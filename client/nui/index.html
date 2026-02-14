@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CAD/MDT</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    #laptop {
+      display: none;
+      width: 75vw;
+      height: 80vh;
+      max-width: 1200px;
+      max-height: 800px;
+      background: #111;
+      border-radius: 12px;
+      border: 3px solid #333;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05) inset;
+      overflow: hidden;
+      position: relative;
+    }
+    #laptop.open { display: block; }
+    #laptop-screen {
+      width: 100%;
+      height: calc(100% - 36px);
+      border: none;
+      background: #020d1e;
+    }
+    #laptop-bar {
+      height: 36px;
+      background: #032261;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      border-top: 1px solid #333;
+    }
+    #laptop-bar span {
+      color: #6b7a8d;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    #close-btn {
+      background: #ef4444;
+      border: none;
+      color: #fff;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    #close-btn:hover { opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <div id="laptop">
+    <iframe id="laptop-screen" src="about:blank"></iframe>
+    <div id="laptop-bar">
+      <span>VKC CAD - Press F5 or ESC to close</span>
+      <button id="close-btn" title="Close">X</button>
+    </div>
+  </div>
+
+  <script>
+    const laptop = document.getElementById('laptop');
+    const screen = document.getElementById('laptop-screen');
+    const closeBtn = document.getElementById('close-btn');
+    let cadUrl = '';
+
+    window.addEventListener('message', function(e) {
+      if (e.data.type === 'toggleCAD') {
+        if (e.data.open) {
+          if (!cadUrl) {
+            cadUrl = 'http://localhost:3030';
+          }
+          screen.src = cadUrl;
+          laptop.classList.add('open');
+        } else {
+          laptop.classList.remove('open');
+        }
+      }
+    });
+
+    closeBtn.addEventListener('click', function() {
+      laptop.classList.remove('open');
+      fetch('https://fivemcad/closeCAD', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+    });
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        laptop.classList.remove('open');
+        fetch('https://fivemcad/closeCAD', {
+          method: 'POST',
+          body: JSON.stringify({})
+        });
+      }
+    });
+  </script>
+</body>
+</html>
