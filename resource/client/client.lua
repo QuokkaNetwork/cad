@@ -1,4 +1,5 @@
 local isOpen = false
+local cadUrl = GetConvar('cad_web_url', 'http://127.0.0.1:3030')
 
 RegisterNUICallback('closeCAD', function(_, cb)
     isOpen = false
@@ -11,7 +12,8 @@ function ToggleCAD()
     SetNuiFocus(isOpen, isOpen)
     SendNUIMessage({
         type = 'toggleCAD',
-        open = isOpen
+        open = isOpen,
+        cadUrl = cadUrl
     })
 end
 

@@ -57,6 +57,9 @@ import {
   adminKickUnit,
   getCmsSettings,
   updateCmsSettings,
+  getExternalDbConfig,
+  updateExternalDbConfig,
+  testExternalDbConfig,
   getCmsServices,
   createCmsService,
   updateCmsService,
@@ -377,6 +380,29 @@ export default function App() {
   const [cmsNewDeptName, setCmsNewDeptName] = useState('');
   const [cmsSettingKey, setCmsSettingKey] = useState('');
   const [cmsSettingValue, setCmsSettingValue] = useState('');
+  const [externalDbConfig, setExternalDbConfig] = useState({
+    enabled: false,
+    host: '',
+    port: '3306',
+    user: '',
+    password: '',
+    database: '',
+    character_table: 'players',
+    character_id_field: 'citizenid',
+    character_firstname_field: '',
+    character_lastname_field: '',
+    character_birthdate_field: '',
+    character_phone_field: '',
+    character_json_field: 'charinfo',
+    character_json_firstname_path: '$.firstname',
+    character_json_lastname_path: '$.lastname',
+    character_json_birthdate_path: '$.birthdate',
+    character_json_phone_path: '$.phone',
+    vehicle_table: 'player_vehicles',
+    vehicle_plate_field: 'plate',
+    vehicle_model_field: 'vehicle',
+    vehicle_owner_field: 'citizenid',
+  });
 
   // VHF Radio state
   const [radioFreqInput, setRadioFreqInput] = useState('');
@@ -484,6 +510,9 @@ export default function App() {
     getAnnouncements().then(setAnnouncements).catch(() => {});
     getCmsServices().then(setCmsServices).catch(() => {});
     getCmsSettings().then(setCmsSettings).catch(() => {});
+    if (user && user.role === 'admin') {
+      getExternalDbConfig().then(setExternalDbConfig).catch(() => {});
+    }
   }, [isLoggedIn]);
 
   useEffect(() => {
@@ -823,6 +852,7 @@ export default function App() {
       if (adminTab === 'auditlog') loadAuditLog();
       if (adminTab === 'jobcodes') loadCustomJobCodes();
       if (adminTab === 'statuscodes') loadCustomStatusCodes();
+      if (adminTab === 'services') getExternalDbConfig().then(setExternalDbConfig).catch(() => {});
     }
   }, [isLoggedIn, isAdmin, tab, adminTab]);
 
@@ -880,6 +910,28 @@ export default function App() {
       const next = current.includes(dept) ? current.filter((d) => d !== dept) : [...current, dept];
       return { ...prev, [userId]: next };
     });
+  }
+
+  async function handleSaveExternalDbConfig(e) {
+    e.preventDefault();
+    setError(''); setStatus('');
+    try {
+      const saved = await updateExternalDbConfig(externalDbConfig);
+      setExternalDbConfig(saved);
+      setStatus('External DB configuration saved');
+    } catch (err) {
+      setError(err.message || 'Failed to save external DB config');
+    }
+  }
+
+  async function handleTestExternalDbConfig() {
+    setError(''); setStatus('');
+    try {
+      const result = await testExternalDbConfig();
+      setStatus(`External DB connected (characters: ${result.details?.characters ? 'ok' : 'n/a'}, vehicles: ${result.details?.vehicles ? 'ok' : 'n/a'})`);
+    } catch (err) {
+      setError(err.message || 'External DB test failed');
+    }
   }
 
   async function handleCreateJobSync(e) {
@@ -1715,6 +1767,60 @@ export default function App() {
                         ))}
                       </div>
                     )}
+                  </div>
+                </details>
+
+                {/* External DB Mapping */}
+                <details className="cms-add-section" style={{ marginTop: '12px' }}>
+                  <summary className="cms-add-summary">External DB Mapping</summary>
+                  <div className="cms-settings-panel">
+                    <form className="form cms-add-form" onSubmit={handleSaveExternalDbConfig}>
+                      <div className="cms-form-grid">
+                        <label>
+                          Enabled
+                          <select
+                            value={externalDbConfig.enabled ? 'true' : 'false'}
+                            onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, enabled: e.target.value === 'true' }))}
+                          >
+                            <option value="false">Disabled</option>
+                            <option value="true">Enabled</option>
+                          </select>
+                        </label>
+                        <label>DB Host<input value={externalDbConfig.host} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, host: e.target.value }))} placeholder="127.0.0.1" /></label>
+                        <label>DB Port<input value={externalDbConfig.port} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, port: e.target.value }))} placeholder="3306" /></label>
+                        <label>DB Name<input value={externalDbConfig.database} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, database: e.target.value }))} placeholder="qbox" /></label>
+                        <label>DB User<input value={externalDbConfig.user} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, user: e.target.value }))} placeholder="root" /></label>
+                        <label>DB Password<input type="password" value={externalDbConfig.password} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, password: e.target.value }))} placeholder="password" /></label>
+                      </div>
+
+                      <h3 style={{ marginTop: '10px' }}>Character Bindings</h3>
+                      <div className="cms-form-grid">
+                        <label>Table<input value={externalDbConfig.character_table} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_table: e.target.value }))} placeholder="players" /></label>
+                        <label>ID Field<input value={externalDbConfig.character_id_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_id_field: e.target.value }))} placeholder="citizenid" /></label>
+                        <label>First Name Field<input value={externalDbConfig.character_firstname_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_firstname_field: e.target.value }))} placeholder="firstname (leave blank to use JSON)" /></label>
+                        <label>Last Name Field<input value={externalDbConfig.character_lastname_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_lastname_field: e.target.value }))} placeholder="lastname (leave blank to use JSON)" /></label>
+                        <label>Birthdate Field<input value={externalDbConfig.character_birthdate_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_birthdate_field: e.target.value }))} placeholder="birthdate (optional)" /></label>
+                        <label>Phone Field<input value={externalDbConfig.character_phone_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_phone_field: e.target.value }))} placeholder="phone (optional)" /></label>
+                        <label>JSON Field<input value={externalDbConfig.character_json_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_json_field: e.target.value }))} placeholder="charinfo" /></label>
+                        <label>JSON First Name Path<input value={externalDbConfig.character_json_firstname_path} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_json_firstname_path: e.target.value }))} placeholder="$.firstname" /></label>
+                        <label>JSON Last Name Path<input value={externalDbConfig.character_json_lastname_path} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_json_lastname_path: e.target.value }))} placeholder="$.lastname" /></label>
+                        <label>JSON Birthdate Path<input value={externalDbConfig.character_json_birthdate_path} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_json_birthdate_path: e.target.value }))} placeholder="$.birthdate" /></label>
+                        <label>JSON Phone Path<input value={externalDbConfig.character_json_phone_path} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, character_json_phone_path: e.target.value }))} placeholder="$.phone" /></label>
+                      </div>
+
+                      <h3 style={{ marginTop: '10px' }}>Vehicle Bindings</h3>
+                      <div className="cms-form-grid">
+                        <label>Table<input value={externalDbConfig.vehicle_table} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, vehicle_table: e.target.value }))} placeholder="player_vehicles" /></label>
+                        <label>Plate Field<input value={externalDbConfig.vehicle_plate_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, vehicle_plate_field: e.target.value }))} placeholder="plate" /></label>
+                        <label>Model Field<input value={externalDbConfig.vehicle_model_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, vehicle_model_field: e.target.value }))} placeholder="vehicle" /></label>
+                        <label>Owner Field<input value={externalDbConfig.vehicle_owner_field} onChange={(e) => setExternalDbConfig((prev) => ({ ...prev, vehicle_owner_field: e.target.value }))} placeholder="citizenid" /></label>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                        <button type="submit">Save External DB Config</button>
+                        <button type="button" className="ghost" onClick={handleTestExternalDbConfig}>Test Connection</button>
+                      </div>
+                    </form>
                   </div>
                 </details>
 

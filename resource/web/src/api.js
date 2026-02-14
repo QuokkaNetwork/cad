@@ -491,6 +491,35 @@ export async function updateCmsSettings(settings) {
   return res.json();
 }
 
+// ===== External DB Integration =====
+
+export async function getExternalDbConfig() {
+  const res = await authedFetch('/api/admin/external-db');
+  if (!res.ok) throw new Error('External DB config fetch failed');
+  return res.json();
+}
+
+export async function updateExternalDbConfig(config) {
+  const res = await authedFetch('/api/admin/external-db', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config }),
+  });
+  if (!res.ok) throw new Error('External DB config update failed');
+  return res.json();
+}
+
+export async function testExternalDbConfig() {
+  const res = await authedFetch('/api/admin/external-db/test', {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'External DB test failed');
+  }
+  return res.json();
+}
+
 // ===== CMS Services =====
 
 export async function getCmsServices() {

@@ -50,6 +50,8 @@ const {
   setCmsSetting,
   getAllCmsSettings,
   deleteCmsSetting,
+  getExternalDbConfig,
+  setExternalDbConfig,
   listCmsServices,
   getCmsService,
   createCmsService,
@@ -60,7 +62,13 @@ const {
   updateCmsDepartment,
 } = require('./db');
 const { login, authMiddleware } = require('./auth');
-const { searchCharacters, getCoordsByCitizenId, getSourceByCitizenId, searchVehicles } = require('./qbox');
+const {
+  searchCharacters,
+  getCoordsByCitizenId,
+  getSourceByCitizenId,
+  searchVehicles,
+  testExternalDbConfig,
+} = require('./qbox');
 
 const app = express();
 app.use(express.json());
@@ -806,6 +814,38 @@ app.put('/api/admin/cms/settings', authMiddleware, adminMiddleware, (req, res) =
 app.delete('/api/admin/cms/settings/:key', authMiddleware, adminMiddleware, (req, res) => {
   deleteCmsSetting(req.params.key);
   res.json({ status: 'ok' });
+});
+
+// ===== External DB Mapping Routes =====
+
+app.get('/api/admin/external-db', authMiddleware, adminMiddleware, (req, res) => {
+  res.json(getExternalDbConfig());
+});
+
+app.put('/api/admin/external-db', authMiddleware, adminMiddleware, (req, res) => {
+  const { config: payload } = req.body || {};
+  if (!payload || typeof payload !== 'object') {
+    res.status(400).json({ error: 'config object required' });
+    return;
+  }
+
+  const saved = setExternalDbConfig(payload);
+  addAuditLog({
+    user_id: req.user.id,
+    username: req.user.username,
+    action: 'update_external_db_config',
+    detail: `Updated external DB mappings (${saved.enabled ? 'enabled' : 'disabled'})`,
+  });
+  res.json(saved);
+});
+
+app.post('/api/admin/external-db/test', authMiddleware, adminMiddleware, async (req, res) => {
+  const result = await testExternalDbConfig();
+  if (!result.ok) {
+    res.status(400).json(result);
+    return;
+  }
+  res.json(result);
 });
 
 // ===== CMS Services Routes =====

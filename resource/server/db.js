@@ -645,6 +645,59 @@ function deleteCmsSetting(key) {
   run('DELETE FROM cms_settings WHERE key = ?', [key]);
 }
 
+const EXTERNAL_DB_DEFAULTS = {
+  enabled: false,
+  host: '',
+  port: '3306',
+  user: '',
+  password: '',
+  database: '',
+  character_table: 'players',
+  character_id_field: 'citizenid',
+  character_firstname_field: '',
+  character_lastname_field: '',
+  character_birthdate_field: '',
+  character_phone_field: '',
+  character_json_field: 'charinfo',
+  character_json_firstname_path: '$.firstname',
+  character_json_lastname_path: '$.lastname',
+  character_json_birthdate_path: '$.birthdate',
+  character_json_phone_path: '$.phone',
+  vehicle_table: 'player_vehicles',
+  vehicle_plate_field: 'plate',
+  vehicle_model_field: 'vehicle',
+  vehicle_owner_field: 'citizenid',
+};
+
+const EXTERNAL_DB_KEYS = Object.keys(EXTERNAL_DB_DEFAULTS);
+
+function getExternalDbConfig() {
+  const current = getAllCmsSettings();
+  const result = { ...EXTERNAL_DB_DEFAULTS };
+
+  EXTERNAL_DB_KEYS.forEach((key) => {
+    const fullKey = `external_db.${key}`;
+    if (current[fullKey] !== undefined) {
+      result[key] = current[fullKey];
+    }
+  });
+
+  return {
+    ...result,
+    enabled: String(result.enabled) === 'true' || result.enabled === true,
+  };
+}
+
+function setExternalDbConfig(config) {
+  EXTERNAL_DB_KEYS.forEach((key) => {
+    if (config[key] === undefined) {
+      return;
+    }
+    setCmsSetting(`external_db.${key}`, String(config[key]));
+  });
+  return getExternalDbConfig();
+}
+
 // ===== CMS Services =====
 
 function listCmsServices() {
@@ -803,6 +856,8 @@ module.exports = {
   setCmsSetting,
   getAllCmsSettings,
   deleteCmsSetting,
+  getExternalDbConfig,
+  setExternalDbConfig,
   listCmsServices,
   getCmsService,
   createCmsService,

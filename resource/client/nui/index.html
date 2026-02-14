@@ -85,8 +85,11 @@
     window.addEventListener('message', function(e) {
       if (e.data.type === 'toggleCAD') {
         if (e.data.open) {
+          if (e.data.cadUrl) {
+            cadUrl = e.data.cadUrl;
+          }
           if (!cadUrl) {
-            cadUrl = 'http://localhost:3030';
+            cadUrl = 'http://127.0.0.1:3030';
           }
           screen.src = cadUrl;
           laptop.classList.add('open');
