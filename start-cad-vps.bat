@@ -58,21 +58,51 @@ if exist ".env" (
 )
 
 if "%AUTO_UPDATE_BRANCH%"=="" set "AUTO_UPDATE_BRANCH=main"
-echo [CAD] Forcing sync with origin/%AUTO_UPDATE_BRANCH% ...
-call git fetch origin %AUTO_UPDATE_BRANCH%
-if errorlevel 1 goto :fail
-call git reset --hard origin/%AUTO_UPDATE_BRANCH%
-if errorlevel 1 goto :fail
-call git clean -fd
-if errorlevel 1 goto :fail
+set "LOCAL_HEAD="
+set "REMOTE_HEAD="
+set "UPDATED=0"
 
-echo [CAD] Installing dependencies...
-call npm install
+for /f %%I in ('git rev-parse HEAD 2^>nul') do set "LOCAL_HEAD=%%I"
+call git fetch origin %AUTO_UPDATE_BRANCH% --quiet
 if errorlevel 1 goto :fail
+for /f %%I in ('git rev-parse origin/%AUTO_UPDATE_BRANCH% 2^>nul') do set "REMOTE_HEAD=%%I"
 
-echo [CAD] Building web app...
-call npm run build
-if errorlevel 1 goto :fail
+if not defined LOCAL_HEAD (
+  echo [CAD] No local commit detected. Syncing to origin/%AUTO_UPDATE_BRANCH%...
+  call git reset --hard origin/%AUTO_UPDATE_BRANCH%
+  if errorlevel 1 goto :fail
+  call git clean -fd
+  if errorlevel 1 goto :fail
+  set "UPDATED=1"
+) else if /I not "!LOCAL_HEAD!"=="!REMOTE_HEAD!" (
+  echo [CAD] Update found on origin/%AUTO_UPDATE_BRANCH%.
+  call git reset --hard origin/%AUTO_UPDATE_BRANCH%
+  if errorlevel 1 goto :fail
+  call git clean -fd
+  if errorlevel 1 goto :fail
+  set "UPDATED=1"
+)
+
+if "!UPDATED!"=="1" (
+  echo [CAD] Installing dependencies...
+  call npm install
+  if errorlevel 1 goto :fail
+
+  echo [CAD] Building web app...
+  call npm run build
+  if errorlevel 1 goto :fail
+) else (
+  if not exist "node_modules" (
+    echo [CAD] Dependencies missing. Running npm install...
+    call npm install
+    if errorlevel 1 goto :fail
+  )
+  if not exist "web\dist\index.html" (
+    echo [CAD] Web build missing. Running npm run build...
+    call npm run build
+    if errorlevel 1 goto :fail
+  )
+)
 
 echo [CAD] Launching server...
 set NODE_ENV=production

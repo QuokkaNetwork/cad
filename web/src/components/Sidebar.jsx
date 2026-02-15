@@ -11,14 +11,6 @@ const POLICE_NAV = [
   { to: '/records', label: 'Records', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
 ];
 
-const ADMIN_NAV = [
-  { to: '/admin/users', label: 'Users' },
-  { to: '/admin/departments', label: 'Departments' },
-  { to: '/admin/role-mappings', label: 'Role Mappings' },
-  { to: '/admin/audit-log', label: 'Audit Log' },
-  { to: '/admin/settings', label: 'Settings' },
-];
-
 function SidebarLink({ to, label, icon }) {
   return (
     <NavLink
@@ -42,7 +34,7 @@ function SidebarLink({ to, label, icon }) {
 }
 
 export default function Sidebar() {
-  const { isAdmin, departments } = useAuth();
+  const { departments } = useAuth();
   const { activeDepartment } = useDepartment();
 
   return (
@@ -71,18 +63,6 @@ export default function Sidebar() {
           </div>
         )}
       </nav>
-
-      {/* Bottom section */}
-      <div className="border-t border-cad-border p-3 space-y-1">
-        {isAdmin && (
-          <>
-            <div className="text-xs text-cad-muted uppercase tracking-wider mt-3 mb-2 px-3">Admin</div>
-            {ADMIN_NAV.map(item => (
-              <SidebarLink key={item.to} {...item} />
-            ))}
-          </>
-        )}
-      </div>
     </aside>
   );
 }
