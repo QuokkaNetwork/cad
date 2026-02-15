@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, Events } = require('discord.js');
 const config = require('../config');
 const { Users, UserDepartments, DiscordRoleMappings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
@@ -19,11 +19,11 @@ async function startBot() {
     ],
   });
 
-  client.on('ready', () => {
+  client.on(Events.ClientReady, () => {
     console.log(`Discord bot logged in as ${client.user.tag}`);
   });
 
-  client.on('guildMemberUpdate', (oldMember, newMember) => {
+  client.on(Events.GuildMemberUpdate, (oldMember, newMember) => {
     if (newMember.guild.id !== config.discord.guildId) return;
 
     const oldRoles = new Set(oldMember.roles.cache.map(r => r.id));

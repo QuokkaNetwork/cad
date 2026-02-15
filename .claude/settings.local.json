@@ -8,7 +8,9 @@
       "Bash(npm install)",
       "Bash(cmd.exe /c \"where node && where npm\")",
       "Bash(cmd.exe /c \"where node 2>&1 && where npm 2>&1 && where bun 2>&1 && where pnpm 2>&1 && where yarn 2>&1\")",
-      "Bash(export PATH=\"$PATH:/c/Program Files/nodejs\")"
+      "Bash(export PATH=\"$PATH:/c/Program Files/nodejs\")",
+      "Bash(npm run build:*)",
+      "Bash(timeout 5 node:*)"
     ]
   }
 }
