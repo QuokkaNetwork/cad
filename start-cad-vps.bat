@@ -3,11 +3,13 @@ setlocal ENABLEDELAYEDEXPANSION
 
 REM --- Bootstrap config ---
 REM Set this to your repo URL if running this BAT outside an existing CAD repo checkout.
-set "CAD_REPO_URL=https://github.com/YOUR_ORG/YOUR_CAD_REPO.git"
+set "CAD_REPO_URL=https://github.com/QuokkaNetwork/cad.git"
 set "CAD_REPO_BRANCH=main"
 set "CAD_SUBDIR=cad"
 
 set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%.") do set "SCRIPT_DIR=%%~fI"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "APP_DIR=%SCRIPT_DIR%"
 set "NPM_BIN="
 set "NPM_INSTALL_FLAGS=--include=dev"
@@ -18,8 +20,11 @@ echo [CAD] Starting self-install launcher...
 
 REM --- Detect app directory ---
 if exist "%APP_DIR%package.json" if exist "%APP_DIR%server" if exist "%APP_DIR%web" goto :deps_check
-set "APP_DIR=%SCRIPT_DIR%%CAD_SUBDIR%\"
+set "APP_DIR=%SCRIPT_DIR%\%CAD_SUBDIR%"
 if not exist "%APP_DIR%" mkdir "%APP_DIR%"
+
+set "APP_DIR=%APP_DIR:"=%"
+if "%APP_DIR:~-1%"=="\" set "APP_DIR=%APP_DIR:~0,-1%"
 
 :deps_check
 where winget >nul 2>nul
@@ -67,13 +72,14 @@ if not defined NPM_BIN (
 )
 
 REM --- Clone repo if needed ---
-if not exist "%APP_DIR%package.json" (
+if not exist "%APP_DIR%\package.json" (
   if "%CAD_REPO_URL%"=="https://github.com/YOUR_ORG/YOUR_CAD_REPO.git" (
     echo [CAD] ERROR: Set CAD_REPO_URL at top of this BAT to your real repository URL.
     pause
     exit /b 1
   )
   echo [CAD] No CAD source found. Cloning repository into "%APP_DIR%"...
+  echo [CAD] Cloning to: %APP_DIR%
   git clone --branch "%CAD_REPO_BRANCH%" "%CAD_REPO_URL%" "%APP_DIR%"
   if errorlevel 1 (
     echo [CAD] ERROR: Repository clone failed.
@@ -92,9 +98,18 @@ if not exist ".git" (
     pause
     exit /b 1
   )
-  cd /d "%SCRIPT_DIR%"
-  if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%"
-  echo [CAD] Local files are not a git checkout. Re-cloning from repository...
+  if /I "%APP_DIR%"=="%SCRIPT_DIR%" (
+    set "APP_DIR=%SCRIPT_DIR%\%CAD_SUBDIR%"
+    set "APP_DIR=%APP_DIR:"=%"
+    if "%APP_DIR:~-1%"=="\" set "APP_DIR=%APP_DIR:~0,-1%"
+    if not exist "%APP_DIR%" mkdir "%APP_DIR%"
+    echo [CAD] Current folder is not a git checkout. Installing into subfolder: %APP_DIR%
+  ) else (
+    cd /d "%SCRIPT_DIR%"
+    if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%"
+    echo [CAD] Local files are not a git checkout. Re-cloning from repository...
+  )
+  echo [CAD] Cloning to: %APP_DIR%
   git clone --branch "%CAD_REPO_BRANCH%" "%CAD_REPO_URL%" "%APP_DIR%"
   if errorlevel 1 (
     echo [CAD] ERROR: Repository clone failed.
