@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import AdminPageHeader from '../../components/AdminPageHeader';
 
 export default function AdminAuditLog() {
   const [entries, setEntries] = useState([]);
@@ -19,7 +20,10 @@ export default function AdminAuditLog() {
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-6">Audit Log</h2>
+      <AdminPageHeader
+        title="Audit Log"
+        subtitle="Review administrative and system activity events."
+      />
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

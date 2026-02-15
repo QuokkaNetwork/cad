@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import AdminPageHeader from '../../components/AdminPageHeader';
 
 export default function AdminRoleMappings() {
   const [mappings, setMappings] = useState([]);
@@ -72,8 +73,11 @@ export default function AdminRoleMappings() {
 
   return (
     <div>
+      <AdminPageHeader
+        title="Discord Role Mappings"
+        subtitle="Map Discord roles to departments and sync member access."
+      />
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold">Discord Role Mappings</h2>
         <button
           onClick={syncAll}
           disabled={syncing}

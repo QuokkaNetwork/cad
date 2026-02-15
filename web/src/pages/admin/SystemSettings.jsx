@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import AdminPageHeader from '../../components/AdminPageHeader';
 
 function formatErr(err) {
   if (!err) return 'Unknown error';
@@ -66,7 +67,10 @@ export default function AdminSystemSettings() {
 
   return (
     <div className="max-w-2xl">
-      <h2 className="text-xl font-bold mb-6">System Settings</h2>
+      <AdminPageHeader
+        title="System Settings"
+        subtitle="Configure CAD integrations and backend data sources."
+      />
 
       {/* QBox Database */}
       <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-4">

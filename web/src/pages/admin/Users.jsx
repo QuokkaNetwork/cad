@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import AdminPageHeader from '../../components/AdminPageHeader';
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
@@ -42,7 +43,10 @@ export default function AdminUsers() {
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-6">User Management</h2>
+      <AdminPageHeader
+        title="User Management"
+        subtitle="Manage user access, roles, bans, and department membership."
+      />
 
       <input
         type="text"

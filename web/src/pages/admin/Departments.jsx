@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import Modal from '../../components/Modal';
+import AdminPageHeader from '../../components/AdminPageHeader';
 
 export default function AdminDepartments() {
   const [departments, setDepartments] = useState([]);
@@ -99,8 +100,11 @@ export default function AdminDepartments() {
 
   return (
     <div>
+      <AdminPageHeader
+        title="Departments"
+        subtitle="Create and manage departments, colors, and logo assets."
+      />
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold">Departments</h2>
         <button
           onClick={() => setShowNew(true)}
           className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
