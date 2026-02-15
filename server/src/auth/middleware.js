@@ -1,6 +1,6 @@
 const { verifyToken } = require('./jwt');
 const config = require('../config');
-const { Users, UserDepartments } = require('../db/sqlite');
+const { Users, UserDepartments, Departments } = require('../db/sqlite');
 
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -21,7 +21,9 @@ function requireAuth(req, res, next) {
     if (user.is_banned) {
       return res.status(403).json({ error: 'Account is banned' });
     }
-    user.departments = UserDepartments.getForUser(user.id);
+    user.departments = user.is_admin
+      ? Departments.list()
+      : UserDepartments.getForUser(user.id);
     req.user = user;
     next();
   } catch (err) {

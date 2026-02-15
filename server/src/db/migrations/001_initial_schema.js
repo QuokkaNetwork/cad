@@ -25,6 +25,7 @@ module.exports = {
 
       INSERT OR IGNORE INTO departments (name, short_name, color, icon, is_active) VALUES
         ('Victoria Police', 'VicPol', '#032261', 'vicpol', 1),
+        ('Police Communications', 'DISPATCH', '#1F2937', '', 1),
         ('Ambulance Victoria', 'AV', '#007D85', 'av', 0),
         ('Fire Rescue Victoria', 'FRV', '#AA0028', 'frv', 0);
 

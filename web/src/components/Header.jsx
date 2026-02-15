@@ -1,6 +1,6 @@
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import GoOnDutyModal from './GoOnDutyModal';
@@ -9,10 +9,13 @@ export default function Header() {
   const { user, logout } = useAuth();
   const { activeDepartment } = useDepartment();
   const navigate = useNavigate();
+  const location = useLocation();
   const [open, setOpen] = useState(false);
   const [myUnit, setMyUnit] = useState(null);
   const [showOnDutyModal, setShowOnDutyModal] = useState(false);
   const [offDutyLoading, setOffDutyLoading] = useState(false);
+  const departmentRoutes = ['/dispatch', '/units', '/search', '/bolos', '/records'];
+  const onDepartmentPage = departmentRoutes.some(route => location.pathname.startsWith(route));
 
   async function refreshMyUnit() {
     try {
@@ -61,7 +64,7 @@ export default function Header() {
           )}
         </div>
         <div className="flex items-center gap-4">
-          {activeDepartment && (
+          {activeDepartment && onDepartmentPage && (
             <>
               {onActiveDeptDuty ? (
                 <div className="flex items-center gap-2">
