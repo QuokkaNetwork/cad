@@ -6,6 +6,7 @@ const {
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
+const qbox = require('../db/qbox');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -124,6 +125,31 @@ router.post('/discord/sync', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Sync failed', message: err.message });
+  }
+});
+
+// --- QBox diagnostics ---
+router.get('/qbox/test', async (req, res) => {
+  try {
+    const result = await qbox.testConnection();
+    if (!result.success) {
+      return res.status(400).json({ error: 'QBox connection failed', message: result.message });
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'QBox connection failed', message: err.message });
+  }
+});
+
+router.get('/qbox/schema', async (req, res) => {
+  try {
+    const report = await qbox.inspectConfiguredSchema();
+    if (!report.success) {
+      return res.status(400).json({ error: 'QBox schema validation failed', message: report.message, details: report });
+    }
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: 'QBox schema validation failed', message: err.message });
   }
 });
 

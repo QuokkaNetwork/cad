@@ -8,6 +8,7 @@ const config = require('./config');
 const { initDb } = require('./db/sqlite');
 const { initSteamAuth } = require('./auth/steam');
 const { startBot } = require('./discord/bot');
+const { startAutoUpdater } = require('./services/autoUpdater');
 
 // Initialize database
 console.log('Initializing database...');
@@ -82,4 +83,8 @@ startBot().then(client => {
   if (client) console.log('Discord bot started');
 }).catch(err => {
   console.error('Discord bot failed to start:', err.message);
+});
+
+startAutoUpdater().catch(err => {
+  console.error('Auto updater failed to start:', err.message);
 });

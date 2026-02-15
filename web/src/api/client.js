@@ -1,5 +1,15 @@
 const TOKEN_KEY = 'cad_token';
 
+class ApiError extends Error {
+  constructor(message, options = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = options.status || 0;
+    this.error = options.error || '';
+    this.details = options.details;
+  }
+}
+
 export function setToken(token) {
   localStorage.setItem(TOKEN_KEY, token);
 }
@@ -27,7 +37,15 @@ async function request(url, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || 'Request failed');
+    const pieces = [];
+    if (err.error) pieces.push(err.error);
+    if (err.message) pieces.push(err.message);
+    const message = pieces.join(': ') || 'Request failed';
+    throw new ApiError(message, {
+      status: res.status,
+      error: err.error,
+      details: err.details,
+    });
   }
 
   return res.json();
@@ -40,3 +58,5 @@ export const api = {
   put: (url, data) => request(url, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (url) => request(url, { method: 'DELETE' }),
 };
+
+export { ApiError };

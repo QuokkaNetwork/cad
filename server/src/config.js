@@ -1,6 +1,11 @@
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
+function parseIntEnv(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
 module.exports = {
   port: parseInt(process.env.PORT, 10) || 3030,
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -18,6 +23,16 @@ module.exports = {
     guildId: process.env.DISCORD_GUILD_ID || '',
     clientId: process.env.DISCORD_CLIENT_ID || '',
     clientSecret: process.env.DISCORD_CLIENT_SECRET || '',
+    periodicSyncMinutes: parseIntEnv(process.env.DISCORD_PERIODIC_SYNC_MINUTES, 10),
+  },
+  autoUpdate: {
+    enabled: String(process.env.AUTO_UPDATE_ENABLED || 'false').toLowerCase() === 'true',
+    intervalMinutes: parseIntEnv(process.env.AUTO_UPDATE_INTERVAL_MINUTES, 5),
+    branch: process.env.AUTO_UPDATE_BRANCH || '',
+    runNpmInstall: String(process.env.AUTO_UPDATE_RUN_NPM_INSTALL || 'true').toLowerCase() === 'true',
+    runWebBuild: String(process.env.AUTO_UPDATE_RUN_WEB_BUILD || 'true').toLowerCase() === 'true',
+    exitOnUpdate: String(process.env.AUTO_UPDATE_EXIT_ON_UPDATE || 'true').toLowerCase() === 'true',
+    selfRestart: String(process.env.AUTO_UPDATE_SELF_RESTART || 'true').toLowerCase() === 'true',
   },
   webUrl: process.env.WEB_URL || 'http://localhost:5173',
   sqlite: {

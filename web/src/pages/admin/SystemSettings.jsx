@@ -1,11 +1,22 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 
+function formatErr(err) {
+  if (!err) return 'Unknown error';
+  const base = err.message || 'Request failed';
+  if (!err.details) return base;
+  if (Array.isArray(err.details?.errors) && err.details.errors.length > 0) {
+    return `${base}\n- ${err.details.errors.join('\n- ')}`;
+  }
+  return base;
+}
+
 export default function AdminSystemSettings() {
   const [settings, setSettings] = useState({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [schemaResult, setSchemaResult] = useState(null);
 
   async function fetchSettings() {
     try {
@@ -28,7 +39,7 @@ export default function AdminSystemSettings() {
       await api.put('/api/admin/settings', { settings });
       alert('Settings saved');
     } catch (err) {
-      alert('Failed to save: ' + err.message);
+      alert('Failed to save:\n' + formatErr(err));
     } finally {
       setSaving(false);
     }
@@ -37,14 +48,17 @@ export default function AdminSystemSettings() {
   async function testQboxConnection() {
     setTesting(true);
     setTestResult(null);
+    setSchemaResult(null);
     // Save first, then test
     try {
       await api.put('/api/admin/settings', { settings });
-      // A dedicated test endpoint would be better; for now test via a dummy search
-      const result = await api.get('/api/search/persons?q=__test__');
-      setTestResult({ success: true, message: 'Connection successful' });
+      const connection = await api.get('/api/admin/qbox/test');
+      setTestResult({ success: true, message: connection.message || 'Connection successful' });
+      const schema = await api.get('/api/admin/qbox/schema');
+      setSchemaResult(schema);
     } catch (err) {
-      setTestResult({ success: false, message: err.message });
+      setTestResult({ success: false, message: formatErr(err) });
+      if (err.details) setSchemaResult(err.details);
     } finally {
       setTesting(false);
     }
@@ -111,17 +125,66 @@ export default function AdminSystemSettings() {
           </div>
         </div>
 
+        <div className="mt-3">
+          <h4 className="text-xs text-cad-muted mb-2">Custom Field Mapping (JSON arrays)</h4>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-cad-muted mb-1">Person Custom Fields (`qbox_person_custom_fields`)</label>
+              <textarea
+                value={settings.qbox_person_custom_fields || ''}
+                onChange={e => updateSetting('qbox_person_custom_fields', e.target.value)}
+                className="w-full h-28 bg-cad-surface border border-cad-border rounded px-3 py-2 text-xs font-mono focus:outline-none focus:border-cad-accent"
+                placeholder={'[{"key":"job","source":"charinfo","path":"job.label"},{"key":"license_status","source":"column","column":"metadata","path":"licenses.driver"}]'}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-cad-muted mb-1">Vehicle Custom Fields (`qbox_vehicle_custom_fields`)</label>
+              <textarea
+                value={settings.qbox_vehicle_custom_fields || ''}
+                onChange={e => updateSetting('qbox_vehicle_custom_fields', e.target.value)}
+                className="w-full h-24 bg-cad-surface border border-cad-border rounded px-3 py-2 text-xs font-mono focus:outline-none focus:border-cad-accent"
+                placeholder={'[{"key":"mods_class","source":"column","column":"mods","path":"class"},{"key":"impounded_at","source":"column","column":"impounded_at"}]'}
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="flex gap-2 mt-4">
           <button onClick={testQboxConnection} disabled={testing}
             className="px-3 py-1.5 text-sm bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50">
             {testing ? 'Testing...' : 'Test Connection'}
           </button>
           {testResult && (
-            <span className={`text-sm ${testResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+            <span className={`text-sm whitespace-pre-wrap ${testResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
               {testResult.message}
             </span>
           )}
         </div>
+
+        {schemaResult && (
+          <div className="mt-3 text-xs">
+            {Array.isArray(schemaResult.errors) && schemaResult.errors.length > 0 && (
+              <div className="text-red-400 whitespace-pre-wrap">
+                {'Errors:\n- ' + schemaResult.errors.join('\n- ')}
+              </div>
+            )}
+            {Array.isArray(schemaResult.players?.warnings) && schemaResult.players.warnings.length > 0 && (
+              <div className="text-amber-300 whitespace-pre-wrap mt-2">
+                {'Player Warnings:\n- ' + schemaResult.players.warnings.join('\n- ')}
+              </div>
+            )}
+            {Array.isArray(schemaResult.vehicles?.warnings) && schemaResult.vehicles.warnings.length > 0 && (
+              <div className="text-amber-300 whitespace-pre-wrap mt-2">
+                {'Vehicle Warnings:\n- ' + schemaResult.vehicles.warnings.join('\n- ')}
+              </div>
+            )}
+            {schemaResult.success && (
+              <div className="text-emerald-400 mt-2">
+                Schema check passed. Charinfo JSON column: {String(schemaResult.players?.columns?.find(c => c.name === (settings.qbox_charinfo_col || 'charinfo'))?.isJson || false)}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Save button */}

@@ -6,6 +6,7 @@ const bus = require('../utils/eventBus');
 
 let client = null;
 const ADMIN_DISCORD_ROLE_ID = '1472592662103064617';
+let roleSyncInterval = null;
 
 async function startBot() {
   if (!config.discord.botToken) {
@@ -39,7 +40,34 @@ async function startBot() {
   });
 
   await client.login(config.discord.botToken);
+  startPeriodicRoleSync();
   return client;
+}
+
+function startPeriodicRoleSync() {
+  const minutes = Number(config.discord.periodicSyncMinutes || 0);
+  if (minutes <= 0) return;
+  if (roleSyncInterval) return;
+
+  syncAllMembers()
+    .then(result => {
+      console.log(`[Discord] Initial role sync complete: ${result.synced} synced, ${result.skipped} skipped`);
+    })
+    .catch(err => {
+      console.error('[Discord] Initial role sync failed:', err.message);
+    });
+
+  const intervalMs = minutes * 60 * 1000;
+  roleSyncInterval = setInterval(async () => {
+    try {
+      const result = await syncAllMembers();
+      console.log(`[Discord] Periodic role sync complete: ${result.synced} synced, ${result.skipped} skipped`);
+    } catch (err) {
+      console.error('[Discord] Periodic role sync failed:', err.message);
+    }
+  }, intervalMs);
+
+  console.log(`[Discord] Periodic role sync enabled every ${minutes} minute(s)`);
 }
 
 async function syncUserRoles(discordId) {

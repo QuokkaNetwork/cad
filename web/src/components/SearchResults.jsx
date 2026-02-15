@@ -4,6 +4,7 @@ export default function SearchResults({ type, results, onSelect }) {
   }
 
   if (type === 'person') {
+    const hasCustomFields = results.some(person => person.custom_fields && Object.keys(person.custom_fields).length > 0);
     return (
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -14,6 +15,7 @@ export default function SearchResults({ type, results, onSelect }) {
               <th className="px-3 py-2">DOB</th>
               <th className="px-3 py-2">Phone</th>
               <th className="px-3 py-2">Gender</th>
+              {hasCustomFields && <th className="px-3 py-2">Custom</th>}
             </tr>
           </thead>
           <tbody>
@@ -28,6 +30,13 @@ export default function SearchResults({ type, results, onSelect }) {
                 <td className="px-3 py-2 text-cad-muted">{person.birthdate}</td>
                 <td className="px-3 py-2 text-cad-muted">{person.phone}</td>
                 <td className="px-3 py-2 text-cad-muted">{person.gender === '0' ? 'Male' : person.gender === '1' ? 'Female' : person.gender}</td>
+                {hasCustomFields && (
+                  <td className="px-3 py-2 text-cad-muted">
+                    {person.custom_fields && Object.keys(person.custom_fields).length > 0
+                      ? Object.entries(person.custom_fields).map(([key, value]) => `${key}: ${String(value)}`).join(', ')
+                      : '-'}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -37,6 +46,7 @@ export default function SearchResults({ type, results, onSelect }) {
   }
 
   // Vehicle results
+  const hasCustomFields = results.some(vehicle => vehicle.custom_fields && Object.keys(vehicle.custom_fields).length > 0);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -47,6 +57,7 @@ export default function SearchResults({ type, results, onSelect }) {
             <th className="px-3 py-2">Owner</th>
             <th className="px-3 py-2">Garage</th>
             <th className="px-3 py-2">State</th>
+            {hasCustomFields && <th className="px-3 py-2">Custom</th>}
           </tr>
         </thead>
         <tbody>
@@ -61,6 +72,13 @@ export default function SearchResults({ type, results, onSelect }) {
               <td className="px-3 py-2 font-mono text-cad-muted">{vehicle.owner}</td>
               <td className="px-3 py-2 text-cad-muted">{vehicle.garage}</td>
               <td className="px-3 py-2 text-cad-muted">{vehicle.state}</td>
+              {hasCustomFields && (
+                <td className="px-3 py-2 text-cad-muted">
+                  {vehicle.custom_fields && Object.keys(vehicle.custom_fields).length > 0
+                    ? Object.entries(vehicle.custom_fields).map(([key, value]) => `${key}: ${String(value)}`).join(', ')
+                    : '-'}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

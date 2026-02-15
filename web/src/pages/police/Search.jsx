@@ -4,6 +4,15 @@ import SearchResults from '../../components/SearchResults';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
 
+function formatErr(err) {
+  if (!err) return 'Unknown error';
+  const base = err.message || 'Request failed';
+  if (Array.isArray(err.details?.errors) && err.details.errors.length > 0) {
+    return `${base}\n- ${err.details.errors.join('\n- ')}`;
+  }
+  return base;
+}
+
 export default function Search() {
   const [searchType, setSearchType] = useState('person');
   const [query, setQuery] = useState('');
@@ -23,7 +32,7 @@ export default function Search() {
       const data = await api.get(`${endpoint}?q=${encodeURIComponent(query.trim())}`);
       setResults(data);
     } catch (err) {
-      alert('Search failed: ' + err.message);
+      alert('Search failed:\n' + formatErr(err));
     } finally {
       setSearching(false);
     }
@@ -39,7 +48,7 @@ export default function Search() {
       setPersonVehicles(vehicles);
       setPersonRecords(records);
     } catch (err) {
-      console.error('Failed to load person details:', err);
+      alert('Failed to load person details:\n' + formatErr(err));
     }
   }
 
@@ -144,10 +153,21 @@ export default function Search() {
               {personVehicles.length > 0 ? (
                 <div className="space-y-1">
                   {personVehicles.map((v, i) => (
-                    <div key={i} className="flex items-center gap-4 bg-cad-surface rounded px-3 py-2 text-sm">
-                      <span className="font-mono font-bold text-cad-accent-light">{v.plate}</span>
-                      <span>{v.vehicle}</span>
-                      <span className="text-cad-muted">{v.garage}</span>
+                    <div key={i} className="bg-cad-surface rounded px-3 py-2 text-sm">
+                      <div className="flex items-center gap-4">
+                        <span className="font-mono font-bold text-cad-accent-light">{v.plate}</span>
+                        <span>{v.vehicle}</span>
+                        <span className="text-cad-muted">{v.garage}</span>
+                      </div>
+                      {v.custom_fields && Object.keys(v.custom_fields).length > 0 && (
+                        <div className="mt-1 text-xs text-cad-muted">
+                          {Object.entries(v.custom_fields).map(([key, value]) => (
+                            <span key={key} className="mr-3">
+                              {key}: {String(value)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -155,6 +175,22 @@ export default function Search() {
                 <p className="text-sm text-cad-muted">No vehicles registered</p>
               )}
             </div>
+
+            {selectedPerson.custom_fields && Object.keys(selectedPerson.custom_fields).length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                  Custom Fields
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  {Object.entries(selectedPerson.custom_fields).map(([key, value]) => (
+                    <div key={key}>
+                      <span className="text-cad-muted">{key}:</span>
+                      <span className="ml-2">{String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Criminal records */}
             <div>
