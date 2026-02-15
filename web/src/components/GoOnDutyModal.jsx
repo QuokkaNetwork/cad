@@ -4,6 +4,8 @@ import { api } from '../api/client';
 export default function GoOnDutyModal({ open, onClose, department, onSuccess }) {
   const overlayRef = useRef(null);
   const [callsign, setCallsign] = useState('');
+  const [subDepartments, setSubDepartments] = useState([]);
+  const [subDepartmentId, setSubDepartmentId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -12,11 +14,28 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
       document.body.style.overflow = 'hidden';
       setError('');
       setCallsign('');
+      setSubDepartmentId('');
     } else {
       document.body.style.overflow = '';
     }
     return () => { document.body.style.overflow = ''; };
   }, [open]);
+
+  useEffect(() => {
+    async function fetchSubDepartments() {
+      if (!open || !department?.id) {
+        setSubDepartments([]);
+        return;
+      }
+      try {
+        const data = await api.get(`/api/units/sub-departments?department_id=${department.id}`);
+        setSubDepartments(Array.isArray(data) ? data : []);
+      } catch {
+        setSubDepartments([]);
+      }
+    }
+    fetchSubDepartments();
+  }, [open, department?.id]);
 
   useEffect(() => {
     function onKey(e) {
@@ -30,12 +49,17 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
     e.preventDefault();
     const trimmed = callsign.trim();
     if (!trimmed) return;
+    if (subDepartments.length > 0 && !subDepartmentId) {
+      setError('Please select a sub-department');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
       await api.post('/api/units/me', {
         callsign: trimmed,
         department_id: department?.id,
+        sub_department_id: subDepartmentId || null,
       });
       onSuccess?.();
       onClose();
@@ -76,6 +100,24 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
             autoFocus
             className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
           />
+          {subDepartments.length > 0 && (
+            <>
+              <label className="block text-sm text-cad-muted mb-2 mt-3">Sub-Department</label>
+              <select
+                value={subDepartmentId}
+                onChange={e => setSubDepartmentId(e.target.value)}
+                required
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              >
+                <option value="">Select sub-department...</option>
+                {subDepartments.map(sd => (
+                  <option key={sd.id} value={sd.id}>
+                    {sd.name} ({sd.short_name})
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           {error ? <p className="text-xs text-red-400 mt-2">{error}</p> : null}
 
           <div className="mt-4 flex gap-2">

@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments } = require('../db/sqlite');
+const { Units, Departments, SubDepartments } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -10,6 +10,19 @@ const DISPATCH_SHORT_NAME = 'DISPATCH';
 function findDispatchDepartment() {
   const all = Departments.list();
   return all.find(d => String(d.short_name || '').toUpperCase() === DISPATCH_SHORT_NAME) || null;
+}
+
+function getAvailableSubDepartments(user, deptId) {
+  const allForDept = SubDepartments.listByDepartment(deptId, true);
+  if (user.is_admin) return allForDept;
+
+  const allowed = Array.isArray(user.sub_departments)
+    ? user.sub_departments.filter(sd => sd.department_id === deptId && sd.is_active)
+    : [];
+
+  // If no specific sub-department role mapping exists for this user+department,
+  // allow any active sub-department in the department.
+  return allowed.length > 0 ? allowed : allForDept;
 }
 
 // List on-duty units (filtered by department query param)
@@ -52,6 +65,17 @@ router.get('/dispatcher-status', requireAuth, (req, res) => {
   });
 });
 
+// List sub-departments available to current user for a department
+router.get('/sub-departments', requireAuth, (req, res) => {
+  const deptId = parseInt(req.query.department_id, 10);
+  if (!deptId) return res.status(400).json({ error: 'department_id is required' });
+
+  const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
+  if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
+
+  res.json(getAvailableSubDepartments(req.user, deptId));
+});
+
 // Get current user's unit
 router.get('/me', requireAuth, (req, res) => {
   const unit = Units.findByUserId(req.user.id);
@@ -64,7 +88,7 @@ router.post('/me', requireAuth, (req, res) => {
   const existing = Units.findByUserId(req.user.id);
   if (existing) return res.status(400).json({ error: 'Already on duty' });
 
-  const { callsign, department_id } = req.body;
+  const { callsign, department_id, sub_department_id } = req.body;
   if (!callsign || !department_id) {
     return res.status(400).json({ error: 'Callsign and department are required' });
   }
@@ -76,13 +100,32 @@ router.post('/me', requireAuth, (req, res) => {
   const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
   if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
 
+  const availableSubDepts = getAvailableSubDepartments(req.user, deptId);
+  let selectedSubDeptId = null;
+  if (availableSubDepts.length > 0) {
+    selectedSubDeptId = parseInt(sub_department_id, 10);
+    if (!selectedSubDeptId) {
+      return res.status(400).json({ error: 'sub_department_id is required for this department' });
+    }
+    const valid = availableSubDepts.find(sd => sd.id === selectedSubDeptId);
+    if (!valid) {
+      return res.status(400).json({ error: 'Invalid sub department selection' });
+    }
+  }
+
   const unit = Units.create({
     user_id: req.user.id,
     department_id: deptId,
+    sub_department_id: selectedSubDeptId,
     callsign: callsign.trim(),
   });
 
-  audit(req.user.id, 'unit_on_duty', { callsign, department: dept.short_name });
+  const selectedSubDept = selectedSubDeptId ? SubDepartments.findById(selectedSubDeptId) : null;
+  audit(req.user.id, 'unit_on_duty', {
+    callsign,
+    department: dept.short_name,
+    sub_department: selectedSubDept?.short_name || '',
+  });
   bus.emit('unit:online', { departmentId: deptId, unit });
   res.status(201).json(unit);
 });

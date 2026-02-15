@@ -7,6 +7,17 @@ export default function UnitCard({ unit, onStatusChange, compact = false }) {
     return (
       <div className="flex items-center gap-2 px-2 py-1.5 bg-cad-surface rounded text-sm">
         <span className="font-mono font-medium text-cad-accent-light">{unit.callsign}</span>
+        {unit.sub_department_short_name && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+            style={{
+              backgroundColor: `${unit.sub_department_color || '#64748b'}33`,
+              color: unit.sub_department_color || '#cbd5e1',
+            }}
+          >
+            {unit.sub_department_short_name}
+          </span>
+        )}
         <StatusBadge status={unit.status} />
       </div>
     );
@@ -20,6 +31,18 @@ export default function UnitCard({ unit, onStatusChange, compact = false }) {
             <img src={unit.user_avatar} alt="" className="w-6 h-6 rounded-full" />
           )}
           <span className="font-mono font-bold text-cad-accent-light">{unit.callsign}</span>
+          {unit.sub_department_short_name && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+              style={{
+                backgroundColor: `${unit.sub_department_color || '#64748b'}33`,
+                color: unit.sub_department_color || '#cbd5e1',
+              }}
+              title={unit.sub_department_name || unit.sub_department_short_name}
+            >
+              {unit.sub_department_short_name}
+            </span>
+          )}
         </div>
         <StatusBadge status={unit.status} />
       </div>

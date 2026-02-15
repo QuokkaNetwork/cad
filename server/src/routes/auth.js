@@ -3,7 +3,7 @@ const passport = require('passport');
 const config = require('../config');
 const { generateToken } = require('../auth/jwt');
 const { requireAuth } = require('../auth/middleware');
-const { Users, UserDepartments } = require('../db/sqlite');
+const { Users, UserDepartments, UserSubDepartments } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 
 const router = express.Router();
@@ -40,6 +40,7 @@ router.get('/steam/callback',
 router.get('/me', requireAuth, (req, res) => {
   const { id, steam_id, steam_name, avatar_url, discord_id, discord_name, is_admin, created_at } = req.user;
   const departments = req.user.departments;
+  const sub_departments = req.user.sub_departments || [];
   res.json({
     id,
     steam_id,
@@ -50,6 +51,7 @@ router.get('/me', requireAuth, (req, res) => {
     is_admin: !!is_admin,
     created_at,
     departments,
+    sub_departments,
   });
 });
 
@@ -133,6 +135,7 @@ router.get('/discord/callback', async (req, res) => {
 router.post('/unlink-discord', requireAuth, (req, res) => {
   Users.update(req.user.id, { discord_id: null, discord_name: '' });
   UserDepartments.setForUser(req.user.id, []);
+  UserSubDepartments.setForUser(req.user.id, []);
   audit(req.user.id, 'discord_unlinked', 'Unlinked Discord account');
   res.json({ success: true });
 });

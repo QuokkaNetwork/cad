@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
 
@@ -6,18 +6,22 @@ export default function AdminRoleMappings() {
   const [mappings, setMappings] = useState([]);
   const [discordRoles, setDiscordRoles] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [subDepartments, setSubDepartments] = useState([]);
   const [selectedRole, setSelectedRole] = useState('');
-  const [selectedDept, setSelectedDept] = useState('');
+  const [targetType, setTargetType] = useState('department');
+  const [selectedTarget, setSelectedTarget] = useState('');
   const [syncing, setSyncing] = useState(false);
 
   async function fetchData() {
     try {
-      const [mappingsData, deptsData] = await Promise.all([
+      const [mappingsData, deptsData, subDeptsData] = await Promise.all([
         api.get('/api/admin/role-mappings'),
         api.get('/api/admin/departments'),
+        api.get('/api/admin/sub-departments'),
       ]);
       setMappings(mappingsData);
       setDepartments(deptsData);
+      setSubDepartments(subDeptsData);
 
       try {
         const rolesData = await api.get('/api/admin/discord/roles');
@@ -32,17 +36,31 @@ export default function AdminRoleMappings() {
 
   useEffect(() => { fetchData(); }, []);
 
+  const targetOptions = useMemo(() => {
+    if (targetType === 'sub_department') {
+      return subDepartments.map(sd => ({
+        id: sd.id,
+        label: `${sd.name} (${sd.short_name}) - ${sd.department_name}`,
+      }));
+    }
+    return departments.map(d => ({
+      id: d.id,
+      label: `${d.name} (${d.short_name})`,
+    }));
+  }, [targetType, departments, subDepartments]);
+
   async function addMapping() {
-    if (!selectedRole || !selectedDept) return;
+    if (!selectedRole || !selectedTarget) return;
     const role = discordRoles.find(r => r.id === selectedRole);
     try {
       await api.post('/api/admin/role-mappings', {
         discord_role_id: selectedRole,
         discord_role_name: role?.name || '',
-        department_id: selectedDept,
+        target_type: targetType,
+        target_id: selectedTarget,
       });
       setSelectedRole('');
-      setSelectedDept('');
+      setSelectedTarget('');
       fetchData();
     } catch (err) {
       alert('Failed to create mapping: ' + err.message);
@@ -75,7 +93,7 @@ export default function AdminRoleMappings() {
     <div>
       <AdminPageHeader
         title="Discord Role Mappings"
-        subtitle="Map Discord roles to departments and sync member access."
+        subtitle="Map Discord roles to departments or sub-departments and sync member access."
       />
       <div className="flex items-center justify-between mb-6">
         <button
@@ -87,7 +105,6 @@ export default function AdminRoleMappings() {
         </button>
       </div>
 
-      {/* Current mappings */}
       <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden mb-6">
         <div className="px-4 py-3 border-b border-cad-border">
           <h3 className="text-sm font-semibold">Current Mappings</h3>
@@ -98,7 +115,7 @@ export default function AdminRoleMappings() {
               <tr className="border-b border-cad-border text-left text-xs text-cad-muted uppercase tracking-wider">
                 <th className="px-4 py-2">Discord Role</th>
                 <th className="px-4 py-2">Role ID</th>
-                <th className="px-4 py-2">Department</th>
+                <th className="px-4 py-2">Target</th>
                 <th className="px-4 py-2"></th>
               </tr>
             </thead>
@@ -107,7 +124,11 @@ export default function AdminRoleMappings() {
                 <tr key={m.id} className="border-b border-cad-border/50">
                   <td className="px-4 py-2 font-medium">{m.discord_role_name || '-'}</td>
                   <td className="px-4 py-2 font-mono text-xs text-cad-muted">{m.discord_role_id}</td>
-                  <td className="px-4 py-2">{m.department_name} ({m.department_short_name})</td>
+                  <td className="px-4 py-2">
+                    {m.target_type === 'sub_department'
+                      ? `${m.sub_department_name} (${m.sub_department_short_name}) -> ${m.parent_department_name} (${m.parent_department_short_name})`
+                      : `${m.department_name} (${m.department_short_name})`}
+                  </td>
                   <td className="px-4 py-2">
                     <button
                       onClick={() => deleteMapping(m.id)}
@@ -125,11 +146,10 @@ export default function AdminRoleMappings() {
         )}
       </div>
 
-      {/* Add new mapping */}
       <div className="bg-cad-card border border-cad-border rounded-lg p-4">
         <h3 className="text-sm font-semibold mb-3">Add Mapping</h3>
-        <div className="flex gap-3 items-end">
-          <div className="flex-1">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+          <div>
             <label className="block text-xs text-cad-muted mb-1">Discord Role</label>
             <select
               value={selectedRole}
@@ -142,22 +162,37 @@ export default function AdminRoleMappings() {
               ))}
             </select>
           </div>
-          <div className="flex-1">
-            <label className="block text-xs text-cad-muted mb-1">Department</label>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Target Type</label>
             <select
-              value={selectedDept}
-              onChange={e => setSelectedDept(e.target.value)}
+              value={targetType}
+              onChange={e => { setTargetType(e.target.value); setSelectedTarget(''); }}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
             >
-              <option value="">Select department...</option>
-              {departments.map(d => (
-                <option key={d.id} value={d.id}>{d.name} ({d.short_name})</option>
+              <option value="department">Department</option>
+              <option value="sub_department">Sub-Department</option>
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">
+              {targetType === 'sub_department' ? 'Sub-Department' : 'Department'}
+            </label>
+            <select
+              value={selectedTarget}
+              onChange={e => setSelectedTarget(e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="">Select...</option>
+              {targetOptions.map(option => (
+                <option key={option.id} value={option.id}>{option.label}</option>
               ))}
             </select>
           </div>
+        </div>
+        <div className="mt-3">
           <button
             onClick={addMapping}
-            disabled={!selectedRole || !selectedDept}
+            disabled={!selectedRole || !selectedTarget}
             className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
           >
             Add

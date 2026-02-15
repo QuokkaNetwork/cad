@@ -145,64 +145,157 @@ const UserDepartments = {
   },
 };
 
-// --- Discord Role Mappings ---
+// --- Sub Departments ---
+const SubDepartments = {
+  list() {
+    return db.prepare(`
+      SELECT sd.*, d.name as department_name, d.short_name as department_short_name
+      FROM sub_departments sd
+      JOIN departments d ON d.id = sd.department_id
+      ORDER BY d.id, sd.name
+    `).all();
+  },
+  listByDepartment(departmentId, activeOnly = false) {
+    const filter = activeOnly ? 'AND sd.is_active = 1' : '';
+    return db.prepare(`
+      SELECT sd.*, d.name as department_name, d.short_name as department_short_name
+      FROM sub_departments sd
+      JOIN departments d ON d.id = sd.department_id
+      WHERE sd.department_id = ? ${filter}
+      ORDER BY sd.name
+    `).all(departmentId);
+  },
+  findById(id) {
+    return db.prepare(`
+      SELECT sd.*, d.name as department_name, d.short_name as department_short_name
+      FROM sub_departments sd
+      JOIN departments d ON d.id = sd.department_id
+      WHERE sd.id = ?
+    `).get(id);
+  },
+  create({ department_id, name, short_name, color, is_active }) {
+    const info = db.prepare(`
+      INSERT INTO sub_departments (department_id, name, short_name, color, is_active)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      department_id,
+      name,
+      short_name || '',
+      color || '#0052C2',
+      is_active === undefined ? 1 : (is_active ? 1 : 0)
+    );
+    return this.findById(info.lastInsertRowid);
+  },
+  update(id, fields) {
+    const allowed = ['name', 'short_name', 'color', 'is_active'];
+    const updates = [];
+    const values = [];
+    for (const key of allowed) {
+      if (fields[key] !== undefined) {
+        updates.push(`${key} = ?`);
+        values.push(fields[key]);
+      }
+    }
+    if (updates.length === 0) return;
+    values.push(id);
+    db.prepare(`UPDATE sub_departments SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  },
+  delete(id) {
+    db.prepare('DELETE FROM sub_departments WHERE id = ?').run(id);
+  },
+};
+
+// --- User Sub Departments ---
+const UserSubDepartments = {
+  getForUser(userId) {
+    return db.prepare(`
+      SELECT sd.*, d.name as department_name, d.short_name as department_short_name
+      FROM sub_departments sd
+      JOIN user_sub_departments usd ON usd.sub_department_id = sd.id
+      JOIN departments d ON d.id = sd.department_id
+      WHERE usd.user_id = ?
+      ORDER BY d.id, sd.name
+    `).all(userId);
+  },
+  setForUser(userId, subDepartmentIds) {
+    db.transaction(() => {
+      db.prepare('DELETE FROM user_sub_departments WHERE user_id = ?').run(userId);
+      const insert = db.prepare('INSERT INTO user_sub_departments (user_id, sub_department_id) VALUES (?, ?)');
+      for (const subDeptId of subDepartmentIds) {
+        insert.run(userId, subDeptId);
+      }
+    })();
+  },
+};
+
+// --- Discord Role Mappings / Links ---
 const DiscordRoleMappings = {
   list() {
     return db.prepare(`
-      SELECT drm.*, d.name as department_name, d.short_name as department_short_name
-      FROM discord_role_mappings drm
-      JOIN departments d ON d.id = drm.department_id
-      ORDER BY drm.id
+      SELECT
+        drl.*,
+        d.name as department_name,
+        d.short_name as department_short_name,
+        sd.name as sub_department_name,
+        sd.short_name as sub_department_short_name,
+        pd.name as parent_department_name,
+        pd.short_name as parent_department_short_name
+      FROM discord_role_links drl
+      LEFT JOIN departments d
+        ON drl.target_type = 'department' AND d.id = drl.target_id
+      LEFT JOIN sub_departments sd
+        ON drl.target_type = 'sub_department' AND sd.id = drl.target_id
+      LEFT JOIN departments pd
+        ON sd.department_id = pd.id
+      ORDER BY drl.id
     `).all();
   },
   findByRoleId(roleId) {
-    return db.prepare('SELECT * FROM discord_role_mappings WHERE discord_role_id = ?').get(roleId);
+    return db.prepare('SELECT * FROM discord_role_links WHERE discord_role_id = ?').all(roleId);
   },
-  create({ discord_role_id, discord_role_name, department_id }) {
+  create({ discord_role_id, discord_role_name, target_type, target_id }) {
     const info = db.prepare(
-      'INSERT INTO discord_role_mappings (discord_role_id, discord_role_name, department_id) VALUES (?, ?, ?)'
-    ).run(discord_role_id, discord_role_name, department_id);
-    return { id: info.lastInsertRowid, discord_role_id, discord_role_name, department_id };
+      'INSERT INTO discord_role_links (discord_role_id, discord_role_name, target_type, target_id) VALUES (?, ?, ?, ?)'
+    ).run(discord_role_id, discord_role_name || '', target_type, target_id);
+    return { id: info.lastInsertRowid, discord_role_id, discord_role_name: discord_role_name || '', target_type, target_id };
   },
   delete(id) {
-    db.prepare('DELETE FROM discord_role_mappings WHERE id = ?').run(id);
+    db.prepare('DELETE FROM discord_role_links WHERE id = ?').run(id);
   },
 };
 
 // --- Units ---
 const Units = {
-  findById(id) {
-    return db.prepare(`
-      SELECT u.*, us.steam_name as user_name
+  _baseSelect() {
+    return `
+      SELECT
+        u.*,
+        us.steam_name as user_name,
+        us.avatar_url as user_avatar,
+        sd.name as sub_department_name,
+        sd.short_name as sub_department_short_name,
+        sd.color as sub_department_color
       FROM units u
       JOIN users us ON us.id = u.user_id
-      WHERE u.id = ?
-    `).get(id);
+      LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
+    `;
+  },
+  findById(id) {
+    return db.prepare(`${this._baseSelect()} WHERE u.id = ?`).get(id);
   },
   findByUserId(userId) {
-    return db.prepare('SELECT * FROM units WHERE user_id = ?').get(userId);
+    return db.prepare(`${this._baseSelect()} WHERE u.user_id = ?`).get(userId);
   },
   listByDepartment(departmentId) {
-    return db.prepare(`
-      SELECT u.*, us.steam_name as user_name, us.avatar_url as user_avatar
-      FROM units u
-      JOIN users us ON us.id = u.user_id
-      WHERE u.department_id = ?
-      ORDER BY u.callsign
-    `).all(departmentId);
+    return db.prepare(`${this._baseSelect()} WHERE u.department_id = ? ORDER BY u.callsign`).all(departmentId);
   },
   list() {
-    return db.prepare(`
-      SELECT u.*, us.steam_name as user_name, us.avatar_url as user_avatar
-      FROM units u
-      JOIN users us ON us.id = u.user_id
-      ORDER BY u.callsign
-    `).all();
+    return db.prepare(`${this._baseSelect()} ORDER BY u.callsign`).all();
   },
-  create({ user_id, department_id, callsign, status, location, note }) {
+  create({ user_id, department_id, sub_department_id, callsign, status, location, note }) {
     const info = db.prepare(
-      'INSERT INTO units (user_id, department_id, callsign, status, location, note) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(user_id, department_id, callsign, status || 'available', location || '', note || '');
+      'INSERT INTO units (user_id, department_id, sub_department_id, callsign, status, location, note) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(user_id, department_id, sub_department_id || null, callsign, status || 'available', location || '', note || '');
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
@@ -234,10 +327,11 @@ const Calls = {
     const call = db.prepare('SELECT * FROM calls WHERE id = ?').get(id);
     if (call) {
       call.assigned_units = db.prepare(`
-        SELECT u.*, us.steam_name as user_name
+        SELECT u.*, us.steam_name as user_name, sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color
         FROM call_units cu
         JOIN units u ON u.id = cu.unit_id
         JOIN users us ON us.id = u.user_id
+        LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
         WHERE cu.call_id = ?
       `).all(id);
     }
@@ -256,10 +350,11 @@ const Calls = {
     `).all(departmentId);
 
     const getUnits = db.prepare(`
-      SELECT u.id, u.callsign, u.status, us.steam_name as user_name
+      SELECT u.id, u.callsign, u.status, us.steam_name as user_name, sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color
       FROM call_units cu
       JOIN units u ON u.id = cu.unit_id
       JOIN users us ON us.id = u.user_id
+      LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
       WHERE cu.call_id = ?
     `);
 
@@ -523,6 +618,8 @@ module.exports = {
   Users,
   Departments,
   UserDepartments,
+  SubDepartments,
+  UserSubDepartments,
   DiscordRoleMappings,
   Units,
   Calls,

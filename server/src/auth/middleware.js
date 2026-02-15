@@ -1,6 +1,6 @@
 const { verifyToken } = require('./jwt');
 const config = require('../config');
-const { Users, UserDepartments, Departments } = require('../db/sqlite');
+const { Users, UserDepartments, Departments, UserSubDepartments, SubDepartments } = require('../db/sqlite');
 
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -24,6 +24,9 @@ function requireAuth(req, res, next) {
     user.departments = user.is_admin
       ? Departments.list()
       : UserDepartments.getForUser(user.id);
+    user.sub_departments = user.is_admin
+      ? SubDepartments.list()
+      : UserSubDepartments.getForUser(user.id);
     req.user = user;
     next();
   } catch (err) {

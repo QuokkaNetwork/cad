@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const config = require('../config');
-const { Users, UserDepartments, DiscordRoleMappings } = require('../db/sqlite');
+const { Users, UserDepartments, UserSubDepartments, DiscordRoleMappings, SubDepartments } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -90,23 +90,35 @@ async function syncUserRoles(discordId) {
   const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
   const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
 
-  const departmentIds = [];
+  const departmentIds = new Set();
+  const subDepartmentIds = new Set();
   for (const mapping of mappings) {
-    if (memberRoleIds.has(mapping.discord_role_id)) {
-      departmentIds.push(mapping.department_id);
+    if (!memberRoleIds.has(mapping.discord_role_id)) continue;
+    if (mapping.target_type === 'department' && mapping.target_id) {
+      departmentIds.add(mapping.target_id);
+    }
+    if (mapping.target_type === 'sub_department' && mapping.target_id) {
+      subDepartmentIds.add(mapping.target_id);
+      const sub = SubDepartments.findById(mapping.target_id);
+      if (sub?.department_id) {
+        departmentIds.add(sub.department_id);
+      }
     }
   }
 
-  // Deduplicate
-  const uniqueDeptIds = [...new Set(departmentIds)];
+  const uniqueDeptIds = [...departmentIds];
+  const uniqueSubDeptIds = [...subDepartmentIds];
 
   const oldDepts = UserDepartments.getForUser(user.id);
+  const oldSubDepts = UserSubDepartments.getForUser(user.id);
   const oldIsAdmin = !!user.is_admin;
   UserDepartments.setForUser(user.id, uniqueDeptIds);
+  UserSubDepartments.setForUser(user.id, uniqueSubDeptIds);
   if (hasAdminRole && !oldIsAdmin) {
     Users.update(user.id, { is_admin: 1 });
   }
   const newDepts = UserDepartments.getForUser(user.id);
+  const newSubDepts = UserSubDepartments.getForUser(user.id);
   const newIsAdmin = !!(Users.findById(user.id)?.is_admin);
 
   // Check if anything changed
@@ -121,6 +133,16 @@ async function syncUserRoles(discordId) {
     bus.emit('sync:department', { userId: user.id, departments: newDepts });
   }
 
+  const oldSubIds = oldSubDepts.map(d => d.id).sort().join(',');
+  const newSubIds = newSubDepts.map(d => d.id).sort().join(',');
+  if (oldSubIds !== newSubIds) {
+    audit(user.id, 'sub_department_sync', {
+      discordId,
+      before: oldSubDepts.map(d => d.short_name),
+      after: newSubDepts.map(d => d.short_name),
+    });
+  }
+
   if (oldIsAdmin !== newIsAdmin) {
     audit(user.id, 'admin_sync', {
       discordId,
@@ -130,7 +152,12 @@ async function syncUserRoles(discordId) {
     });
   }
 
-  return { synced: true, is_admin: newIsAdmin, departments: newDepts.map(d => d.short_name) };
+  return {
+    synced: true,
+    is_admin: newIsAdmin,
+    departments: newDepts.map(d => d.short_name),
+    sub_departments: newSubDepts.map(d => d.short_name),
+  };
 }
 
 async function syncAllMembers() {
@@ -150,14 +177,24 @@ async function syncAllMembers() {
 
     const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
     const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
-    const departmentIds = [];
+    const departmentIds = new Set();
+    const subDepartmentIds = new Set();
     for (const mapping of mappings) {
-      if (memberRoleIds.has(mapping.discord_role_id)) {
-        departmentIds.push(mapping.department_id);
+      if (!memberRoleIds.has(mapping.discord_role_id)) continue;
+      if (mapping.target_type === 'department' && mapping.target_id) {
+        departmentIds.add(mapping.target_id);
+      }
+      if (mapping.target_type === 'sub_department' && mapping.target_id) {
+        subDepartmentIds.add(mapping.target_id);
+        const sub = SubDepartments.findById(mapping.target_id);
+        if (sub?.department_id) {
+          departmentIds.add(sub.department_id);
+        }
       }
     }
 
-    UserDepartments.setForUser(user.id, [...new Set(departmentIds)]);
+    UserDepartments.setForUser(user.id, [...departmentIds]);
+    UserSubDepartments.setForUser(user.id, [...subDepartmentIds]);
     if (hasAdminRole && !user.is_admin) {
       Users.update(user.id, { is_admin: 1 });
     }

@@ -263,6 +263,17 @@ export default function Dispatch() {
                     <div key={u.id} className="flex items-center justify-between bg-cad-surface rounded px-3 py-2">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-cad-accent-light">{u.callsign}</span>
+                        {u.sub_department_short_name && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                            style={{
+                              backgroundColor: `${u.sub_department_color || '#64748b'}33`,
+                              color: u.sub_department_color || '#cbd5e1',
+                            }}
+                          >
+                            {u.sub_department_short_name}
+                          </span>
+                        )}
                         <span className="text-sm text-cad-muted">{u.user_name}</span>
                         <StatusBadge status={u.status} />
                       </div>

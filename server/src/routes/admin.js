@@ -6,7 +6,7 @@ const sharp = require('sharp');
 const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
-  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs,
+  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs, SubDepartments,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
@@ -85,7 +85,13 @@ router.patch('/users/:id', (req, res) => {
 
 // --- Departments ---
 router.get('/departments', (req, res) => {
-  res.json(Departments.list());
+  const depts = Departments.list();
+  const allSubs = SubDepartments.list();
+  const withCounts = depts.map(d => ({
+    ...d,
+    sub_department_count: allSubs.filter(sd => sd.department_id === d.id).length,
+  }));
+  res.json(withCounts);
 });
 
 router.post('/departments', (req, res) => {
@@ -114,28 +120,111 @@ router.delete('/departments/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// --- Sub Departments ---
+router.get('/sub-departments', (req, res) => {
+  const deptId = parseInt(req.query.department_id, 10);
+  if (deptId) {
+    return res.json(SubDepartments.listByDepartment(deptId));
+  }
+  res.json(SubDepartments.list());
+});
+
+router.post('/sub-departments', (req, res) => {
+  const { department_id, name, short_name, color, is_active } = req.body;
+  const deptId = parseInt(department_id, 10);
+  if (!deptId || !name || !short_name) {
+    return res.status(400).json({ error: 'department_id, name and short_name are required' });
+  }
+  const parent = Departments.findById(deptId);
+  if (!parent) return res.status(400).json({ error: 'Parent department not found' });
+
+  try {
+    const sub = SubDepartments.create({
+      department_id: deptId,
+      name: String(name).trim(),
+      short_name: String(short_name).trim(),
+      color: color || parent.color || '#0052C2',
+      is_active: is_active === undefined ? 1 : (is_active ? 1 : 0),
+    });
+    audit(req.user.id, 'sub_department_created', { subDepartmentId: sub.id, departmentId: deptId });
+    res.status(201).json(sub);
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) {
+      return res.status(400).json({ error: 'Sub-department name or short name already exists for this department' });
+    }
+    throw err;
+  }
+});
+
+router.patch('/sub-departments/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const sub = SubDepartments.findById(id);
+  if (!sub) return res.status(404).json({ error: 'Sub department not found' });
+
+  try {
+    SubDepartments.update(id, req.body || {});
+    audit(req.user.id, 'sub_department_updated', { subDepartmentId: id });
+    res.json(SubDepartments.findById(id));
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) {
+      return res.status(400).json({ error: 'Sub-department name or short name already exists for this department' });
+    }
+    throw err;
+  }
+});
+
+router.delete('/sub-departments/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const sub = SubDepartments.findById(id);
+  if (!sub) return res.status(404).json({ error: 'Sub department not found' });
+  try {
+    SubDepartments.delete(id);
+    audit(req.user.id, 'sub_department_deleted', { subDepartmentId: id });
+    res.json({ success: true });
+  } catch (err) {
+    if (String(err.message).includes('FOREIGN KEY')) {
+      return res.status(400).json({ error: 'Cannot delete sub department while units still reference it' });
+    }
+    throw err;
+  }
+});
+
 // --- Discord Role Mappings ---
 router.get('/role-mappings', (req, res) => {
   res.json(DiscordRoleMappings.list());
 });
 
 router.post('/role-mappings', (req, res) => {
-  const { discord_role_id, discord_role_name, department_id } = req.body;
-  if (!discord_role_id || !department_id) {
-    return res.status(400).json({ error: 'discord_role_id and department_id are required' });
+  const { discord_role_id, discord_role_name, target_type, target_id, department_id } = req.body;
+
+  // Backward compatibility: treat department_id as department target.
+  const resolvedType = target_type || (department_id ? 'department' : '');
+  const resolvedTargetId = parseInt(target_id || department_id, 10);
+  if (!discord_role_id || !resolvedType || !resolvedTargetId) {
+    return res.status(400).json({ error: 'discord_role_id, target_type and target_id are required' });
+  }
+  if (!['department', 'sub_department'].includes(resolvedType)) {
+    return res.status(400).json({ error: 'target_type must be department or sub_department' });
+  }
+  if (resolvedType === 'department' && !Departments.findById(resolvedTargetId)) {
+    return res.status(400).json({ error: 'Department target not found' });
+  }
+  if (resolvedType === 'sub_department' && !SubDepartments.findById(resolvedTargetId)) {
+    return res.status(400).json({ error: 'Sub-department target not found' });
   }
 
   try {
     const mapping = DiscordRoleMappings.create({
       discord_role_id,
       discord_role_name: discord_role_name || '',
-      department_id: parseInt(department_id, 10),
+      target_type: resolvedType,
+      target_id: resolvedTargetId,
     });
     audit(req.user.id, 'role_mapping_created', { mapping });
     res.status(201).json(mapping);
   } catch (err) {
     if (err.message.includes('UNIQUE')) {
-      return res.status(400).json({ error: 'This Discord role is already mapped' });
+      return res.status(400).json({ error: 'This Discord role is already mapped to that target' });
     }
     throw err;
   }

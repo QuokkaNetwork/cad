@@ -20,9 +20,9 @@ function shellQuote(value) {
   return `"${String(value || '').replace(/"/g, '\\"')}"`;
 }
 
-function run(command, cwd) {
+function run(command, cwd, env = {}) {
   return new Promise((resolve, reject) => {
-    exec(command, { cwd, shell: true }, (error, stdout, stderr) => {
+    exec(command, { cwd, shell: true, env: { ...process.env, ...env } }, (error, stdout, stderr) => {
       if (error) {
         error.command = command;
         error.stdout = stdout;
@@ -149,12 +149,34 @@ async function checkForUpdates(repoRoot, branch) {
 
     if (config.autoUpdate.runNpmInstall) {
       console.log('[AutoUpdate] Running npm install...');
-      await run(npm('install'), repoRoot);
+      await run(npm('install --include=dev'), repoRoot, {
+        npm_config_production: 'false',
+        npm_config_include: 'dev',
+      });
     }
 
     if (config.autoUpdate.runWebBuild) {
       console.log('[AutoUpdate] Running npm run build...');
-      await run(npm('run build'), repoRoot);
+      try {
+        await run(npm('run build'), repoRoot, {
+          npm_config_production: 'false',
+          npm_config_include: 'dev',
+        });
+      } catch (err) {
+        const text = `${err?.message || ''}\n${err?.stderr || ''}\n${err?.stdout || ''}`;
+        const missingVite = /'vite' is not recognized|vite(\.cmd)?\s*:\s*The term 'vite'/i.test(text);
+        if (!missingVite) throw err;
+
+        console.warn('[AutoUpdate] Build failed due to missing vite. Re-installing web dev dependencies and retrying build once...');
+        await run(npm('install --workspace=web --include=dev'), repoRoot, {
+          npm_config_production: 'false',
+          npm_config_include: 'dev',
+        });
+        await run(npm('run build'), repoRoot, {
+          npm_config_production: 'false',
+          npm_config_include: 'dev',
+        });
+      }
     }
 
     console.log('[AutoUpdate] Update applied successfully');

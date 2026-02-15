@@ -1,6 +1,6 @@
 const express = require('express');
 const { verifyToken } = require('../auth/jwt');
-const { Users, UserDepartments, Departments } = require('../db/sqlite');
+const { Users, UserDepartments, Departments, UserSubDepartments, SubDepartments } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 
 const router = express.Router();
@@ -21,6 +21,9 @@ router.get('/', (req, res) => {
     user.departments = user.is_admin
       ? Departments.list()
       : UserDepartments.getForUser(user.id);
+    user.sub_departments = user.is_admin
+      ? SubDepartments.list()
+      : UserSubDepartments.getForUser(user.id);
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }

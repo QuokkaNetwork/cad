@@ -5,6 +5,9 @@ cd /d "%~dp0"
 
 echo [CAD] Starting VPS launcher...
 set "NPM_BIN="
+set "NPM_INSTALL_FLAGS=--include=dev"
+set "npm_config_production=false"
+set "npm_config_include=dev"
 
 where node >nul 2>nul
 if errorlevel 1 (
@@ -94,22 +97,34 @@ if not defined LOCAL_HEAD (
 
 if "!UPDATED!"=="1" (
   echo [CAD] Installing dependencies...
-  call %NPM_BIN% install
+  call %NPM_BIN% install %NPM_INSTALL_FLAGS%
   if errorlevel 1 goto :fail
 
   echo [CAD] Building web app...
   call %NPM_BIN% run build
-  if errorlevel 1 goto :fail
+  if errorlevel 1 (
+    echo [CAD] Build failed. Re-installing web workspace dev dependencies and retrying...
+    call %NPM_BIN% install --workspace=web %NPM_INSTALL_FLAGS%
+    if errorlevel 1 goto :fail
+    call %NPM_BIN% run build
+    if errorlevel 1 goto :fail
+  )
 ) else (
   if not exist "node_modules" (
     echo [CAD] Dependencies missing. Running npm install...
-    call %NPM_BIN% install
+    call %NPM_BIN% install %NPM_INSTALL_FLAGS%
     if errorlevel 1 goto :fail
   )
   if not exist "web\dist\index.html" (
     echo [CAD] Web build missing. Running npm run build...
     call %NPM_BIN% run build
-    if errorlevel 1 goto :fail
+    if errorlevel 1 (
+      echo [CAD] Build failed. Re-installing web workspace dev dependencies and retrying...
+      call %NPM_BIN% install --workspace=web %NPM_INSTALL_FLAGS%
+      if errorlevel 1 goto :fail
+      call %NPM_BIN% run build
+      if errorlevel 1 goto :fail
+    )
   )
 )
 
