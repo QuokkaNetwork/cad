@@ -10,7 +10,7 @@ export default function AuthCallback() {
     const token = searchParams.get('token');
     if (token) {
       setToken(token);
-      navigate('/settings', { replace: true });
+      navigate('/home', { replace: true });
     } else {
       navigate('/login?error=no_token', { replace: true });
     }

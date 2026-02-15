@@ -2,9 +2,11 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { DepartmentProvider } from './context/DepartmentContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import RequireDepartment from './components/RequireDepartment';
 import MainLayout from './layouts/MainLayout';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
+import Home from './pages/Home';
 import Settings from './pages/Settings';
 import Dispatch from './pages/police/Dispatch';
 import Units from './pages/police/Units';
@@ -34,15 +36,17 @@ export default function App() {
               </ProtectedRoute>
             }
           >
+            <Route path="/home" element={<Home />} />
+
             {/* Settings */}
             <Route path="/settings" element={<Settings />} />
 
             {/* Police MDT */}
-            <Route path="/dispatch" element={<Dispatch />} />
-            <Route path="/units" element={<Units />} />
-            <Route path="/search" element={<Search />} />
-            <Route path="/bolos" element={<BOLOs />} />
-            <Route path="/records" element={<Records />} />
+            <Route path="/dispatch" element={<RequireDepartment><Dispatch /></RequireDepartment>} />
+            <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
+            <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
+            <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
+            <Route path="/records" element={<RequireDepartment><Records /></RequireDepartment>} />
 
             {/* Admin */}
             <Route path="/admin/users" element={<ProtectedRoute requireAdmin><AdminUsers /></ProtectedRoute>} />
@@ -53,7 +57,7 @@ export default function App() {
           </Route>
 
           {/* Default redirect */}
-          <Route path="*" element={<Navigate to="/dispatch" replace />} />
+          <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </DepartmentProvider>
     </AuthProvider>

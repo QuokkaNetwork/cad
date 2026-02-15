@@ -1,9 +1,13 @@
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
+import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 
 export default function Header() {
   const { user, logout } = useAuth();
   const { activeDepartment } = useDepartment();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
 
   return (
     <header>
@@ -24,19 +28,38 @@ export default function Header() {
         </div>
         <div className="flex items-center gap-4">
           {user && (
-            <div className="flex items-center gap-2">
-              {user.avatar_url && (
-                <img src={user.avatar_url} alt="" className="w-7 h-7 rounded-full" />
+            <div className="relative">
+              <button
+                onClick={() => setOpen(v => !v)}
+                className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-cad-card transition-colors"
+              >
+                {user.avatar_url ? (
+                  <img src={user.avatar_url} alt="" className="w-7 h-7 rounded-full" />
+                ) : (
+                  <div className="w-7 h-7 rounded-full bg-cad-card border border-cad-border" />
+                )}
+                <span className="text-sm text-cad-muted">{user.steam_name}</span>
+                <span className="text-cad-muted text-xs">v</span>
+              </button>
+
+              {open && (
+                <div className="absolute right-0 mt-2 w-44 bg-cad-surface border border-cad-border rounded-lg shadow-lg z-50">
+                  <button
+                    onClick={() => { setOpen(false); navigate('/settings'); }}
+                    className="w-full text-left px-3 py-2 text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card rounded-t-lg transition-colors"
+                  >
+                    Profile Settings
+                  </button>
+                  <button
+                    onClick={logout}
+                    className="w-full text-left px-3 py-2 text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card rounded-b-lg transition-colors"
+                  >
+                    Logout
+                  </button>
+                </div>
               )}
-              <span className="text-sm text-cad-muted">{user.steam_name}</span>
             </div>
           )}
-          <button
-            onClick={logout}
-            className="text-xs text-cad-muted hover:text-cad-ink transition-colors"
-          >
-            Logout
-          </button>
         </div>
       </div>
     </header>
