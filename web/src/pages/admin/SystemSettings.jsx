@@ -117,7 +117,7 @@ export default function AdminSystemSettings() {
                 className="w-full bg-cad-surface border border-cad-border rounded px-3 py-1.5 text-xs focus:outline-none focus:border-cad-accent" placeholder="player_vehicles" />
             </div>
             <div>
-              <label className="block text-xs text-cad-muted mb-1">Citizen ID Column</label>
+              <label className="block text-xs text-cad-muted mb-1">Person Identifier Column</label>
               <input type="text" value={settings.qbox_citizenid_col || ''} onChange={e => updateSetting('qbox_citizenid_col', e.target.value)}
                 className="w-full bg-cad-surface border border-cad-border rounded px-3 py-1.5 text-xs focus:outline-none focus:border-cad-accent" placeholder="citizenid" />
             </div>

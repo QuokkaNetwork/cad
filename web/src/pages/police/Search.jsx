@@ -57,9 +57,9 @@ export default function Search() {
       <h2 className="text-xl font-bold mb-6">Person & Vehicle Search</h2>
 
       {/* Search form */}
-      <div className="bg-cad-card border border-cad-border rounded-lg p-4 mb-6">
-        <form onSubmit={doSearch} className="flex gap-3">
-          <div className="flex bg-cad-surface rounded border border-cad-border overflow-hidden">
+      <div className="bg-cad-card border border-cad-border rounded-2xl p-4 mb-6">
+        <form onSubmit={doSearch} className="flex flex-col md:flex-row gap-3">
+          <div className="flex bg-cad-surface rounded-lg border border-cad-border overflow-hidden">
             <button
               type="button"
               onClick={() => setSearchType('person')}
@@ -79,13 +79,15 @@ export default function Search() {
               Vehicle
             </button>
           </div>
-          <input
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder={searchType === 'person' ? 'Search by name or citizen ID...' : 'Search by plate or model...'}
-            className="flex-1 bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-          />
+          <div className="flex-1 relative">
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={searchType === 'person' ? 'Search by first or last name...' : 'Search by plate or vehicle model...'}
+              className="w-full bg-cad-surface border border-cad-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            />
+          </div>
           <button
             type="submit"
             disabled={searching || query.trim().length < 2}
@@ -121,10 +123,6 @@ export default function Search() {
           <div className="space-y-4">
             {/* Basic info */}
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <span className="text-cad-muted">Citizen ID:</span>
-                <span className="ml-2 font-mono text-cad-accent-light">{selectedPerson.citizenid}</span>
-              </div>
               <div>
                 <span className="text-cad-muted">DOB:</span>
                 <span className="ml-2">{selectedPerson.birthdate}</span>

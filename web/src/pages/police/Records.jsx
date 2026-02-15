@@ -6,27 +6,44 @@ import Modal from '../../components/Modal';
 
 export default function Records() {
   const { activeDepartment } = useDepartment();
-  const [citizenId, setCitizenId] = useState('');
+  const [personQuery, setPersonQuery] = useState('');
+  const [personMatches, setPersonMatches] = useState([]);
+  const [selectedPerson, setSelectedPerson] = useState(null);
   const [records, setRecords] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [lookingUpPersons, setLookingUpPersons] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
-    citizen_id: '',
+    person_name: '',
     type: 'charge',
     title: '',
     description: '',
     fine_amount: 0,
   });
 
-  async function searchRecords(e) {
+  async function searchPeople(e) {
     e.preventDefault();
-    if (!citizenId.trim()) return;
+    if (personQuery.trim().length < 2) return;
+    setLookingUpPersons(true);
+    try {
+      const data = await api.get(`/api/search/persons?q=${encodeURIComponent(personQuery.trim())}`);
+      setPersonMatches(data);
+    } catch (err) {
+      alert('Lookup failed: ' + err.message);
+    } finally {
+      setLookingUpPersons(false);
+    }
+  }
+
+  async function selectPerson(person) {
+    setSelectedPerson(person);
+    setForm(f => ({ ...f, person_name: `${person.firstname} ${person.lastname}`.trim() }));
     setSearching(true);
     try {
-      const data = await api.get(`/api/records?citizen_id=${encodeURIComponent(citizenId.trim())}`);
+      const data = await api.get(`/api/records?citizen_id=${encodeURIComponent(person.citizenid)}`);
       setRecords(data);
     } catch (err) {
-      alert('Search failed: ' + err.message);
+      alert('Failed to load records: ' + err.message);
     } finally {
       setSearching(false);
     }
@@ -34,18 +51,31 @@ export default function Records() {
 
   async function createRecord(e) {
     e.preventDefault();
+    if (!selectedPerson) {
+      alert('Select a person first');
+      return;
+    }
     try {
       await api.post('/api/records', {
-        ...form,
+        citizen_id: selectedPerson.citizenid,
+        type: form.type,
+        title: form.title,
+        description: form.description,
+        fine_amount: form.fine_amount,
         department_id: activeDepartment?.id,
       });
       setShowNew(false);
-      // Refresh if we're viewing this citizen's records
-      if (citizenId === form.citizen_id) {
-        const data = await api.get(`/api/records?citizen_id=${encodeURIComponent(citizenId)}`);
+      if (selectedPerson?.citizenid) {
+        const data = await api.get(`/api/records?citizen_id=${encodeURIComponent(selectedPerson.citizenid)}`);
         setRecords(data);
       }
-      setForm({ citizen_id: '', type: 'charge', title: '', description: '', fine_amount: 0 });
+      setForm({
+        person_name: selectedPerson ? `${selectedPerson.firstname} ${selectedPerson.lastname}`.trim() : '',
+        type: 'charge',
+        title: '',
+        description: '',
+        fine_amount: 0,
+      });
     } catch (err) {
       alert('Failed to create record: ' + err.message);
     }
@@ -57,36 +87,69 @@ export default function Records() {
         <h2 className="text-xl font-bold">Criminal Records</h2>
         <button
           onClick={() => setShowNew(true)}
-          className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
+          disabled={!selectedPerson}
+          className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
         >
           + New Record
         </button>
       </div>
 
-      {/* Search by citizen ID */}
-      <div className="bg-cad-card border border-cad-border rounded-lg p-4 mb-6">
-        <form onSubmit={searchRecords} className="flex gap-3">
+      {/* Person lookup */}
+      <div className="bg-cad-card border border-cad-border rounded-2xl p-4 mb-6">
+        <form onSubmit={searchPeople} className="flex flex-col md:flex-row gap-3">
           <input
             type="text"
-            value={citizenId}
-            onChange={e => setCitizenId(e.target.value)}
-            placeholder="Enter Citizen ID to view records..."
-            className="flex-1 bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent font-mono"
+            value={personQuery}
+            onChange={e => setPersonQuery(e.target.value)}
+            placeholder="Search person by first or last name..."
+            className="flex-1 bg-cad-surface border border-cad-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
           />
           <button
             type="submit"
-            disabled={searching}
+            disabled={lookingUpPersons || personQuery.trim().length < 2}
             className="px-6 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
           >
-            {searching ? 'Searching...' : 'Search'}
+            {lookingUpPersons ? 'Searching...' : 'Find Person'}
           </button>
         </form>
+
+        {personMatches.length > 0 && (
+          <div className="mt-3 border border-cad-border rounded-lg overflow-hidden">
+            {personMatches.slice(0, 8).map((p, idx) => (
+              <button
+                key={`${p.citizenid}-${idx}`}
+                onClick={() => selectPerson(p)}
+                className="w-full text-left px-3 py-2 bg-cad-surface hover:bg-cad-card transition-colors border-b border-cad-border/60 last:border-b-0"
+              >
+                <span className="font-medium">{p.firstname} {p.lastname}</span>
+                <span className="text-xs text-cad-muted ml-2">{p.birthdate || 'Unknown DOB'}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectedPerson && (
+          <div className="mt-3 flex items-center justify-between gap-2 text-sm text-cad-muted">
+            <div>
+              Selected: <span className="text-cad-ink font-medium">{selectedPerson.firstname} {selectedPerson.lastname}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setSelectedPerson(null); setRecords([]); }}
+              className="px-2 py-1 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Records list */}
       {records.length > 0 && (
         <div className="space-y-3">
-          <div className="text-sm text-cad-muted">{records.length} record(s) for {citizenId}</div>
+          <div className="text-sm text-cad-muted">
+            {records.length} record(s) for {selectedPerson?.firstname} {selectedPerson?.lastname}
+          </div>
           {records.map(r => (
             <div key={r.id} className="bg-cad-card border border-cad-border rounded-lg p-4">
               <div className="flex items-center justify-between mb-2">
@@ -111,22 +174,22 @@ export default function Records() {
         </div>
       )}
 
-      {records.length === 0 && citizenId && !searching && (
-        <p className="text-center text-cad-muted py-8">No records found for this citizen</p>
+      {records.length === 0 && selectedPerson && !searching && (
+        <p className="text-center text-cad-muted py-8">No records found for this person</p>
       )}
 
       {/* New Record Modal */}
       <Modal open={showNew} onClose={() => setShowNew(false)} title="New Criminal Record">
         <form onSubmit={createRecord} className="space-y-3">
           <div>
-            <label className="block text-sm text-cad-muted mb-1">Citizen ID *</label>
+            <label className="block text-sm text-cad-muted mb-1">Person *</label>
             <input
               type="text"
               required
-              value={form.citizen_id}
-              onChange={e => setForm(f => ({ ...f, citizen_id: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="e.g. ABC12345"
+              value={form.person_name}
+              readOnly
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm text-cad-ink"
+              placeholder="Select a person from lookup"
             />
           </div>
           <div>

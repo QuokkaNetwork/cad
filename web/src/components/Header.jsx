@@ -1,13 +1,47 @@
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
 import { useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { api } from '../api/client';
+import GoOnDutyModal from './GoOnDutyModal';
 
 export default function Header() {
   const { user, logout } = useAuth();
   const { activeDepartment } = useDepartment();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [myUnit, setMyUnit] = useState(null);
+  const [showOnDutyModal, setShowOnDutyModal] = useState(false);
+  const [offDutyLoading, setOffDutyLoading] = useState(false);
+
+  async function refreshMyUnit() {
+    try {
+      const unit = await api.get('/api/units/me');
+      setMyUnit(unit);
+    } catch {
+      setMyUnit(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return;
+    refreshMyUnit();
+  }, [user, activeDepartment?.id]);
+
+  async function goOffDuty() {
+    setOffDutyLoading(true);
+    try {
+      await api.delete('/api/units/me');
+      setMyUnit(null);
+    } catch (err) {
+      alert('Failed to go off duty: ' + err.message);
+    } finally {
+      setOffDutyLoading(false);
+    }
+  }
+
+  const onActiveDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id === activeDepartment.id);
+  const onOtherDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id !== activeDepartment.id);
 
   return (
     <header>
@@ -27,6 +61,34 @@ export default function Header() {
           )}
         </div>
         <div className="flex items-center gap-4">
+          {activeDepartment && (
+            <>
+              {onActiveDeptDuty ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
+                    On Duty: {myUnit.callsign}
+                  </span>
+                  <button
+                    onClick={goOffDuty}
+                    disabled={offDutyLoading}
+                    className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                  >
+                    {offDutyLoading ? '...' : 'Go Off Duty'}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowOnDutyModal(true)}
+                  disabled={onOtherDeptDuty}
+                  className="px-3 py-1.5 text-sm bg-cad-accent hover:bg-cad-accent-light text-white rounded font-medium transition-colors disabled:opacity-50"
+                  title={onOtherDeptDuty ? 'You are already on duty in another department' : 'Go On Duty'}
+                >
+                  {onOtherDeptDuty ? 'On Duty Elsewhere' : 'Go On Duty'}
+                </button>
+              )}
+            </>
+          )}
+
           {user && (
             <div className="relative">
               <button
@@ -68,6 +130,12 @@ export default function Header() {
           )}
         </div>
       </div>
+      <GoOnDutyModal
+        open={showOnDutyModal}
+        onClose={() => setShowOnDutyModal(false)}
+        department={activeDepartment}
+        onSuccess={refreshMyUnit}
+      />
     </header>
   );
 }

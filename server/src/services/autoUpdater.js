@@ -6,6 +6,7 @@ let updateInProgress = false;
 const gitBin = (config.autoUpdate.gitBin || 'git').trim();
 const configuredNpmBin = (config.autoUpdate.npmBin || 'npm').trim();
 let resolvedNpmBin = configuredNpmBin;
+const preservePaths = Array.isArray(config.autoUpdate.preservePaths) ? config.autoUpdate.preservePaths : [];
 
 function git(command) {
   return `"${gitBin}" ${command}`;
@@ -13,6 +14,10 @@ function git(command) {
 
 function npm(command) {
   return `"${resolvedNpmBin}" ${command}`;
+}
+
+function shellQuote(value) {
+  return `"${String(value || '').replace(/"/g, '\\"')}"`;
 }
 
 function run(command, cwd) {
@@ -96,6 +101,20 @@ function restartCurrentProcess() {
   child.unref();
 }
 
+function gitCleanCommand() {
+  const excludes = preservePaths
+    .map(path => String(path || '').trim())
+    .filter(Boolean)
+    .map(path => `-e ${shellQuote(path)}`)
+    .join(' ');
+  return git(`clean -fd ${excludes}`.trim());
+}
+
+async function discardLocalChanges(repoRoot) {
+  await run(git('reset --hard HEAD'), repoRoot);
+  await run(gitCleanCommand(), repoRoot);
+}
+
 async function checkForUpdates(repoRoot, branch) {
   if (updateInProgress) return;
   updateInProgress = true;
@@ -103,14 +122,19 @@ async function checkForUpdates(repoRoot, branch) {
   try {
     const { stdout: status } = await run(git('status --porcelain'), repoRoot);
     if (status.trim()) {
-      const changed = status
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean)
-        .slice(0, 20);
-      console.warn('[AutoUpdate] Local changes detected; skipping update check');
-      console.warn(`[AutoUpdate] Changed files:\n${changed.join('\n')}`);
-      return;
+      if (!config.autoUpdate.forceSync) {
+        const changed = status
+          .split(/\r?\n/)
+          .map(line => line.trim())
+          .filter(Boolean)
+          .slice(0, 20);
+        console.warn('[AutoUpdate] Local changes detected; skipping update check');
+        console.warn(`[AutoUpdate] Changed files:\n${changed.join('\n')}`);
+        return;
+      }
+
+      console.log('[AutoUpdate] Local changes detected; force sync enabled, discarding local repository changes');
+      await discardLocalChanges(repoRoot);
     }
 
     await run(git(`fetch origin ${branch}`), repoRoot);
@@ -120,7 +144,8 @@ async function checkForUpdates(repoRoot, branch) {
     if (behind <= 0) return;
 
     console.log(`[AutoUpdate] ${behind} update(s) found on origin/${branch}. Applying update...`);
-    await run(git(`pull --ff-only origin ${branch}`), repoRoot);
+    await run(git(`reset --hard origin/${branch}`), repoRoot);
+    await run(gitCleanCommand(), repoRoot);
 
     if (config.autoUpdate.runNpmInstall) {
       console.log('[AutoUpdate] Running npm install...');

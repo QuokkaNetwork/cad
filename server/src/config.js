@@ -11,6 +11,14 @@ function parseBoolEnv(value, fallback) {
   return String(value).toLowerCase() === 'true';
 }
 
+function parseCsvEnv(value, fallback = []) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return String(value)
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
 function normalizeBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
@@ -66,6 +74,8 @@ module.exports = {
     branch: process.env.AUTO_UPDATE_BRANCH || '',
     gitBin: process.env.GIT_BIN || 'git',
     npmBin: process.env.NPM_BIN || 'npm',
+    forceSync: parseBoolEnv(process.env.AUTO_UPDATE_FORCE_SYNC, true),
+    preservePaths: parseCsvEnv(process.env.AUTO_UPDATE_PRESERVE_PATHS, ['.env', 'server/data/']),
     runNpmInstall: String(process.env.AUTO_UPDATE_RUN_NPM_INSTALL || 'true').toLowerCase() === 'true',
     runWebBuild: String(process.env.AUTO_UPDATE_RUN_WEB_BUILD || 'true').toLowerCase() === 'true',
     exitOnUpdate: String(process.env.AUTO_UPDATE_EXIT_ON_UPDATE || 'true').toLowerCase() === 'true',

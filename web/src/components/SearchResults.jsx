@@ -10,7 +10,6 @@ export default function SearchResults({ type, results, onSelect }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-cad-border text-left text-xs text-cad-muted uppercase tracking-wider">
-              <th className="px-3 py-2">Citizen ID</th>
               <th className="px-3 py-2">Name</th>
               <th className="px-3 py-2">DOB</th>
               <th className="px-3 py-2">Phone</th>
@@ -25,7 +24,6 @@ export default function SearchResults({ type, results, onSelect }) {
                 onClick={() => onSelect?.(person)}
                 className="border-b border-cad-border/50 hover:bg-cad-card cursor-pointer transition-colors"
               >
-                <td className="px-3 py-2 font-mono text-cad-accent-light">{person.citizenid}</td>
                 <td className="px-3 py-2 font-medium">{person.firstname} {person.lastname}</td>
                 <td className="px-3 py-2 text-cad-muted">{person.birthdate}</td>
                 <td className="px-3 py-2 text-cad-muted">{person.phone}</td>
@@ -54,7 +52,6 @@ export default function SearchResults({ type, results, onSelect }) {
           <tr className="border-b border-cad-border text-left text-xs text-cad-muted uppercase tracking-wider">
             <th className="px-3 py-2">Plate</th>
             <th className="px-3 py-2">Vehicle</th>
-            <th className="px-3 py-2">Owner</th>
             <th className="px-3 py-2">Garage</th>
             <th className="px-3 py-2">State</th>
             {hasCustomFields && <th className="px-3 py-2">Custom</th>}
@@ -69,7 +66,6 @@ export default function SearchResults({ type, results, onSelect }) {
             >
               <td className="px-3 py-2 font-mono font-bold text-cad-accent-light">{vehicle.plate}</td>
               <td className="px-3 py-2">{vehicle.vehicle}</td>
-              <td className="px-3 py-2 font-mono text-cad-muted">{vehicle.owner}</td>
               <td className="px-3 py-2 text-cad-muted">{vehicle.garage}</td>
               <td className="px-3 py-2 text-cad-muted">{vehicle.state}</td>
               {hasCustomFields && (

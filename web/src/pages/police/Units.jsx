@@ -8,10 +8,8 @@ export default function Units() {
   const { activeDepartment } = useDepartment();
   const [units, setUnits] = useState([]);
   const [myUnit, setMyUnit] = useState(null);
-  const [callsign, setCallsign] = useState('');
   const [location, setLocation] = useState('');
   const [note, setNote] = useState('');
-  const [loading, setLoading] = useState(false);
 
   const deptId = activeDepartment?.id;
 
@@ -40,21 +38,6 @@ export default function Units() {
     'unit:offline': () => fetchData(),
     'unit:update': () => fetchData(),
   });
-
-  async function goOnDuty(e) {
-    e.preventDefault();
-    if (!callsign.trim()) return;
-    setLoading(true);
-    try {
-      await api.post('/api/units/me', { callsign: callsign.trim(), department_id: deptId });
-      setCallsign('');
-      fetchData();
-    } catch (err) {
-      alert('Failed to go on duty: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function goOffDuty() {
     if (!confirm('Go off duty?')) return;
@@ -131,24 +114,10 @@ export default function Units() {
         </div>
       ) : (
         <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">
-          <h3 className="font-semibold mb-3">Go On Duty</h3>
-          <form onSubmit={goOnDuty} className="flex gap-3">
-            <input
-              type="text"
-              value={callsign}
-              onChange={e => setCallsign(e.target.value)}
-              placeholder="Enter callsign (e.g. DP-41)"
-              required
-              className="flex-1 bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-            />
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-6 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              {loading ? 'Going...' : 'Go On Duty'}
-            </button>
-          </form>
+          <h3 className="font-semibold mb-1">Not On Duty</h3>
+          <p className="text-sm text-cad-muted">
+            Use the <span className="text-cad-ink font-medium">Go On Duty</span> button in the header to set your callsign and start your shift.
+          </p>
         </div>
       )}
 
