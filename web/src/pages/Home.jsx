@@ -34,7 +34,7 @@ function DepartmentCard({ dept, onSelect }) {
 export default function Home() {
   const navigate = useNavigate();
   const { departments, isAdmin } = useAuth();
-  const { setActiveDepartment, activeDepartment } = useDepartment();
+  const { setActiveDepartment } = useDepartment();
 
   function selectDepartment(dept) {
     setActiveDepartment(dept);
@@ -42,47 +42,29 @@ export default function Home() {
   }
 
   return (
-    <div>
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold">Home</h2>
-        <p className="text-sm text-cad-muted mt-1">Select a department to enter the CAD tools.</p>
-      </div>
-
-      {activeDepartment && (
-        <div className="mb-5 text-sm text-cad-muted">
-          Active department:
-          <span className="ml-2 px-2 py-0.5 rounded" style={{ backgroundColor: `${activeDepartment.color || '#0052C2'}30`, color: activeDepartment.color || '#0052C2' }}>
-            {activeDepartment.short_name || activeDepartment.name}
-          </span>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {departments.map(dept => (
-          <DepartmentCard key={dept.id} dept={dept} onSelect={selectDepartment} />
-        ))}
-        {isAdmin && (
-          <button
-            onClick={() => navigate('/admin/users')}
-            className="w-full text-left bg-cad-card border border-cad-border rounded-2xl p-5 hover:border-cad-gold/60 hover:bg-cad-surface transition-colors"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-semibold">Administration</h3>
-                <p className="text-sm text-cad-muted">Admin Panel</p>
+    <div className="min-h-screen bg-cad-bg p-6 md:p-10">
+      <div className="max-w-6xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {departments.map(dept => (
+            <DepartmentCard key={dept.id} dept={dept} onSelect={selectDepartment} />
+          ))}
+          {isAdmin && (
+            <button
+              onClick={() => navigate('/admin/users')}
+              className="w-full text-left bg-cad-card border border-cad-border rounded-2xl p-5 hover:border-cad-gold/60 hover:bg-cad-surface transition-colors"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">Administration</h3>
+                  <p className="text-sm text-cad-muted">Admin Panel</p>
+                </div>
+                <span className="w-3 h-3 rounded-full mt-1.5 bg-cad-gold" />
               </div>
-              <span className="w-3 h-3 rounded-full mt-1.5 bg-cad-gold" />
-            </div>
-            <p className="text-xs text-cad-muted mt-4">Manage users, departments and system settings</p>
-          </button>
-        )}
-      </div>
-
-      {departments.length === 0 && !isAdmin && (
-        <div className="bg-cad-card border border-cad-border rounded-2xl p-6 mt-4">
-          <p className="text-cad-muted">No department access yet. Link Discord in your profile settings to sync your roles.</p>
+              <p className="text-xs text-cad-muted mt-4">Manage users, departments and system settings</p>
+            </button>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
