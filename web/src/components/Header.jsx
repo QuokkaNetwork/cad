@@ -14,8 +14,7 @@ export default function Header() {
   const [myUnit, setMyUnit] = useState(null);
   const [showOnDutyModal, setShowOnDutyModal] = useState(false);
   const [offDutyLoading, setOffDutyLoading] = useState(false);
-  const departmentRoutes = ['/dispatch', '/units', '/search', '/bolos', '/records'];
-  const onDepartmentPage = departmentRoutes.some(route => location.pathname.startsWith(route));
+  const onDepartmentPage = /^\/(dispatch|units|search|bolos|records)(\/|$)/.test(location.pathname);
 
   async function refreshMyUnit() {
     try {
@@ -30,6 +29,12 @@ export default function Header() {
     if (!user) return;
     refreshMyUnit();
   }, [user, activeDepartment?.id]);
+
+  useEffect(() => {
+    if (!onDepartmentPage && showOnDutyModal) {
+      setShowOnDutyModal(false);
+    }
+  }, [onDepartmentPage, showOnDutyModal]);
 
   async function goOffDuty() {
     setOffDutyLoading(true);
