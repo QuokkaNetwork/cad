@@ -6,11 +6,16 @@ const sharp = require('sharp');
 const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
-  Settings, AuditLog, Announcements, Units,
+  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const qbox = require('../db/qbox');
+const {
+  installOrUpdateResource,
+  getStatus: getFiveMResourceStatus,
+  startFiveMResourceAutoSync,
+} = require('../services/fivemResourceManager');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -204,8 +209,37 @@ router.put('/settings', (req, res) => {
   for (const [key, value] of Object.entries(settings)) {
     Settings.set(key, String(value));
   }
+  startFiveMResourceAutoSync();
   audit(req.user.id, 'settings_updated', { keys: Object.keys(settings) });
   res.json(Settings.getAll());
+});
+
+// --- FiveM resource management ---
+router.get('/fivem-resource/status', (_req, res) => {
+  res.json(getFiveMResourceStatus());
+});
+
+router.post('/fivem-resource/install', (req, res) => {
+  try {
+    const result = installOrUpdateResource();
+    audit(req.user.id, 'fivem_resource_installed', {
+      targetDir: result.targetDir,
+      version: result.version,
+    });
+    startFiveMResourceAutoSync();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/fivem/links', (_req, res) => {
+  res.json(FiveMPlayerLinks.list());
+});
+
+router.get('/fivem/fine-jobs', (req, res) => {
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
+  res.json(FiveMFineJobs.listRecent(limit));
 });
 
 // --- Audit Log ---

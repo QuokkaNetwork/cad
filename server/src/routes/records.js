@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { CriminalRecords, Units } = require('../db/sqlite');
+const { CriminalRecords, Units, FiveMFineJobs, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 
 const router = express.Router();
@@ -51,6 +51,17 @@ router.post('/', requireAuth, (req, res) => {
     officer_callsign: officerCallsign,
     department_id: department_id || (unit ? unit.department_id : null),
   });
+
+  const fivemFineEnabled = String(Settings.get('fivem_bridge_qbox_fines_enabled') || 'false').toLowerCase() === 'true';
+  if (type === 'fine' && Number(fine_amount || 0) > 0 && fivemFineEnabled) {
+    FiveMFineJobs.create({
+      citizen_id,
+      amount: Number(fine_amount || 0),
+      reason: title,
+      issued_by_user_id: req.user.id,
+      source_record_id: record.id,
+    });
+  }
 
   audit(req.user.id, 'record_created', { recordId: record.id, citizen_id, type, title });
   res.status(201).json(record);

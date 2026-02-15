@@ -359,6 +359,97 @@ const CriminalRecords = {
   },
 };
 
+// --- FiveM player links ---
+const FiveMPlayerLinks = {
+  upsert({ steam_id, game_id, citizen_id, player_name, position_x, position_y, position_z, heading, speed }) {
+    db.prepare(`
+      INSERT INTO fivem_player_links (
+        steam_id, game_id, citizen_id, player_name, position_x, position_y, position_z, heading, speed, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(steam_id) DO UPDATE SET
+        game_id = excluded.game_id,
+        citizen_id = excluded.citizen_id,
+        player_name = excluded.player_name,
+        position_x = excluded.position_x,
+        position_y = excluded.position_y,
+        position_z = excluded.position_z,
+        heading = excluded.heading,
+        speed = excluded.speed,
+        updated_at = datetime('now')
+    `).run(
+      steam_id,
+      game_id || '',
+      citizen_id || '',
+      player_name || '',
+      Number(position_x || 0),
+      Number(position_y || 0),
+      Number(position_z || 0),
+      Number(heading || 0),
+      Number(speed || 0)
+    );
+    return this.findBySteamId(steam_id);
+  },
+  removeBySteamId(steamId) {
+    db.prepare('DELETE FROM fivem_player_links WHERE steam_id = ?').run(steamId);
+  },
+  findBySteamId(steamId) {
+    return db.prepare('SELECT * FROM fivem_player_links WHERE steam_id = ?').get(steamId);
+  },
+  findByCitizenId(citizenId) {
+    return db.prepare('SELECT * FROM fivem_player_links WHERE citizen_id = ?').get(citizenId);
+  },
+  list() {
+    return db.prepare('SELECT * FROM fivem_player_links ORDER BY updated_at DESC').all();
+  },
+};
+
+// --- FiveM fine jobs ---
+const FiveMFineJobs = {
+  create({ citizen_id, amount, reason, issued_by_user_id, source_record_id }) {
+    const info = db.prepare(`
+      INSERT INTO fivem_fine_jobs (
+        citizen_id, amount, reason, issued_by_user_id, source_record_id, status, error, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'pending', '', datetime('now'), datetime('now'))
+    `).run(citizen_id, Number(amount || 0), reason || '', issued_by_user_id || null, source_record_id || null);
+    return this.findById(info.lastInsertRowid);
+  },
+  findById(id) {
+    return db.prepare('SELECT * FROM fivem_fine_jobs WHERE id = ?').get(id);
+  },
+  listPending(limit = 25) {
+    return db.prepare(`
+      SELECT * FROM fivem_fine_jobs
+      WHERE status = 'pending'
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(limit);
+  },
+  markSent(id) {
+    db.prepare(`
+      UPDATE fivem_fine_jobs
+      SET status = 'sent', error = '', sent_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  },
+  markFailed(id, error) {
+    db.prepare(`
+      UPDATE fivem_fine_jobs
+      SET status = 'failed', error = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(String(error || '').slice(0, 500), id);
+  },
+  markPending(id) {
+    db.prepare(`
+      UPDATE fivem_fine_jobs
+      SET status = 'pending', error = '', updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  },
+  listRecent(limit = 100) {
+    return db.prepare('SELECT * FROM fivem_fine_jobs ORDER BY created_at DESC LIMIT ?').all(limit);
+  },
+};
+
 // --- Settings ---
 const Settings = {
   get(key) {
@@ -437,6 +528,8 @@ module.exports = {
   Calls,
   Bolos,
   CriminalRecords,
+  FiveMPlayerLinks,
+  FiveMFineJobs,
   Settings,
   AuditLog,
   Announcements,

@@ -16,6 +16,9 @@ export default function AdminSystemSettings() {
   const [settings, setSettings] = useState({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [installingBridge, setInstallingBridge] = useState(false);
+  const [loadingBridgeStatus, setLoadingBridgeStatus] = useState(false);
+  const [bridgeStatus, setBridgeStatus] = useState(null);
   const [testResult, setTestResult] = useState(null);
   const [schemaResult, setSchemaResult] = useState(null);
 
@@ -28,7 +31,22 @@ export default function AdminSystemSettings() {
     }
   }
 
-  useEffect(() => { fetchSettings(); }, []);
+  async function fetchFiveMStatus() {
+    setLoadingBridgeStatus(true);
+    try {
+      const status = await api.get('/api/admin/fivem-resource/status');
+      setBridgeStatus(status);
+    } catch (err) {
+      setBridgeStatus({ error: err.message });
+    } finally {
+      setLoadingBridgeStatus(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchSettings();
+    fetchFiveMStatus();
+  }, []);
 
   function updateSetting(key, value) {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -39,6 +57,7 @@ export default function AdminSystemSettings() {
     try {
       await api.put('/api/admin/settings', { settings });
       alert('Settings saved');
+      fetchFiveMStatus();
     } catch (err) {
       alert('Failed to save:\n' + formatErr(err));
     } finally {
@@ -62,6 +81,20 @@ export default function AdminSystemSettings() {
       if (err.details) setSchemaResult(err.details);
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function installOrUpdateFiveMResource() {
+    setInstallingBridge(true);
+    try {
+      await api.put('/api/admin/settings', { settings });
+      const result = await api.post('/api/admin/fivem-resource/install', {});
+      alert(`FiveM resource synced to:\n${result.targetDir}`);
+      fetchFiveMStatus();
+    } catch (err) {
+      alert('Failed to sync FiveM resource:\n' + formatErr(err));
+    } finally {
+      setInstallingBridge(false);
     }
   }
 
@@ -186,6 +219,119 @@ export default function AdminSystemSettings() {
               <div className="text-emerald-400 mt-2">
                 Schema check passed. Charinfo JSON column: {String(schemaResult.players?.columns?.find(c => c.name === (settings.qbox_charinfo_col || 'charinfo'))?.isJson || false)}
               </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* FiveM Bridge */}
+      <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-4">
+        <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-4">FiveM CAD Bridge</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">FiveM Resources Directory</label>
+            <input
+              type="text"
+              value={settings.fivem_bridge_install_path || ''}
+              onChange={e => updateSetting('fivem_bridge_install_path', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="e.g. C:\\txData\\YourServer\\resources\\[cad]"
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              CAD will install/update a resource folder named <span className="font-mono">cad_bridge</span> in this directory.
+            </p>
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Shared Bridge Token</label>
+            <input
+              type="text"
+              value={settings.fivem_bridge_shared_token || ''}
+              onChange={e => updateSetting('fivem_bridge_shared_token', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="Set a long random token"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Enable Bridge</label>
+            <select
+              value={settings.fivem_bridge_enabled || 'false'}
+              onChange={e => updateSetting('fivem_bridge_enabled', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="false">Disabled</option>
+              <option value="true">Enabled</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Auto Update Resource</label>
+            <select
+              value={settings.fivem_bridge_auto_update || 'true'}
+              onChange={e => updateSetting('fivem_bridge_auto_update', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Auto Sync Interval (minutes)</label>
+            <input
+              type="number"
+              min="1"
+              value={settings.fivem_bridge_sync_interval_minutes || '5'}
+              onChange={e => updateSetting('fivem_bridge_sync_interval_minutes', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Queue QBox Fines From CAD</label>
+            <select
+              value={settings.fivem_bridge_qbox_fines_enabled || 'false'}
+              onChange={e => updateSetting('fivem_bridge_qbox_fines_enabled', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="false">Disabled</option>
+              <option value="true">Enabled</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 mt-4">
+          <button
+            onClick={installOrUpdateFiveMResource}
+            disabled={installingBridge}
+            className="px-3 py-1.5 text-sm bg-cad-accent hover:bg-cad-accent-light text-white rounded border border-cad-accent/40 transition-colors disabled:opacity-50"
+          >
+            {installingBridge ? 'Syncing...' : 'Install / Update Resource'}
+          </button>
+          <button
+            onClick={fetchFiveMStatus}
+            disabled={loadingBridgeStatus}
+            className="px-3 py-1.5 text-sm bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
+          >
+            {loadingBridgeStatus ? 'Refreshing...' : 'Refresh Status'}
+          </button>
+        </div>
+
+        {bridgeStatus && (
+          <div className="mt-3 text-xs space-y-1">
+            {bridgeStatus.error ? (
+              <div className="text-red-400 whitespace-pre-wrap">{bridgeStatus.error}</div>
+            ) : (
+              <>
+                <div className="text-cad-muted">
+                  Resource: <span className="font-mono">{bridgeStatus.resourceName || 'cad_bridge'}</span>
+                </div>
+                <div className="text-cad-muted">
+                  Installed: <span className={bridgeStatus.installed ? 'text-emerald-400' : 'text-red-400'}>{String(!!bridgeStatus.installed)}</span>
+                </div>
+                <div className="text-cad-muted">
+                  Up To Date: <span className={bridgeStatus.upToDate ? 'text-emerald-400' : 'text-amber-300'}>{String(!!bridgeStatus.upToDate)}</span>
+                </div>
+                {bridgeStatus.targetDir && (
+                  <div className="text-cad-muted whitespace-pre-wrap">Target: {bridgeStatus.targetDir}</div>
+                )}
+              </>
             )}
           </div>
         )}

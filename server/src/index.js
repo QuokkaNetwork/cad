@@ -10,6 +10,7 @@ const { initDb } = require('./db/sqlite');
 const { initSteamAuth } = require('./auth/steam');
 const { startBot } = require('./discord/bot');
 const { startAutoUpdater } = require('./services/autoUpdater');
+const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 
 // Initialize database
 console.log('Initializing database...');
@@ -51,6 +52,7 @@ app.use('/api/search', require('./routes/search'));
 app.use('/api/records', require('./routes/records'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/integration/fivem', require('./routes/fivem'));
 
 // Announcements (public, auth-required)
 const { requireAuth } = require('./auth/middleware');
@@ -104,3 +106,5 @@ startBot().then(client => {
 startAutoUpdater().catch(err => {
   console.error('Auto updater failed to start:', err.message);
 });
+
+startFiveMResourceAutoSync();
