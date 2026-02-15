@@ -3,6 +3,11 @@ const config = require('../config');
 
 let updateInterval = null;
 let updateInProgress = false;
+const gitBin = (config.autoUpdate.gitBin || 'git').trim();
+
+function git(command) {
+  return `"${gitBin}" ${command}`;
+}
 
 function run(command, cwd) {
   return new Promise((resolve, reject) => {
@@ -19,13 +24,13 @@ function run(command, cwd) {
 }
 
 async function resolveRepoRoot() {
-  const { stdout } = await run('git rev-parse --show-toplevel', process.cwd());
+  const { stdout } = await run(git('rev-parse --show-toplevel'), process.cwd());
   return stdout.trim();
 }
 
 async function resolveBranch(repoRoot) {
   if (config.autoUpdate.branch) return config.autoUpdate.branch;
-  const { stdout } = await run('git rev-parse --abbrev-ref HEAD', repoRoot);
+  const { stdout } = await run(git('rev-parse --abbrev-ref HEAD'), repoRoot);
   return stdout.trim();
 }
 
@@ -44,20 +49,20 @@ async function checkForUpdates(repoRoot, branch) {
   updateInProgress = true;
 
   try {
-    const { stdout: status } = await run('git status --porcelain', repoRoot);
+    const { stdout: status } = await run(git('status --porcelain'), repoRoot);
     if (status.trim()) {
       console.warn('[AutoUpdate] Local changes detected; skipping update check');
       return;
     }
 
-    await run(`git fetch origin ${branch}`, repoRoot);
-    const { stdout: behindOut } = await run(`git rev-list --count HEAD..origin/${branch}`, repoRoot);
+    await run(git(`fetch origin ${branch}`), repoRoot);
+    const { stdout: behindOut } = await run(git(`rev-list --count HEAD..origin/${branch}`), repoRoot);
     const behind = Number.parseInt(behindOut.trim(), 10) || 0;
 
     if (behind <= 0) return;
 
     console.log(`[AutoUpdate] ${behind} update(s) found on origin/${branch}. Applying update...`);
-    await run(`git pull --ff-only origin ${branch}`, repoRoot);
+    await run(git(`pull --ff-only origin ${branch}`), repoRoot);
 
     if (config.autoUpdate.runNpmInstall) {
       console.log('[AutoUpdate] Running npm install...');
@@ -102,6 +107,7 @@ async function startAutoUpdater() {
     }, intervalMs);
   } catch (err) {
     console.error('[AutoUpdate] Could not start updater:', err.message);
+    console.error('[AutoUpdate] Install Git and ensure it is in PATH, or set GIT_BIN in .env (e.g. C:\\Program Files\\Git\\cmd\\git.exe)');
   }
 }
 

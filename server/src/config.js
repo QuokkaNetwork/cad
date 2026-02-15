@@ -6,17 +6,35 @@ function parseIntEnv(value, fallback) {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function normalizeBaseUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+const nodeEnv = process.env.NODE_ENV || 'development';
+const steamRealm = normalizeBaseUrl(process.env.STEAM_REALM || 'http://localhost:3030');
+const steamReturnUrl = normalizeBaseUrl(process.env.STEAM_RETURN_URL || `${steamRealm}/api/auth/steam/callback`);
+
+let webUrl = normalizeBaseUrl(
+  process.env.WEB_URL || (nodeEnv === 'production' ? steamRealm : 'http://localhost:5173')
+);
+
+// Protect production from redirecting to Vite's dev server URL.
+if (nodeEnv === 'production' && /:5173(?:\/|$)/.test(webUrl) && steamRealm) {
+  console.warn('[config] WEB_URL points to :5173 in production; using STEAM_REALM instead.');
+  webUrl = steamRealm;
+}
+
 module.exports = {
   port: parseInt(process.env.PORT, 10) || 3030,
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
   jwt: {
     secret: process.env.JWT_SECRET || 'change-me',
     expiresIn: '12h',
   },
   steam: {
     apiKey: process.env.STEAM_API_KEY || '',
-    realm: process.env.STEAM_REALM || 'http://localhost:3030',
-    returnUrl: process.env.STEAM_RETURN_URL || 'http://localhost:3030/api/auth/steam/callback',
+    realm: steamRealm,
+    returnUrl: steamReturnUrl,
   },
   discord: {
     botToken: process.env.DISCORD_BOT_TOKEN || '',
@@ -29,12 +47,13 @@ module.exports = {
     enabled: String(process.env.AUTO_UPDATE_ENABLED || 'false').toLowerCase() === 'true',
     intervalMinutes: parseIntEnv(process.env.AUTO_UPDATE_INTERVAL_MINUTES, 5),
     branch: process.env.AUTO_UPDATE_BRANCH || '',
+    gitBin: process.env.GIT_BIN || 'git',
     runNpmInstall: String(process.env.AUTO_UPDATE_RUN_NPM_INSTALL || 'true').toLowerCase() === 'true',
     runWebBuild: String(process.env.AUTO_UPDATE_RUN_WEB_BUILD || 'true').toLowerCase() === 'true',
     exitOnUpdate: String(process.env.AUTO_UPDATE_EXIT_ON_UPDATE || 'true').toLowerCase() === 'true',
     selfRestart: String(process.env.AUTO_UPDATE_SELF_RESTART || 'true').toLowerCase() === 'true',
   },
-  webUrl: process.env.WEB_URL || 'http://localhost:5173',
+  webUrl,
   sqlite: {
     file: path.resolve(__dirname, '../data/cad.sqlite'),
   },
