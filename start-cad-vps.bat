@@ -4,6 +4,7 @@ setlocal ENABLEDELAYEDEXPANSION
 cd /d "%~dp0"
 
 echo [CAD] Starting VPS launcher...
+set "NPM_BIN="
 
 where node >nul 2>nul
 if errorlevel 1 (
@@ -13,7 +14,12 @@ if errorlevel 1 (
 )
 
 where npm >nul 2>nul
-if errorlevel 1 (
+if not errorlevel 1 set "NPM_BIN=npm"
+if not defined NPM_BIN (
+  where npm.cmd >nul 2>nul
+  if not errorlevel 1 set "NPM_BIN=npm.cmd"
+)
+if not defined NPM_BIN (
   echo [CAD] ERROR: npm is not installed or not in PATH.
   pause
   exit /b 1
@@ -58,10 +64,13 @@ if exist ".env" (
 )
 
 if "%AUTO_UPDATE_BRANCH%"=="" set "AUTO_UPDATE_BRANCH=main"
+
+:main_loop
 set "LOCAL_HEAD="
 set "REMOTE_HEAD="
 set "UPDATED=0"
 
+echo [CAD] Checking for updates on startup...
 for /f %%I in ('git rev-parse HEAD 2^>nul') do set "LOCAL_HEAD=%%I"
 call git fetch origin %AUTO_UPDATE_BRANCH% --quiet
 if errorlevel 1 goto :fail
@@ -71,43 +80,48 @@ if not defined LOCAL_HEAD (
   echo [CAD] No local commit detected. Syncing to origin/%AUTO_UPDATE_BRANCH%...
   call git reset --hard origin/%AUTO_UPDATE_BRANCH%
   if errorlevel 1 goto :fail
-  call git clean -fd -e server/data/uploads/
+  call git clean -fd -e .env -e server/data/
   if errorlevel 1 goto :fail
   set "UPDATED=1"
 ) else if /I not "!LOCAL_HEAD!"=="!REMOTE_HEAD!" (
   echo [CAD] Update found on origin/%AUTO_UPDATE_BRANCH%.
   call git reset --hard origin/%AUTO_UPDATE_BRANCH%
   if errorlevel 1 goto :fail
-  call git clean -fd -e server/data/uploads/
+  call git clean -fd -e .env -e server/data/
   if errorlevel 1 goto :fail
   set "UPDATED=1"
 )
 
 if "!UPDATED!"=="1" (
   echo [CAD] Installing dependencies...
-  call npm install
+  call %NPM_BIN% install
   if errorlevel 1 goto :fail
 
   echo [CAD] Building web app...
-  call npm run build
+  call %NPM_BIN% run build
   if errorlevel 1 goto :fail
 ) else (
   if not exist "node_modules" (
     echo [CAD] Dependencies missing. Running npm install...
-    call npm install
+    call %NPM_BIN% install
     if errorlevel 1 goto :fail
   )
   if not exist "web\dist\index.html" (
     echo [CAD] Web build missing. Running npm run build...
-    call npm run build
+    call %NPM_BIN% run build
     if errorlevel 1 goto :fail
   )
 )
 
 echo [CAD] Launching server...
 set NODE_ENV=production
-call npm run start
-goto :eof
+set AUTO_UPDATE_SELF_RESTART=false
+set AUTO_UPDATE_EXIT_ON_UPDATE=true
+call %NPM_BIN% run start
+set "SERVER_EXIT=!ERRORLEVEL!"
+echo [CAD] Server exited with code !SERVER_EXIT!. Restarting launcher loop...
+timeout /t 2 /nobreak >nul
+goto :main_loop
 
 :fail
 echo [CAD] Startup failed.
