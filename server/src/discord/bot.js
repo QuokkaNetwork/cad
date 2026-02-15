@@ -5,6 +5,7 @@ const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 let client = null;
+const ADMIN_DISCORD_ROLE_ID = '1472592662103064617';
 
 async function startBot() {
   if (!config.discord.botToken) {
@@ -59,6 +60,7 @@ async function syncUserRoles(discordId) {
 
   const mappings = DiscordRoleMappings.list();
   const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
+  const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
 
   const departmentIds = [];
   for (const mapping of mappings) {
@@ -71,8 +73,13 @@ async function syncUserRoles(discordId) {
   const uniqueDeptIds = [...new Set(departmentIds)];
 
   const oldDepts = UserDepartments.getForUser(user.id);
+  const oldIsAdmin = !!user.is_admin;
   UserDepartments.setForUser(user.id, uniqueDeptIds);
+  if (hasAdminRole && !oldIsAdmin) {
+    Users.update(user.id, { is_admin: 1 });
+  }
   const newDepts = UserDepartments.getForUser(user.id);
+  const newIsAdmin = !!(Users.findById(user.id)?.is_admin);
 
   // Check if anything changed
   const oldIds = oldDepts.map(d => d.id).sort().join(',');
@@ -86,7 +93,16 @@ async function syncUserRoles(discordId) {
     bus.emit('sync:department', { userId: user.id, departments: newDepts });
   }
 
-  return { synced: true, departments: newDepts.map(d => d.short_name) };
+  if (oldIsAdmin !== newIsAdmin) {
+    audit(user.id, 'admin_sync', {
+      discordId,
+      before: oldIsAdmin,
+      after: newIsAdmin,
+      roleId: ADMIN_DISCORD_ROLE_ID,
+    });
+  }
+
+  return { synced: true, is_admin: newIsAdmin, departments: newDepts.map(d => d.short_name) };
 }
 
 async function syncAllMembers() {
@@ -105,6 +121,7 @@ async function syncAllMembers() {
     if (!user) { skipped++; continue; }
 
     const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
+    const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
     const departmentIds = [];
     for (const mapping of mappings) {
       if (memberRoleIds.has(mapping.discord_role_id)) {
@@ -113,6 +130,9 @@ async function syncAllMembers() {
     }
 
     UserDepartments.setForUser(user.id, [...new Set(departmentIds)]);
+    if (hasAdminRole && !user.is_admin) {
+      Users.update(user.id, { is_admin: 1 });
+    }
     synced++;
   }
 
