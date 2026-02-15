@@ -35,8 +35,7 @@ async function request(url, options = {}) {
 
   if (res.status === 401) {
     clearToken();
-    window.location.href = '/login';
-    throw new Error('Unauthorized');
+    throw new ApiError('Unauthorized', { status: 401, error: 'unauthorized' });
   }
 
   if (!res.ok) {
