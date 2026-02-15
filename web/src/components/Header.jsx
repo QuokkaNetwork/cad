@@ -45,13 +45,19 @@ export default function Header() {
               {open && (
                 <div className="absolute right-0 mt-2 w-44 bg-cad-surface border border-cad-border rounded-lg shadow-lg z-50">
                   <button
-                    onClick={() => { setOpen(false); navigate('/settings'); }}
+                    onClick={() => { setOpen(false); navigate('/home'); }}
                     className="w-full text-left px-3 py-2 text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card rounded-t-lg transition-colors"
+                  >
+                    Home
+                  </button>
+                  <button
+                    onClick={() => { setOpen(false); navigate('/settings'); }}
+                    className="w-full text-left px-3 py-2 text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card transition-colors"
                   >
                     Profile Settings
                   </button>
                   <button
-                    onClick={logout}
+                    onClick={() => { setOpen(false); logout(); }}
                     className="w-full text-left px-3 py-2 text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card rounded-b-lg transition-colors"
                   >
                     Logout

@@ -28,10 +28,6 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {/* Protected routes */}
-          <Route path="/home" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-
           <Route
             element={
               <ProtectedRoute>
@@ -39,6 +35,10 @@ export default function App() {
               </ProtectedRoute>
             }
           >
+            {/* General */}
+            <Route path="/home" element={<Home />} />
+            <Route path="/settings" element={<Settings />} />
+
             {/* Police MDT */}
             <Route path="/dispatch" element={<RequireDepartment><Dispatch /></RequireDepartment>} />
             <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
