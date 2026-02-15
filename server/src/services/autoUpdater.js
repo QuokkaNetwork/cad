@@ -51,7 +51,13 @@ async function checkForUpdates(repoRoot, branch) {
   try {
     const { stdout: status } = await run(git('status --porcelain'), repoRoot);
     if (status.trim()) {
+      const changed = status
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .slice(0, 20);
       console.warn('[AutoUpdate] Local changes detected; skipping update check');
+      console.warn(`[AutoUpdate] Changed files:\n${changed.join('\n')}`);
       return;
     }
 

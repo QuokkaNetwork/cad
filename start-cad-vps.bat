@@ -50,23 +50,29 @@ if errorlevel 1 (
   )
 )
 
-if not exist "node_modules" (
-  echo [CAD] Root dependencies missing. Running npm install...
-  call npm install
-  if errorlevel 1 goto :fail
+set "AUTO_UPDATE_BRANCH=main"
+if exist ".env" (
+  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if /I "%%A"=="AUTO_UPDATE_BRANCH" set "AUTO_UPDATE_BRANCH=%%B"
+  )
 )
 
-if not exist "server\node_modules" (
-  echo [CAD] Server dependencies missing. Running npm install...
-  call npm install
-  if errorlevel 1 goto :fail
-)
+if "%AUTO_UPDATE_BRANCH%"=="" set "AUTO_UPDATE_BRANCH=main"
+echo [CAD] Forcing sync with origin/%AUTO_UPDATE_BRANCH% ...
+call git fetch origin %AUTO_UPDATE_BRANCH%
+if errorlevel 1 goto :fail
+call git reset --hard origin/%AUTO_UPDATE_BRANCH%
+if errorlevel 1 goto :fail
+call git clean -fd
+if errorlevel 1 goto :fail
 
-if not exist "web\dist\index.html" (
-  echo [CAD] Web build missing. Running npm run build...
-  call npm run build
-  if errorlevel 1 goto :fail
-)
+echo [CAD] Installing dependencies...
+call npm install
+if errorlevel 1 goto :fail
+
+echo [CAD] Building web app...
+call npm run build
+if errorlevel 1 goto :fail
 
 echo [CAD] Launching server...
 set NODE_ENV=production
