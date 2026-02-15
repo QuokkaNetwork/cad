@@ -1,4 +1,8 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const sharp = require('sharp');
 const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
@@ -10,6 +14,40 @@ const qbox = require('../db/qbox');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
+
+const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
+fs.mkdirSync(uploadRoot, { recursive: true });
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+    if (allowed.has(file.mimetype)) return cb(null, true);
+    cb(new Error('Only PNG, JPG, WEBP, or GIF images are allowed'));
+  },
+});
+
+router.post('/departments/upload-icon', upload.single('icon'), async (req, res, next) => {
+  if (!req.file) return res.status(400).json({ error: 'icon file is required' });
+  try {
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.webp`;
+    const outputPath = path.join(uploadRoot, fileName);
+
+    await sharp(req.file.buffer)
+      .rotate()
+      .resize(256, 256, {
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
+      .webp({ quality: 88 })
+      .toFile(outputPath);
+
+    res.json({ icon: `/uploads/department-icons/${fileName}` });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // --- Users ---
 router.get('/users', (req, res) => {

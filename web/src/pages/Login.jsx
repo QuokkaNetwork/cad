@@ -23,17 +23,14 @@ export default function Login() {
 
           {/* Login button */}
           <a
-            href="/api/auth/steam"
-            className="inline-flex items-center gap-3 px-6 py-3 bg-[#171a21] hover:bg-[#2a475e] border border-[#2a475e] rounded-lg text-white font-medium transition-colors w-full justify-center"
+            href="/api/auth/cfx"
+            className="inline-flex items-center gap-3 px-6 py-3 bg-[#f98c20] hover:bg-[#e57f1a] border border-[#f98c20] rounded-lg text-white font-medium transition-colors w-full justify-center"
           >
-            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M11.979 0C5.678 0 .511 4.86.022 10.928l6.432 2.658a3.387 3.387 0 011.912-.588c.063 0 .125.002.188.006l2.861-4.142V8.77c0-2.587 2.105-4.692 4.692-4.692 2.587 0 4.692 2.105 4.692 4.692 0 2.587-2.105 4.693-4.692 4.693h-.11l-4.076 2.911c0 .047.002.094.002.142 0 1.94-1.578 3.517-3.517 3.517-1.735 0-3.174-1.269-3.454-2.93L.533 14.568C1.905 19.848 6.49 23.754 12 23.754c6.627 0 12-5.373 12-12C24 5.373 18.627 0 12 0h-.021z"/>
-            </svg>
-            Login with Steam
+            Login with CFX
           </a>
 
           <p className="text-xs text-cad-muted mt-4">
-            Sign in with your Steam account to access the CAD system
+            Sign in with your CFX account to access the CAD system
           </p>
         </div>
       </div>

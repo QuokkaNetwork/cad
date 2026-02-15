@@ -24,7 +24,11 @@ export function clearToken() {
 
 async function request(url, options = {}) {
   const token = getToken();
-  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  const headers = { ...(options.headers || {}) };
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  if (!isFormData && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(url, { ...options, headers });
@@ -53,9 +57,9 @@ async function request(url, options = {}) {
 
 export const api = {
   get: (url) => request(url),
-  post: (url, data) => request(url, { method: 'POST', body: JSON.stringify(data) }),
-  patch: (url, data) => request(url, { method: 'PATCH', body: JSON.stringify(data) }),
-  put: (url, data) => request(url, { method: 'PUT', body: JSON.stringify(data) }),
+  post: (url, data) => request(url, { method: 'POST', body: data instanceof FormData ? data : JSON.stringify(data) }),
+  patch: (url, data) => request(url, { method: 'PATCH', body: data instanceof FormData ? data : JSON.stringify(data) }),
+  put: (url, data) => request(url, { method: 'PUT', body: data instanceof FormData ? data : JSON.stringify(data) }),
   delete: (url) => request(url, { method: 'DELETE' }),
 };
 

@@ -71,14 +71,14 @@ if not defined LOCAL_HEAD (
   echo [CAD] No local commit detected. Syncing to origin/%AUTO_UPDATE_BRANCH%...
   call git reset --hard origin/%AUTO_UPDATE_BRANCH%
   if errorlevel 1 goto :fail
-  call git clean -fd
+  call git clean -fd -e server/data/uploads/
   if errorlevel 1 goto :fail
   set "UPDATED=1"
 ) else if /I not "!LOCAL_HEAD!"=="!REMOTE_HEAD!" (
   echo [CAD] Update found on origin/%AUTO_UPDATE_BRANCH%.
   call git reset --hard origin/%AUTO_UPDATE_BRANCH%
   if errorlevel 1 goto :fail
-  call git clean -fd
+  call git clean -fd -e server/data/uploads/
   if errorlevel 1 goto :fail
   set "UPDATED=1"
 )

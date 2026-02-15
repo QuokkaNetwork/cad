@@ -13,7 +13,7 @@ function DepartmentCard({ dept, onSelect }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {logo ? (
-            <img src={logo} alt="" className="w-10 h-10 rounded-xl object-cover bg-cad-surface border border-cad-border" />
+            <img src={logo} alt="" className="w-10 h-10 rounded-xl object-contain p-0.5 bg-cad-surface border border-cad-border" />
           ) : (
             <div className="w-10 h-10 rounded-xl border border-cad-border bg-cad-surface flex items-center justify-center text-xs text-cad-muted">
               {dept.short_name?.slice(0, 3) || 'DEP'}

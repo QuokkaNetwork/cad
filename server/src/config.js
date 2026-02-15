@@ -48,6 +48,7 @@ module.exports = {
     intervalMinutes: parseIntEnv(process.env.AUTO_UPDATE_INTERVAL_MINUTES, 5),
     branch: process.env.AUTO_UPDATE_BRANCH || '',
     gitBin: process.env.GIT_BIN || 'git',
+    npmBin: process.env.NPM_BIN || 'npm',
     runNpmInstall: String(process.env.AUTO_UPDATE_RUN_NPM_INSTALL || 'true').toLowerCase() === 'true',
     runWebBuild: String(process.env.AUTO_UPDATE_RUN_WEB_BUILD || 'true').toLowerCase() === 'true',
     exitOnUpdate: String(process.env.AUTO_UPDATE_EXIT_ON_UPDATE || 'true').toLowerCase() === 'true',

@@ -56,6 +56,10 @@ app.get('/api/announcements', requireAuth, (req, res) => {
   res.json(Announcements.listActive());
 });
 
+// Serve uploaded assets
+const uploadsPath = path.join(__dirname, '../data/uploads');
+app.use('/uploads', express.static(uploadsPath));
+
 // Serve static frontend in production
 const distPath = path.join(__dirname, '../../web/dist');
 app.use(express.static(distPath));
@@ -69,6 +73,15 @@ app.get('*', (req, res, next) => {
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
+  if (err?.name === 'MulterError') {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'Image too large (max 2MB)' });
+    }
+    return res.status(400).json({ error: err.message || 'Upload error' });
+  }
+  if (err?.message === 'Only image files are allowed') {
+    return res.status(400).json({ error: err.message });
+  }
   res.status(500).json({ error: 'Internal server error' });
 });
 
