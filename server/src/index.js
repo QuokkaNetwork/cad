@@ -1,4 +1,5 @@
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -17,6 +18,7 @@ console.log('Database ready');
 
 // Initialize Express
 const app = express();
+app.locals.authCookieName = config.auth.cookieName;
 
 // Security middleware
 app.use(helmet({ contentSecurityPolicy: false }));
@@ -25,6 +27,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.use(cookieParser());
 
 // Rate limiting
 const limiter = rateLimit({

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { getToken } from '../api/client';
 
 export function useEventSource(eventHandlers) {
   const esRef = useRef(null);
@@ -7,14 +6,11 @@ export function useEventSource(eventHandlers) {
   handlersRef.current = eventHandlers;
 
   const connect = useCallback(() => {
-    const token = getToken();
-    if (!token) return;
-
     if (esRef.current) {
       esRef.current.close();
     }
 
-    const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+    const es = new EventSource('/api/events');
     esRef.current = es;
 
     es.onopen = () => {

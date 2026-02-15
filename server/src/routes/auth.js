@@ -8,6 +8,20 @@ const { audit } = require('../utils/audit');
 
 const router = express.Router();
 
+function authCookieOptions() {
+  const options = {
+    httpOnly: true,
+    secure: !!config.auth.cookieSecure,
+    sameSite: config.auth.cookieSameSite || 'Lax',
+    path: '/',
+    maxAge: 12 * 60 * 60 * 1000,
+  };
+  if (config.auth.cookieDomain) {
+    options.domain = config.auth.cookieDomain;
+  }
+  return options;
+}
+
 // Steam OpenID login
 router.get('/steam', passport.authenticate('steam', { session: false }));
 
@@ -16,8 +30,9 @@ router.get('/steam/callback',
   passport.authenticate('steam', { session: false, failureRedirect: `${config.webUrl}/login?error=steam_failed` }),
   (req, res) => {
     const token = generateToken(req.user);
+    res.cookie(config.auth.cookieName, token, authCookieOptions());
     audit(req.user.id, 'login', 'Steam login');
-    res.redirect(`${config.webUrl}/auth/callback?token=${encodeURIComponent(token)}`);
+    res.redirect(`${config.webUrl}/auth/callback`);
   }
 );
 
@@ -119,6 +134,20 @@ router.post('/unlink-discord', requireAuth, (req, res) => {
   Users.update(req.user.id, { discord_id: null, discord_name: '' });
   UserDepartments.setForUser(req.user.id, []);
   audit(req.user.id, 'discord_unlinked', 'Unlinked Discord account');
+  res.json({ success: true });
+});
+
+router.post('/logout', (req, res) => {
+  const options = {
+    httpOnly: true,
+    secure: !!config.auth.cookieSecure,
+    sameSite: config.auth.cookieSameSite || 'Lax',
+    path: '/',
+  };
+  if (config.auth.cookieDomain) {
+    options.domain = config.auth.cookieDomain;
+  }
+  res.clearCookie(config.auth.cookieName, options);
   res.json({ success: true });
 });
 

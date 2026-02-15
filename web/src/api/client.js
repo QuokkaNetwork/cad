@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'cad_token';
+const TOKEN_KEY = 'cad_token_legacy';
 
 class ApiError extends Error {
   constructor(message, options = {}) {
@@ -11,11 +11,13 @@ class ApiError extends Error {
 }
 
 export function setToken(token) {
-  localStorage.setItem(TOKEN_KEY, token);
+  if (token) {
+    // Legacy no-op: auth is cookie-based now.
+  }
 }
 
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return null;
 }
 
 export function clearToken() {
@@ -23,15 +25,13 @@ export function clearToken() {
 }
 
 async function request(url, options = {}) {
-  const token = getToken();
   const headers = { ...(options.headers || {}) };
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   if (!isFormData && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
-  if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, { ...options, headers, credentials: 'include' });
 
   if (res.status === 401) {
     clearToken();

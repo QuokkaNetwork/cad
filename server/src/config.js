@@ -6,6 +6,11 @@ function parseIntEnv(value, fallback) {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function parseBoolEnv(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return String(value).toLowerCase() === 'true';
+}
+
 function normalizeBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
@@ -24,12 +29,24 @@ if (nodeEnv === 'production' && /:5173(?:\/|$)/.test(webUrl) && steamRealm) {
   webUrl = steamRealm;
 }
 
+const isHttpsBase = /^https:\/\//i.test(webUrl || steamRealm);
+const defaultCookieSecure = nodeEnv === 'production' && isHttpsBase;
+if (nodeEnv === 'production' && !defaultCookieSecure && process.env.AUTH_COOKIE_SECURE === undefined) {
+  console.warn('[config] Running production over HTTP; auth cookie secure flag disabled. Use HTTPS to harden auth.');
+}
+
 module.exports = {
   port: parseInt(process.env.PORT, 10) || 3030,
   nodeEnv,
   jwt: {
     secret: process.env.JWT_SECRET || 'change-me',
     expiresIn: '12h',
+  },
+  auth: {
+    cookieName: process.env.AUTH_COOKIE_NAME || 'cad_token',
+    cookieSameSite: process.env.AUTH_COOKIE_SAMESITE || 'Lax',
+    cookieSecure: parseBoolEnv(process.env.AUTH_COOKIE_SECURE, defaultCookieSecure),
+    cookieDomain: process.env.AUTH_COOKIE_DOMAIN || '',
   },
   steam: {
     apiKey: process.env.STEAM_API_KEY || '',

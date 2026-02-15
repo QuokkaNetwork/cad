@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar';
 
 export default function MainLayout() {
   const location = useLocation();
-  const hideSidebar = location.pathname === '/settings';
+  const hideSidebar = ['/settings', '/home'].includes(location.pathname) || location.pathname.startsWith('/admin');
 
   return (
     <div className="h-screen flex flex-col">

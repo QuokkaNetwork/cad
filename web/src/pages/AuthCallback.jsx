@@ -1,19 +1,19 @@
 import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { setToken } from '../api/client';
+import { clearToken } from '../api/client';
 
 export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   useEffect(() => {
-    const token = searchParams.get('token');
-    if (token) {
-      setToken(token);
-      navigate('/home', { replace: true });
-    } else {
-      navigate('/login?error=no_token', { replace: true });
+    clearToken();
+    const error = searchParams.get('error');
+    if (error) {
+      navigate(`/login?error=${encodeURIComponent(error)}`, { replace: true });
+      return;
     }
+    navigate('/home', { replace: true });
   }, [searchParams, navigate]);
 
   return (

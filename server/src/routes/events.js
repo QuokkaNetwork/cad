@@ -6,8 +6,12 @@ const bus = require('../utils/eventBus');
 const router = express.Router();
 
 router.get('/', (req, res) => {
-  const { token } = req.query;
-  if (!token) return res.status(401).json({ error: 'Token required' });
+  const queryToken = typeof req.query.token === 'string' ? req.query.token : '';
+  const cookieToken = req.cookies?.[req.app?.locals?.authCookieName || 'cad_token'] || '';
+  const { authorization = '' } = req.headers;
+  const bearerToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  const token = bearerToken || cookieToken || queryToken;
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   let user;
   try {

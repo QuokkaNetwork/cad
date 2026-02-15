@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { api, getToken, clearToken } from '../api/client';
+import { api, clearToken } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -8,11 +8,6 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const fetchUser = useCallback(async () => {
-    const token = getToken();
-    if (!token) {
-      setLoading(false);
-      return;
-    }
     try {
       const data = await api.get('/api/auth/me');
       setUser(data);
@@ -28,10 +23,16 @@ export function AuthProvider({ children }) {
     fetchUser();
   }, [fetchUser]);
 
-  const logout = useCallback(() => {
-    clearToken();
-    setUser(null);
-    window.location.href = '/login';
+  const logout = useCallback(async () => {
+    try {
+      await api.post('/api/auth/logout', {});
+    } catch {
+      // ignore
+    } finally {
+      clearToken();
+      setUser(null);
+      window.location.href = '/login';
+    }
   }, []);
 
   const refreshUser = useCallback(async () => {

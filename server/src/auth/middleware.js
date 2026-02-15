@@ -1,13 +1,17 @@
 const { verifyToken } = require('./jwt');
+const config = require('../config');
 const { Users, UserDepartments } = require('../db/sqlite');
 
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const cookieToken = req.cookies?.[config.auth.cookieName] || '';
+  const token = bearerToken || cookieToken;
+
+  if (!token) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
-  const token = authHeader.slice(7);
   try {
     const decoded = verifyToken(token);
     const user = Users.findById(decoded.userId);

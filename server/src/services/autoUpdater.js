@@ -4,14 +4,15 @@ const config = require('../config');
 let updateInterval = null;
 let updateInProgress = false;
 const gitBin = (config.autoUpdate.gitBin || 'git').trim();
-const npmBin = (config.autoUpdate.npmBin || 'npm').trim();
+const configuredNpmBin = (config.autoUpdate.npmBin || 'npm').trim();
+let resolvedNpmBin = configuredNpmBin;
 
 function git(command) {
   return `"${gitBin}" ${command}`;
 }
 
 function npm(command) {
-  return `"${npmBin}" ${command}`;
+  return `"${resolvedNpmBin}" ${command}`;
 }
 
 function run(command, cwd) {
@@ -46,6 +47,32 @@ function logCommandFailure(prefix, err) {
   if (err.stderr && err.stderr.trim()) {
     console.error(`[AutoUpdate] stderr:\n${tail(err.stderr)}`);
   }
+}
+
+async function resolveNpmBin() {
+  const candidates = [];
+  if (configuredNpmBin) candidates.push(configuredNpmBin);
+
+  if (process.platform === 'win32') {
+    for (const candidate of ['npm.cmd', 'C:\\Program Files\\nodejs\\npm.cmd']) {
+      if (!candidates.includes(candidate)) candidates.push(candidate);
+    }
+  } else if (!candidates.includes('npm')) {
+    candidates.push('npm');
+  }
+
+  let lastErr = null;
+  for (const candidate of candidates) {
+    try {
+      await run(`"${candidate}" --version`, process.cwd());
+      resolvedNpmBin = candidate;
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw lastErr || new Error('No working npm binary found');
 }
 
 async function resolveRepoRoot() {
@@ -97,12 +124,12 @@ async function checkForUpdates(repoRoot, branch) {
 
     if (config.autoUpdate.runNpmInstall) {
       console.log('[AutoUpdate] Running npm install...');
-      await run('npm install', repoRoot);
+      await run(npm('install'), repoRoot);
     }
 
     if (config.autoUpdate.runWebBuild) {
       console.log('[AutoUpdate] Running npm run build...');
-      await run('npm run build', repoRoot);
+      await run(npm('run build'), repoRoot);
     }
 
     console.log('[AutoUpdate] Update applied successfully');
@@ -127,7 +154,8 @@ async function startAutoUpdater() {
 
   try {
     await run(git('--version'), process.cwd());
-    await run(npm('--version'), process.cwd());
+    await resolveNpmBin();
+    console.log(`[AutoUpdate] Using npm binary: ${resolvedNpmBin}`);
 
     const repoRoot = await resolveRepoRoot();
     const branch = await resolveBranch(repoRoot);
