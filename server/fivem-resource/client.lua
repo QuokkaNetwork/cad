@@ -150,6 +150,27 @@ local function notifyRoute(route, hadWaypoint)
   end
 end
 
+local function notifyFine(payload)
+  local title = tostring(payload and payload.title or 'CAD Fine Issued')
+  local description = tostring(payload and payload.description or 'You have received a fine.')
+
+  if GetResourceState('ox_lib') == 'started' then
+    TriggerEvent('ox_lib:notify', {
+      title = title,
+      description = description,
+      type = 'error',
+    })
+    return
+  end
+
+  if GetResourceState('chat') == 'started' then
+    TriggerEvent('chat:addMessage', {
+      color = { 255, 85, 85 },
+      args = { 'CAD', description },
+    })
+  end
+end
+
 RegisterNetEvent('cad_bridge:setCallRoute', function(route)
   if type(route) ~= 'table' then return end
 
@@ -165,6 +186,10 @@ RegisterNetEvent('cad_bridge:setCallRoute', function(route)
   end
 
   notifyRoute(route, false)
+end)
+
+RegisterNetEvent('cad_bridge:notifyFine', function(payload)
+  notifyFine(payload)
 end)
 
 CreateThread(function()

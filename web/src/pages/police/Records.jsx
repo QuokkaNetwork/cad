@@ -12,8 +12,6 @@ import {
   parseMedicalRecord,
 } from '../../utils/incidentRecordFormat';
 import {
-  OFFENCE_CATEGORY_LABEL,
-  OFFENCE_CATEGORY_ORDER,
   calculateSelectionTotal,
   normalizeOffenceSelections,
   parseRecordOffenceItems,
@@ -307,17 +305,6 @@ function FireFields({ form, setForm }) {
   );
 }
 
-function groupOffencesByCategory(offences) {
-  const out = {};
-  for (const category of OFFENCE_CATEGORY_ORDER) out[category] = [];
-  for (const offence of offences || []) {
-    const key = OFFENCE_CATEGORY_ORDER.includes(offence?.category) ? offence.category : OFFENCE_CATEGORY_ORDER[0];
-    if (!out[key]) out[key] = [];
-    out[key].push(offence);
-  }
-  return out;
-}
-
 function upsertOffenceSelection(selection, offenceId, quantity) {
   const next = { ...(selection || {}) };
   const id = String(offenceId);
@@ -330,14 +317,54 @@ function upsertOffenceSelection(selection, offenceId, quantity) {
 }
 
 function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine }) {
-  const grouped = useMemo(() => groupOffencesByCategory(catalog), [catalog]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const sortedCatalog = useMemo(() => {
+    return [...catalog].sort((a, b) => {
+      const sortDiff = Number(a?.sort_order || 0) - Number(b?.sort_order || 0);
+      if (sortDiff !== 0) return sortDiff;
+      const codeA = String(a?.code || '').trim();
+      const codeB = String(b?.code || '').trim();
+      if (codeA || codeB) {
+        const codeDiff = codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
+        if (codeDiff !== 0) return codeDiff;
+      }
+      return String(a?.title || '').localeCompare(String(b?.title || ''), undefined, { sensitivity: 'base' });
+    });
+  }, [catalog]);
+
+  const filteredCatalog = useMemo(() => {
+    const query = String(search || '').trim().toLowerCase();
+    if (!query) return sortedCatalog;
+    return sortedCatalog.filter((offence) => (
+      String(offence?.code || '').toLowerCase().includes(query)
+      || String(offence?.title || '').toLowerCase().includes(query)
+      || String(offence?.description || '').toLowerCase().includes(query)
+      || String(offence?.category || '').toLowerCase().includes(query)
+    ));
+  }, [sortedCatalog, search]);
+
+  const selectedCount = useMemo(() => (
+    Object.values(selection || {}).filter(qty => Number(qty) > 0).length
+  ), [selection]);
 
   return (
     <>
       <div className="bg-cad-surface border border-cad-border rounded-lg p-3">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between gap-2 mb-3">
           <p className="text-sm font-medium">Preset Offences</p>
-          <p className="text-sm text-amber-300">Total Fine: ${Number(totalFine || 0).toLocaleString()}</p>
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-amber-300">Total Fine: ${Number(totalFine || 0).toLocaleString()}</p>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(prev => !prev)}
+              disabled={loading || catalog.length === 0}
+              className="px-3 py-1 text-xs bg-cad-card border border-cad-border rounded hover:bg-cad-border transition-colors disabled:opacity-50"
+            >
+              {pickerOpen ? 'Hide Offences' : 'Search Offences'}
+            </button>
+          </div>
         </div>
         {loading ? (
           <p className="text-sm text-cad-muted">Loading offence catalog...</p>
@@ -345,61 +372,71 @@ function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine
           <p className="text-sm text-cad-muted">
             No offences are configured yet. Ask an admin to add entries in Admin - Offence Catalog.
           </p>
+        ) : !pickerOpen ? (
+          <p className="text-xs text-cad-muted">
+            {selectedCount > 0
+              ? `${selectedCount} offence${selectedCount === 1 ? '' : 's'} selected. Click "Search Offences" to add or edit.`
+              : 'Click "Search Offences" to find and add charges.'}
+          </p>
         ) : (
-          <div className="space-y-4">
-            {OFFENCE_CATEGORY_ORDER.map(category => (
-              <div key={category}>
-                <p className="text-xs text-cad-muted uppercase tracking-wider mb-2">
-                  {OFFENCE_CATEGORY_LABEL[category] || category}
-                </p>
-                <div className="space-y-2">
-                  {(grouped[category] || []).map(offence => {
-                    const id = String(offence.id);
-                    const selectedQty = Number(selection[id] || 0);
-                    const checked = selectedQty > 0;
-                    return (
-                      <div key={offence.id} className="bg-cad-card border border-cad-border rounded p-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <label className="flex items-center gap-2 min-w-0">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={e => setSelection(prev => (
-                                e.target.checked
-                                  ? upsertOffenceSelection(prev, offence.id, selectedQty || 1)
-                                  : upsertOffenceSelection(prev, offence.id, 0)
-                              ))}
-                              className="rounded"
-                            />
-                            <span className="min-w-0">
-                              <span className="text-sm font-medium">
-                                {offence.code ? `${offence.code} - ` : ''}{offence.title}
-                              </span>
-                              {offence.description && (
-                                <span className="block text-xs text-cad-muted truncate">{offence.description}</span>
-                              )}
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="Search by code, title, description, or category"
+            />
+            {filteredCatalog.length === 0 ? (
+              <p className="text-xs text-cad-muted">No offences match your search.</p>
+            ) : (
+              <div className="space-y-2 max-h-72 overflow-auto pr-1">
+                {filteredCatalog.map(offence => {
+                  const id = String(offence.id);
+                  const selectedQty = Number(selection[id] || 0);
+                  const checked = selectedQty > 0;
+                  return (
+                    <div key={offence.id} className="bg-cad-card border border-cad-border rounded p-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="flex items-center gap-2 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={e => setSelection(prev => (
+                              e.target.checked
+                                ? upsertOffenceSelection(prev, offence.id, selectedQty || 1)
+                                : upsertOffenceSelection(prev, offence.id, 0)
+                            ))}
+                            className="rounded"
+                          />
+                          <span className="min-w-0">
+                            <span className="text-sm font-medium">
+                              {offence.code ? `${offence.code} - ` : ''}{offence.title}
                             </span>
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-amber-300">${Number(offence.fine_amount || 0).toLocaleString()}</span>
-                            {checked && (
-                              <input
-                                type="number"
-                                min="1"
-                                max="20"
-                                value={selectedQty}
-                                onChange={e => setSelection(prev => upsertOffenceSelection(prev, offence.id, Number(e.target.value) || 1))}
-                                className="w-16 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs focus:outline-none focus:border-cad-accent"
-                              />
+                            {offence.description && (
+                              <span className="block text-xs text-cad-muted truncate">{offence.description}</span>
                             )}
-                          </div>
+                          </span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-amber-300">${Number(offence.fine_amount || 0).toLocaleString()}</span>
+                          {checked && (
+                            <input
+                              type="number"
+                              min="1"
+                              max="20"
+                              value={selectedQty}
+                              onChange={e => setSelection(prev => upsertOffenceSelection(prev, offence.id, Number(e.target.value) || 1))}
+                              className="w-16 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs focus:outline-none focus:border-cad-accent"
+                            />
+                          )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
+            )}
           </div>
         )}
       </div>

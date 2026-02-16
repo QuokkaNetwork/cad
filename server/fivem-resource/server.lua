@@ -483,6 +483,30 @@ local function hasExpectedDeduction(beforeBalance, afterBalance, amount)
   return after <= (expected + 0.01)
 end
 
+local function verifyDeductionWithRetries(readBalance, beforeBalance, amount, retries, delayMs)
+  local attempts = math.max(0, math.floor(tonumber(retries) or 0))
+  local waitMs = math.max(0, math.floor(tonumber(delayMs) or 0))
+
+  local afterBalance = readBalance()
+  local deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+  if deducted ~= false then
+    return deducted, afterBalance
+  end
+
+  for _ = 1, attempts do
+    if waitMs > 0 then
+      Wait(waitMs)
+    end
+    afterBalance = readBalance()
+    deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+    if deducted ~= false then
+      return deducted, afterBalance
+    end
+  end
+
+  return deducted, afterBalance
+end
+
 local function applyJobSyncAuto(sourceId, jobName, jobGrade)
   if GetResourceState('qbx_core') == 'started' then
     local ok, xPlayer = pcall(function()
@@ -695,16 +719,12 @@ local function applyFine(job)
     if reason ~= '' then
       message = message .. (' (%s)'):format(reason)
     end
-
-    if GetResourceState('ox_lib') == 'started' then
-      TriggerClientEvent('ox_lib:notify', sourceId, {
-        title = 'CAD Fine Issued',
-        description = message,
-        type = 'error',
-      })
-      return
-    end
-    notifyPlayer(sourceId, message)
+    TriggerClientEvent('cad_bridge:notifyFine', sourceId, {
+      title = 'CAD Fine Issued',
+      description = message,
+      amount = tonumber(amount) or 0,
+      reason = reason,
+    })
   end
 
   if Config.FineAdapter == 'auto' then
@@ -722,6 +742,8 @@ local function applyFine(job)
         local beforeBalance = getQbxMoneyBalance(sourceId, xPlayer, account)
         local attemptedAdapters = {}
         local attemptErrors = {}
+        local balanceVerifyRetries = 3
+        local balanceVerifyDelayMs = 150
 
         local function recordAttempt(label, err)
           attemptedAdapters[#attemptedAdapters + 1] = label
@@ -748,23 +770,42 @@ local function applyFine(job)
             return false
           end
 
-          local afterBalance = getAfterBalance()
-          local deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+          if result == false then
+            recordAttempt(label, 'returned false')
+            return false
+          end
+
+          local deducted = nil
+          if beforeBalance ~= nil then
+            deducted = select(1, verifyDeductionWithRetries(
+              getAfterBalance,
+              beforeBalance,
+              amount,
+              balanceVerifyRetries,
+              balanceVerifyDelayMs
+            ))
+          end
+
           if deducted == true then
             recordAttempt(label)
             return true
           end
 
-          if result == false then
-            recordAttempt(label, 'returned false')
-            return false
+          if result == true then
+            -- Some QBX implementations return true before balance replication catches up.
+            if deducted == false then
+              recordAttempt(label, 'returned true but balance check did not reflect deduction yet')
+            else
+              recordAttempt(label)
+            end
+            return true
           end
+
+          -- Some framework adapters do not return a status; accept on no-error when balance cannot be verified.
           if deducted == false then
             recordAttempt(label, ('no deduction verified (result=%s)'):format(tostring(result)))
             return false
           end
-
-          -- Some framework adapters do not return a status; accept on no-error when balance cannot be verified.
           recordAttempt(label)
           return true
         end
@@ -876,13 +917,29 @@ local function applyFine(job)
           if removed == false then
             return false, 'qb-core rejected fine removal', false
           end
-          local afterBalance = getPlayerMoneyBalance(player, account)
-          local deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+
+          local deducted = nil
+          if beforeBalance ~= nil then
+            deducted = select(1, verifyDeductionWithRetries(
+              function()
+                return getPlayerMoneyBalance(player, account)
+              end,
+              beforeBalance,
+              amount,
+              3,
+              150
+            ))
+          end
+
           if removed == nil and deducted ~= true then
             return false, 'qb-core RemoveMoney returned no status and deduction could not be verified', false
           end
           if removed == true and deducted == false then
-            return false, 'qb-core reported success but balance did not decrease', false
+            print(('[cad_bridge] qb-core RemoveMoney reported success but balance verification did not update immediately (source=%s, account=%s, amount=%s)'):format(
+              tostring(sourceId),
+              tostring(account),
+              tostring(amount)
+            ))
           end
           notifyFineApplied(sourceId)
           return true, '', false

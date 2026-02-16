@@ -127,10 +127,15 @@ export default function LiveMap() {
     const width = Math.min(maxWidth, Math.max(minWidth, next.width));
     const height = width * (WORLD_HEIGHT / WORLD_WIDTH);
 
-    const minX = WORLD_BOUNDS.minX - ((width - WORLD_WIDTH) * 0.5);
-    const maxX = WORLD_BOUNDS.maxX - width + ((width - WORLD_WIDTH) * 0.5);
-    const minY = -WORLD_BOUNDS.maxY - ((height - WORLD_HEIGHT) * 0.5);
-    const maxY = -WORLD_BOUNDS.minY - height + ((height - WORLD_HEIGHT) * 0.5);
+    // Keep map constrained when zoomed in; keep centered when zoomed out.
+    const extraX = Math.max(0, width - WORLD_WIDTH) * 0.5;
+    const extraY = Math.max(0, height - WORLD_HEIGHT) * 0.5;
+    const minX = WORLD_BOUNDS.minX - extraX;
+    const maxX = WORLD_BOUNDS.maxX - width + extraX;
+    const worldMinY = -WORLD_BOUNDS.maxY;
+    const worldMaxY = -WORLD_BOUNDS.minY;
+    const minY = worldMinY - extraY;
+    const maxY = worldMaxY - height + extraY;
 
     return {
       x: Math.min(maxX, Math.max(minX, next.x)),
@@ -372,7 +377,7 @@ export default function LiveMap() {
             </svg>
 
             <div className="absolute left-3 bottom-3 bg-cad-surface/90 border border-cad-border rounded px-2 py-1 text-[11px] text-cad-muted">
-              Drag to pan | Mouse wheel to zoom
+              Mouse wheel to zoom | Drag to pan
             </div>
           </div>
         </div>
