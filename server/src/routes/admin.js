@@ -7,6 +7,7 @@ const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
   Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs, FiveMJobSyncJobs, SubDepartments, OffenceCatalog,
+  FieldMappingCategories, FieldMappings,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
@@ -22,6 +23,8 @@ const router = express.Router();
 router.use(requireAuth, requireAdmin);
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const OFFENCE_CATEGORIES = new Set(['infringement', 'summary', 'indictment']);
+const FIELD_MAPPING_ENTITY_TYPES = new Set(['person', 'vehicle']);
+const IDENTIFIER_RE = /^[A-Za-z0-9_]+$/;
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -71,6 +74,36 @@ function parseOrderedIds(value) {
       .map(id => Number(id))
       .filter(id => Number.isInteger(id) && id > 0)
   ));
+}
+
+function normalizeFieldMappingEntityType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (FIELD_MAPPING_ENTITY_TYPES.has(normalized)) return normalized;
+  return '';
+}
+
+function parseSortOrder(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function parseFlagInt(value, fallback = 0) {
+  if (value === undefined) return fallback;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  const text = String(value || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return 1;
+  if (['0', 'false', 'no', 'n', 'off'].includes(text)) return 0;
+  return fallback;
+}
+
+function normalizeIdentifier(value, label) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  if (!IDENTIFIER_RE.test(normalized)) {
+    throw new Error(`${label} contains invalid characters`);
+  }
+  return normalized;
 }
 
 const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
@@ -679,6 +712,253 @@ router.delete('/offence-catalog/:id', (req, res) => {
   OffenceCatalog.delete(id);
   audit(req.user.id, 'offence_catalog_deleted', { offenceId: id });
   res.json({ success: true });
+});
+
+// --- Field Mapping Categories ---
+router.get('/field-mapping-categories', (req, res) => {
+  const requestedType = String(req.query.entity_type || '').trim();
+  if (!requestedType) {
+    return res.json({
+      person: FieldMappingCategories.list('person'),
+      vehicle: FieldMappingCategories.list('vehicle'),
+    });
+  }
+
+  const entityType = normalizeFieldMappingEntityType(requestedType);
+  if (!entityType) {
+    return res.status(400).json({ error: 'entity_type must be person or vehicle' });
+  }
+  res.json(FieldMappingCategories.list(entityType));
+});
+
+router.post('/field-mapping-categories', (req, res) => {
+  const entityType = normalizeFieldMappingEntityType(req.body?.entity_type);
+  if (!entityType) {
+    return res.status(400).json({ error: 'entity_type must be person or vehicle' });
+  }
+
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const sortOrder = parseSortOrder(req.body?.sort_order, 0);
+
+  try {
+    const category = FieldMappingCategories.create({
+      name,
+      entity_type: entityType,
+      sort_order: sortOrder,
+    });
+    audit(req.user.id, 'field_mapping_category_created', {
+      category_id: category.id,
+      entity_type: entityType,
+      name,
+    });
+    res.status(201).json(category);
+  } catch (err) {
+    if (String(err?.message || '').includes('UNIQUE')) {
+      return res.status(400).json({ error: 'A category with that name already exists for this entity type' });
+    }
+    throw err;
+  }
+});
+
+router.patch('/field-mapping-categories/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid category id' });
+  const existing = FieldMappingCategories.findById(id);
+  if (!existing) return res.status(404).json({ error: 'Category not found' });
+
+  const updates = {};
+  if (req.body?.name !== undefined) {
+    const name = String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'name cannot be empty' });
+    updates.name = name;
+  }
+  if (req.body?.sort_order !== undefined) {
+    updates.sort_order = parseSortOrder(req.body.sort_order, Number(existing.sort_order || 0));
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid fields supplied' });
+  }
+
+  try {
+    FieldMappingCategories.update(id, updates);
+    const updated = FieldMappingCategories.findById(id);
+    audit(req.user.id, 'field_mapping_category_updated', {
+      category_id: id,
+      updates: Object.keys(updates),
+    });
+    res.json(updated);
+  } catch (err) {
+    if (String(err?.message || '').includes('UNIQUE')) {
+      return res.status(400).json({ error: 'A category with that name already exists for this entity type' });
+    }
+    throw err;
+  }
+});
+
+router.delete('/field-mapping-categories/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid category id' });
+  const existing = FieldMappingCategories.findById(id);
+  if (!existing) return res.status(404).json({ error: 'Category not found' });
+
+  FieldMappingCategories.delete(id);
+  audit(req.user.id, 'field_mapping_category_deleted', {
+    category_id: id,
+    entity_type: existing.entity_type,
+    name: existing.name,
+  });
+  res.json({ success: true });
+});
+
+// --- Field Mappings ---
+router.get('/field-mappings', (req, res) => {
+  const categoryId = parseInt(req.query.category_id, 10);
+  if (categoryId) {
+    return res.json(FieldMappings.listByCategory(categoryId));
+  }
+
+  const entityType = normalizeFieldMappingEntityType(req.query.entity_type || 'person');
+  if (!entityType) {
+    return res.status(400).json({ error: 'entity_type must be person or vehicle' });
+  }
+  res.json(FieldMappings.listAll(entityType));
+});
+
+router.post('/field-mappings', (req, res) => {
+  const categoryId = parseInt(req.body?.category_id, 10);
+  if (!categoryId) return res.status(400).json({ error: 'category_id is required' });
+  const category = FieldMappingCategories.findById(categoryId);
+  if (!category) return res.status(404).json({ error: 'Category not found' });
+
+  const label = String(req.body?.label || '').trim();
+  if (!label) return res.status(400).json({ error: 'label is required' });
+
+  let tableName = '';
+  let columnName = '';
+  let joinColumn = '';
+  try {
+    tableName = normalizeIdentifier(req.body?.table_name, 'table_name');
+    columnName = normalizeIdentifier(req.body?.column_name, 'column_name');
+    joinColumn = normalizeIdentifier(req.body?.character_join_column, 'character_join_column');
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (!tableName || !columnName || !joinColumn) {
+    return res.status(400).json({ error: 'table_name, column_name, and character_join_column are required' });
+  }
+
+  const isJson = parseFlagInt(req.body?.is_json, 0);
+  const jsonKey = String(req.body?.json_key || '').trim();
+  const sortOrder = parseSortOrder(req.body?.sort_order, 0);
+  const isSearchColumn = parseFlagInt(req.body?.is_search_column, 0);
+
+  const mapping = FieldMappings.create({
+    category_id: categoryId,
+    label,
+    table_name: tableName,
+    column_name: columnName,
+    is_json: isJson,
+    json_key: jsonKey,
+    character_join_column: joinColumn,
+    sort_order: sortOrder,
+    is_search_column: isSearchColumn,
+  });
+
+  audit(req.user.id, 'field_mapping_created', {
+    mapping_id: mapping.id,
+    category_id: categoryId,
+    entity_type: category.entity_type,
+    label,
+  });
+  res.status(201).json(mapping);
+});
+
+router.patch('/field-mappings/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid mapping id' });
+  const existing = FieldMappings.findById(id);
+  if (!existing) return res.status(404).json({ error: 'Mapping not found' });
+
+  const updates = {};
+
+  if (req.body?.category_id !== undefined) {
+    const categoryId = parseInt(req.body.category_id, 10);
+    if (!categoryId) return res.status(400).json({ error: 'category_id must be a positive number' });
+    const category = FieldMappingCategories.findById(categoryId);
+    if (!category) return res.status(404).json({ error: 'Target category not found' });
+    updates.category_id = categoryId;
+  }
+  if (req.body?.label !== undefined) {
+    const label = String(req.body.label || '').trim();
+    if (!label) return res.status(400).json({ error: 'label cannot be empty' });
+    updates.label = label;
+  }
+  try {
+    if (req.body?.table_name !== undefined) {
+      const tableName = normalizeIdentifier(req.body.table_name, 'table_name');
+      if (!tableName) return res.status(400).json({ error: 'table_name cannot be empty' });
+      updates.table_name = tableName;
+    }
+    if (req.body?.column_name !== undefined) {
+      const columnName = normalizeIdentifier(req.body.column_name, 'column_name');
+      if (!columnName) return res.status(400).json({ error: 'column_name cannot be empty' });
+      updates.column_name = columnName;
+    }
+    if (req.body?.character_join_column !== undefined) {
+      const joinColumn = normalizeIdentifier(req.body.character_join_column, 'character_join_column');
+      if (!joinColumn) return res.status(400).json({ error: 'character_join_column cannot be empty' });
+      updates.character_join_column = joinColumn;
+    }
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (req.body?.is_json !== undefined) updates.is_json = parseFlagInt(req.body.is_json, existing.is_json ? 1 : 0);
+  if (req.body?.json_key !== undefined) updates.json_key = String(req.body.json_key || '').trim();
+  if (req.body?.sort_order !== undefined) updates.sort_order = parseSortOrder(req.body.sort_order, Number(existing.sort_order || 0));
+  if (req.body?.is_search_column !== undefined) updates.is_search_column = parseFlagInt(req.body.is_search_column, existing.is_search_column ? 1 : 0);
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid fields supplied' });
+  }
+
+  FieldMappings.update(id, updates);
+  const updated = FieldMappings.findById(id);
+  audit(req.user.id, 'field_mapping_updated', {
+    mapping_id: id,
+    updates: Object.keys(updates),
+  });
+  res.json(updated);
+});
+
+router.delete('/field-mappings/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid mapping id' });
+  const existing = FieldMappings.findById(id);
+  if (!existing) return res.status(404).json({ error: 'Mapping not found' });
+
+  FieldMappings.delete(id);
+  audit(req.user.id, 'field_mapping_deleted', {
+    mapping_id: id,
+    category_id: existing.category_id,
+    label: existing.label,
+  });
+  res.json({ success: true });
+});
+
+router.get('/qbox/table-columns', async (req, res) => {
+  const tableName = String(req.query.table_name || '').trim();
+  if (!tableName) {
+    return res.status(400).json({ error: 'table_name is required' });
+  }
+
+  try {
+    const columns = await qbox.listTableColumns(tableName);
+    res.json(columns);
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Failed to inspect table columns' });
+  }
 });
 
 // --- Settings ---

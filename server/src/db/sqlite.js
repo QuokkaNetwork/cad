@@ -1141,7 +1141,7 @@ const FieldMappings = {
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['label', 'table_name', 'column_name', 'is_json', 'json_key', 'character_join_column', 'sort_order', 'is_search_column'];
+    const allowed = ['category_id', 'label', 'table_name', 'column_name', 'is_json', 'json_key', 'character_join_column', 'sort_order', 'is_search_column'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -1149,6 +1149,7 @@ const FieldMappings = {
         updates.push(`${key} = ?`);
         let val = fields[key];
         if (key === 'is_json' || key === 'is_search_column') val = val ? 1 : 0;
+        if (key === 'category_id') val = Number(val) || 0;
         values.push(val);
       }
     }

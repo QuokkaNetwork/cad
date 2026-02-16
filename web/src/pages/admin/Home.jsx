@@ -43,6 +43,12 @@ const ADMIN_ITEMS = [
     description: 'Configure database and integration settings.',
     color: 'bg-vicpol-navy',
   },
+  {
+    to: '/admin/field-mappings',
+    title: 'Field Mappings',
+    description: 'Map CAD profile fields to specific database tables/columns/JSON keys.',
+    color: 'bg-cyan-500',
+  },
 ];
 
 function AdminCard({ item, onOpen, className = '' }) {

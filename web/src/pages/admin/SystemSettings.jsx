@@ -371,6 +371,9 @@ export default function AdminSystemSettings() {
 
         <div className="mt-3">
           <h4 className="text-xs text-cad-muted mb-2">Custom Field Mapping (JSON arrays)</h4>
+          <p className="text-xs text-cad-muted mb-2">
+            Advanced mapping is available in <span className="font-semibold">Admin &gt; Field Mappings</span>. These JSON fields remain as backward-compatible legacy mapping.
+          </p>
           <div className="space-y-3">
             <div>
               <label className="block text-xs text-cad-muted mb-1">Person Custom Fields (`qbox_person_custom_fields`)</label>

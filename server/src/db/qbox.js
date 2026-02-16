@@ -102,6 +102,244 @@ function buildCustomFieldValues({ row, charinfo, mappings }) {
   return customFields;
 }
 
+function isMeaningfulValue(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.some(v => isMeaningfulValue(v));
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+function valueToSignature(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function valueToDisplay(value) {
+  if (!isMeaningfulValue(value)) return '';
+  if (Array.isArray(value)) {
+    return value.map(v => valueToDisplay(v)).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function getBaseRowsForTable(baseRowsByTable, tableName) {
+  if (!baseRowsByTable || typeof baseRowsByTable !== 'object') return null;
+  if (Array.isArray(baseRowsByTable[tableName])) return baseRowsByTable[tableName];
+
+  const target = String(tableName || '').toLowerCase();
+  for (const [key, rows] of Object.entries(baseRowsByTable)) {
+    if (String(key || '').toLowerCase() === target && Array.isArray(rows)) {
+      return rows;
+    }
+  }
+  return null;
+}
+
+function normalizeDatabaseFieldMappings(entityType = 'person') {
+  const normalizedType = String(entityType || '').trim().toLowerCase() === 'vehicle' ? 'vehicle' : 'person';
+  let categories = [];
+  let rows = [];
+  try {
+    categories = FieldMappingCategories.list(normalizedType);
+    rows = FieldMappings.listAll(normalizedType);
+  } catch (err) {
+    if (String(err?.message || '').toLowerCase().includes('no such table')) {
+      return { categories: [], mappings: [] };
+    }
+    throw err;
+  }
+  const categoryMap = new Map(categories.map(category => [category.id, category]));
+  const mappings = [];
+
+  for (const row of rows) {
+    const category = categoryMap.get(row.category_id);
+    if (!category) continue;
+
+    const label = String(row.label || '').trim();
+    const tableName = String(row.table_name || '').trim();
+    const columnName = String(row.column_name || '').trim();
+    const joinColumn = String(row.character_join_column || '').trim();
+    const jsonKey = String(row.json_key || '').trim();
+
+    if (!label || !tableName || !columnName || !joinColumn) continue;
+    if (!IDENTIFIER_RE.test(tableName) || !IDENTIFIER_RE.test(columnName) || !IDENTIFIER_RE.test(joinColumn)) continue;
+
+    mappings.push({
+      id: row.id,
+      category_id: row.category_id,
+      category_name: String(category.name || '').trim() || String(row.category_name || '').trim() || 'Uncategorized',
+      category_sort_order: Number.isFinite(Number(category.sort_order)) ? Number(category.sort_order) : 0,
+      label,
+      table_name: tableName,
+      column_name: columnName,
+      character_join_column: joinColumn,
+      is_json: !!row.is_json,
+      json_key: jsonKey,
+      is_search_column: !!row.is_search_column,
+      sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
+      entity_type: normalizedType,
+    });
+  }
+
+  return { categories, mappings };
+}
+
+async function queryRowsByMappingSource({ poolRef, tableName, joinColumn, joinValue }) {
+  const tableNameSql = escapeIdentifier(tableName, `mapping table "${tableName}"`);
+  const joinColSql = escapeIdentifier(joinColumn, `mapping join column "${joinColumn}"`);
+  const [rows] = await poolRef.query(
+    `SELECT * FROM ${tableNameSql} WHERE ${joinColSql} = ? LIMIT 100`,
+    [joinValue]
+  );
+  return Array.isArray(rows) ? rows : [];
+}
+
+function extractValueFromMappingRow(row, mapping) {
+  const raw = row?.[mapping.column_name];
+  if (mapping.is_json) {
+    const parsed = parseMaybeJson(raw);
+    if (!mapping.json_key) return parsed;
+    return getPathValue(parsed, mapping.json_key);
+  }
+  return raw;
+}
+
+function collectMappingValues(rows, mapping) {
+  const values = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const value = extractValueFromMappingRow(row, mapping);
+    if (!isMeaningfulValue(value)) continue;
+    const signature = valueToSignature(value);
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    values.push(value);
+  }
+  return values;
+}
+
+async function resolveMappedFieldData({
+  entityType = 'person',
+  joinValue,
+  baseRowsByTable = {},
+  includeSearchOnly = false,
+}) {
+  const normalizedJoinValue = String(joinValue || '').trim();
+  if (!normalizedJoinValue) {
+    return { categories: [], custom_fields: {} };
+  }
+
+  const { categories, mappings } = normalizeDatabaseFieldMappings(entityType);
+  const activeMappings = includeSearchOnly
+    ? mappings.filter(mapping => mapping.is_search_column)
+    : mappings;
+
+  if (activeMappings.length === 0) {
+    return { categories: [], custom_fields: {} };
+  }
+
+  const activeCategoryIds = new Set(activeMappings.map(mapping => mapping.category_id));
+  const resolvedCategories = categories
+    .filter(category => activeCategoryIds.has(category.id))
+    .map(category => ({
+      id: category.id,
+      name: String(category.name || '').trim() || 'Uncategorized',
+      entity_type: category.entity_type,
+      sort_order: Number.isFinite(Number(category.sort_order)) ? Number(category.sort_order) : 0,
+      fields: [],
+    }));
+
+  const categoryMap = new Map(resolvedCategories.map(category => [category.id, category]));
+  const rowsCache = new Map();
+  const customFields = {};
+  const poolRef = await getPool();
+
+  for (const mapping of activeMappings) {
+    const sourceKey = `${mapping.table_name}::${mapping.character_join_column}`;
+    let sourceRows = rowsCache.get(sourceKey);
+
+    if (!sourceRows) {
+      const seededRows = getBaseRowsForTable(baseRowsByTable, mapping.table_name);
+      if (Array.isArray(seededRows) && seededRows.length > 0) {
+        const filteredRows = seededRows.filter((row) => {
+          const joinCandidate = String(row?.[mapping.character_join_column] || '').trim();
+          return joinCandidate === normalizedJoinValue;
+        });
+        if (filteredRows.length > 0) {
+          sourceRows = filteredRows;
+        }
+      }
+
+      if (!sourceRows) {
+        try {
+          sourceRows = await queryRowsByMappingSource({
+            poolRef,
+            tableName: mapping.table_name,
+            joinColumn: mapping.character_join_column,
+            joinValue: normalizedJoinValue,
+          });
+        } catch (err) {
+          console.warn('[QBox] Failed to resolve mapped field source:', {
+            table: mapping.table_name,
+            join_column: mapping.character_join_column,
+            label: mapping.label,
+            error: err?.message || String(err),
+          });
+          sourceRows = [];
+        }
+      }
+
+      rowsCache.set(sourceKey, sourceRows);
+    }
+
+    const values = collectMappingValues(sourceRows, mapping);
+    const fieldValue = values.length === 0 ? null : (values.length === 1 ? values[0] : values);
+    const displayValue = valueToDisplay(fieldValue);
+
+    const category = categoryMap.get(mapping.category_id);
+    if (category) {
+      category.fields.push({
+        id: mapping.id,
+        label: mapping.label,
+        value: fieldValue,
+        display_value: displayValue,
+        is_empty: !isMeaningfulValue(fieldValue),
+        table_name: mapping.table_name,
+        column_name: mapping.column_name,
+        character_join_column: mapping.character_join_column,
+        is_json: mapping.is_json,
+        json_key: mapping.json_key,
+        sort_order: mapping.sort_order,
+        is_search_column: mapping.is_search_column,
+      });
+    }
+
+    if (displayValue) {
+      customFields[mapping.label] = displayValue;
+    }
+  }
+
+  return {
+    categories: resolvedCategories,
+    custom_fields: customFields,
+  };
+}
+
 function normalizeJobName(value) {
   return String(value || '').trim();
 }
@@ -256,6 +494,13 @@ async function getTableColumns(tableName) {
   }));
 }
 
+async function listTableColumns(tableName) {
+  const normalized = String(tableName || '').trim();
+  if (!normalized) throw new Error('table_name is required');
+  if (!IDENTIFIER_RE.test(normalized)) throw new Error('table_name contains invalid characters');
+  return getTableColumns(normalized);
+}
+
 function buildColumnsMap(columns) {
   return columns.reduce((acc, col) => {
     acc[col.name] = col;
@@ -320,18 +565,55 @@ async function inspectConfiguredSchema() {
       report.players.warnings.push(`"${cfg.charInfoCol}" is ${playersMap[cfg.charInfoCol].dataType}, not JSON. JSON parsing fallback will be used.`);
     }
 
-    const personMappings = normalizeCustomFields(parseJsonSetting('qbox_person_custom_fields', []), ['column', 'charinfo', 'row']);
-    const vehicleMappings = normalizeCustomFields(parseJsonSetting('qbox_vehicle_custom_fields', []), ['column', 'row']);
+    const legacyPersonMappings = normalizeCustomFields(parseJsonSetting('qbox_person_custom_fields', []), ['column', 'charinfo', 'row']);
+    const legacyVehicleMappings = normalizeCustomFields(parseJsonSetting('qbox_vehicle_custom_fields', []), ['column', 'row']);
     const vehiclesMap = buildColumnsMap(vehiclesColumns);
 
-    for (const mapping of personMappings.filter(m => m.source === 'column')) {
+    for (const mapping of legacyPersonMappings.filter(m => m.source === 'column')) {
       if (!playersMap[mapping.column]) {
         report.players.warnings.push(`Person custom field "${mapping.key}" references missing column "${mapping.column}"`);
       }
     }
-    for (const mapping of vehicleMappings.filter(m => m.source === 'column')) {
+    for (const mapping of legacyVehicleMappings.filter(m => m.source === 'column')) {
       if (!vehiclesMap[mapping.column]) {
         report.vehicles.warnings.push(`Vehicle custom field "${mapping.key}" references missing column "${mapping.column}"`);
+      }
+    }
+
+    const dbPersonMappings = normalizeDatabaseFieldMappings('person').mappings;
+    const dbVehicleMappings = normalizeDatabaseFieldMappings('vehicle').mappings;
+    const tableColumnsCache = new Map([
+      [cfg.playersTable, playersColumns],
+      [cfg.vehiclesTable, vehiclesColumns],
+    ]);
+
+    for (const mapping of [...dbPersonMappings, ...dbVehicleMappings]) {
+      const warningBucket = mapping.entity_type === 'vehicle' ? report.vehicles.warnings : report.players.warnings;
+
+      let columns = tableColumnsCache.get(mapping.table_name);
+      if (!columns) {
+        try {
+          columns = await getTableColumns(mapping.table_name);
+        } catch {
+          columns = [];
+        }
+        tableColumnsCache.set(mapping.table_name, columns);
+      }
+
+      if (!columns.length) {
+        warningBucket.push(`Field mapping "${mapping.label}" references missing table "${mapping.table_name}"`);
+        continue;
+      }
+
+      const cols = buildColumnsMap(columns);
+      if (!cols[mapping.column_name]) {
+        warningBucket.push(`Field mapping "${mapping.label}" references missing column "${mapping.column_name}" in "${mapping.table_name}"`);
+      }
+      if (!cols[mapping.character_join_column]) {
+        warningBucket.push(`Field mapping "${mapping.label}" references missing join column "${mapping.character_join_column}" in "${mapping.table_name}"`);
+      }
+      if (mapping.is_json && !mapping.json_key) {
+        warningBucket.push(`Field mapping "${mapping.label}" has JSON mode enabled but JSON key is blank`);
       }
     }
 
@@ -353,16 +635,10 @@ async function searchCharacters(term) {
     const citizenIdColSql = escapeIdentifier(citizenIdCol, 'citizen ID column');
     const charInfoColSql = escapeIdentifier(charInfoCol, 'charinfo column');
     const personMappings = normalizeCustomFields(parseJsonSetting('qbox_person_custom_fields', []), ['column', 'charinfo', 'row']);
-
-    const columnMappings = personMappings.filter(m => m.source === 'column' && m.column && IDENTIFIER_RE.test(m.column));
-    const selectCustomColumns = columnMappings
-      .map(m => `${escapeIdentifier(m.column, `person custom field column "${m.key}"`)} AS ${escapeIdentifier(`cf_${m.key}`, 'person custom field alias')}`)
-      .join(', ');
-    const selectCustomColumnsSql = selectCustomColumns ? `, ${selectCustomColumns}` : '';
     const normalizedTerm = `%${String(term).trim().toLowerCase()}%`;
 
     const [rows] = await p.query(
-      `SELECT ${citizenIdColSql} as citizenid, ${charInfoColSql} as charinfo${selectCustomColumnsSql}
+      `SELECT *
        FROM ${tableNameSql}
        WHERE ${citizenIdColSql} LIKE ?
          OR CAST(${charInfoColSql} AS CHAR) LIKE ?
@@ -377,25 +653,31 @@ async function searchCharacters(term) {
       [`%${term}%`, `%${term}%`, normalizedTerm, normalizedTerm, normalizedTerm]
     );
 
-    return rows.map(row => {
-      const info = parseMaybeJson(row.charinfo);
-      const normalizedRow = { ...row };
-      for (const mapping of columnMappings) {
-        normalizedRow[mapping.column] = row[`cf_${mapping.key}`];
-      }
-      const customFields = buildCustomFieldValues({ row: normalizedRow, charinfo: info, mappings: personMappings });
+    return Promise.all(rows.map(async (row) => {
+      const citizenId = String(row[citizenIdCol] || '').trim();
+      const info = parseMaybeJson(row[charInfoCol]);
+      const legacyCustomFields = buildCustomFieldValues({ row, charinfo: info, mappings: personMappings });
+      const mapped = await resolveMappedFieldData({
+        entityType: 'person',
+        joinValue: citizenId,
+        baseRowsByTable: { [playersTable]: [row] },
+        includeSearchOnly: true,
+      });
 
       return {
-        citizenid: row.citizenid,
+        citizenid: citizenId,
         firstname: info.firstname || '',
         lastname: info.lastname || '',
         birthdate: info.birthdate || '',
         gender: info.gender !== undefined ? String(info.gender) : '',
         phone: info.phone || '',
         nationality: info.nationality || '',
-        custom_fields: customFields,
+        custom_fields: {
+          ...legacyCustomFields,
+          ...mapped.custom_fields,
+        },
       };
-    });
+    }));
   } catch (err) {
     console.error('QBox character search error:', err);
     throw new Error(`QBox character search error: ${err.message}`);
@@ -424,11 +706,17 @@ async function getCharacterById(citizenId) {
     if (rows.length === 0) return null;
     const row = rows[0];
     const info = parseMaybeJson(row[charInfoCol]);
-    const customFields = buildCustomFieldValues({ row, charinfo: info, mappings: personMappings });
+    const normalizedCitizenId = String(row[citizenIdCol] || '').trim();
+    const legacyCustomFields = buildCustomFieldValues({ row, charinfo: info, mappings: personMappings });
+    const mapped = await resolveMappedFieldData({
+      entityType: 'person',
+      joinValue: normalizedCitizenId,
+      baseRowsByTable: { [playersTable]: [row] },
+    });
     const extractedJob = extractJobFromCharacterRow(row, info, jobCol);
 
     return {
-      citizenid: row[citizenIdCol],
+      citizenid: normalizedCitizenId,
       firstname: info.firstname || '',
       lastname: info.lastname || '',
       birthdate: info.birthdate || '',
@@ -436,7 +724,11 @@ async function getCharacterById(citizenId) {
       phone: info.phone || '',
       nationality: info.nationality || '',
       job: extractedJob,
-      custom_fields: customFields,
+      custom_fields: {
+        ...legacyCustomFields,
+        ...mapped.custom_fields,
+      },
+      mapped_categories: mapped.categories,
       raw: row,
     };
   } catch (err) {
@@ -471,13 +763,29 @@ async function searchVehicles(term) {
       [`%${term}%`, `%${term}%`]
     );
 
-    return rows.map(row => ({
-      plate: row.plate || '',
-      vehicle: row.vehicle || '',
-      owner: row.citizenid || '',
-      garage: row.garage || '',
-      state: row.state !== undefined ? String(row.state) : '',
-      custom_fields: buildCustomFieldValues({ row, charinfo: {}, mappings: vehicleMappings }),
+    return Promise.all(rows.map(async (row) => {
+      const ownerCitizenId = String(row.citizenid || row.owner || '').trim();
+      const legacyCustomFields = buildCustomFieldValues({ row, charinfo: {}, mappings: vehicleMappings });
+      const mapped = ownerCitizenId
+        ? await resolveMappedFieldData({
+          entityType: 'vehicle',
+          joinValue: ownerCitizenId,
+          baseRowsByTable: { [vehiclesTable]: [row] },
+          includeSearchOnly: true,
+        })
+        : { custom_fields: {} };
+
+      return {
+        plate: row.plate || '',
+        vehicle: row.vehicle || '',
+        owner: ownerCitizenId,
+        garage: row.garage || '',
+        state: row.state !== undefined ? String(row.state) : '',
+        custom_fields: {
+          ...legacyCustomFields,
+          ...mapped.custom_fields,
+        },
+      };
     }));
   } catch (err) {
     console.error('QBox vehicle search error:', err);
@@ -497,13 +805,29 @@ async function getVehiclesByOwner(citizenId) {
       [citizenId]
     );
 
-    return rows.map(row => ({
-      plate: row.plate || '',
-      vehicle: row.vehicle || '',
-      owner: row.citizenid || '',
-      garage: row.garage || '',
-      state: row.state !== undefined ? String(row.state) : '',
-      custom_fields: buildCustomFieldValues({ row, charinfo: {}, mappings: vehicleMappings }),
+    return Promise.all(rows.map(async (row) => {
+      const ownerCitizenId = String(row.citizenid || row.owner || citizenId || '').trim();
+      const legacyCustomFields = buildCustomFieldValues({ row, charinfo: {}, mappings: vehicleMappings });
+      const mapped = ownerCitizenId
+        ? await resolveMappedFieldData({
+          entityType: 'vehicle',
+          joinValue: ownerCitizenId,
+          baseRowsByTable: { [vehiclesTable]: [row] },
+        })
+        : { categories: [], custom_fields: {} };
+
+      return {
+        plate: row.plate || '',
+        vehicle: row.vehicle || '',
+        owner: ownerCitizenId,
+        garage: row.garage || '',
+        state: row.state !== undefined ? String(row.state) : '',
+        custom_fields: {
+          ...legacyCustomFields,
+          ...mapped.custom_fields,
+        },
+        mapped_categories: mapped.categories,
+      };
     }));
   } catch (err) {
     console.error('QBox get vehicles error:', err);
@@ -574,6 +898,7 @@ module.exports = {
   initPool,
   testConnection,
   inspectConfiguredSchema,
+  listTableColumns,
   searchCharacters,
   getCharacterById,
   getCharacterJobById,

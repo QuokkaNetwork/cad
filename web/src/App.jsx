@@ -22,6 +22,7 @@ import AdminAuditLog from './pages/admin/AuditLog';
 import AdminSystemSettings from './pages/admin/SystemSettings';
 import AdminHome from './pages/admin/Home';
 import AdminOffenceCatalog from './pages/admin/OffenceCatalog';
+import AdminFieldMappings from './pages/admin/FieldMappings';
 
 export default function App() {
   return (
@@ -60,6 +61,7 @@ export default function App() {
             <Route path="/admin/job-bindings" element={<ProtectedRoute requireAdmin><AdminJobBindings /></ProtectedRoute>} />
             <Route path="/admin/audit-log" element={<ProtectedRoute requireAdmin><AdminAuditLog /></ProtectedRoute>} />
             <Route path="/admin/settings" element={<ProtectedRoute requireAdmin><AdminSystemSettings /></ProtectedRoute>} />
+            <Route path="/admin/field-mappings" element={<ProtectedRoute requireAdmin><AdminFieldMappings /></ProtectedRoute>} />
           </Route>
 
           {/* Default redirect */}

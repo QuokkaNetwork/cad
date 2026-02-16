@@ -17,6 +17,21 @@ function formatErr(err) {
   return base;
 }
 
+function formatMappedValue(value) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    return value.map(v => formatMappedValue(v)).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 export default function Search() {
   const { activeDepartment } = useDepartment();
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -54,14 +69,23 @@ export default function Search() {
 
   async function selectPerson(person) {
     setSelectedPerson(person);
+    setPersonVehicles([]);
+    setPersonRecords([]);
     try {
       const vehiclePromise = isParamedics
         ? Promise.resolve([])
         : api.get(`/api/search/persons/${person.citizenid}/vehicles`);
-      const [vehicles, records] = await Promise.all([
+      const [personDetails, vehicles, records] = await Promise.all([
+        api.get(`/api/search/persons/${person.citizenid}`),
         vehiclePromise,
         api.get(`/api/search/persons/${person.citizenid}/records`),
       ]);
+      setSelectedPerson((current) => {
+        if (!current || String(current.citizenid || '') !== String(person.citizenid || '')) {
+          return current;
+        }
+        return personDetails && typeof personDetails === 'object' ? personDetails : person;
+      });
       setPersonVehicles(Array.isArray(vehicles) ? vehicles : []);
       setPersonRecords(records);
     } catch (err) {
@@ -189,6 +213,28 @@ export default function Search() {
                             ))}
                           </div>
                         )}
+                        {Array.isArray(v.mapped_categories) && v.mapped_categories.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {v.mapped_categories.map(category => {
+                              const fields = Array.isArray(category.fields)
+                                ? category.fields.filter(field => String(field.display_value || '').trim().length > 0)
+                                : [];
+                              if (fields.length === 0) return null;
+                              return (
+                                <div key={`${v.plate || i}-${category.id}`} className="text-[11px]">
+                                  <p className="text-cad-muted uppercase tracking-wider mb-0.5">{category.name}</p>
+                                  <div className="text-cad-muted">
+                                    {fields.map(field => (
+                                      <span key={field.id} className="mr-3">
+                                        {field.label}: {formatMappedValue(field.value)}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -210,6 +256,35 @@ export default function Search() {
                       <span className="ml-2">{String(value)}</span>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {Array.isArray(selectedPerson.mapped_categories) && selectedPerson.mapped_categories.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                  Database Mappings
+                </h4>
+                <div className="space-y-3">
+                  {selectedPerson.mapped_categories.map(category => {
+                    const fields = Array.isArray(category.fields)
+                      ? category.fields.filter(field => String(field.display_value || '').trim().length > 0)
+                      : [];
+                    if (fields.length === 0) return null;
+                    return (
+                      <div key={category.id} className="bg-cad-surface rounded px-3 py-2">
+                        <p className="text-xs text-cad-muted uppercase tracking-wider mb-1">{category.name}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-1 text-sm">
+                          {fields.map(field => (
+                            <div key={field.id}>
+                              <span className="text-cad-muted">{field.label}:</span>
+                              <span className="ml-2">{formatMappedValue(field.value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
