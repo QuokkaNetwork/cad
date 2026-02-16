@@ -79,6 +79,19 @@ function getEditableUnitStatuses() {
   return new Set(['available', 'busy', 'enroute', 'on-scene']);
 }
 
+function emitRouteClearOnAvailable(unit, statusValue) {
+  const normalizedStatus = normalizeUnitStatus(statusValue);
+  if (normalizedStatus !== 'available') return;
+  if (!unit || !unit.id) return;
+
+  const activeCall = Calls.getAssignedCallForUnit(unit.id);
+  bus.emit('unit:status_available', {
+    departmentId: unit.department_id,
+    unit,
+    call: activeCall || null,
+  });
+}
+
 function canDispatchManageUnit(user, unit) {
   if (!user || !unit) return false;
   if (user.is_admin) return true;
@@ -592,6 +605,7 @@ router.patch('/me', requireAuth, (req, res) => {
   const updated = Units.findById(unit.id);
 
   bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
+  emitRouteClearOnAvailable(updated, updates.status);
   res.json(updated);
 });
 
@@ -614,6 +628,7 @@ router.patch('/:id/status', requireAuth, (req, res) => {
   Units.update(unit.id, { status: normalizedStatus });
   const updated = Units.findById(unit.id);
   bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
+  emitRouteClearOnAvailable(updated, normalizedStatus);
   audit(req.user.id, 'unit_status_updated_by_dispatch', {
     target_unit_id: unit.id,
     callsign: unit.callsign,

@@ -146,13 +146,32 @@ function renderDepartments() {
 }
 
 function setVisible(visible) {
-  if (!hasUiElements()) return;
+  if (!hasUiElements()) {
+    console.error("[CAD 000] UI elements not found!");
+    return;
+  }
   open = visible === true;
-  overlay.classList.toggle("hidden", !open);
-  overlay.setAttribute("aria-hidden", open ? "false" : "true");
+  console.log("[CAD 000] Setting visibility:", open);
+
   if (open) {
-    titleInput.focus();
-    titleInput.select();
+    // Force remove hidden class
+    overlay.classList.remove("hidden");
+    overlay.style.display = "grid";
+    overlay.setAttribute("aria-hidden", "false");
+
+    // Force focus after a short delay to ensure rendering
+    setTimeout(function() {
+      if (titleInput) {
+        titleInput.focus();
+        titleInput.select();
+      }
+    }, 50);
+
+    console.log("[CAD 000] UI should now be visible - overlay classes:", overlay.className);
+  } else {
+    overlay.classList.add("hidden");
+    overlay.style.display = "none";
+    overlay.setAttribute("aria-hidden", "true");
   }
 }
 
@@ -248,18 +267,36 @@ function cancelEmergencyForm() {
   setVisible(false);
 }
 
+var lastOpenPayload = null;
+
 window.addEventListener("message", function onMessage(event) {
   var message = event.data || {};
+  console.log("[CAD 000] Received message:", message.action);
   if (message.action === "cadBridge000:open") {
-    resetForm(message.payload || {});
+    console.log("[CAD 000] Opening UI with payload:", message.payload);
+    lastOpenPayload = message.payload || {};
+    resetForm(lastOpenPayload);
     setVisible(true);
     postNui("cadBridge000Opened", {}).catch(function ignoreOpenedError() {});
     return;
   }
   if (message.action === "cadBridge000:close") {
+    console.log("[CAD 000] Closing UI");
     setVisible(false);
   }
 });
+
+// Emergency fallback: expose a global function to force open the UI
+window.force000Open = function(departments) {
+  console.log("[CAD 000] FORCE OPEN called");
+  var payload = {
+    departments: departments || [],
+    max_title_length: 80,
+    max_details_length: 600
+  };
+  resetForm(payload);
+  setVisible(true);
+};
 
 if (hasUiElements()) {
   form.addEventListener("submit", function onSubmit(event) {
@@ -287,4 +324,37 @@ if (hasUiElements()) {
   });
 }
 
-postNui("cadBridge000Ready", {}).catch(function ignoreReadyError() {});
+// Wait for DOM to be fully ready before signaling
+function initialize() {
+  console.log("[CAD 000] Initializing UI");
+
+  if (!hasUiElements()) {
+    console.error("[CAD 000] CRITICAL: UI elements not found in DOM!");
+    console.error("[CAD 000] overlay:", !!overlay);
+    console.error("[CAD 000] form:", !!form);
+    console.error("[CAD 000] titleInput:", !!titleInput);
+    return;
+  }
+
+  console.log("[CAD 000] All UI elements found, sending ready signal");
+  console.log("[CAD 000] Overlay initial state - hidden:", overlay.classList.contains("hidden"));
+
+  // Ensure overlay starts hidden
+  overlay.classList.add("hidden");
+  overlay.style.display = "none";
+
+  postNui("cadBridge000Ready", {})
+    .then(function() {
+      console.log("[CAD 000] Ready signal sent successfully");
+    })
+    .catch(function(err) {
+      console.error("[CAD 000] Ready signal failed:", err);
+    });
+}
+
+// Initialize when DOM is ready
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initialize);
+} else {
+  initialize();
+}

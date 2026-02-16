@@ -25,6 +25,15 @@ body {
   overflow: hidden;
   color: var(--ink);
   font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif;
+  background: transparent;
+}
+
+body {
+  pointer-events: none;
+}
+
+body * {
+  pointer-events: auto;
 }
 
 .overlay {
@@ -38,10 +47,13 @@ body {
     radial-gradient(900px 600px at 80% 100%, rgba(59, 130, 246, 0.12), transparent 65%),
     linear-gradient(160deg, var(--bg-1), var(--bg-2));
   backdrop-filter: blur(3px);
+  z-index: 9999;
+  pointer-events: auto;
 }
 
 .hidden {
   display: none !important;
+  pointer-events: none !important;
 }
 
 .panel {

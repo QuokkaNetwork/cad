@@ -550,6 +550,20 @@ bus.on('unit:offline', ({ unit }) => {
   clearRouteJobsForUnit(unit?.id);
 });
 
+bus.on('unit:status_available', ({ unit, call }) => {
+  const resolvedUnit = unit || Units.findById(Number(unit?.id || 0));
+  if (!resolvedUnit) return;
+
+  clearRouteJobsForUnit(resolvedUnit.id);
+  const resolvedCall = call || Calls.getAssignedCallForUnit(resolvedUnit.id) || null;
+  if (!resolvedCall) return;
+  try {
+    queueRouteClearJob(resolvedCall, resolvedUnit, resolvedUnit.id);
+  } catch (err) {
+    console.warn('[FiveMBridge] Could not queue clear route job on status available:', err?.message || err);
+  }
+});
+
 // Heartbeat from FiveM resource with online players + position.
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];

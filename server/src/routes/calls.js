@@ -222,18 +222,27 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
   const detachedUnitSnapshot = Array.isArray(call?.assigned_units)
     ? (call.assigned_units.find(u => Number(u.id) === Number(parsedUnitId)) || null)
     : null;
-  const unitForEvent = unit || detachedUnitSnapshot;
   const unassignmentChanges = Calls.unassignUnit(call.id, parsedUnitId);
-  let updated = Calls.findById(call.id);
-  let autoClosed = false;
-  const assignedCount = Array.isArray(updated?.assigned_units) ? updated.assigned_units.length : 0;
-  const wasEverAssigned = Number(updated?.was_ever_assigned || call?.was_ever_assigned || 0) === 1;
+  const updated = Calls.findById(call.id);
+  let refreshedUnit = unit;
+  let unitStatusResetToAvailable = false;
 
-  if (unassignmentChanges > 0 && wasEverAssigned && assignedCount === 0 && String(updated?.status || '').toLowerCase() !== 'closed') {
-    Calls.update(call.id, { status: 'closed' });
-    updated = Calls.findById(call.id);
-    autoClosed = true;
+  if (unassignmentChanges > 0 && unit?.id) {
+    const hasAnyActiveCall = !!Calls.getAssignedCallForUnit(unit.id);
+    if (!hasAnyActiveCall && normalizeUnitStatus(unit.status) !== 'available') {
+      Units.update(unit.id, { status: 'available' });
+      refreshedUnit = Units.findById(unit.id) || unit;
+      unitStatusResetToAvailable = true;
+      bus.emit('unit:update', { departmentId: refreshedUnit.department_id, unit: refreshedUnit });
+      bus.emit('unit:status_available', {
+        departmentId: refreshedUnit.department_id,
+        unit: refreshedUnit,
+        call: null,
+      });
+    }
   }
+  const unitForEvent = refreshedUnit || detachedUnitSnapshot;
+  const autoClosed = false;
 
   bus.emit('call:unassign', {
     departmentId: call.department_id,
@@ -242,16 +251,15 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
     unit_id: parsedUnitId,
     removed: unassignmentChanges > 0,
     auto_closed: autoClosed,
+    unit_status_reset_available: unitStatusResetToAvailable,
   });
-  if (autoClosed) {
-    bus.emit('call:close', { departmentId: call.department_id, call: updated, reason: 'auto_closed_all_units_detached' });
-  }
   audit(req.user.id, 'call_unit_unassigned', {
     callId: call.id,
     unitId: parsedUnitId,
     callsign: unitForEvent?.callsign || '',
     assignment_removed: unassignmentChanges > 0,
     auto_closed: autoClosed,
+    unit_status_reset_available: unitStatusResetToAvailable,
   });
   res.json(updated);
 });

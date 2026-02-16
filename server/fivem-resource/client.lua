@@ -364,15 +364,38 @@ local function setEmergencyUiVisible(isVisible, payload)
   if visible then
     emergencyUiAwaitingOpenAck = true
     emergencyUiOpenedAtMs = tonumber(GetGameTimer() or 0) or 0
+    print('[cad_bridge] Setting NUI focus and sending open message')
+    print('[cad_bridge] Payload:', json.encode(payload or {}))
+
+    -- Force set NUI focus multiple times to ensure it works
+    SetNuiFocus(true, true)
+    Wait(10)
+    SetNuiFocus(true, true)
+
+    -- Send the open message
+    SendNUIMessage({
+      action = 'cadBridge000:open',
+      payload = payload or {},
+    })
+
+    -- Send again after a tiny delay to ensure it's received
+    Wait(10)
+    SendNUIMessage({
+      action = 'cadBridge000:open',
+      payload = payload or {},
+    })
+
+    print('[cad_bridge] NUI focus set and messages sent')
   else
     emergencyUiAwaitingOpenAck = false
     emergencyUiOpenedAtMs = 0
+    print('[cad_bridge] Closing 000 popup')
+    SetNuiFocus(false, false)
+    SendNUIMessage({
+      action = 'cadBridge000:close',
+      payload = {},
+    })
   end
-  SetNuiFocus(visible, visible)
-  SendNUIMessage({
-    action = visible and 'cadBridge000:open' or 'cadBridge000:close',
-    payload = payload or {},
-  })
 end
 
 local function sanitizeEmergencyDepartments(departments)
@@ -411,25 +434,49 @@ local function openEmergencyPopup(departments)
   end
 
   if not emergencyUiReady then
-    notifyEmergencyUiIssue('000 UI did not load. Try again, or restart cad_bridge.')
-    return
+    -- Try to force it anyway as a last resort
+    print('[cad_bridge] Emergency UI not ready - attempting force open anyway')
+    notifyEmergencyUiIssue('000 UI may not be fully loaded. If nothing appears, restart cad_bridge.')
+    -- Continue anyway to try opening
+  else
+    print('[cad_bridge] 000 NUI confirmed ready')
   end
 
-  setEmergencyUiVisible(true, {
-    departments = sanitizeEmergencyDepartments(departments),
+  local sanitizedDepts = sanitizeEmergencyDepartments(departments)
+  print('[cad_bridge] Opening 000 emergency popup with ' .. tostring(#sanitizedDepts) .. ' departments')
+
+  local payload = {
+    departments = sanitizedDepts,
     max_title_length = 80,
     max_details_length = 600,
-  })
+  }
+
+  setEmergencyUiVisible(true, payload)
+
+  -- Watchdog: Check if UI opened after 2 seconds
+  CreateThread(function()
+    Wait(2000)
+    if emergencyUiOpen and emergencyUiAwaitingOpenAck then
+      print('[cad_bridge] WARNING: 000 UI did not acknowledge open after 2 seconds')
+      print('[cad_bridge] Attempting to resend open message...')
+      SendNUIMessage({
+        action = 'cadBridge000:open',
+        payload = payload,
+      })
+    end
+  end)
 end
 
 RegisterNUICallback('cadBridge000Ready', function(_data, cb)
   emergencyUiReady = true
+  print('[cad_bridge] 000 NUI is ready')
   if cb then cb({ ok = true }) end
 end)
 
 RegisterNUICallback('cadBridge000Opened', function(_data, cb)
   emergencyUiAwaitingOpenAck = false
   emergencyUiOpenedAtMs = 0
+  print('[cad_bridge] 000 NUI opened successfully')
   if cb then cb({ ok = true }) end
 end)
 
@@ -497,6 +544,16 @@ end)
 RegisterNetEvent('cad_bridge:prompt000', function(departments)
   openEmergencyPopup(departments)
 end)
+
+-- Test command to verify UI works without server
+RegisterCommand('test000ui', function()
+  print('[cad_bridge] Testing 000 UI with mock data')
+  openEmergencyPopup({
+    {id = 1, name = 'Police Department', short_name = 'LSPD', color = '#3b82f6'},
+    {id = 2, name = 'Fire Department', short_name = 'LSFD', color = '#ef4444'},
+    {id = 3, name = 'Emergency Medical Services', short_name = 'EMS', color = '#10b981'},
+  })
+end, false)
 
 AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
