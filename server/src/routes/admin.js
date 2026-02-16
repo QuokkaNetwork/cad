@@ -6,7 +6,7 @@ const sharp = require('sharp');
 const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
-  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs, SubDepartments,
+  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs, FiveMJobSyncJobs, SubDepartments, OffenceCatalog,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
@@ -21,6 +21,7 @@ const {
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
+const OFFENCE_CATEGORIES = new Set(['infringement', 'summary', 'indictment']);
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -46,6 +47,21 @@ function parseFiveMLinkKey(value) {
     return { type: 'license', value: key.slice('license:'.length) };
   }
   return { type: 'steam', value: key };
+}
+
+function normalizeOffenceCategory(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (OFFENCE_CATEGORIES.has(normalized)) return normalized;
+  return 'infringement';
+}
+
+function parseOrderedIds(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(
+    value
+      .map(id => Number(id))
+      .filter(id => Number.isInteger(id) && id > 0)
+  ));
 }
 
 const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
@@ -96,16 +112,33 @@ router.patch('/users/:id', (req, res) => {
   const user = Users.findById(userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  const { is_admin, is_banned } = req.body;
+  const { is_admin, is_banned, preferred_citizen_id } = req.body;
   const updates = {};
   if (is_admin !== undefined) updates.is_admin = is_admin ? 1 : 0;
   if (is_banned !== undefined) updates.is_banned = is_banned ? 1 : 0;
+  if (preferred_citizen_id !== undefined) updates.preferred_citizen_id = String(preferred_citizen_id || '').trim();
 
   Users.update(userId, updates);
   audit(req.user.id, 'user_updated', { targetUserId: userId, updates });
 
   if (is_banned) {
     Units.removeByUserId(userId);
+  }
+
+  if (preferred_citizen_id !== undefined) {
+    try {
+      const { queueJobSyncForUserId } = require('../discord/bot');
+      const queued = queueJobSyncForUserId(userId);
+      if (queued) {
+        audit(req.user.id, 'user_character_linked', {
+          targetUserId: userId,
+          preferred_citizen_id: String(preferred_citizen_id || '').trim(),
+          jobSyncJobId: queued.id,
+        });
+      }
+    } catch (err) {
+      console.warn('[Admin] Could not queue job sync for character link update:', err?.message || err);
+    }
   }
 
   res.json(Users.findById(userId));
@@ -123,10 +156,26 @@ router.get('/departments', (req, res) => {
 });
 
 router.post('/departments', (req, res) => {
-  const { name, short_name, color, icon } = req.body;
+  const {
+    name,
+    short_name,
+    color,
+    icon,
+    layout_type,
+    fivem_job_name,
+    fivem_job_grade,
+  } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
 
-  const dept = Departments.create({ name, short_name, color, icon });
+  const dept = Departments.create({
+    name,
+    short_name,
+    color,
+    icon,
+    layout_type,
+    fivem_job_name: String(fivem_job_name || '').trim(),
+    fivem_job_grade: Number.isFinite(Number(fivem_job_grade)) ? Number(fivem_job_grade) : 0,
+  });
   audit(req.user.id, 'department_created', { departmentId: dept.id, name });
   res.status(201).json(dept);
 });
@@ -141,11 +190,43 @@ router.patch('/departments/:id', (req, res) => {
   res.json(Departments.findById(id));
 });
 
+router.post('/departments/reorder', (req, res) => {
+  const orderedIds = parseOrderedIds(req.body?.ordered_ids);
+  if (!orderedIds.length) {
+    return res.status(400).json({ error: 'ordered_ids is required' });
+  }
+
+  const departments = Departments.list();
+  const existingIds = new Set(departments.map(d => d.id));
+  if (orderedIds.some(id => !existingIds.has(id))) {
+    return res.status(400).json({ error: 'ordered_ids contains unknown department id(s)' });
+  }
+
+  const provided = new Set(orderedIds);
+  const remaining = departments
+    .filter(d => !provided.has(d.id))
+    .map(d => d.id);
+  const finalOrder = [...orderedIds, ...remaining];
+
+  Departments.reorder(finalOrder);
+  audit(req.user.id, 'department_reordered', { ordered_ids: finalOrder });
+  res.json(Departments.list());
+});
+
 router.delete('/departments/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
-  Departments.delete(id);
-  audit(req.user.id, 'department_deleted', { departmentId: id });
-  res.json({ success: true });
+  const dept = Departments.findById(id);
+  if (!dept) return res.status(404).json({ error: 'Department not found' });
+  try {
+    Departments.delete(id);
+    audit(req.user.id, 'department_deleted', { departmentId: id });
+    res.json({ success: true });
+  } catch (err) {
+    if (String(err.message).includes('FOREIGN KEY')) {
+      return res.status(400).json({ error: 'Cannot delete department while records/units/mappings still reference it' });
+    }
+    throw err;
+  }
 });
 
 // --- Sub Departments ---
@@ -158,7 +239,15 @@ router.get('/sub-departments', (req, res) => {
 });
 
 router.post('/sub-departments', (req, res) => {
-  const { department_id, name, short_name, color, is_active } = req.body;
+  const {
+    department_id,
+    name,
+    short_name,
+    color,
+    is_active,
+    fivem_job_name,
+    fivem_job_grade,
+  } = req.body;
   const deptId = parseInt(department_id, 10);
   if (!deptId || !name || !short_name) {
     return res.status(400).json({ error: 'department_id, name and short_name are required' });
@@ -173,6 +262,8 @@ router.post('/sub-departments', (req, res) => {
       short_name: String(short_name).trim(),
       color: color || parent.color || '#0052C2',
       is_active: is_active === undefined ? 1 : (is_active ? 1 : 0),
+      fivem_job_name: String(fivem_job_name || '').trim(),
+      fivem_job_grade: Number.isFinite(Number(fivem_job_grade)) ? Number(fivem_job_grade) : 0,
     });
     audit(req.user.id, 'sub_department_created', { subDepartmentId: sub.id, departmentId: deptId });
     res.status(201).json(sub);
@@ -199,6 +290,29 @@ router.patch('/sub-departments/:id', (req, res) => {
     }
     throw err;
   }
+});
+
+router.post('/sub-departments/reorder', (req, res) => {
+  const departmentId = parseInt(req.body?.department_id, 10);
+  if (!departmentId) return res.status(400).json({ error: 'department_id is required' });
+  if (!Departments.findById(departmentId)) return res.status(404).json({ error: 'Department not found' });
+
+  const orderedIds = parseOrderedIds(req.body?.ordered_ids);
+  if (!orderedIds.length) return res.status(400).json({ error: 'ordered_ids is required' });
+
+  const subs = SubDepartments.listByDepartment(departmentId);
+  const existingIds = new Set(subs.map(s => s.id));
+  if (orderedIds.some(id => !existingIds.has(id))) {
+    return res.status(400).json({ error: 'ordered_ids contains unknown sub-department id(s) for that department' });
+  }
+
+  const provided = new Set(orderedIds);
+  const remaining = subs.filter(s => !provided.has(s.id)).map(s => s.id);
+  const finalOrder = [...orderedIds, ...remaining];
+
+  SubDepartments.reorderForDepartment(departmentId, finalOrder);
+  audit(req.user.id, 'sub_department_reordered', { departmentId, ordered_ids: finalOrder });
+  res.json(SubDepartments.listByDepartment(departmentId));
 });
 
 router.delete('/sub-departments/:id', (req, res) => {
@@ -313,6 +427,106 @@ router.get('/qbox/schema', async (req, res) => {
   }
 });
 
+// --- Offence catalog ---
+router.get('/offence-catalog', (req, res) => {
+  const includeInactive = String(req.query.include_inactive || '').toLowerCase() === 'true';
+  const offences = OffenceCatalog.list(!includeInactive);
+  res.json(offences);
+});
+
+router.post('/offence-catalog', (req, res) => {
+  const {
+    category,
+    code,
+    title,
+    description,
+    fine_amount,
+    sort_order,
+    is_active,
+  } = req.body || {};
+
+  const normalizedTitle = String(title || '').trim();
+  if (!normalizedTitle) {
+    return res.status(400).json({ error: 'title is required' });
+  }
+
+  const fineAmount = Number(fine_amount || 0);
+  if (!Number.isFinite(fineAmount) || fineAmount < 0) {
+    return res.status(400).json({ error: 'fine_amount must be a non-negative number' });
+  }
+
+  try {
+    const offence = OffenceCatalog.create({
+      category: normalizeOffenceCategory(category),
+      code: String(code || '').trim(),
+      title: normalizedTitle,
+      description: String(description || '').trim(),
+      fine_amount: fineAmount,
+      sort_order: Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0,
+      is_active: is_active === undefined ? 1 : (is_active ? 1 : 0),
+    });
+    audit(req.user.id, 'offence_catalog_created', { offenceId: offence.id, category: offence.category });
+    res.status(201).json(offence);
+  } catch (err) {
+    if (String(err?.message || '').includes('UNIQUE')) {
+      return res.status(400).json({ error: 'An offence with that category/code already exists' });
+    }
+    throw err;
+  }
+});
+
+router.patch('/offence-catalog/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid offence id' });
+  const existing = OffenceCatalog.findById(id);
+  if (!existing) return res.status(404).json({ error: 'Offence not found' });
+
+  const updates = {};
+  if (req.body?.category !== undefined) updates.category = normalizeOffenceCategory(req.body.category);
+  if (req.body?.code !== undefined) updates.code = String(req.body.code || '').trim();
+  if (req.body?.title !== undefined) {
+    const normalizedTitle = String(req.body.title || '').trim();
+    if (!normalizedTitle) return res.status(400).json({ error: 'title is required' });
+    updates.title = normalizedTitle;
+  }
+  if (req.body?.description !== undefined) updates.description = String(req.body.description || '').trim();
+  if (req.body?.sort_order !== undefined) updates.sort_order = Number.isFinite(Number(req.body.sort_order)) ? Number(req.body.sort_order) : 0;
+  if (req.body?.is_active !== undefined) updates.is_active = req.body.is_active ? 1 : 0;
+  if (req.body?.fine_amount !== undefined) {
+    const fineAmount = Number(req.body.fine_amount);
+    if (!Number.isFinite(fineAmount) || fineAmount < 0) {
+      return res.status(400).json({ error: 'fine_amount must be a non-negative number' });
+    }
+    updates.fine_amount = fineAmount;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid fields supplied' });
+  }
+
+  try {
+    OffenceCatalog.update(id, updates);
+    const updated = OffenceCatalog.findById(id);
+    audit(req.user.id, 'offence_catalog_updated', { offenceId: id, updates: Object.keys(updates) });
+    res.json(updated);
+  } catch (err) {
+    if (String(err?.message || '').includes('UNIQUE')) {
+      return res.status(400).json({ error: 'An offence with that category/code already exists' });
+    }
+    throw err;
+  }
+});
+
+router.delete('/offence-catalog/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid offence id' });
+  const existing = OffenceCatalog.findById(id);
+  if (!existing) return res.status(404).json({ error: 'Offence not found' });
+  OffenceCatalog.delete(id);
+  audit(req.user.id, 'offence_catalog_deleted', { offenceId: id });
+  res.json({ success: true });
+});
+
 // --- Settings ---
 router.get('/settings', (req, res) => {
   res.json(Settings.getAll());
@@ -390,6 +604,46 @@ router.post('/fivem/fine-jobs/:id/retry', (req, res) => {
   res.json({ ok: true });
 });
 
+router.post('/fivem/fine-jobs/:id/cancel', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid job id' });
+  const job = FiveMFineJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Fine job not found' });
+
+  FiveMFineJobs.markCancelled(id, 'Cancelled by admin');
+  audit(req.user.id, 'fivem_fine_job_cancelled', { fineJobId: id });
+  res.json({ ok: true });
+});
+
+router.post('/fivem/fine-jobs/clear-test', (req, res) => {
+  const cleared = FiveMFineJobs.cancelPendingTestJobs('Cleared queued test fine jobs by admin');
+  audit(req.user.id, 'fivem_test_fines_cleared', { cleared });
+  res.json({ ok: true, cleared });
+});
+
+router.get('/fivem/job-sync-jobs', (req, res) => {
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
+  const jobs = FiveMJobSyncJobs.listRecent(limit).map((job) => {
+    const user = Users.findById(job.user_id);
+    return {
+      ...job,
+      cad_user_name: user?.steam_name || '',
+      cad_discord_id: user?.discord_id || '',
+    };
+  });
+  res.json(jobs);
+});
+
+router.post('/fivem/job-sync-jobs/:id/retry', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid job sync id' });
+  const job = FiveMJobSyncJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Job sync not found' });
+
+  FiveMJobSyncJobs.markPending(id);
+  res.json({ ok: true });
+});
+
 router.post('/fivem/test-fine', (req, res) => {
   const { steam_id, citizen_id, amount, reason } = req.body || {};
   const fineAmount = Number(amount);
@@ -435,7 +689,8 @@ router.post('/fivem/test-fine', (req, res) => {
     reason: jobReason,
   });
 
-  res.status(201).json({ success: true, job, player: link });
+  const deliveryMode = String(Settings.get('fivem_bridge_qbox_fines_delivery_mode') || 'bridge').trim().toLowerCase();
+  res.status(201).json({ success: true, job, player: link, delivery_mode: deliveryMode });
 });
 
 // --- Audit Log ---

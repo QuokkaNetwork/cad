@@ -36,6 +36,8 @@ export default function AdminSystemSettings() {
   const [testFineResult, setTestFineResult] = useState(null);
   const [fineJobs, setFineJobs] = useState([]);
   const [loadingFineJobs, setLoadingFineJobs] = useState(false);
+  const [jobSyncJobs, setJobSyncJobs] = useState([]);
+  const [loadingJobSyncJobs, setLoadingJobSyncJobs] = useState(false);
 
   async function fetchSettings() {
     try {
@@ -105,6 +107,18 @@ export default function AdminSystemSettings() {
     }
   }
 
+  async function fetchJobSyncJobs() {
+    setLoadingJobSyncJobs(true);
+    try {
+      const data = await api.get('/api/admin/fivem/job-sync-jobs?limit=20');
+      setJobSyncJobs(Array.isArray(data) ? data : []);
+    } catch {
+      setJobSyncJobs([]);
+    } finally {
+      setLoadingJobSyncJobs(false);
+    }
+  }
+
   async function retryFineJob(jobId) {
     try {
       await api.post(`/api/admin/fivem/fine-jobs/${jobId}/retry`, {});
@@ -115,11 +129,45 @@ export default function AdminSystemSettings() {
     }
   }
 
+  async function cancelFineJob(jobId) {
+    try {
+      await api.post(`/api/admin/fivem/fine-jobs/${jobId}/cancel`, {});
+      setTestFineResult({ success: true, message: `Fine job #${jobId} cancelled.` });
+      fetchFineJobs();
+    } catch (err) {
+      setTestFineResult({ success: false, message: formatErr(err) });
+    }
+  }
+
+  async function clearQueuedTestFines() {
+    try {
+      const result = await api.post('/api/admin/fivem/fine-jobs/clear-test', {});
+      setTestFineResult({
+        success: true,
+        message: `Cleared ${Number(result?.cleared || 0)} queued test fine job(s).`,
+      });
+      fetchFineJobs();
+    } catch (err) {
+      setTestFineResult({ success: false, message: formatErr(err) });
+    }
+  }
+
+  async function retryJobSyncJob(jobId) {
+    try {
+      await api.post(`/api/admin/fivem/job-sync-jobs/${jobId}/retry`, {});
+      setTestFineResult({ success: true, message: `Job sync #${jobId} re-queued.` });
+      fetchJobSyncJobs();
+    } catch (err) {
+      setTestFineResult({ success: false, message: formatErr(err) });
+    }
+  }
+
   useEffect(() => {
     fetchSettings();
     fetchFiveMStatus();
     fetchFineTargets();
     fetchFineJobs();
+    fetchJobSyncJobs();
   }, [locationKey]);
 
   function updateSetting(key, value) {
@@ -201,9 +249,12 @@ export default function AdminSystemSettings() {
         reason: testFineReason,
       });
       const playerName = result?.player?.player_name || result?.player?.citizen_id || 'player';
+      const deliveryMode = String(result?.delivery_mode || settings.fivem_bridge_qbox_fines_delivery_mode || 'bridge').toLowerCase();
       setTestFineResult({
         success: true,
-        message: `Queued fine job #${result?.job?.id || '?'} for ${playerName}.`,
+        message: deliveryMode === 'direct_db'
+          ? `Queued fine job #${result?.job?.id || '?'} for ${playerName}. Direct DB mode does not send in-game ox_lib notifications.`
+          : `Queued fine job #${result?.job?.id || '?'} for ${playerName}.`,
       });
       fetchFineJobs();
     } catch (err) {
@@ -433,12 +484,12 @@ export default function AdminSystemSettings() {
           <div>
             <label className="block text-xs text-cad-muted mb-1">Fine Delivery Mode</label>
             <select
-              value={settings.fivem_bridge_qbox_fines_delivery_mode || 'direct_db'}
+              value={settings.fivem_bridge_qbox_fines_delivery_mode || 'bridge'}
               onChange={e => updateSetting('fivem_bridge_qbox_fines_delivery_mode', e.target.value)}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
             >
               <option value="direct_db">Direct QBX DB</option>
-              <option value="bridge">FiveM Bridge Command</option>
+              <option value="bridge">FiveM Bridge (In-Game)</option>
             </select>
           </div>
           <div>
@@ -449,6 +500,43 @@ export default function AdminSystemSettings() {
               onChange={e => updateSetting('qbox_fine_account_key', e.target.value)}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
               placeholder="bank"
+            />
+          </div>
+          {String(settings.fivem_bridge_qbox_fines_delivery_mode || 'bridge') === 'direct_db' && (
+            <p className="col-span-2 text-xs text-amber-300">
+              Direct QBX DB mode updates database money only. Live in-game fines and ox_lib notifications require
+              <span className="font-semibold"> FiveM Bridge (In-Game)</span>.
+            </p>
+          )}
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Discord Role Job Sync</label>
+            <select
+              value={settings.fivem_bridge_job_sync_enabled || 'true'}
+              onChange={e => updateSetting('fivem_bridge_job_sync_enabled', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Default Job (No CAD Mapping)</label>
+            <input
+              type="text"
+              value={settings.fivem_bridge_job_sync_default_job || ''}
+              onChange={e => updateSetting('fivem_bridge_job_sync_default_job', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="Leave blank to skip fallback (or set e.g. unemployed)"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Default Job Grade</label>
+            <input
+              type="number"
+              min="0"
+              value={settings.fivem_bridge_job_sync_default_grade || '0'}
+              onChange={e => updateSetting('fivem_bridge_job_sync_default_grade', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
             />
           </div>
         </div>
@@ -568,13 +656,21 @@ export default function AdminSystemSettings() {
       <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Fine Job Status</h3>
-          <button
-            onClick={fetchFineJobs}
-            disabled={loadingFineJobs}
-            className="px-3 py-1.5 text-xs bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
-          >
-            {loadingFineJobs ? 'Refreshing...' : 'Refresh Jobs'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={clearQueuedTestFines}
+              className="px-3 py-1.5 text-xs bg-red-500/10 text-red-300 hover:text-red-200 rounded border border-red-500/30 transition-colors"
+            >
+              Clear Queued Test Fines
+            </button>
+            <button
+              onClick={fetchFineJobs}
+              disabled={loadingFineJobs}
+              className="px-3 py-1.5 text-xs bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
+            >
+              {loadingFineJobs ? 'Refreshing...' : 'Refresh Jobs'}
+            </button>
+          </div>
         </div>
         {fineJobs.length === 0 ? (
           <p className="text-xs text-cad-muted">No fine jobs recorded yet.</p>
@@ -597,8 +693,65 @@ export default function AdminSystemSettings() {
                       {job.status}
                     </span>
                     {job.status !== 'sent' && (
+                      <>
+                        <button
+                          onClick={() => retryFineJob(job.id)}
+                          className="px-2 py-0.5 text-[10px] bg-cad-card text-cad-muted hover:text-cad-ink rounded border border-cad-border"
+                        >
+                          Retry
+                        </button>
+                        <button
+                          onClick={() => cancelFineJob(job.id)}
+                          className="px-2 py-0.5 text-[10px] bg-red-500/10 text-red-300 hover:text-red-200 rounded border border-red-500/30"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[11px] text-cad-muted mt-1">{job.reason || 'No reason'}</p>
+                {!!job.error && <p className="text-[11px] text-red-300 mt-1 whitespace-pre-wrap">{job.error}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Job Sync Status</h3>
+          <button
+            onClick={fetchJobSyncJobs}
+            disabled={loadingJobSyncJobs}
+            className="px-3 py-1.5 text-xs bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
+          >
+            {loadingJobSyncJobs ? 'Refreshing...' : 'Refresh Jobs'}
+          </button>
+        </div>
+        {jobSyncJobs.length === 0 ? (
+          <p className="text-xs text-cad-muted">No job sync jobs recorded yet.</p>
+        ) : (
+          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+            {jobSyncJobs.map(job => (
+              <div key={job.id} className="bg-cad-surface border border-cad-border rounded px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-cad-ink">
+                    #{job.id} | {job.cad_user_name || `User ${job.user_id}`} | {job.job_name} ({Number(job.job_grade || 0)})
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[11px] font-semibold uppercase ${
+                      job.status === 'sent'
+                        ? 'text-emerald-400'
+                        : job.status === 'failed'
+                          ? 'text-red-400'
+                          : 'text-amber-300'
+                    }`}>
+                      {job.status}
+                    </span>
+                    {job.status !== 'sent' && (
                       <button
-                        onClick={() => retryFineJob(job.id)}
+                        onClick={() => retryJobSyncJob(job.id)}
                         className="px-2 py-0.5 text-[10px] bg-cad-card text-cad-muted hover:text-cad-ink rounded border border-cad-border"
                       >
                         Retry
@@ -606,7 +759,9 @@ export default function AdminSystemSettings() {
                     )}
                   </div>
                 </div>
-                <p className="text-[11px] text-cad-muted mt-1">{job.reason || 'No reason'}</p>
+                <p className="text-[11px] text-cad-muted mt-1">
+                  Source: {job.source_type || 'none'} {job.source_id ? `#${job.source_id}` : ''}
+                </p>
                 {!!job.error && <p className="text-[11px] text-red-300 mt-1 whitespace-pre-wrap">{job.error}</p>}
               </div>
             ))}

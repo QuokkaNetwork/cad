@@ -8,6 +8,7 @@ Config.SharedToken = GetConvar('cad_bridge_token', '')
 -- Sync intervals (milliseconds)
 Config.HeartbeatIntervalMs = tonumber(GetConvar('cad_bridge_heartbeat_ms', '5000')) or 5000
 Config.FinePollIntervalMs = tonumber(GetConvar('cad_bridge_fine_poll_ms', '7000')) or 7000
+Config.JobSyncPollIntervalMs = tonumber(GetConvar('cad_bridge_job_sync_poll_ms', '5000')) or 5000
 
 -- If true, publish all online players.
 -- If false, only players with steam/discord/license identifiers are published.
@@ -20,9 +21,19 @@ Config.NearestPostalResource = GetConvar('cad_bridge_postal_resource', 'nearest-
 Config.NearestPostalExport = GetConvar('cad_bridge_postal_export', 'getPostal')
 
 -- Fine processing adapter
+-- 'auto' -> try qbx_core/qb-core RemoveMoney on online character + notify
 -- 'command' -> ExecuteCommand with template below
 -- 'none' -> mark failed unless you customize server.lua
-Config.FineAdapter = GetConvar('cad_bridge_fine_adapter', 'command')
+Config.FineAdapter = GetConvar('cad_bridge_fine_adapter', 'auto')
 
--- Tokens available: {citizenid}, {amount}, {reason}
+-- Tokens available: {source}, {citizenid}, {amount}, {reason}
 Config.FineCommandTemplate = GetConvar('cad_bridge_fine_command', 'qbx_fine {citizenid} {amount} {reason}')
+
+-- Job sync adapter:
+-- 'auto' -> try qbx_core/qb-core player SetJob API
+-- 'command' -> ExecuteCommand with template below
+-- 'none' -> disable job sync applies in resource
+Config.JobSyncAdapter = GetConvar('cad_bridge_job_sync_adapter', 'auto')
+
+-- Tokens available: {source}, {citizenid}, {job}, {grade}
+Config.JobSyncCommandTemplate = GetConvar('cad_bridge_job_sync_command', 'qbx_setjob {source} {job} {grade}')

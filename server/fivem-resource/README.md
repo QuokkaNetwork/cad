@@ -25,20 +25,31 @@ If those convars are missing, the installed resource now falls back to the CAD v
 Optional:
 - `set cad_bridge_heartbeat_ms 5000`
 - `set cad_bridge_fine_poll_ms 7000`
-- `set cad_bridge_fine_adapter command`
+- `set cad_bridge_job_sync_poll_ms 5000`
+- `set cad_bridge_fine_adapter auto`
 - `set cad_bridge_fine_command qbx_fine {citizenid} {amount} {reason}`
+- `set cad_bridge_job_sync_adapter auto`
+- `set cad_bridge_job_sync_command qbx_setjob {source} {job} {grade}`
 - `set cad_bridge_use_nearest_postal true`
 - `set cad_bridge_postal_resource nearest-postal`
 - `set cad_bridge_postal_export getPostal`
 
 CAD-side fine delivery options:
 - In Admin > System Settings, `Fine Delivery Mode = Direct QBX DB` applies fines directly in the QBX players table.
-- `Fine Delivery Mode = FiveM Bridge Command` keeps the old queue polling behavior via this resource.
+- `Fine Delivery Mode = FiveM Bridge (In-Game)` applies fines through this resource to the currently logged-in character and supports in-game notifications.
+
+CAD-side job sync options:
+- In Admin > Departments/Sub-Departments, set `FiveM Job Mapping` (`job name` + `grade`) for role targets.
+- In Admin > Users, set `Preferred Character (citizenid)` if job sync should only target one character.
+- In Admin > System Settings, enable `Discord Role Job Sync` and set fallback job/grade.
+- During Discord role sync, CAD queues job/rank updates that this resource applies in-game.
 
 ## QBox fine adapter
-The default adapter runs a server command using `cad_bridge_fine_command`.
-You should point this to a command/resource in your server that actually creates invoices/fines in your QBox setup.
-If the configured command is not registered, CAD fine jobs will now fail with a clear error instead of being marked sent.
+Default `auto` adapter applies fines to the online character using `qbx_core`/`qb-core` money APIs.
+If `ox_lib` is running, fined players receive an in-game notification.
+You can switch to `command` and use `cad_bridge_fine_command` if your server uses a custom fine command flow.
+If your command expects a player source, include `{source}` in the command template.
+Command adapter execution now waits for the target character to be online.
 
 ## Notes
 - Steam identifiers are required for CAD user matching.

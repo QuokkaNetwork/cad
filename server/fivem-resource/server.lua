@@ -360,35 +360,397 @@ local function commandExists(commandName)
   return false
 end
 
+local function normalizeCitizenId(citizenId)
+  return trim(citizenId):lower()
+end
+
+local function findPlayerByCitizenId(citizenId)
+  local target = normalizeCitizenId(citizenId)
+  if target == '' then return nil end
+
+  for _, src in ipairs(GetPlayers()) do
+    local s = tonumber(src)
+    if s and normalizeCitizenId(getCitizenId(s)) == target then
+      return s
+    end
+  end
+  return nil
+end
+
+local function findPlayerByIdentifier(prefix, value)
+  local target = trim(value):lower()
+  if target == '' then return nil end
+  local expectedPrefix = tostring(prefix or ''):lower() .. ':'
+
+  for _, src in ipairs(GetPlayers()) do
+    local s = tonumber(src)
+    if s then
+      for _, identifier in ipairs(GetPlayerIdentifiers(s)) do
+        local id = tostring(identifier or ''):lower()
+        if id == (expectedPrefix .. target) then
+          return s
+        end
+      end
+    end
+  end
+  return nil
+end
+
+local function resolvePlayerSourceForJob(job)
+  local sourceId = tonumber(job.game_id or job.source or 0)
+  if sourceId and sourceId > 0 and GetPlayerName(sourceId) then
+    return sourceId
+  end
+
+  local byCitizen = findPlayerByCitizenId(job.citizen_id)
+  if byCitizen then return byCitizen end
+
+  local byDiscord = findPlayerByIdentifier('discord', job.discord_id)
+  if byDiscord then return byDiscord end
+
+  return nil
+end
+
+local function resolveFineSource(job, citizenId)
+  local sourceId = tonumber(job.game_id or job.source or 0)
+  local normalizedCitizen = normalizeCitizenId(citizenId)
+  if sourceId and sourceId > 0 and GetPlayerName(sourceId) then
+    if normalizedCitizen == '' or normalizeCitizenId(getCitizenId(sourceId)) == normalizedCitizen then
+      return sourceId
+    end
+  end
+
+  local byCitizen = findPlayerByCitizenId(citizenId)
+  if byCitizen then return byCitizen end
+
+  local discordId = trim(job.discord_id or '')
+  if discordId ~= '' then
+    local byDiscord = findPlayerByIdentifier('discord', discordId)
+    if byDiscord then return byDiscord end
+  end
+
+  local steamKey = trim(job.steam_id or ''):lower()
+  if steamKey:sub(1, 8) == 'discord:' then
+    local byDiscord = findPlayerByIdentifier('discord', steamKey:sub(9))
+    if byDiscord then return byDiscord end
+  elseif steamKey:sub(1, 8) == 'license:' then
+    local byLicense = findPlayerByIdentifier('license', steamKey:sub(9))
+    if byLicense then return byLicense end
+  elseif steamKey:sub(1, 9) == 'license2:' then
+    local byLicense2 = findPlayerByIdentifier('license2', steamKey:sub(10))
+    if byLicense2 then return byLicense2 end
+  end
+
+  return nil
+end
+
+local function toMoneyNumber(value)
+  local n = tonumber(value)
+  if not n then return nil end
+  if n ~= n then return nil end
+  return n
+end
+
+local function getPlayerMoneyBalance(player, account)
+  if type(player) ~= 'table' then return nil end
+  local playerData = player.PlayerData
+  if type(playerData) ~= 'table' then return nil end
+  local money = playerData.money
+  if type(money) ~= 'table' then return nil end
+  return toMoneyNumber(money[account])
+end
+
+local function hasExpectedDeduction(beforeBalance, afterBalance, amount)
+  local before = toMoneyNumber(beforeBalance)
+  local after = toMoneyNumber(afterBalance)
+  if not before or not after then return nil end
+  local expected = before - (tonumber(amount) or 0)
+  return after <= (expected + 0.01)
+end
+
+local function applyJobSyncAuto(sourceId, jobName, jobGrade)
+  if GetResourceState('qbx_core') == 'started' then
+    local ok, xPlayer = pcall(function()
+      return exports.qbx_core:GetPlayer(sourceId)
+    end)
+    if ok and xPlayer then
+      if xPlayer.Functions and type(xPlayer.Functions.SetJob) == 'function' then
+        local setOk, err = pcall(function()
+          xPlayer.Functions.SetJob(jobName, jobGrade)
+        end)
+        if setOk then return true, '' end
+        return false, ('qbx_core SetJob failed: %s'):format(tostring(err))
+      end
+      if type(xPlayer.SetJob) == 'function' then
+        local setOk, err = pcall(function()
+          xPlayer:SetJob(jobName, jobGrade)
+        end)
+        if setOk then return true, '' end
+        return false, ('qbx_core SetJob failed: %s'):format(tostring(err))
+      end
+      return false, 'qbx_core player object has no SetJob method'
+    end
+  end
+
+  if GetResourceState('qb-core') == 'started' then
+    local ok, core = pcall(function()
+      return exports['qb-core']:GetCoreObject()
+    end)
+    if ok and core and core.Functions and core.Functions.GetPlayer then
+      local player = core.Functions.GetPlayer(sourceId)
+      if player and player.Functions and type(player.Functions.SetJob) == 'function' then
+        local setOk, err = pcall(function()
+          player.Functions.SetJob(jobName, jobGrade)
+        end)
+        if setOk then return true, '' end
+        return false, ('qb-core SetJob failed: %s'):format(tostring(err))
+      end
+      return false, 'qb-core player object has no SetJob method'
+    end
+  end
+
+  return false, 'No supported framework for auto job sync (qbx_core/qb-core)'
+end
+
+local function applyJobSync(job)
+  if Config.JobSyncAdapter == 'none' then
+    return false, 'Job sync adapter disabled (Config.JobSyncAdapter=none)', false
+  end
+
+  local jobName = trim(job.job_name or '')
+  if jobName == '' then
+    return false, 'Job name is empty', false
+  end
+  local jobGrade = math.max(0, math.floor(tonumber(job.job_grade) or 0))
+  local sourceId = resolvePlayerSourceForJob(job)
+
+  if not sourceId then
+    return false, 'Target player is no longer online', true
+  end
+
+  if Config.JobSyncAdapter == 'command' then
+    local cmdTemplate = tostring(Config.JobSyncCommandTemplate or '')
+    if cmdTemplate == '' then
+      return false, 'Job sync command template is empty', false
+    end
+
+    local commandName = cmdTemplate:match('^%s*([^%s]+)') or ''
+    if commandName == '' then
+      return false, 'Job sync command template has no command name', false
+    end
+    if not commandExists(commandName) then
+      return false, ('Job sync command not registered: %s'):format(commandName), false
+    end
+
+    local cmd = cmdTemplate
+    cmd = cmd:gsub('{source}', shellEscape(sourceId))
+    cmd = cmd:gsub('{citizenid}', shellEscape(job.citizen_id or ''))
+    cmd = cmd:gsub('{job}', shellEscape(jobName))
+    cmd = cmd:gsub('{grade}', shellEscape(jobGrade))
+    ExecuteCommand(cmd)
+    return true, '', false
+  end
+
+  if Config.JobSyncAdapter == 'auto' then
+    local ok, err = applyJobSyncAuto(sourceId, jobName, jobGrade)
+    return ok, err or '', false
+  end
+
+  return false, ('Unknown job sync adapter: %s'):format(tostring(Config.JobSyncAdapter)), false
+end
+
+CreateThread(function()
+  while true do
+    Wait(math.max(2000, Config.JobSyncPollIntervalMs))
+    if not hasBridgeConfig() then
+      goto continue
+    end
+
+    request('GET', '/api/integration/fivem/job-jobs?limit=25', nil, function(status, body)
+      if status ~= 200 then
+        return
+      end
+
+      local ok, jobs = pcall(json.decode, body)
+      if not ok or type(jobs) ~= 'table' then
+        return
+      end
+
+      for _, job in ipairs(jobs) do
+        local success, err, transient = applyJobSync(job)
+        if success then
+          request('POST', ('/api/integration/fivem/job-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+        elseif transient then
+          -- Keep pending so it can be retried automatically when player is available.
+        else
+          request('POST', ('/api/integration/fivem/job-jobs/%s/failed'):format(tostring(job.id)), {
+            error = err or 'Job sync adapter failed',
+          }, function() end)
+        end
+      end
+    end)
+
+    ::continue::
+  end
+end)
+
 local function applyFine(job)
   if Config.FineAdapter == 'none' then
-    return false, 'Fine adapter disabled (Config.FineAdapter=none)'
+    return false, 'Fine adapter disabled (Config.FineAdapter=none)', false
+  end
+
+  local citizenId = trim(job.citizen_id or '')
+  local amount = tonumber(job.amount) or 0
+  local reason = trim(job.reason or '')
+  local account = trim(job.account or 'bank')
+  if citizenId == '' then
+    return false, 'Fine citizen_id is empty', false
+  end
+  if amount <= 0 then
+    return false, 'Fine amount must be greater than 0', false
+  end
+
+  local function notifyFineApplied(sourceId)
+    local message = ('You have been fined $%s'):format(tostring(math.floor(amount)))
+    if reason ~= '' then
+      message = message .. (' (%s)'):format(reason)
+    end
+
+    if GetResourceState('ox_lib') == 'started' then
+      TriggerClientEvent('ox_lib:notify', sourceId, {
+        title = 'CAD Fine Issued',
+        description = message,
+        type = 'error',
+      })
+      return
+    end
+    notifyPlayer(sourceId, message)
+  end
+
+  if Config.FineAdapter == 'auto' then
+    local sourceId = resolveFineSource(job, citizenId)
+    if not sourceId then
+      return false, 'Target character is not currently online', true
+    end
+
+    if GetResourceState('qbx_core') == 'started' then
+      local ok, xPlayer = pcall(function()
+        return exports.qbx_core:GetPlayer(sourceId)
+      end)
+      if ok and xPlayer then
+        local beforeBalance = getPlayerMoneyBalance(xPlayer, account)
+        local removed = false
+        local success = false
+        local errMsg = ''
+
+        if xPlayer.Functions and type(xPlayer.Functions.RemoveMoney) == 'function' then
+          success, removed = pcall(function()
+            return xPlayer.Functions.RemoveMoney(account, amount, reason ~= '' and reason or 'CAD fine')
+          end)
+          errMsg = success and '' or tostring(removed)
+        elseif type(xPlayer.RemoveMoney) == 'function' then
+          success, removed = pcall(function()
+            return xPlayer:RemoveMoney(account, amount, reason ~= '' and reason or 'CAD fine')
+          end)
+          errMsg = success and '' or tostring(removed)
+        else
+          return false, 'qbx_core player object has no RemoveMoney method', false
+        end
+
+        if not success then
+          return false, ('qbx_core RemoveMoney failed: %s'):format(errMsg), false
+        end
+        if removed == false then
+          return false, 'qbx_core rejected fine removal', false
+        end
+        local afterBalance = getPlayerMoneyBalance(xPlayer, account)
+        if afterBalance == nil then
+          local refreshedOk, refreshed = pcall(function()
+            return exports.qbx_core:GetPlayer(sourceId)
+          end)
+          if refreshedOk and refreshed then
+            afterBalance = getPlayerMoneyBalance(refreshed, account)
+          end
+        end
+        local deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+        if removed == nil and deducted ~= true then
+          return false, 'qbx_core RemoveMoney returned no status and deduction could not be verified', false
+        end
+        if removed == true and deducted == false then
+          return false, 'qbx_core reported success but balance did not decrease', false
+        end
+        notifyFineApplied(sourceId)
+        return true, '', false
+      end
+    end
+
+    if GetResourceState('qb-core') == 'started' then
+      local ok, core = pcall(function()
+        return exports['qb-core']:GetCoreObject()
+      end)
+      if ok and core and core.Functions and core.Functions.GetPlayer then
+        local player = core.Functions.GetPlayer(sourceId)
+        if player and player.Functions and type(player.Functions.RemoveMoney) == 'function' then
+          local beforeBalance = getPlayerMoneyBalance(player, account)
+          local success, removed = pcall(function()
+            return player.Functions.RemoveMoney(account, amount, reason ~= '' and reason or 'CAD fine')
+          end)
+          if not success then
+            return false, ('qb-core RemoveMoney failed: %s'):format(tostring(removed)), false
+          end
+          if removed == false then
+            return false, 'qb-core rejected fine removal', false
+          end
+          local afterBalance = getPlayerMoneyBalance(player, account)
+          local deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+          if removed == nil and deducted ~= true then
+            return false, 'qb-core RemoveMoney returned no status and deduction could not be verified', false
+          end
+          if removed == true and deducted == false then
+            return false, 'qb-core reported success but balance did not decrease', false
+          end
+          notifyFineApplied(sourceId)
+          return true, '', false
+        end
+        return false, 'qb-core player object has no RemoveMoney method', false
+      end
+    end
+
+    return false, 'No supported framework for auto fine adapter (qbx_core/qb-core)', false
   end
 
   if Config.FineAdapter == 'command' then
     local cmdTemplate = tostring(Config.FineCommandTemplate or '')
     if cmdTemplate == '' then
-      return false, 'Fine command template is empty'
+      return false, 'Fine command template is empty', false
     end
 
     local commandName = cmdTemplate:match('^%s*([^%s]+)') or ''
     if commandName == '' then
-      return false, 'Fine command template has no command name'
+      return false, 'Fine command template has no command name', false
     end
     if not commandExists(commandName) then
-      return false, ('Fine command not registered: %s'):format(commandName)
+      return false, ('Fine command not registered: %s'):format(commandName), false
     end
 
+    local sourceId = resolveFineSource(job, citizenId)
+    if not sourceId then
+      return false, 'Target character is not currently online for command fine', true
+    end
     local cmd = cmdTemplate
-    cmd = cmd:gsub('{citizenid}', shellEscape(job.citizen_id or ''))
-    cmd = cmd:gsub('{amount}', shellEscape(job.amount or 0))
-    cmd = cmd:gsub('{reason}', shellEscape(job.reason or ''))
+    cmd = cmd:gsub('{source}', shellEscape(sourceId or 0))
+    cmd = cmd:gsub('{citizenid}', shellEscape(citizenId))
+    cmd = cmd:gsub('{amount}', shellEscape(amount))
+    cmd = cmd:gsub('{reason}', shellEscape(reason))
 
     ExecuteCommand(cmd)
-    return true, ''
+    if sourceId then
+      notifyFineApplied(sourceId)
+    end
+    return true, '', false
   end
 
-  return false, ('Unknown fine adapter: %s'):format(tostring(Config.FineAdapter))
+  return false, ('Unknown fine adapter: %s'):format(tostring(Config.FineAdapter)), false
 end
 
 CreateThread(function()
@@ -409,9 +771,11 @@ CreateThread(function()
       end
 
       for _, job in ipairs(jobs) do
-        local success, err = applyFine(job)
+        local success, err, transient = applyFine(job)
         if success then
           request('POST', ('/api/integration/fivem/fine-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+        elseif transient then
+          -- Keep pending and retry when the target character is online.
         else
           request('POST', ('/api/integration/fivem/fine-jobs/%s/failed'):format(tostring(job.id)), {
             error = err or 'Fine adapter failed',

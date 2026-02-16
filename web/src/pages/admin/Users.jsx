@@ -6,18 +6,38 @@ import AdminPageHeader from '../../components/AdminPageHeader';
 export default function AdminUsers() {
   const { key: locationKey } = useLocation();
   const [users, setUsers] = useState([]);
+  const [activeLinks, setActiveLinks] = useState([]);
+  const [characterInputs, setCharacterInputs] = useState({});
+  const [savingCharacterFor, setSavingCharacterFor] = useState(null);
   const [search, setSearch] = useState('');
 
   async function fetchUsers() {
     try {
       const data = await api.get('/api/admin/users');
       setUsers(data);
+      const nextInputs = {};
+      for (const user of data) {
+        nextInputs[user.id] = user.preferred_citizen_id || '';
+      }
+      setCharacterInputs(nextInputs);
     } catch (err) {
       console.error('Failed to load users:', err);
     }
   }
 
-  useEffect(() => { fetchUsers(); }, [locationKey]);
+  async function fetchLinks() {
+    try {
+      const links = await api.get('/api/admin/fivem/links');
+      setActiveLinks(Array.isArray(links) ? links : []);
+    } catch {
+      setActiveLinks([]);
+    }
+  }
+
+  useEffect(() => {
+    fetchUsers();
+    fetchLinks();
+  }, [locationKey]);
 
   async function toggleAdmin(userId, isAdmin) {
     try {
@@ -34,6 +54,20 @@ export default function AdminUsers() {
       fetchUsers();
     } catch (err) {
       alert('Failed to update user: ' + err.message);
+    }
+  }
+
+  async function savePreferredCharacter(userId) {
+    try {
+      setSavingCharacterFor(userId);
+      await api.patch(`/api/admin/users/${userId}`, {
+        preferred_citizen_id: characterInputs[userId] || '',
+      });
+      fetchUsers();
+    } catch (err) {
+      alert('Failed to update preferred character: ' + err.message);
+    } finally {
+      setSavingCharacterFor(null);
     }
   }
 
@@ -65,6 +99,7 @@ export default function AdminUsers() {
               <th className="px-3 py-2">User</th>
               <th className="px-3 py-2">Steam ID</th>
               <th className="px-3 py-2">Discord</th>
+              <th className="px-3 py-2">Preferred Character</th>
               <th className="px-3 py-2">Departments</th>
               <th className="px-3 py-2">Role</th>
               <th className="px-3 py-2">Actions</th>
@@ -81,6 +116,45 @@ export default function AdminUsers() {
                 </td>
                 <td className="px-3 py-2 font-mono text-xs text-cad-muted">{user.steam_id}</td>
                 <td className="px-3 py-2 text-cad-muted">{user.discord_name || '-'}</td>
+                <td className="px-3 py-2">
+                  {(() => {
+                    const linkedCharacters = Array.from(new Map(
+                      activeLinks
+                        .filter(link => link.cad_user_id === user.id && String(link.citizen_id || '').trim())
+                        .map(link => [String(link.citizen_id || '').trim(), link])
+                    ).values());
+                    return (
+                  <div className="space-y-1">
+                    <input
+                      type="text"
+                      value={characterInputs[user.id] || ''}
+                      onChange={e => setCharacterInputs(prev => ({ ...prev, [user.id]: e.target.value }))}
+                      placeholder="citizenid (manual or quick-pick)"
+                      className="w-40 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-cad-accent"
+                    />
+                    <div className="flex flex-wrap gap-1">
+                      {linkedCharacters.map(link => (
+                          <button
+                            key={`${user.id}-${link.steam_id}-${link.citizen_id}`}
+                            onClick={() => setCharacterInputs(prev => ({ ...prev, [user.id]: link.citizen_id }))}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-cad-card border border-cad-border text-cad-muted hover:text-cad-ink"
+                            title={`#${link.game_id || '?'} ${link.player_name || 'Unknown'}`}
+                          >
+                            {link.citizen_id}
+                          </button>
+                        ))}
+                    </div>
+                    <button
+                      onClick={() => savePreferredCharacter(user.id)}
+                      disabled={savingCharacterFor === user.id}
+                      className="text-[10px] px-2 py-1 bg-cad-surface text-cad-muted hover:text-cad-ink rounded transition-colors disabled:opacity-50"
+                    >
+                      {savingCharacterFor === user.id ? 'Saving...' : 'Save Character'}
+                    </button>
+                  </div>
+                    );
+                  })()}
+                </td>
                 <td className="px-3 py-2">
                   <div className="flex gap-1 flex-wrap">
                     {user.departments?.map(d => (

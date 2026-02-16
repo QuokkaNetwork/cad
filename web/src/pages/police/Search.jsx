@@ -1,8 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import SearchResults from '../../components/SearchResults';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
+import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
+import { parseFireRecord, parseMedicalRecord } from '../../utils/incidentRecordFormat';
+import { parseRecordOffenceItems } from '../../utils/offenceCatalog';
+import { useDepartment } from '../../context/DepartmentContext';
 
 function formatErr(err) {
   if (!err) return 'Unknown error';
@@ -14,6 +18,10 @@ function formatErr(err) {
 }
 
 export default function Search() {
+  const { activeDepartment } = useDepartment();
+  const layoutType = getDepartmentLayoutType(activeDepartment);
+  const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
+  const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
   const [searchType, setSearchType] = useState('person');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -21,6 +29,12 @@ export default function Search() {
   const [selectedPerson, setSelectedPerson] = useState(null);
   const [personVehicles, setPersonVehicles] = useState([]);
   const [personRecords, setPersonRecords] = useState([]);
+
+  useEffect(() => {
+    if (isParamedics && searchType !== 'person') {
+      setSearchType('person');
+    }
+  }, [isParamedics, searchType]);
 
   async function doSearch(e) {
     e.preventDefault();
@@ -41,11 +55,14 @@ export default function Search() {
   async function selectPerson(person) {
     setSelectedPerson(person);
     try {
+      const vehiclePromise = isParamedics
+        ? Promise.resolve([])
+        : api.get(`/api/search/persons/${person.citizenid}/vehicles`);
       const [vehicles, records] = await Promise.all([
-        api.get(`/api/search/persons/${person.citizenid}/vehicles`),
+        vehiclePromise,
         api.get(`/api/search/persons/${person.citizenid}/records`),
       ]);
-      setPersonVehicles(vehicles);
+      setPersonVehicles(Array.isArray(vehicles) ? vehicles : []);
       setPersonRecords(records);
     } catch (err) {
       alert('Failed to load person details:\n' + formatErr(err));
@@ -54,7 +71,9 @@ export default function Search() {
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-6">Person & Vehicle Search</h2>
+      <h2 className="text-xl font-bold mb-6">
+        {isLaw ? 'Person & Vehicle Search' : isParamedics ? 'Patient Lookup' : 'Incident Lookup'}
+      </h2>
 
       {/* Search form */}
       <div className="bg-cad-card border border-cad-border rounded-2xl p-4 mb-6">
@@ -67,24 +86,28 @@ export default function Search() {
                 searchType === 'person' ? 'bg-cad-accent text-white' : 'text-cad-muted hover:text-cad-ink'
               }`}
             >
-              Person
+              {isParamedics ? 'Patient' : 'Person'}
             </button>
-            <button
-              type="button"
-              onClick={() => setSearchType('vehicle')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                searchType === 'vehicle' ? 'bg-cad-accent text-white' : 'text-cad-muted hover:text-cad-ink'
-              }`}
-            >
-              Vehicle
-            </button>
+            {!isParamedics && (
+              <button
+                type="button"
+                onClick={() => setSearchType('vehicle')}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  searchType === 'vehicle' ? 'bg-cad-accent text-white' : 'text-cad-muted hover:text-cad-ink'
+                }`}
+              >
+                Vehicle
+              </button>
+            )}
           </div>
           <div className="flex-1 relative">
             <input
               type="text"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder={searchType === 'person' ? 'Search by first or last name...' : 'Search by plate or vehicle model...'}
+              placeholder={searchType === 'person'
+                ? (isParamedics ? 'Search patient by first or last name...' : 'Search by first or last name...')
+                : 'Search by plate or vehicle model...'}
               className="w-full bg-cad-surface border border-cad-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
             />
           </div>
@@ -143,36 +166,37 @@ export default function Search() {
               )}
             </div>
 
-            {/* Vehicles */}
-            <div>
-              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                Registered Vehicles ({personVehicles.length})
-              </h4>
-              {personVehicles.length > 0 ? (
-                <div className="space-y-1">
-                  {personVehicles.map((v, i) => (
-                    <div key={i} className="bg-cad-surface rounded px-3 py-2 text-sm">
-                      <div className="flex items-center gap-4">
-                        <span className="font-mono font-bold text-cad-accent-light">{v.plate}</span>
-                        <span>{v.vehicle}</span>
-                        <span className="text-cad-muted">{v.garage}</span>
-                      </div>
-                      {v.custom_fields && Object.keys(v.custom_fields).length > 0 && (
-                        <div className="mt-1 text-xs text-cad-muted">
-                          {Object.entries(v.custom_fields).map(([key, value]) => (
-                            <span key={key} className="mr-3">
-                              {key}: {String(value)}
-                            </span>
-                          ))}
+            {!isParamedics && (
+              <div>
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                  Registered Vehicles ({personVehicles.length})
+                </h4>
+                {personVehicles.length > 0 ? (
+                  <div className="space-y-1">
+                    {personVehicles.map((v, i) => (
+                      <div key={i} className="bg-cad-surface rounded px-3 py-2 text-sm">
+                        <div className="flex items-center gap-4">
+                          <span className="font-mono font-bold text-cad-accent-light">{v.plate}</span>
+                          <span>{v.vehicle}</span>
+                          <span className="text-cad-muted">{v.garage}</span>
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-cad-muted">No vehicles registered</p>
-              )}
-            </div>
+                        {v.custom_fields && Object.keys(v.custom_fields).length > 0 && (
+                          <div className="mt-1 text-xs text-cad-muted">
+                            {Object.entries(v.custom_fields).map(([key, value]) => (
+                              <span key={key} className="mr-3">
+                                {key}: {String(value)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-cad-muted">No vehicles registered</p>
+                )}
+              </div>
+            )}
 
             {selectedPerson.custom_fields && Object.keys(selectedPerson.custom_fields).length > 0 && (
               <div>
@@ -193,28 +217,68 @@ export default function Search() {
             {/* Criminal records */}
             <div>
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                Criminal History ({personRecords.length})
+                {isLaw ? 'Criminal History' : isParamedics ? 'Patient Reports' : 'Incident Reports'} ({personRecords.length})
               </h4>
               {personRecords.length > 0 ? (
                 <div className="space-y-2">
-                  {personRecords.map(r => (
-                    <div key={r.id} className="bg-cad-surface rounded p-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <StatusBadge status={r.type} />
-                        <span className="font-medium text-sm">{r.title}</span>
+                  {personRecords.map(r => {
+                    const medical = parseMedicalRecord(r);
+                    const fire = parseFireRecord(r);
+                    const offenceItems = parseRecordOffenceItems(r);
+                    const offenceTotal = offenceItems.reduce(
+                      (sum, item) => sum + (Number(item.line_total || (item.fine_amount * item.quantity)) || 0),
+                      0
+                    );
+                    return (
+                      <div key={r.id} className="bg-cad-surface rounded p-3">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <StatusBadge status={r.type} />
+                          <span className="font-medium text-sm">{r.title}</span>
+                          {medical && <span className="text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">Medical</span>}
+                          {fire && <span className="text-[11px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-500/30">Fire</span>}
+                          {offenceItems.length > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">Offences</span>}
+                        </div>
+                        {medical ? (
+                          <div className="text-xs text-cad-muted space-y-1">
+                            <p>Severity: {medical.severity} | Pain: {medical.pain}/10</p>
+                            {medical.treatment && <p>Treatment: {medical.treatment}</p>}
+                            {medical.transport_to && <p>Transport: {medical.transport_to}</p>}
+                          </div>
+                        ) : fire ? (
+                          <div className="text-xs text-cad-muted space-y-1">
+                            <p>Type: {fire.incident_type} | Severity: {fire.severity}</p>
+                            {fire.action_taken && <p>Action: {fire.action_taken}</p>}
+                            <p>Casualties: {Number(fire.casualties || 0)}</p>
+                          </div>
+                        ) : offenceItems.length > 0 ? (
+                          <div className="text-xs text-cad-muted space-y-1">
+                            {offenceItems.map((item, idx) => (
+                              <p key={`${r.id}-offence-${idx}`}>
+                                {item.quantity}x {item.code ? `${item.code} - ` : ''}{item.title}
+                              </p>
+                            ))}
+                            <p className="text-amber-300">Total Fine: ${Number(offenceTotal || 0).toLocaleString()}</p>
+                            {r.description && <p>Notes: {r.description}</p>}
+                          </div>
+                        ) : (
+                          <>
+                            {r.description && <p className="text-xs text-cad-muted">{r.description}</p>}
+                            {r.type === 'fine' && r.fine_amount > 0 && (
+                              <p className="text-xs text-amber-400 mt-1">${r.fine_amount.toLocaleString()}</p>
+                            )}
+                          </>
+                        )}
+                        <p className="text-xs text-cad-muted mt-1">
+                          {r.officer_callsign} {r.officer_name} - {new Date(r.created_at + 'Z').toLocaleDateString()}
+                        </p>
                       </div>
-                      {r.description && <p className="text-xs text-cad-muted">{r.description}</p>}
-                      {r.type === 'fine' && r.fine_amount > 0 && (
-                        <p className="text-xs text-amber-400 mt-1">${r.fine_amount.toLocaleString()}</p>
-                      )}
-                      <p className="text-xs text-cad-muted mt-1">
-                        {r.officer_callsign} {r.officer_name} - {new Date(r.created_at + 'Z').toLocaleDateString()}
-                      </p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
-                <p className="text-sm text-cad-muted">No criminal history</p>
+                <p className="text-sm text-cad-muted">
+                  {isLaw ? 'No criminal history' : isParamedics ? 'No patient reports' : 'No incident reports'}
+                </p>
               )}
             </div>
           </div>

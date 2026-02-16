@@ -1,12 +1,213 @@
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const config = require('../config');
-const { Users, UserDepartments, UserSubDepartments, DiscordRoleMappings, SubDepartments } = require('../db/sqlite');
+const {
+  Users,
+  Departments,
+  UserDepartments,
+  UserSubDepartments,
+  DiscordRoleMappings,
+  SubDepartments,
+  FiveMJobSyncJobs,
+  Settings,
+} = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 let client = null;
 const ADMIN_DISCORD_ROLE_ID = '1472592662103064617';
 let roleSyncInterval = null;
+
+function toBool(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return String(value).trim().toLowerCase() === 'true';
+}
+
+function normalizeGrade(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+}
+
+function normalizedJob(jobName, jobGrade, sourceType = 'none', sourceId = null) {
+  const name = String(jobName || '').trim();
+  if (!name) return null;
+  return {
+    job_name: name,
+    job_grade: normalizeGrade(jobGrade),
+    source_type: sourceType,
+    source_id: sourceId ? Number(sourceId) : null,
+  };
+}
+
+function getDefaultJobTarget() {
+  const configuredName = String(Settings.get('fivem_bridge_job_sync_default_job') || '').trim();
+  if (!configuredName) return null;
+  const configuredGrade = normalizeGrade(Settings.get('fivem_bridge_job_sync_default_grade') || 0);
+  return normalizedJob(configuredName, configuredGrade, 'fallback', null);
+}
+
+function isJobSyncEnabled() {
+  return toBool(Settings.get('fivem_bridge_job_sync_enabled'), true);
+}
+
+function choosePreferredTarget(candidates = []) {
+  if (!candidates.length) return null;
+  return [...candidates].sort((a, b) => {
+    if (b.job_grade !== a.job_grade) return b.job_grade - a.job_grade;
+    return (a.source_id || 0) - (b.source_id || 0);
+  })[0];
+}
+
+function computeDesiredJobTarget(departments, subDepartments) {
+  const subCandidates = (Array.isArray(subDepartments) ? subDepartments : [])
+    .map(sd => normalizedJob(sd.fivem_job_name, sd.fivem_job_grade, 'sub_department', sd.id))
+    .filter(Boolean);
+  const bestSub = choosePreferredTarget(subCandidates);
+  if (bestSub) return bestSub;
+
+  const deptCandidates = (Array.isArray(departments) ? departments : [])
+    .map(d => normalizedJob(d.fivem_job_name, d.fivem_job_grade, 'department', d.id))
+    .filter(Boolean);
+  const bestDept = choosePreferredTarget(deptCandidates);
+  if (bestDept) return bestDept;
+
+  return getDefaultJobTarget();
+}
+
+function isSameJobTarget(left, right) {
+  const a = left || null;
+  const b = right || null;
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (
+    String(a.job_name || '') === String(b.job_name || '')
+    && normalizeGrade(a.job_grade) === normalizeGrade(b.job_grade)
+    && String(a.source_type || '') === String(b.source_type || '')
+    && Number(a.source_id || 0) === Number(b.source_id || 0)
+  );
+}
+
+function getMappedTargets(memberRoleIds, mappings) {
+  const departmentIds = new Set();
+  const subDepartmentIds = new Set();
+  for (const mapping of mappings) {
+    if (!memberRoleIds.has(mapping.discord_role_id)) continue;
+    if (mapping.target_type === 'department' && mapping.target_id) {
+      departmentIds.add(mapping.target_id);
+    }
+    if (mapping.target_type === 'sub_department' && mapping.target_id) {
+      subDepartmentIds.add(mapping.target_id);
+      const sub = SubDepartments.findById(mapping.target_id);
+      if (sub?.department_id) {
+        departmentIds.add(sub.department_id);
+      }
+    }
+  }
+  return {
+    departmentIds: [...departmentIds],
+    subDepartmentIds: [...subDepartmentIds],
+  };
+}
+
+function queueJobSyncIfNeeded(user, oldDepts, oldSubDepts, newDepts, newSubDepts) {
+  if (!isJobSyncEnabled()) return null;
+
+  const beforeTarget = computeDesiredJobTarget(oldDepts, oldSubDepts);
+  const afterTarget = computeDesiredJobTarget(newDepts, newSubDepts);
+  if (!afterTarget) return null;
+  const preferredCitizenId = String(user.preferred_citizen_id || '').trim();
+
+  const latestJob = FiveMJobSyncJobs.findLatestByUserId(user.id);
+  if (isSameJobTarget(beforeTarget, afterTarget) && latestJob) {
+    const latestTarget = normalizedJob(
+      latestJob.job_name,
+      latestJob.job_grade,
+      latestJob.source_type,
+      latestJob.source_id
+    );
+    const latestCitizen = String(latestJob.citizen_id || '').trim();
+    if (isSameJobTarget(latestTarget, afterTarget) && latestCitizen === preferredCitizenId) return null;
+  }
+
+  const job = FiveMJobSyncJobs.createOrReplacePending({
+    user_id: user.id,
+    steam_id: user.steam_id,
+    discord_id: user.discord_id || '',
+    citizen_id: preferredCitizenId,
+    job_name: afterTarget.job_name,
+    job_grade: afterTarget.job_grade,
+    source_type: afterTarget.source_type,
+    source_id: afterTarget.source_id,
+  });
+
+  audit(user.id, 'fivem_job_sync_queued', {
+    discordId: user.discord_id,
+    preferredCitizenId,
+    before: beforeTarget,
+    after: afterTarget,
+    jobSyncJobId: job?.id || null,
+  });
+
+  return job;
+}
+
+function syncLinkedUserAccess(user, member, mappings) {
+  const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
+  const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
+  const { departmentIds, subDepartmentIds } = getMappedTargets(memberRoleIds, mappings);
+
+  const oldDepts = UserDepartments.getForUser(user.id);
+  const oldSubDepts = UserSubDepartments.getForUser(user.id);
+  const oldIsAdmin = !!user.is_admin;
+
+  UserDepartments.setForUser(user.id, departmentIds);
+  UserSubDepartments.setForUser(user.id, subDepartmentIds);
+  if (hasAdminRole !== oldIsAdmin) {
+    Users.update(user.id, { is_admin: hasAdminRole ? 1 : 0 });
+  }
+
+  const newDepts = UserDepartments.getForUser(user.id);
+  const newSubDepts = UserSubDepartments.getForUser(user.id);
+  const newIsAdmin = !!(Users.findById(user.id)?.is_admin);
+
+  const oldIds = oldDepts.map(d => d.id).sort().join(',');
+  const newIds = newDepts.map(d => d.id).sort().join(',');
+  if (oldIds !== newIds) {
+    audit(user.id, 'department_sync', {
+      discordId: user.discord_id,
+      before: oldDepts.map(d => d.short_name),
+      after: newDepts.map(d => d.short_name),
+    });
+    bus.emit('sync:department', { userId: user.id, departments: newDepts });
+  }
+
+  const oldSubIds = oldSubDepts.map(d => d.id).sort().join(',');
+  const newSubIds = newSubDepts.map(d => d.id).sort().join(',');
+  if (oldSubIds !== newSubIds) {
+    audit(user.id, 'sub_department_sync', {
+      discordId: user.discord_id,
+      before: oldSubDepts.map(d => d.short_name),
+      after: newSubDepts.map(d => d.short_name),
+    });
+  }
+
+  if (oldIsAdmin !== newIsAdmin) {
+    audit(user.id, 'admin_sync', {
+      discordId: user.discord_id,
+      before: oldIsAdmin,
+      after: newIsAdmin,
+      roleId: ADMIN_DISCORD_ROLE_ID,
+    });
+  }
+
+  const queuedJob = queueJobSyncIfNeeded(user, oldDepts, oldSubDepts, newDepts, newSubDepts);
+
+  return {
+    is_admin: newIsAdmin,
+    departments: newDepts,
+    sub_departments: newSubDepts,
+    queued_job_sync_id: queuedJob?.id || null,
+  };
+}
 
 async function startBot() {
   if (!config.discord.botToken) {
@@ -87,76 +288,14 @@ async function syncUserRoles(discordId) {
   }
 
   const mappings = DiscordRoleMappings.list();
-  const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
-  const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
-
-  const departmentIds = new Set();
-  const subDepartmentIds = new Set();
-  for (const mapping of mappings) {
-    if (!memberRoleIds.has(mapping.discord_role_id)) continue;
-    if (mapping.target_type === 'department' && mapping.target_id) {
-      departmentIds.add(mapping.target_id);
-    }
-    if (mapping.target_type === 'sub_department' && mapping.target_id) {
-      subDepartmentIds.add(mapping.target_id);
-      const sub = SubDepartments.findById(mapping.target_id);
-      if (sub?.department_id) {
-        departmentIds.add(sub.department_id);
-      }
-    }
-  }
-
-  const uniqueDeptIds = [...departmentIds];
-  const uniqueSubDeptIds = [...subDepartmentIds];
-
-  const oldDepts = UserDepartments.getForUser(user.id);
-  const oldSubDepts = UserSubDepartments.getForUser(user.id);
-  const oldIsAdmin = !!user.is_admin;
-  UserDepartments.setForUser(user.id, uniqueDeptIds);
-  UserSubDepartments.setForUser(user.id, uniqueSubDeptIds);
-  if (hasAdminRole !== oldIsAdmin) {
-    Users.update(user.id, { is_admin: hasAdminRole ? 1 : 0 });
-  }
-  const newDepts = UserDepartments.getForUser(user.id);
-  const newSubDepts = UserSubDepartments.getForUser(user.id);
-  const newIsAdmin = !!(Users.findById(user.id)?.is_admin);
-
-  // Check if anything changed
-  const oldIds = oldDepts.map(d => d.id).sort().join(',');
-  const newIds = newDepts.map(d => d.id).sort().join(',');
-  if (oldIds !== newIds) {
-    audit(user.id, 'department_sync', {
-      discordId,
-      before: oldDepts.map(d => d.short_name),
-      after: newDepts.map(d => d.short_name),
-    });
-    bus.emit('sync:department', { userId: user.id, departments: newDepts });
-  }
-
-  const oldSubIds = oldSubDepts.map(d => d.id).sort().join(',');
-  const newSubIds = newSubDepts.map(d => d.id).sort().join(',');
-  if (oldSubIds !== newSubIds) {
-    audit(user.id, 'sub_department_sync', {
-      discordId,
-      before: oldSubDepts.map(d => d.short_name),
-      after: newSubDepts.map(d => d.short_name),
-    });
-  }
-
-  if (oldIsAdmin !== newIsAdmin) {
-    audit(user.id, 'admin_sync', {
-      discordId,
-      before: oldIsAdmin,
-      after: newIsAdmin,
-      roleId: ADMIN_DISCORD_ROLE_ID,
-    });
-  }
+  const synced = syncLinkedUserAccess(user, member, mappings);
 
   return {
     synced: true,
-    is_admin: newIsAdmin,
-    departments: newDepts.map(d => d.short_name),
-    sub_departments: newSubDepts.map(d => d.short_name),
+    is_admin: synced.is_admin,
+    departments: synced.departments.map(d => d.short_name),
+    sub_departments: synced.sub_departments.map(d => d.short_name),
+    queued_job_sync_id: synced.queued_job_sync_id,
   };
 }
 
@@ -174,31 +313,7 @@ async function syncAllMembers() {
   for (const [, member] of members) {
     const user = Users.findByDiscordId(member.id);
     if (!user) { skipped++; continue; }
-
-    const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
-    const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
-    const departmentIds = new Set();
-    const subDepartmentIds = new Set();
-    for (const mapping of mappings) {
-      if (!memberRoleIds.has(mapping.discord_role_id)) continue;
-      if (mapping.target_type === 'department' && mapping.target_id) {
-        departmentIds.add(mapping.target_id);
-      }
-      if (mapping.target_type === 'sub_department' && mapping.target_id) {
-        subDepartmentIds.add(mapping.target_id);
-        const sub = SubDepartments.findById(mapping.target_id);
-        if (sub?.department_id) {
-          departmentIds.add(sub.department_id);
-        }
-      }
-    }
-
-    UserDepartments.setForUser(user.id, [...departmentIds]);
-    UserSubDepartments.setForUser(user.id, [...subDepartmentIds]);
-    const isAdmin = !!user.is_admin;
-    if (hasAdminRole !== isAdmin) {
-      Users.update(user.id, { is_admin: hasAdminRole ? 1 : 0 });
-    }
+    syncLinkedUserAccess(user, member, mappings);
     synced++;
   }
 
@@ -226,4 +341,13 @@ function getClient() {
   return client;
 }
 
-module.exports = { startBot, syncUserRoles, syncAllMembers, getGuildRoles, getClient };
+function queueJobSyncForUserId(userId) {
+  const user = Users.findById(userId);
+  if (!user) return null;
+
+  const depts = user.is_admin ? Departments.list() : UserDepartments.getForUser(user.id);
+  const subDepts = user.is_admin ? SubDepartments.list() : UserSubDepartments.getForUser(user.id);
+  return queueJobSyncIfNeeded(user, depts, subDepts, depts, subDepts);
+}
+
+module.exports = { startBot, syncUserRoles, syncAllMembers, getGuildRoles, getClient, queueJobSyncForUserId };

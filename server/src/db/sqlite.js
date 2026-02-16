@@ -5,6 +5,27 @@ const config = require('../config');
 
 let db;
 
+const DEPARTMENT_LAYOUT_TYPES = new Set(['law_enforcement', 'paramedics', 'fire']);
+const OFFENCE_CATEGORIES = new Set(['infringement', 'summary', 'indictment']);
+
+function normalizeDepartmentLayoutType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (DEPARTMENT_LAYOUT_TYPES.has(normalized)) return normalized;
+  return 'law_enforcement';
+}
+
+function normalizeOffenceCategory(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (OFFENCE_CATEGORIES.has(normalized)) return normalized;
+  return 'infringement';
+}
+
+function getNextSortOrder(tableName, whereClause = '', whereValues = []) {
+  const query = `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order FROM ${tableName} ${whereClause}`;
+  const row = db.prepare(query).get(...whereValues);
+  return Number.isFinite(Number(row?.next_sort_order)) ? Number(row.next_sort_order) : 0;
+}
+
 function initDb() {
   const dir = path.dirname(config.sqlite.file);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -56,13 +77,17 @@ const Users = {
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['steam_name', 'avatar_url', 'discord_id', 'discord_name', 'is_admin', 'is_banned'];
+    const allowed = ['steam_name', 'avatar_url', 'discord_id', 'discord_name', 'is_admin', 'is_banned', 'preferred_citizen_id'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
       if (fields[key] !== undefined) {
         updates.push(`${key} = ?`);
-        values.push(fields[key]);
+        if (key === 'preferred_citizen_id') {
+          values.push(String(fields[key] || '').trim());
+        } else {
+          values.push(fields[key]);
+        }
       }
     }
     if (updates.length === 0) return;
@@ -78,10 +103,10 @@ const Users = {
 // --- Departments ---
 const Departments = {
   list() {
-    return db.prepare('SELECT * FROM departments ORDER BY id').all();
+    return db.prepare('SELECT * FROM departments ORDER BY sort_order ASC, id ASC').all();
   },
   listActive() {
-    return db.prepare('SELECT * FROM departments WHERE is_active = 1 ORDER BY id').all();
+    return db.prepare('SELECT * FROM departments WHERE is_active = 1 ORDER BY sort_order ASC, id ASC').all();
   },
   findById(id) {
     return db.prepare('SELECT * FROM departments WHERE id = ?').get(id);
@@ -89,20 +114,44 @@ const Departments = {
   findByShortName(shortName) {
     return db.prepare('SELECT * FROM departments WHERE short_name = ?').get(shortName);
   },
-  create({ name, short_name, color, icon }) {
+  create({ name, short_name, color, icon, layout_type, fivem_job_name, fivem_job_grade, sort_order }) {
+    const resolvedSortOrder = Number.isFinite(Number(sort_order))
+      ? Math.max(0, Math.trunc(Number(sort_order)))
+      : getNextSortOrder('departments');
     const info = db.prepare(
-      'INSERT INTO departments (name, short_name, color, icon) VALUES (?, ?, ?, ?)'
-    ).run(name, short_name || '', color || '#0052C2', icon || '');
+      'INSERT INTO departments (name, short_name, color, icon, layout_type, fivem_job_name, fivem_job_grade, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      name,
+      short_name || '',
+      color || '#0052C2',
+      icon || '',
+      normalizeDepartmentLayoutType(layout_type),
+      String(fivem_job_name || '').trim(),
+      Number.isFinite(Number(fivem_job_grade)) ? Math.max(0, Math.trunc(Number(fivem_job_grade))) : 0,
+      resolvedSortOrder
+    );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['name', 'short_name', 'color', 'icon', 'is_active', 'dispatch_visible', 'is_dispatch'];
+    const allowed = ['name', 'short_name', 'color', 'icon', 'is_active', 'dispatch_visible', 'is_dispatch', 'layout_type', 'fivem_job_name', 'fivem_job_grade', 'sort_order'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
       if (fields[key] !== undefined) {
         updates.push(`${key} = ?`);
-        values.push(fields[key]);
+        if (key === 'fivem_job_name') {
+          values.push(String(fields[key] || '').trim());
+        } else if (key === 'fivem_job_grade') {
+          const grade = Number(fields[key]);
+          values.push(Number.isFinite(grade) ? Math.max(0, Math.trunc(grade)) : 0);
+        } else if (key === 'layout_type') {
+          values.push(normalizeDepartmentLayoutType(fields[key]));
+        } else if (key === 'sort_order') {
+          const sortOrder = Number(fields[key]);
+          values.push(Number.isFinite(sortOrder) ? Math.max(0, Math.trunc(sortOrder)) : 0);
+        } else {
+          values.push(fields[key]);
+        }
       }
     }
     if (updates.length === 0) return;
@@ -110,7 +159,16 @@ const Departments = {
     db.prepare(`UPDATE departments SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   },
   listDispatchVisible() {
-    return db.prepare('SELECT * FROM departments WHERE dispatch_visible = 1 AND is_active = 1 ORDER BY id').all();
+    return db.prepare('SELECT * FROM departments WHERE dispatch_visible = 1 AND is_active = 1 ORDER BY sort_order ASC, id ASC').all();
+  },
+  reorder(orderedIds) {
+    const tx = db.transaction(() => {
+      const update = db.prepare('UPDATE departments SET sort_order = ? WHERE id = ?');
+      orderedIds.forEach((id, index) => {
+        update.run(index, id);
+      });
+    });
+    tx();
   },
   delete(id) {
     db.prepare('DELETE FROM departments WHERE id = ?').run(id);
@@ -124,7 +182,7 @@ const UserDepartments = {
       SELECT d.* FROM departments d
       JOIN user_departments ud ON ud.department_id = d.id
       WHERE ud.user_id = ?
-      ORDER BY d.id
+      ORDER BY d.sort_order ASC, d.id ASC
     `).all(userId);
   },
   setForUser(userId, departmentIds) {
@@ -155,7 +213,7 @@ const SubDepartments = {
       SELECT sd.*, d.name as department_name, d.short_name as department_short_name
       FROM sub_departments sd
       JOIN departments d ON d.id = sd.department_id
-      ORDER BY d.id, sd.name
+      ORDER BY d.sort_order ASC, d.id ASC, sd.sort_order ASC, sd.name ASC, sd.id ASC
     `).all();
   },
   listByDepartment(departmentId, activeOnly = false) {
@@ -165,7 +223,7 @@ const SubDepartments = {
       FROM sub_departments sd
       JOIN departments d ON d.id = sd.department_id
       WHERE sd.department_id = ? ${filter}
-      ORDER BY sd.name
+      ORDER BY sd.sort_order ASC, sd.name ASC, sd.id ASC
     `).all(departmentId);
   },
   findById(id) {
@@ -176,32 +234,57 @@ const SubDepartments = {
       WHERE sd.id = ?
     `).get(id);
   },
-  create({ department_id, name, short_name, color, is_active }) {
+  create({ department_id, name, short_name, color, is_active, fivem_job_name, fivem_job_grade, sort_order }) {
+    const resolvedSortOrder = Number.isFinite(Number(sort_order))
+      ? Math.max(0, Math.trunc(Number(sort_order)))
+      : getNextSortOrder('sub_departments', 'WHERE department_id = ?', [department_id]);
     const info = db.prepare(`
-      INSERT INTO sub_departments (department_id, name, short_name, color, is_active)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO sub_departments (department_id, name, short_name, color, is_active, fivem_job_name, fivem_job_grade, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       department_id,
       name,
       short_name || '',
       color || '#0052C2',
-      is_active === undefined ? 1 : (is_active ? 1 : 0)
+      is_active === undefined ? 1 : (is_active ? 1 : 0),
+      String(fivem_job_name || '').trim(),
+      Number.isFinite(Number(fivem_job_grade)) ? Math.max(0, Math.trunc(Number(fivem_job_grade))) : 0,
+      resolvedSortOrder
     );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['name', 'short_name', 'color', 'is_active'];
+    const allowed = ['name', 'short_name', 'color', 'is_active', 'fivem_job_name', 'fivem_job_grade', 'sort_order'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
       if (fields[key] !== undefined) {
         updates.push(`${key} = ?`);
-        values.push(fields[key]);
+        if (key === 'fivem_job_name') {
+          values.push(String(fields[key] || '').trim());
+        } else if (key === 'fivem_job_grade') {
+          const grade = Number(fields[key]);
+          values.push(Number.isFinite(grade) ? Math.max(0, Math.trunc(grade)) : 0);
+        } else if (key === 'sort_order') {
+          const sortOrder = Number(fields[key]);
+          values.push(Number.isFinite(sortOrder) ? Math.max(0, Math.trunc(sortOrder)) : 0);
+        } else {
+          values.push(fields[key]);
+        }
       }
     }
     if (updates.length === 0) return;
     values.push(id);
     db.prepare(`UPDATE sub_departments SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  },
+  reorderForDepartment(departmentId, orderedIds) {
+    const tx = db.transaction(() => {
+      const update = db.prepare('UPDATE sub_departments SET sort_order = ? WHERE id = ? AND department_id = ?');
+      orderedIds.forEach((id, index) => {
+        update.run(index, id, departmentId);
+      });
+    });
+    tx();
   },
   delete(id) {
     db.prepare('DELETE FROM sub_departments WHERE id = ?').run(id);
@@ -217,7 +300,7 @@ const UserSubDepartments = {
       JOIN user_sub_departments usd ON usd.sub_department_id = sd.id
       JOIN departments d ON d.id = sd.department_id
       WHERE usd.user_id = ?
-      ORDER BY d.id, sd.name
+      ORDER BY d.sort_order ASC, d.id ASC, sd.sort_order ASC, sd.name ASC
     `).all(userId);
   },
   setForUser(userId, subDepartmentIds) {
@@ -489,6 +572,93 @@ const Bolos = {
   },
 };
 
+// --- Offence Catalog ---
+const OffenceCatalog = {
+  list(activeOnly = false) {
+    const filter = activeOnly ? 'WHERE is_active = 1' : '';
+    return db.prepare(`
+      SELECT *
+      FROM offence_catalog
+      ${filter}
+      ORDER BY
+        CASE category
+          WHEN 'infringement' THEN 1
+          WHEN 'summary' THEN 2
+          WHEN 'indictment' THEN 3
+          ELSE 9
+        END,
+        sort_order ASC,
+        title ASC,
+        id ASC
+    `).all();
+  },
+  findById(id) {
+    return db.prepare('SELECT * FROM offence_catalog WHERE id = ?').get(id);
+  },
+  findByIds(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const numericIds = Array.from(new Set(
+      ids
+        .map(id => Number(id))
+        .filter(id => Number.isInteger(id) && id > 0)
+    ));
+    if (numericIds.length === 0) return [];
+    const placeholders = numericIds.map(() => '?').join(', ');
+    return db.prepare(`SELECT * FROM offence_catalog WHERE id IN (${placeholders})`).all(...numericIds);
+  },
+  create({ category, code, title, description, fine_amount, sort_order, is_active }) {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    const info = db.prepare(`
+      INSERT INTO offence_catalog (
+        category, code, title, description, fine_amount, sort_order, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      normalizeOffenceCategory(category),
+      normalizedCode,
+      String(title || '').trim(),
+      String(description || '').trim(),
+      Math.max(0, Number(fine_amount || 0)),
+      Number.isFinite(Number(sort_order)) ? Math.trunc(Number(sort_order)) : 0,
+      is_active === undefined ? 1 : (is_active ? 1 : 0)
+    );
+    return this.findById(info.lastInsertRowid);
+  },
+  update(id, fields) {
+    const allowed = ['category', 'code', 'title', 'description', 'fine_amount', 'sort_order', 'is_active'];
+    const updates = [];
+    const values = [];
+    for (const key of allowed) {
+      if (fields[key] !== undefined) {
+        updates.push(`${key} = ?`);
+        if (key === 'category') {
+          values.push(normalizeOffenceCategory(fields[key]));
+        } else if (key === 'code') {
+          values.push(String(fields[key] || '').trim().toUpperCase());
+        } else if (key === 'title') {
+          values.push(String(fields[key] || '').trim());
+        } else if (key === 'description') {
+          values.push(String(fields[key] || '').trim());
+        } else if (key === 'fine_amount') {
+          values.push(Math.max(0, Number(fields[key] || 0)));
+        } else if (key === 'sort_order') {
+          values.push(Number.isFinite(Number(fields[key])) ? Math.trunc(Number(fields[key])) : 0);
+        } else if (key === 'is_active') {
+          values.push(fields[key] ? 1 : 0);
+        } else {
+          values.push(fields[key]);
+        }
+      }
+    }
+    if (updates.length === 0) return;
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+    db.prepare(`UPDATE offence_catalog SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  },
+  delete(id) {
+    db.prepare('DELETE FROM offence_catalog WHERE id = ?').run(id);
+  },
+};
+
 // --- Criminal Records ---
 const CriminalRecords = {
   findByCitizenId(citizenId) {
@@ -499,20 +669,44 @@ const CriminalRecords = {
   findById(id) {
     return db.prepare('SELECT * FROM criminal_records WHERE id = ?').get(id);
   },
-  create({ citizen_id, type, title, description, fine_amount, officer_name, officer_callsign, department_id }) {
+  create({
+    citizen_id,
+    type,
+    title,
+    description,
+    fine_amount,
+    offence_items_json,
+    officer_name,
+    officer_callsign,
+    department_id,
+  }) {
     const info = db.prepare(
-      'INSERT INTO criminal_records (citizen_id, type, title, description, fine_amount, officer_name, officer_callsign, department_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(citizen_id, type, title, description || '', fine_amount || 0, officer_name || '', officer_callsign || '', department_id);
+      'INSERT INTO criminal_records (citizen_id, type, title, description, fine_amount, offence_items_json, officer_name, officer_callsign, department_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      citizen_id,
+      type,
+      title,
+      description || '',
+      fine_amount || 0,
+      String(offence_items_json || '[]'),
+      officer_name || '',
+      officer_callsign || '',
+      department_id
+    );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['type', 'title', 'description', 'fine_amount'];
+    const allowed = ['type', 'title', 'description', 'fine_amount', 'offence_items_json'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
       if (fields[key] !== undefined) {
         updates.push(`${key} = ?`);
-        values.push(fields[key]);
+        if (key === 'offence_items_json') {
+          values.push(String(fields[key] || '[]'));
+        } else {
+          values.push(fields[key]);
+        }
       }
     }
     if (updates.length === 0) return;
@@ -615,6 +809,27 @@ const FiveMFineJobs = {
       WHERE id = ?
     `).run(id);
   },
+  markCancelled(id, error = 'Cancelled by admin') {
+    db.prepare(`
+      UPDATE fivem_fine_jobs
+      SET
+        status = CASE WHEN status = 'pending' OR status = 'failed' THEN 'cancelled' ELSE status END,
+        error = CASE
+          WHEN status = 'pending' OR status = 'failed' THEN ?
+          ELSE error
+        END,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(String(error || 'Cancelled by admin').slice(0, 500), id);
+  },
+  cancelPendingTestJobs(error = 'Cleared queued test fine jobs') {
+    const info = db.prepare(`
+      UPDATE fivem_fine_jobs
+      SET status = 'cancelled', error = ?, updated_at = datetime('now')
+      WHERE source_record_id IS NULL AND status = 'pending'
+    `).run(String(error || 'Cleared queued test fine jobs').slice(0, 500));
+    return info.changes || 0;
+  },
   updatePendingBySourceRecordId(sourceRecordId, { amount, reason }) {
     db.prepare(`
       UPDATE fivem_fine_jobs
@@ -639,6 +854,126 @@ const FiveMFineJobs = {
   },
   listRecent(limit = 100) {
     return db.prepare('SELECT * FROM fivem_fine_jobs ORDER BY created_at DESC LIMIT ?').all(limit);
+  },
+};
+
+// --- FiveM job sync jobs ---
+const FiveMJobSyncJobs = {
+  createOrReplacePending({
+    user_id,
+    steam_id,
+    discord_id,
+    citizen_id,
+    job_name,
+    job_grade,
+    source_type,
+    source_id,
+  }) {
+    const normalizedJobName = String(job_name || '').trim();
+    const normalizedSourceType = ['department', 'sub_department', 'fallback', 'none'].includes(String(source_type || '').trim())
+      ? String(source_type || '').trim()
+      : 'none';
+    const normalizedGradeRaw = Number(job_grade);
+    const normalizedGrade = Number.isFinite(normalizedGradeRaw) ? Math.max(0, Math.trunc(normalizedGradeRaw)) : 0;
+    const normalizedSourceId = source_id ? Number(source_id) : null;
+
+    const tx = db.transaction(() => {
+      const pending = db.prepare(`
+        SELECT id FROM fivem_job_sync_jobs
+        WHERE user_id = ? AND status = 'pending'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `).get(user_id);
+
+      if (pending) {
+        db.prepare(`
+          UPDATE fivem_job_sync_jobs
+          SET
+            steam_id = ?,
+            discord_id = ?,
+            citizen_id = ?,
+            job_name = ?,
+            job_grade = ?,
+            source_type = ?,
+            source_id = ?,
+            error = '',
+            updated_at = datetime('now')
+          WHERE id = ?
+        `).run(
+          String(steam_id || '').trim(),
+          String(discord_id || '').trim(),
+          String(citizen_id || '').trim(),
+          normalizedJobName,
+          normalizedGrade,
+          normalizedSourceType,
+          normalizedSourceId,
+          pending.id
+        );
+        return this.findById(pending.id);
+      }
+
+      const info = db.prepare(`
+        INSERT INTO fivem_job_sync_jobs (
+          user_id, steam_id, discord_id, citizen_id, job_name, job_grade, source_type, source_id,
+          status, error, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', datetime('now'), datetime('now'))
+      `).run(
+        user_id,
+        String(steam_id || '').trim(),
+        String(discord_id || '').trim(),
+        String(citizen_id || '').trim(),
+        normalizedJobName,
+        normalizedGrade,
+        normalizedSourceType,
+        normalizedSourceId
+      );
+      return this.findById(info.lastInsertRowid);
+    });
+
+    return tx();
+  },
+  findById(id) {
+    return db.prepare('SELECT * FROM fivem_job_sync_jobs WHERE id = ?').get(id);
+  },
+  findLatestByUserId(userId) {
+    return db.prepare(`
+      SELECT * FROM fivem_job_sync_jobs
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(userId);
+  },
+  listPending(limit = 25) {
+    return db.prepare(`
+      SELECT * FROM fivem_job_sync_jobs
+      WHERE status = 'pending'
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(limit);
+  },
+  markSent(id) {
+    db.prepare(`
+      UPDATE fivem_job_sync_jobs
+      SET status = 'sent', error = '', sent_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  },
+  markFailed(id, error) {
+    db.prepare(`
+      UPDATE fivem_job_sync_jobs
+      SET status = 'failed', error = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(String(error || '').slice(0, 500), id);
+  },
+  markPending(id) {
+    db.prepare(`
+      UPDATE fivem_job_sync_jobs
+      SET status = 'pending', error = '', updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  },
+  listRecent(limit = 100) {
+    return db.prepare('SELECT * FROM fivem_job_sync_jobs ORDER BY created_at DESC LIMIT ?').all(limit);
   },
 };
 
@@ -721,9 +1056,11 @@ module.exports = {
   Units,
   Calls,
   Bolos,
+  OffenceCatalog,
   CriminalRecords,
   FiveMPlayerLinks,
   FiveMFineJobs,
+  FiveMJobSyncJobs,
   Settings,
   AuditLog,
   Announcements,

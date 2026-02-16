@@ -1,28 +1,448 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDepartment } from '../../context/DepartmentContext';
 import { api } from '../../api/client';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
+import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
+import {
+  BODY_REGION_OPTIONS,
+  encodeFireDescription,
+  encodeMedicalDescription,
+  parseFireRecord,
+  parseMedicalRecord,
+} from '../../utils/incidentRecordFormat';
+import {
+  OFFENCE_CATEGORY_LABEL,
+  OFFENCE_CATEGORY_ORDER,
+  calculateSelectionTotal,
+  normalizeOffenceSelections,
+  parseRecordOffenceItems,
+} from '../../utils/offenceCatalog';
 
 const EMPTY_NEW_FORM = {
   person_name: '',
-  type: 'charge',
   title: '',
   description: '',
-  fine_amount: 0,
 };
+
+const EMPTY_MEDICAL_FORM = {
+  report_type: 'assessment',
+  complaint: '',
+  severity: 'minor',
+  pain: 0,
+  body_regions: [],
+  treatment: '',
+  transport_to: '',
+  notes: '',
+};
+
+const EMPTY_FIRE_FORM = {
+  incident_type: 'structure_fire',
+  severity: 'moderate',
+  action_taken: '',
+  hazard_notes: '',
+  suppression_used: '',
+  casualties: 0,
+  notes: '',
+};
+
+const MEDICAL_REPORT_TYPES = [
+  { value: 'assessment', label: 'Assessment' },
+  { value: 'treatment', label: 'Treatment' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'release', label: 'Release' },
+];
+
+const FIRE_INCIDENT_TYPES = [
+  { value: 'structure_fire', label: 'Structure Fire' },
+  { value: 'vehicle_fire', label: 'Vehicle Fire' },
+  { value: 'rescue', label: 'Rescue' },
+  { value: 'hazmat', label: 'Hazmat' },
+  { value: 'alarm', label: 'Alarm Activation' },
+];
+
+const SEVERITY_OPTIONS = [
+  { value: 'minor', label: 'Minor' },
+  { value: 'moderate', label: 'Moderate' },
+  { value: 'severe', label: 'Severe' },
+  { value: 'critical', label: 'Critical' },
+];
 
 function mapRecordToEditForm(record) {
   return {
-    type: record?.type || 'charge',
     title: record?.title || '',
     description: record?.description || '',
-    fine_amount: Number(record?.fine_amount || 0),
   };
+}
+
+function toTitleCase(value) {
+  const text = String(value || '').replace(/_/g, ' ').trim();
+  if (!text) return '';
+  return text
+    .split(' ')
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function buildMedicalTitle(form) {
+  const reportType = toTitleCase(form.report_type || 'assessment');
+  const complaint = String(form.complaint || '').trim();
+  return complaint ? `${reportType} - ${complaint}` : `${reportType} - Patient Care`;
+}
+
+function buildFireTitle(form) {
+  const incidentType = toTitleCase(form.incident_type || 'incident');
+  const action = String(form.action_taken || '').trim();
+  return action ? `${incidentType} - ${action}` : `${incidentType} - Fire Response`;
+}
+
+function toggleBodyRegion(selected, key) {
+  if (selected.includes(key)) return selected.filter(item => item !== key);
+  return [...selected, key];
+}
+
+function BodyRegionSelector({ selected, onChange }) {
+  return (
+    <div className="bg-cad-surface border border-cad-border rounded-lg p-3">
+      <p className="text-xs text-cad-muted mb-2">Tap body areas to mark injuries</p>
+      <div className="relative mx-auto w-44 h-80 rounded-xl border border-cad-border/70 bg-cad-card overflow-hidden">
+        <div className="absolute left-1/2 top-3 -translate-x-1/2 w-8 h-8 rounded-full border border-cad-border bg-cad-surface" />
+        <div className="absolute left-1/2 top-12 -translate-x-1/2 w-10 h-14 rounded-lg border border-cad-border bg-cad-surface" />
+        <div className="absolute left-1/2 top-26 -translate-x-1/2 w-14 h-16 rounded-lg border border-cad-border bg-cad-surface" />
+        <div className="absolute left-[42%] top-42 w-4 h-20 rounded-lg border border-cad-border bg-cad-surface" />
+        <div className="absolute left-[54%] top-42 w-4 h-20 rounded-lg border border-cad-border bg-cad-surface" />
+
+        {BODY_REGION_OPTIONS.map(region => {
+          const active = selected.includes(region.key);
+          return (
+            <button
+              key={region.key}
+              type="button"
+              onClick={() => onChange(toggleBodyRegion(selected, region.key))}
+              className={`absolute -translate-x-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                active
+                  ? 'bg-red-500/25 text-red-200 border-red-400/60'
+                  : 'bg-cad-bg/80 text-cad-muted border-cad-border hover:text-cad-ink'
+              }`}
+              style={{ top: region.top, left: region.left }}
+            >
+              {region.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MedicalFields({ form, setForm }) {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm text-cad-muted mb-1">Report Type</label>
+          <select
+            value={form.report_type}
+            onChange={e => setForm(prev => ({ ...prev, report_type: e.target.value }))}
+            className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          >
+            {MEDICAL_REPORT_TYPES.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm text-cad-muted mb-1">Severity</label>
+          <select
+            value={form.severity}
+            onChange={e => setForm(prev => ({ ...prev, severity: e.target.value }))}
+            className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          >
+            {SEVERITY_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Chief Complaint</label>
+        <input
+          type="text"
+          value={form.complaint}
+          onChange={e => setForm(prev => ({ ...prev, complaint: e.target.value }))}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          placeholder="e.g. Chest pain, breathing difficulty"
+        />
+      </div>
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Pain Score (0-10)</label>
+        <input
+          type="number"
+          min="0"
+          max="10"
+          value={form.pain}
+          onChange={e => setForm(prev => ({ ...prev, pain: Math.max(0, Math.min(10, Number(e.target.value) || 0)) }))}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+        />
+      </div>
+      <BodyRegionSelector
+        selected={form.body_regions}
+        onChange={next => setForm(prev => ({ ...prev, body_regions: next }))}
+      />
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Treatment Provided</label>
+        <input
+          type="text"
+          value={form.treatment}
+          onChange={e => setForm(prev => ({ ...prev, treatment: e.target.value }))}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          placeholder="e.g. Oxygen, splinting, medication"
+        />
+      </div>
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Transport Destination</label>
+        <input
+          type="text"
+          value={form.transport_to}
+          onChange={e => setForm(prev => ({ ...prev, transport_to: e.target.value }))}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          placeholder="Hospital or clinic"
+        />
+      </div>
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Clinical Notes</label>
+        <textarea
+          value={form.notes}
+          onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))}
+          rows={3}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+        />
+      </div>
+    </>
+  );
+}
+
+function FireFields({ form, setForm }) {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm text-cad-muted mb-1">Incident Type</label>
+          <select
+            value={form.incident_type}
+            onChange={e => setForm(prev => ({ ...prev, incident_type: e.target.value }))}
+            className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          >
+            {FIRE_INCIDENT_TYPES.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm text-cad-muted mb-1">Severity</label>
+          <select
+            value={form.severity}
+            onChange={e => setForm(prev => ({ ...prev, severity: e.target.value }))}
+            className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          >
+            {SEVERITY_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Action Taken</label>
+        <input
+          type="text"
+          value={form.action_taken}
+          onChange={e => setForm(prev => ({ ...prev, action_taken: e.target.value }))}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          placeholder="e.g. Suppressed room fire, extracted occupant"
+        />
+      </div>
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Hazard Notes</label>
+        <input
+          type="text"
+          value={form.hazard_notes}
+          onChange={e => setForm(prev => ({ ...prev, hazard_notes: e.target.value }))}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          placeholder="e.g. Gas leak risk, electrical hazard"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm text-cad-muted mb-1">Suppression Used</label>
+          <input
+            type="text"
+            value={form.suppression_used}
+            onChange={e => setForm(prev => ({ ...prev, suppression_used: e.target.value }))}
+            className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            placeholder="Foam, dry chem, hose line"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-cad-muted mb-1">Casualties</label>
+          <input
+            type="number"
+            min="0"
+            value={form.casualties}
+            onChange={e => setForm(prev => ({ ...prev, casualties: Math.max(0, Number(e.target.value) || 0) }))}
+            className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          />
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Operational Notes</label>
+        <textarea
+          value={form.notes}
+          onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))}
+          rows={3}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+        />
+      </div>
+    </>
+  );
+}
+
+function groupOffencesByCategory(offences) {
+  const out = {};
+  for (const category of OFFENCE_CATEGORY_ORDER) out[category] = [];
+  for (const offence of offences || []) {
+    const key = OFFENCE_CATEGORY_ORDER.includes(offence?.category) ? offence.category : OFFENCE_CATEGORY_ORDER[0];
+    if (!out[key]) out[key] = [];
+    out[key].push(offence);
+  }
+  return out;
+}
+
+function upsertOffenceSelection(selection, offenceId, quantity) {
+  const next = { ...(selection || {}) };
+  const id = String(offenceId);
+  if (!Number.isFinite(Number(quantity)) || Number(quantity) <= 0) {
+    delete next[id];
+    return next;
+  }
+  next[id] = Math.max(1, Math.min(20, Math.trunc(Number(quantity))));
+  return next;
+}
+
+function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine }) {
+  const grouped = useMemo(() => groupOffencesByCategory(catalog), [catalog]);
+
+  return (
+    <>
+      <div className="bg-cad-surface border border-cad-border rounded-lg p-3">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-medium">Preset Offences</p>
+          <p className="text-sm text-amber-300">Total Fine: ${Number(totalFine || 0).toLocaleString()}</p>
+        </div>
+        {loading ? (
+          <p className="text-sm text-cad-muted">Loading offence catalog...</p>
+        ) : catalog.length === 0 ? (
+          <p className="text-sm text-cad-muted">
+            No offences are configured yet. Ask an admin to add entries in Admin - Offence Catalog.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            {OFFENCE_CATEGORY_ORDER.map(category => (
+              <div key={category}>
+                <p className="text-xs text-cad-muted uppercase tracking-wider mb-2">
+                  {OFFENCE_CATEGORY_LABEL[category] || category}
+                </p>
+                <div className="space-y-2">
+                  {(grouped[category] || []).map(offence => {
+                    const id = String(offence.id);
+                    const selectedQty = Number(selection[id] || 0);
+                    const checked = selectedQty > 0;
+                    return (
+                      <div key={offence.id} className="bg-cad-card border border-cad-border rounded p-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="flex items-center gap-2 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={e => setSelection(prev => (
+                                e.target.checked
+                                  ? upsertOffenceSelection(prev, offence.id, selectedQty || 1)
+                                  : upsertOffenceSelection(prev, offence.id, 0)
+                              ))}
+                              className="rounded"
+                            />
+                            <span className="min-w-0">
+                              <span className="text-sm font-medium">
+                                {offence.code ? `${offence.code} - ` : ''}{offence.title}
+                              </span>
+                              {offence.description && (
+                                <span className="block text-xs text-cad-muted truncate">{offence.description}</span>
+                              )}
+                            </span>
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-amber-300">${Number(offence.fine_amount || 0).toLocaleString()}</span>
+                            {checked && (
+                              <input
+                                type="number"
+                                min="1"
+                                max="20"
+                                value={selectedQty}
+                                onChange={e => setSelection(prev => upsertOffenceSelection(prev, offence.id, Number(e.target.value) || 1))}
+                                className="w-16 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs focus:outline-none focus:border-cad-accent"
+                              />
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
 }
 
 export default function Records() {
   const { activeDepartment } = useDepartment();
+  const layoutType = getDepartmentLayoutType(activeDepartment);
+  const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
+  const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
+
+  const pageCopy = isLaw
+    ? {
+      title: 'Criminal Records',
+      newButton: 'New Record',
+      newModalTitle: 'New Criminal Record',
+      editModalTitle: 'Edit Record',
+      searchPlaceholder: 'Search person by first or last name...',
+      noRecords: 'No records found for this person',
+      countNoun: 'record(s)',
+    }
+    : isParamedics
+      ? {
+        title: 'Patient Care Reports',
+        newButton: 'New Patient Report',
+        newModalTitle: 'New Patient Care Report',
+        editModalTitle: 'Edit Patient Report',
+        searchPlaceholder: 'Search patient by first or last name...',
+        noRecords: 'No patient reports found for this person',
+        countNoun: 'report(s)',
+      }
+      : {
+        title: 'Fire Incident Reports',
+        newButton: 'New Incident Report',
+        newModalTitle: 'New Fire Incident Report',
+        editModalTitle: 'Edit Incident Report',
+        searchPlaceholder: 'Search person by first or last name...',
+        noRecords: 'No fire incident reports found for this person',
+        countNoun: 'report(s)',
+      };
+
   const [personQuery, setPersonQuery] = useState('');
   const [personMatches, setPersonMatches] = useState([]);
   const [selectedPerson, setSelectedPerson] = useState(null);
@@ -33,12 +453,61 @@ export default function Records() {
   const [showNew, setShowNew] = useState(false);
   const [creatingRecord, setCreatingRecord] = useState(false);
   const [newForm, setNewForm] = useState(EMPTY_NEW_FORM);
+  const [newMedicalForm, setNewMedicalForm] = useState(EMPTY_MEDICAL_FORM);
+  const [newFireForm, setNewFireForm] = useState(EMPTY_FIRE_FORM);
 
   const [showEdit, setShowEdit] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
   const [editingSaving, setEditingSaving] = useState(false);
   const [editForm, setEditForm] = useState(mapRecordToEditForm(null));
+  const [editMedicalForm, setEditMedicalForm] = useState(EMPTY_MEDICAL_FORM);
+  const [editFireForm, setEditFireForm] = useState(EMPTY_FIRE_FORM);
   const [deletingRecordId, setDeletingRecordId] = useState(null);
+  const [offenceCatalog, setOffenceCatalog] = useState([]);
+  const [loadingOffenceCatalog, setLoadingOffenceCatalog] = useState(false);
+  const [newOffenceSelection, setNewOffenceSelection] = useState({});
+  const [editOffenceSelection, setEditOffenceSelection] = useState({});
+
+  const newOffenceItems = useMemo(
+    () => normalizeOffenceSelections(newOffenceSelection),
+    [newOffenceSelection]
+  );
+  const editOffenceItems = useMemo(
+    () => normalizeOffenceSelections(editOffenceSelection),
+    [editOffenceSelection]
+  );
+  const newFineTotal = useMemo(
+    () => calculateSelectionTotal(offenceCatalog, newOffenceSelection),
+    [offenceCatalog, newOffenceSelection]
+  );
+  const editFineTotal = useMemo(
+    () => calculateSelectionTotal(offenceCatalog, editOffenceSelection),
+    [offenceCatalog, editOffenceSelection]
+  );
+
+  useEffect(() => {
+    if (!isLaw) return;
+    let cancelled = false;
+    async function fetchOffenceCatalog() {
+      setLoadingOffenceCatalog(true);
+      try {
+        const data = await api.get('/api/records/offence-catalog');
+        if (!cancelled) {
+          setOffenceCatalog(Array.isArray(data) ? data : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setOffenceCatalog([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingOffenceCatalog(false);
+        }
+      }
+    }
+    fetchOffenceCatalog();
+    return () => { cancelled = true; };
+  }, [isLaw]);
 
   async function refreshSelectedPersonRecords(citizenId) {
     if (!citizenId) {
@@ -72,7 +541,13 @@ export default function Records() {
 
   async function selectPerson(person) {
     setSelectedPerson(person);
-    setNewForm(f => ({ ...f, person_name: `${person.firstname} ${person.lastname}`.trim() }));
+    setNewForm({
+      ...EMPTY_NEW_FORM,
+      person_name: `${person.firstname} ${person.lastname}`.trim(),
+    });
+    setNewOffenceSelection({});
+    setNewMedicalForm(EMPTY_MEDICAL_FORM);
+    setNewFireForm(EMPTY_FIRE_FORM);
     await refreshSelectedPersonRecords(person.citizenid);
   }
 
@@ -84,13 +559,46 @@ export default function Records() {
     }
     setCreatingRecord(true);
     try {
+      let payload;
+      if (isLaw) {
+        if (newOffenceItems.length === 0) {
+          alert('Select at least one offence from the preset list.');
+          setCreatingRecord(false);
+          return;
+        }
+        payload = {
+          title: newForm.title,
+          description: newForm.description,
+          offence_items: newOffenceItems,
+        };
+      } else if (isParamedics) {
+        const medical = {
+          ...newMedicalForm,
+          body_regions: Array.isArray(newMedicalForm.body_regions) ? newMedicalForm.body_regions : [],
+        };
+        payload = {
+          type: 'warning',
+          title: buildMedicalTitle(medical),
+          description: encodeMedicalDescription(medical),
+          fine_amount: 0,
+        };
+      } else {
+        const fire = {
+          ...newFireForm,
+          casualties: Math.max(0, Number(newFireForm.casualties) || 0),
+        };
+        payload = {
+          type: 'warning',
+          title: buildFireTitle(fire),
+          description: encodeFireDescription(fire),
+          fine_amount: 0,
+        };
+      }
+
       await api.post('/api/records', {
         citizen_id: selectedPerson.citizenid,
-        type: newForm.type,
-        title: newForm.title,
-        description: newForm.description,
-        fine_amount: Number(newForm.fine_amount || 0),
         department_id: activeDepartment?.id,
+        ...payload,
       });
       setShowNew(false);
       await refreshSelectedPersonRecords(selectedPerson.citizenid);
@@ -98,6 +606,9 @@ export default function Records() {
         ...EMPTY_NEW_FORM,
         person_name: `${selectedPerson.firstname} ${selectedPerson.lastname}`.trim(),
       });
+      setNewOffenceSelection({});
+      setNewMedicalForm(EMPTY_MEDICAL_FORM);
+      setNewFireForm(EMPTY_FIRE_FORM);
     } catch (err) {
       alert('Failed to create record: ' + err.message);
     } finally {
@@ -107,7 +618,35 @@ export default function Records() {
 
   function openEdit(record) {
     setEditingRecord(record);
-    setEditForm(mapRecordToEditForm(record));
+    if (isLaw) {
+      setEditForm(mapRecordToEditForm(record));
+      const parsedOffences = parseRecordOffenceItems(record);
+      const nextSelection = {};
+      for (const item of parsedOffences) {
+        if (item.offence_id > 0) {
+          nextSelection[String(item.offence_id)] = Math.max(1, Number(item.quantity || 1));
+        }
+      }
+      setEditOffenceSelection(nextSelection);
+    } else if (isParamedics) {
+      const medical = parseMedicalRecord(record);
+      setEditMedicalForm(medical
+        ? { ...EMPTY_MEDICAL_FORM, ...medical }
+        : {
+          ...EMPTY_MEDICAL_FORM,
+          complaint: record.title || '',
+          notes: record.description || '',
+        });
+    } else {
+      const fire = parseFireRecord(record);
+      setEditFireForm(fire
+        ? { ...EMPTY_FIRE_FORM, ...fire }
+        : {
+          ...EMPTY_FIRE_FORM,
+          action_taken: record.title || '',
+          notes: record.description || '',
+        });
+    }
     setShowEdit(true);
   }
 
@@ -116,12 +655,41 @@ export default function Records() {
     if (!editingRecord) return;
     setEditingSaving(true);
     try {
-      await api.patch(`/api/records/${editingRecord.id}`, {
-        type: editForm.type,
-        title: editForm.title,
-        description: editForm.description,
-        fine_amount: Number(editForm.fine_amount || 0),
-      });
+      if (isLaw) {
+        const previousOffenceItems = parseRecordOffenceItems(editingRecord);
+        const lawPayload = {
+          title: editForm.title,
+          description: editForm.description,
+        };
+        if (editOffenceItems.length > 0) {
+          lawPayload.offence_items = editOffenceItems;
+        } else if (previousOffenceItems.length > 0) {
+          lawPayload.offence_items = [];
+        }
+        await api.patch(`/api/records/${editingRecord.id}`, lawPayload);
+      } else if (isParamedics) {
+        const medical = {
+          ...editMedicalForm,
+          body_regions: Array.isArray(editMedicalForm.body_regions) ? editMedicalForm.body_regions : [],
+        };
+        await api.patch(`/api/records/${editingRecord.id}`, {
+          type: 'warning',
+          title: buildMedicalTitle(medical),
+          description: encodeMedicalDescription(medical),
+          fine_amount: 0,
+        });
+      } else {
+        const fire = {
+          ...editFireForm,
+          casualties: Math.max(0, Number(editFireForm.casualties) || 0),
+        };
+        await api.patch(`/api/records/${editingRecord.id}`, {
+          type: 'warning',
+          title: buildFireTitle(fire),
+          description: encodeFireDescription(fire),
+          fine_amount: 0,
+        });
+      }
       setShowEdit(false);
       setEditingRecord(null);
       if (selectedPerson?.citizenid) {
@@ -158,13 +726,13 @@ export default function Records() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold">Criminal Records</h2>
+        <h2 className="text-xl font-bold">{pageCopy.title}</h2>
         <button
           onClick={() => setShowNew(true)}
           disabled={!selectedPerson}
           className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
         >
-          + New Record
+          + {pageCopy.newButton}
         </button>
       </div>
 
@@ -174,7 +742,7 @@ export default function Records() {
             type="text"
             value={personQuery}
             onChange={e => setPersonQuery(e.target.value)}
-            placeholder="Search person by first or last name..."
+            placeholder={pageCopy.searchPlaceholder}
             className="flex-1 bg-cad-surface border border-cad-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
           />
           <button
@@ -213,6 +781,8 @@ export default function Records() {
                 setRecords([]);
                 setShowEdit(false);
                 setEditingRecord(null);
+                setNewOffenceSelection({});
+                setEditOffenceSelection({});
               }}
               className="px-2 py-1 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
             >
@@ -225,14 +795,37 @@ export default function Records() {
       {records.length > 0 && (
         <div className="space-y-3">
           <div className="text-sm text-cad-muted">
-            {records.length} record(s) for {selectedPerson?.firstname} {selectedPerson?.lastname}
+            {records.length} {pageCopy.countNoun} for {selectedPerson?.firstname} {selectedPerson?.lastname}
           </div>
-          {records.map(r => (
+          {records.map(r => {
+            const medical = parseMedicalRecord(r);
+            const fire = parseFireRecord(r);
+            const offenceItems = parseRecordOffenceItems(r);
+            const offenceTotal = offenceItems.reduce(
+              (sum, item) => sum + (Number(item.line_total || (item.fine_amount * item.quantity)) || 0),
+              0
+            );
+            return (
             <div key={r.id} className="bg-cad-card border border-cad-border rounded-lg p-4">
               <div className="flex items-start justify-between mb-2 gap-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <StatusBadge status={r.type} />
                   <span className="font-medium">{r.title}</span>
+                  {medical && (
+                    <span className="text-[11px] px-2 py-0.5 rounded border border-cyan-500/40 bg-cyan-500/15 text-cyan-300">
+                      Medical Report
+                    </span>
+                  )}
+                  {fire && (
+                    <span className="text-[11px] px-2 py-0.5 rounded border border-orange-500/40 bg-orange-500/15 text-orange-300">
+                      Fire Report
+                    </span>
+                  )}
+                  {offenceItems.length > 0 && (
+                    <span className="text-[11px] px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/15 text-amber-300">
+                      Offence Set ({offenceItems.length})
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -253,9 +846,55 @@ export default function Records() {
                   <span className="text-xs text-cad-muted">#{r.id}</span>
                 </div>
               </div>
-              {r.description && <p className="text-sm text-cad-muted mb-2">{r.description}</p>}
-              {r.type === 'fine' && Number(r.fine_amount || 0) > 0 && (
-                <p className="text-sm text-amber-400 mb-2">Fine: ${Number(r.fine_amount).toLocaleString()}</p>
+              {medical ? (
+                <div className="space-y-2 text-sm">
+                  <p className="text-cad-muted">
+                    Severity: <span className="text-cad-ink">{toTitleCase(medical.severity)}</span> | Pain: <span className="text-cad-ink">{medical.pain}/10</span>
+                  </p>
+                  {medical.body_regions.length > 0 && (
+                    <p className="text-cad-muted">
+                      Injuries: <span className="text-cad-ink">{medical.body_regions.map(region => BODY_REGION_OPTIONS.find(option => option.key === region)?.label || region).join(', ')}</span>
+                    </p>
+                  )}
+                  {medical.treatment && <p className="text-cad-muted">Treatment: <span className="text-cad-ink">{medical.treatment}</span></p>}
+                  {medical.transport_to && <p className="text-cad-muted">Transport: <span className="text-cad-ink">{medical.transport_to}</span></p>}
+                  {medical.notes && <p className="text-cad-muted">Notes: <span className="text-cad-ink">{medical.notes}</span></p>}
+                </div>
+              ) : fire ? (
+                <div className="space-y-2 text-sm">
+                  <p className="text-cad-muted">
+                    Type: <span className="text-cad-ink">{toTitleCase(fire.incident_type)}</span> | Severity: <span className="text-cad-ink">{toTitleCase(fire.severity)}</span>
+                  </p>
+                  {fire.hazard_notes && <p className="text-cad-muted">Hazards: <span className="text-cad-ink">{fire.hazard_notes}</span></p>}
+                  {fire.suppression_used && <p className="text-cad-muted">Suppression: <span className="text-cad-ink">{fire.suppression_used}</span></p>}
+                  <p className="text-cad-muted">Casualties: <span className="text-cad-ink">{Number(fire.casualties || 0)}</span></p>
+                  {fire.notes && <p className="text-cad-muted">Notes: <span className="text-cad-ink">{fire.notes}</span></p>}
+                </div>
+              ) : offenceItems.length > 0 ? (
+                <div className="space-y-2 text-sm">
+                  <div className="space-y-1">
+                    {offenceItems.map((item, idx) => (
+                      <p key={`${r.id}-offence-${idx}`} className="text-cad-muted">
+                        <span className="text-cad-ink font-medium">{item.quantity}x</span>{' '}
+                        {item.code ? <span className="text-cad-ink">{item.code} - {item.title}</span> : <span className="text-cad-ink">{item.title}</span>}
+                        {Number(item.fine_amount || 0) > 0 && (
+                          <span className="text-amber-300"> (${Number(item.fine_amount).toLocaleString()} each)</span>
+                        )}
+                      </p>
+                    ))}
+                  </div>
+                  <p className="text-amber-400">Total Fine: ${Number(offenceTotal || 0).toLocaleString()}</p>
+                  {r.description && (
+                    <p className="text-cad-muted">Notes: <span className="text-cad-ink">{r.description}</span></p>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {r.description && <p className="text-sm text-cad-muted mb-2">{r.description}</p>}
+                  {r.type === 'fine' && Number(r.fine_amount || 0) > 0 && (
+                    <p className="text-sm text-amber-400 mb-2">Fine: ${Number(r.fine_amount).toLocaleString()}</p>
+                  )}
+                </>
               )}
               <div className="flex items-center justify-between text-xs text-cad-muted">
                 <span>
@@ -264,75 +903,69 @@ export default function Records() {
                 <span>{new Date(r.created_at + 'Z').toLocaleString()}</span>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {records.length === 0 && selectedPerson && !searching && (
-        <p className="text-center text-cad-muted py-8">No records found for this person</p>
+        <p className="text-center text-cad-muted py-8">{pageCopy.noRecords}</p>
       )}
 
-      <Modal open={showNew} onClose={() => setShowNew(false)} title="New Criminal Record">
+      <Modal open={showNew} onClose={() => setShowNew(false)} title={pageCopy.newModalTitle}>
         <form onSubmit={createRecord} className="space-y-3">
           <div>
             <label className="block text-sm text-cad-muted mb-1">Person *</label>
             <input
               type="text"
               required
-              value={newForm.person_name}
+              value={`${selectedPerson?.firstname || ''} ${selectedPerson?.lastname || ''}`.trim()}
               readOnly
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm text-cad-ink"
               placeholder="Select a person from lookup"
             />
           </div>
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Type *</label>
-            <select
-              value={newForm.type}
-              onChange={e => setNewForm(f => ({ ...f, type: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-            >
-              <option value="charge">Charge</option>
-              <option value="fine">Fine</option>
-              <option value="warning">Warning</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Title *</label>
-            <input
-              type="text"
-              required
-              value={newForm.title}
-              onChange={e => setNewForm(f => ({ ...f, title: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-              placeholder="e.g. Assault, Speeding, Possession"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Description</label>
-            <textarea
-              value={newForm.description}
-              onChange={e => setNewForm(f => ({ ...f, description: e.target.value }))}
-              rows={3}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
-            />
-          </div>
-          {newForm.type === 'fine' && (
-            <div>
-              <label className="block text-sm text-cad-muted mb-1">Fine Amount ($)</label>
-              <input
-                type="number"
-                min="0"
-                value={newForm.fine_amount}
-                onChange={e => setNewForm(f => ({ ...f, fine_amount: parseFloat(e.target.value) || 0 }))}
-                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          {isLaw ? (
+            <>
+              <div>
+                <label className="block text-sm text-cad-muted mb-1">Case Title (optional)</label>
+                <input
+                  type="text"
+                  value={newForm.title}
+                  onChange={e => setNewForm(f => ({ ...f, title: e.target.value }))}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                  placeholder="Auto-generated from selected offences if left blank"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-cad-muted mb-1">Notes</label>
+                <textarea
+                  value={newForm.description}
+                  onChange={e => setNewForm(f => ({ ...f, description: e.target.value }))}
+                  rows={3}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+                />
+              </div>
+              <LawOffenceFields
+                catalog={offenceCatalog}
+                selection={newOffenceSelection}
+                setSelection={setNewOffenceSelection}
+                loading={loadingOffenceCatalog}
+                totalFine={newFineTotal}
               />
-            </div>
+            </>
+          ) : isParamedics ? (
+            <MedicalFields form={newMedicalForm} setForm={setNewMedicalForm} />
+          ) : (
+            <FireFields form={newFireForm} setForm={setNewFireForm} />
           )}
           <div className="flex gap-2 pt-2">
             <button
               type="submit"
-              disabled={creatingRecord}
+              disabled={
+                creatingRecord ||
+                (isLaw && (loadingOffenceCatalog || offenceCatalog.length === 0 || newOffenceItems.length === 0))
+              }
               className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
             >
               {creatingRecord ? 'Creating...' : 'Create Record'}
@@ -348,55 +981,48 @@ export default function Records() {
         </form>
       </Modal>
 
-      <Modal open={showEdit} onClose={() => setShowEdit(false)} title={`Edit Record #${editingRecord?.id || ''}`}>
+      <Modal open={showEdit} onClose={() => setShowEdit(false)} title={`${pageCopy.editModalTitle} #${editingRecord?.id || ''}`}>
         <form onSubmit={saveEdit} className="space-y-3">
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Type *</label>
-            <select
-              value={editForm.type}
-              onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-            >
-              <option value="charge">Charge</option>
-              <option value="fine">Fine</option>
-              <option value="warning">Warning</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Title *</label>
-            <input
-              type="text"
-              required
-              value={editForm.title}
-              onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Description</label>
-            <textarea
-              value={editForm.description}
-              onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
-              rows={3}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
-            />
-          </div>
-          {editForm.type === 'fine' && (
-            <div>
-              <label className="block text-sm text-cad-muted mb-1">Fine Amount ($)</label>
-              <input
-                type="number"
-                min="0"
-                value={editForm.fine_amount}
-                onChange={e => setEditForm(f => ({ ...f, fine_amount: parseFloat(e.target.value) || 0 }))}
-                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+          {isLaw ? (
+            <>
+              <div>
+                <label className="block text-sm text-cad-muted mb-1">Case Title (optional)</label>
+                <input
+                  type="text"
+                  value={editForm.title}
+                  onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-cad-muted mb-1">Notes</label>
+                <textarea
+                  value={editForm.description}
+                  onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                  rows={3}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+                />
+              </div>
+              <LawOffenceFields
+                catalog={offenceCatalog}
+                selection={editOffenceSelection}
+                setSelection={setEditOffenceSelection}
+                loading={loadingOffenceCatalog}
+                totalFine={editFineTotal}
               />
-            </div>
+            </>
+          ) : isParamedics ? (
+            <MedicalFields form={editMedicalForm} setForm={setEditMedicalForm} />
+          ) : (
+            <FireFields form={editFireForm} setForm={setEditFireForm} />
           )}
           <div className="flex gap-2 pt-2">
             <button
               type="submit"
-              disabled={editingSaving}
+              disabled={
+                editingSaving ||
+                (isLaw && loadingOffenceCatalog)
+              }
               className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
             >
               {editingSaving ? 'Saving...' : 'Save Changes'}
@@ -414,3 +1040,4 @@ export default function Records() {
     </div>
   );
 }
+

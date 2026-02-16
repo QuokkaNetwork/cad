@@ -7,21 +7,47 @@ const {
   Departments,
   FiveMPlayerLinks,
   FiveMFineJobs,
+  FiveMJobSyncJobs,
 } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
 
 const router = express.Router();
 const liveLinkUserCache = new Map();
+const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
 }
 
 function getFineDeliveryMode() {
-  return String(Settings.get('fivem_bridge_qbox_fines_delivery_mode') || 'direct_db')
+  return String(Settings.get('fivem_bridge_qbox_fines_delivery_mode') || 'bridge')
     .trim()
     .toLowerCase();
+}
+
+function getFineAccountKey() {
+  return String(Settings.get('qbox_fine_account_key') || 'bank').trim() || 'bank';
+}
+
+function isJobSyncEnabled() {
+  return String(Settings.get('fivem_bridge_job_sync_enabled') || 'true')
+    .trim()
+    .toLowerCase() === 'true';
+}
+
+function parseSqliteUtc(value) {
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  const base = text.replace(' ', 'T');
+  const normalized = base.endsWith('Z') ? base : `${base}Z`;
+  return Date.parse(normalized);
+}
+
+function isActiveFiveMLink(link) {
+  const ts = parseSqliteUtc(link?.updated_at);
+  if (Number.isNaN(ts)) return false;
+  return (Date.now() - ts) <= ACTIVE_LINK_MAX_AGE_MS;
 }
 
 function requireBridgeAuth(req, res, next) {
@@ -256,6 +282,47 @@ function chooseCallDepartmentId(cadUser, requestedDepartmentId) {
   return activeAny ? activeAny.id : null;
 }
 
+function chooseActiveLinkForUser(user) {
+  if (!user) return null;
+  const preferredCitizenId = String(user.preferred_citizen_id || '').trim();
+
+  const candidates = [];
+  if (String(user.steam_id || '').trim()) {
+    candidates.push(FiveMPlayerLinks.findBySteamId(String(user.steam_id).trim()));
+  }
+  if (String(user.discord_id || '').trim()) {
+    candidates.push(FiveMPlayerLinks.findBySteamId(`discord:${String(user.discord_id).trim()}`));
+  }
+
+  let selected = null;
+  for (const candidate of candidates) {
+    if (!candidate || !isActiveFiveMLink(candidate)) continue;
+    if (preferredCitizenId && String(candidate.citizen_id || '').trim() !== preferredCitizenId) continue;
+    if (!selected) {
+      selected = candidate;
+      continue;
+    }
+
+    const candidateScore = (String(candidate.citizen_id || '').trim() ? 2 : 0) + (String(candidate.game_id || '').trim() ? 1 : 0);
+    const selectedScore = (String(selected.citizen_id || '').trim() ? 2 : 0) + (String(selected.game_id || '').trim() ? 1 : 0);
+    if (candidateScore > selectedScore) selected = candidate;
+  }
+  return selected;
+}
+
+function findActiveLinkByCitizenId(citizenId) {
+  const target = String(citizenId || '').trim().toLowerCase();
+  if (!target) return null;
+
+  for (const link of FiveMPlayerLinks.list()) {
+    if (!isActiveFiveMLink(link)) continue;
+    const linkedCitizenId = String(link.citizen_id || '').trim().toLowerCase();
+    if (!linkedCitizenId) continue;
+    if (linkedCitizenId === target) return link;
+  }
+  return null;
+}
+
 // Heartbeat from FiveM resource with online players + position.
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];
@@ -422,7 +489,17 @@ router.get('/fine-jobs', requireBridgeAuth, (req, res) => {
     return res.json([]);
   }
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
-  const jobs = FiveMFineJobs.listPending(limit);
+  const account = getFineAccountKey();
+  const jobs = FiveMFineJobs.listPending(limit).map((job) => {
+    const activeLink = findActiveLinkByCitizenId(job.citizen_id);
+    return {
+      ...job,
+      account,
+      game_id: activeLink ? String(activeLink.game_id || '') : '',
+      steam_id: activeLink ? String(activeLink.steam_id || '') : '',
+      player_name: activeLink ? String(activeLink.player_name || '') : '',
+    };
+  });
   res.json(jobs);
 });
 
@@ -438,6 +515,55 @@ router.post('/fine-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   if (!id) return res.status(400).json({ error: 'Invalid job id' });
   const error = String(req.body?.error || 'Unknown fine processing error');
   FiveMFineJobs.markFailed(id, error);
+  res.json({ ok: true });
+});
+
+// FiveM resource polls pending Discord->CAD driven job sync jobs.
+router.get('/job-jobs', requireBridgeAuth, (req, res) => {
+  if (!isJobSyncEnabled()) {
+    return res.json([]);
+  }
+
+  const requestedLimit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+  const pending = FiveMJobSyncJobs.listPending(Math.min(500, requestedLimit * 5));
+  const deliverable = [];
+
+  for (const job of pending) {
+    if (deliverable.length >= requestedLimit) break;
+    if (!String(job.job_name || '').trim()) {
+      FiveMJobSyncJobs.markFailed(job.id, 'Job name is empty');
+      continue;
+    }
+
+    const cadUser = Users.findById(job.user_id);
+    const link = chooseActiveLinkForUser(cadUser);
+    if (!cadUser || !link) continue;
+
+    deliverable.push({
+      ...job,
+      steam_id: String(cadUser.steam_id || ''),
+      discord_id: String(cadUser.discord_id || ''),
+      citizen_id: String(link.citizen_id || job.citizen_id || ''),
+      game_id: String(link.game_id || ''),
+      player_name: String(link.player_name || cadUser.steam_name || ''),
+    });
+  }
+
+  res.json(deliverable);
+});
+
+router.post('/job-jobs/:id/sent', requireBridgeAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid job id' });
+  FiveMJobSyncJobs.markSent(id);
+  res.json({ ok: true });
+});
+
+router.post('/job-jobs/:id/failed', requireBridgeAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid job id' });
+  const error = String(req.body?.error || 'Unknown job sync error');
+  FiveMJobSyncJobs.markFailed(id, error);
   res.json({ ok: true });
 });
 

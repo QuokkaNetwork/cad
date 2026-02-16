@@ -1,15 +1,38 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
+import { useEventSource } from '../hooks/useEventSource';
+import { api } from '../api/client';
+import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../utils/departmentLayout';
 
-const POLICE_NAV = [
+const LAW_NAV = [
   { to: '/home', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
-  { to: '/dispatch', label: 'Dispatch', icon: 'M3 5h12M9 3v2m1.048 3.5A3.5 3.5 0 0116 9.5M5 21l1-4.5M19 21l-1-4.5M12 21H7l.5-2h9l.5 2h-5z' },
   { to: '/units', label: 'Units', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
   { to: '/search', label: 'Search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
   { to: '/bolos', label: 'BOLOs', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z' },
   { to: '/records', label: 'Records', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
 ];
+
+const EMS_NAV = [
+  { to: '/home', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/units', label: 'Units', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
+  { to: '/search', label: 'Patient Lookup', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
+  { to: '/records', label: 'Patient Care', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+];
+
+const FIRE_NAV = [
+  { to: '/home', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/units', label: 'Units', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
+  { to: '/search', label: 'Lookup', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
+  { to: '/records', label: 'Incident Reports', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+];
+
+function getNavItemsForLayout(layoutType) {
+  if (layoutType === DEPARTMENT_LAYOUT.PARAMEDICS) return EMS_NAV;
+  if (layoutType === DEPARTMENT_LAYOUT.FIRE) return FIRE_NAV;
+  return LAW_NAV;
+}
 
 function SidebarLink({ to, label, icon }) {
   return (
@@ -36,6 +59,55 @@ function SidebarLink({ to, label, icon }) {
 export default function Sidebar() {
   const { departments } = useAuth();
   const { activeDepartment } = useDepartment();
+  const [dispatcherOnline, setDispatcherOnline] = useState(false);
+  const [isDispatchDepartment, setIsDispatchDepartment] = useState(false);
+  const prevDispatcherOnlineRef = useRef(null);
+
+  const deptId = activeDepartment?.id;
+  const layoutType = getDepartmentLayoutType(activeDepartment);
+
+  const fetchDispatcherStatus = useCallback(async () => {
+    if (!deptId) {
+      setDispatcherOnline(false);
+      setIsDispatchDepartment(false);
+      prevDispatcherOnlineRef.current = null;
+      return;
+    }
+
+    try {
+      const status = await api.get(`/api/units/dispatcher-status?department_id=${deptId}`);
+      const nextOnline = !!status?.dispatcher_online;
+      const nextIsDispatchDepartment = !!status?.is_dispatch_department;
+
+      setDispatcherOnline(nextOnline);
+      setIsDispatchDepartment(nextIsDispatchDepartment);
+
+      const prevOnline = prevDispatcherOnlineRef.current;
+      prevDispatcherOnlineRef.current = nextOnline;
+
+      // If a dispatcher just came online, reload so department layouts/tabs refresh immediately.
+      if (!nextIsDispatchDepartment && prevOnline === false && nextOnline) {
+        window.location.reload();
+      }
+    } catch {
+      // Keep sidebar usable even if dispatcher status lookup fails.
+    }
+  }, [deptId]);
+
+  useEffect(() => {
+    fetchDispatcherStatus();
+  }, [fetchDispatcherStatus]);
+
+  useEventSource({
+    'unit:online': () => fetchDispatcherStatus(),
+    'unit:offline': () => fetchDispatcherStatus(),
+  });
+
+  const hideUnitsTab = !!(activeDepartment && !isDispatchDepartment && dispatcherOnline);
+  const departmentNavItems = getNavItemsForLayout(layoutType);
+  const navItems = hideUnitsTab
+    ? departmentNavItems.filter(item => item.to !== '/units')
+    : departmentNavItems;
 
   return (
     <aside className="w-56 bg-cad-surface border-r border-cad-border flex flex-col h-full">
@@ -46,7 +118,7 @@ export default function Sidebar() {
             <div className="text-xs text-cad-muted uppercase tracking-wider mb-2 px-3">
               {activeDepartment.short_name}
             </div>
-            {POLICE_NAV.map(item => (
+            {navItems.map(item => (
               <SidebarLink key={item.to} {...item} />
             ))}
           </>

@@ -6,7 +6,7 @@ let timer = null;
 let running = false;
 
 function getFineDeliveryMode() {
-  return String(Settings.get('fivem_bridge_qbox_fines_delivery_mode') || 'direct_db')
+  return String(Settings.get('fivem_bridge_qbox_fines_delivery_mode') || 'bridge')
     .trim()
     .toLowerCase();
 }

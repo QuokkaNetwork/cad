@@ -5,6 +5,7 @@ import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
 import UnitCard from '../../components/UnitCard';
 import StatusBadge from '../../components/StatusBadge';
+import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 
 export default function Units() {
   const { activeDepartment } = useDepartment();
@@ -22,6 +23,9 @@ export default function Units() {
   });
 
   const deptId = activeDepartment?.id;
+  const layoutType = getDepartmentLayoutType(activeDepartment);
+  const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
+  const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
   const isDispatchDepartment = !!activeDepartment?.is_dispatch;
   const canSelfDispatch = !!(myUnit && !dispatchStatus.dispatcher_online && !dispatchStatus.is_dispatch_department);
   const hideSharedPanels = !!(dispatchStatus.dispatcher_online && !dispatchStatus.is_dispatch_department);
@@ -117,7 +121,9 @@ export default function Units() {
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-6">Unit Management</h2>
+      <h2 className="text-xl font-bold mb-6">
+        {isLaw ? 'Unit Management' : isParamedics ? 'Crew & Patient Response' : 'Appliance & Incident Response'}
+      </h2>
 
       {/* My unit / Go on duty */}
       {myUnit ? (
@@ -184,7 +190,9 @@ export default function Units() {
           {/* Self dispatch */}
           {!dispatchStatus.is_dispatch_department && (
             <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">
-              <h3 className="font-semibold mb-3">Self Dispatch</h3>
+              <h3 className="font-semibold mb-3">
+                {isLaw ? 'Self Dispatch' : isParamedics ? 'Assign to Patient Calls' : 'Assign to Incident Calls'}
+              </h3>
               {!myUnit && (
                 <p className="text-sm text-cad-muted">Go on duty first to self-dispatch to active calls.</p>
               )}

@@ -20,6 +20,12 @@ const ADMIN_ITEMS = [
     color: 'bg-[#5865F2]',
   },
   {
+    to: '/admin/offences',
+    title: 'Offence Catalog',
+    description: 'Manage preset Infringements, Summary, and Indictment entries.',
+    color: 'bg-rose-500',
+  },
+  {
     to: '/admin/audit-log',
     title: 'Audit Log',
     description: 'Review administrative and system actions.',
