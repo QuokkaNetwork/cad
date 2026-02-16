@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import Modal from '../../components/Modal';
 import AdminPageHeader from '../../components/AdminPageHeader';
 
 export default function AdminDepartments() {
+  const { key: locationKey } = useLocation();
   const [departments, setDepartments] = useState([]);
   const [subDepartments, setSubDepartments] = useState([]);
   const [showNew, setShowNew] = useState(false);
@@ -31,7 +33,7 @@ export default function AdminDepartments() {
     }
   }
 
-  useEffect(() => { fetchDepts(); }, []);
+  useEffect(() => { fetchDepts(); }, [locationKey]);
 
   async function uploadIcon(file) {
     const data = new FormData();

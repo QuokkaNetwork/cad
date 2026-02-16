@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
@@ -7,6 +8,7 @@ import Modal from '../../components/Modal';
 
 export default function BOLOs() {
   const { activeDepartment } = useDepartment();
+  const { key: locationKey } = useLocation();
   const [bolos, setBolos] = useState([]);
   const [showNew, setShowNew] = useState(false);
   const [boloType, setBoloType] = useState('person');
@@ -25,7 +27,7 @@ export default function BOLOs() {
     }
   }, [deptId]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData, locationKey]);
 
   useEventSource({
     'bolo:create': () => fetchData(),

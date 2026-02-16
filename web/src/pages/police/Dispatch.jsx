@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
@@ -9,6 +10,7 @@ import StatusBadge from '../../components/StatusBadge';
 
 export default function Dispatch() {
   const { activeDepartment } = useDepartment();
+  const { key: locationKey } = useLocation();
   const [calls, setCalls] = useState([]);
   const [units, setUnits] = useState([]);
   const [showNewCall, setShowNewCall] = useState(false);
@@ -31,7 +33,7 @@ export default function Dispatch() {
     }
   }, [deptId]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData, locationKey]);
 
   // Real-time updates
   useEventSource({

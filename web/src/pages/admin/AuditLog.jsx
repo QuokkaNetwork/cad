@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
 
 export default function AdminAuditLog() {
+  const { key: locationKey } = useLocation();
   const [entries, setEntries] = useState([]);
   const [offset, setOffset] = useState(0);
   const limit = 50;
@@ -16,7 +18,7 @@ export default function AdminAuditLog() {
     }
   }
 
-  useEffect(() => { fetchLog(); }, [offset]);
+  useEffect(() => { fetchLog(); }, [offset, locationKey]);
 
   return (
     <div>

@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
 
 export default function AdminUsers() {
+  const { key: locationKey } = useLocation();
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState('');
 
@@ -15,7 +17,7 @@ export default function AdminUsers() {
     }
   }
 
-  useEffect(() => { fetchUsers(); }, []);
+  useEffect(() => { fetchUsers(); }, [locationKey]);
 
   async function toggleAdmin(userId, isAdmin) {
     try {

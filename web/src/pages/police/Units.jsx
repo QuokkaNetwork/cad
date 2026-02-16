@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
@@ -7,6 +8,7 @@ import StatusBadge from '../../components/StatusBadge';
 
 export default function Units() {
   const { activeDepartment } = useDepartment();
+  const { key: locationKey } = useLocation();
   const [units, setUnits] = useState([]);
   const [myUnit, setMyUnit] = useState(null);
   const [location, setLocation] = useState('');
@@ -50,7 +52,7 @@ export default function Units() {
     }
   }, [deptId]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData, locationKey]);
 
   useEventSource({
     'unit:online': () => fetchData(),

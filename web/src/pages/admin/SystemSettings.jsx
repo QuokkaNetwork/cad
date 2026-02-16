@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
 
@@ -13,6 +14,7 @@ function formatErr(err) {
 }
 
 export default function AdminSystemSettings() {
+  const { key: locationKey } = useLocation();
   const [settings, setSettings] = useState({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -46,7 +48,7 @@ export default function AdminSystemSettings() {
   useEffect(() => {
     fetchSettings();
     fetchFiveMStatus();
-  }, []);
+  }, [locationKey]);
 
   function updateSetting(key, value) {
     setSettings(prev => ({ ...prev, [key]: value }));

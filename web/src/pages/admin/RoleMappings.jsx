@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
 
 export default function AdminRoleMappings() {
+  const { key: locationKey } = useLocation();
   const [mappings, setMappings] = useState([]);
   const [discordRoles, setDiscordRoles] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -34,7 +36,7 @@ export default function AdminRoleMappings() {
     }
   }
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [locationKey]);
 
   const targetOptions = useMemo(() => {
     if (targetType === 'sub_department') {
