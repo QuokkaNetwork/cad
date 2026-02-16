@@ -111,16 +111,85 @@ local function notifyPlayer(src, message)
   })
 end
 
-local function submitEmergencyCall(src, details)
+local function splitByPipe(text)
+  local input = tostring(text or '')
+  local parts = {}
+  local cursor = 1
+  while true do
+    local sepStart, sepEnd = input:find('|', cursor, true)
+    if not sepStart then
+      parts[#parts + 1] = trim(input:sub(cursor))
+      break
+    end
+    parts[#parts + 1] = trim(input:sub(cursor, sepStart - 1))
+    cursor = sepEnd + 1
+  end
+  return parts
+end
+
+local function sendEmergencyUsage(src)
+  notifyPlayer(src, 'Usage: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>')
+  notifyPlayer(src, 'Example: /000 Armed Robbery | 24/7 in Sandy | 2 masked males | Black Sultan | shots fired')
+end
+
+local function parseEmergencyReport(rawInput)
+  local raw = trim(rawInput)
+  if raw == '' then
+    return nil, 'Emergency details are required.'
+  end
+
+  local parts = splitByPipe(raw)
+  local report = {
+    emergency_type = '',
+    details = '',
+    suspects = '',
+    vehicle = '',
+    hazards = '',
+  }
+
+  if #parts == 1 then
+    if #parts[1] > 64 then
+      report.emergency_type = 'Emergency'
+      report.details = parts[1]
+    else
+      report.emergency_type = parts[1]
+    end
+  else
+    report.emergency_type = parts[1]
+    report.details = parts[2] or ''
+    report.suspects = parts[3] or ''
+    report.vehicle = parts[4] or ''
+    report.hazards = parts[5] or ''
+  end
+
+  if report.emergency_type == '' then
+    return nil, 'Emergency type is required.'
+  end
+  return report
+end
+
+local function buildEmergencyMessage(report)
+  local lines = {}
+  if report.details ~= '' then lines[#lines + 1] = report.details end
+  if report.suspects ~= '' then lines[#lines + 1] = ('Suspects: %s'):format(report.suspects) end
+  if report.vehicle ~= '' then lines[#lines + 1] = ('Vehicle: %s'):format(report.vehicle) end
+  if report.hazards ~= '' then lines[#lines + 1] = ('Hazards/Injuries: %s'):format(report.hazards) end
+  if #lines == 0 then return 'No additional details provided.' end
+  return table.concat(lines, ' | ')
+end
+
+local function submitEmergencyCall(src, report)
   local s = tonumber(src)
   if not s then return end
 
   local pos = PlayerPositions[s]
+  local details = buildEmergencyMessage(report)
   local payload = {
     source = s,
     player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
     identifiers = GetPlayerIdentifiers(s),
-    message = tostring(details or ''),
+    title = ('000 %s'):format(report.emergency_type),
+    message = details,
     priority = '1',
     job_code = '000',
   }
@@ -141,9 +210,9 @@ local function submitEmergencyCall(src, details)
       if ok and type(parsed) == 'table' and type(parsed.call) == 'table' and parsed.call.id then
         callId = tostring(parsed.call.id)
       end
-      print(('[cad_bridge] /000 call created by %s (#%s) as CAD call #%s')
-        :format(payload.player_name, tostring(s), callId))
-      notifyPlayer(s, ('000 call sent to CAD (Call #%s).'):format(callId))
+      print(('[cad_bridge] /000 call created by %s (#%s) as CAD call #%s [%s]')
+        :format(payload.player_name, tostring(s), callId, report.emergency_type))
+      notifyPlayer(s, ('000 call sent to CAD (Call #%s). Type: %s'):format(callId, report.emergency_type))
       return
     end
 
@@ -162,8 +231,21 @@ RegisterCommand('000', function(src, args)
     print('[cad_bridge] /000 command is in-game only')
     return
   end
-  local details = table.concat(args or {}, ' ')
-  submitEmergencyCall(src, details)
+
+  local rawInput = trim(table.concat(args or {}, ' '))
+  if rawInput == '' or rawInput:lower() == 'help' then
+    sendEmergencyUsage(src)
+    return
+  end
+
+  local report, err = parseEmergencyReport(rawInput)
+  if not report then
+    notifyPlayer(src, err or 'Invalid emergency format.')
+    sendEmergencyUsage(src)
+    return
+  end
+
+  submitEmergencyCall(src, report)
 end, false)
 
 CreateThread(function()

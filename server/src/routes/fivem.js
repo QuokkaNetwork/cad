@@ -18,6 +18,12 @@ function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
 }
 
+function getFineDeliveryMode() {
+  return String(Settings.get('fivem_bridge_qbox_fines_delivery_mode') || 'direct_db')
+    .trim()
+    .toLowerCase();
+}
+
 function requireBridgeAuth(req, res, next) {
   const configured = getBridgeToken();
   if (!configured) {
@@ -408,6 +414,9 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
 
 // FiveM resource polls pending fine jobs and applies them through QBox-side logic.
 router.get('/fine-jobs', requireBridgeAuth, (req, res) => {
+  if (getFineDeliveryMode() === 'direct_db') {
+    return res.json([]);
+  }
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
   const jobs = FiveMFineJobs.listPending(limit);
   res.json(jobs);

@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth } = require('../auth/middleware');
 const { CriminalRecords, Units, FiveMFineJobs, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
+const { processPendingFineJobs } = require('../services/fivemFineProcessor');
 
 const router = express.Router();
 
@@ -60,6 +61,9 @@ router.post('/', requireAuth, (req, res) => {
       reason: title,
       issued_by_user_id: req.user.id,
       source_record_id: record.id,
+    });
+    processPendingFineJobs().catch((err) => {
+      console.error('[FineProcessor] Immediate record fine run failed:', err?.message || err);
     });
   }
 

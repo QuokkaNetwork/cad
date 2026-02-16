@@ -11,6 +11,7 @@ const {
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const qbox = require('../db/qbox');
+const { processPendingFineJobs } = require('../services/fivemFineProcessor');
 const {
   installOrUpdateResource,
   getStatus: getFiveMResourceStatus,
@@ -376,6 +377,19 @@ router.get('/fivem/fine-jobs', (req, res) => {
   res.json(FiveMFineJobs.listRecent(limit));
 });
 
+router.post('/fivem/fine-jobs/:id/retry', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid job id' });
+  const job = FiveMFineJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Fine job not found' });
+
+  FiveMFineJobs.markPending(id);
+  processPendingFineJobs().catch((err) => {
+    console.error('[FineProcessor] Retry run failed:', err?.message || err);
+  });
+  res.json({ ok: true });
+});
+
 router.post('/fivem/test-fine', (req, res) => {
   const { steam_id, citizen_id, amount, reason } = req.body || {};
   const fineAmount = Number(amount);
@@ -407,6 +421,9 @@ router.post('/fivem/test-fine', (req, res) => {
     reason: jobReason,
     issued_by_user_id: req.user.id,
     source_record_id: null,
+  });
+  processPendingFineJobs().catch((err) => {
+    console.error('[FineProcessor] Immediate test fine run failed:', err?.message || err);
   });
 
   audit(req.user.id, 'fivem_test_fine_queued', {

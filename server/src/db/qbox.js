@@ -108,6 +108,7 @@ function getQboxTableConfig() {
     vehiclesTable: getSetting('qbox_vehicles_table', 'player_vehicles'),
     citizenIdCol: getSetting('qbox_citizenid_col', 'citizenid'),
     charInfoCol: getSetting('qbox_charinfo_col', 'charinfo'),
+    moneyCol: getSetting('qbox_money_col', 'money'),
   };
 }
 
@@ -199,7 +200,7 @@ async function inspectConfiguredSchema() {
       report.message = 'Schema check failed';
       return report;
     }
-    if (!IDENTIFIER_RE.test(cfg.citizenIdCol) || !IDENTIFIER_RE.test(cfg.charInfoCol)) {
+    if (!IDENTIFIER_RE.test(cfg.citizenIdCol) || !IDENTIFIER_RE.test(cfg.charInfoCol) || !IDENTIFIER_RE.test(cfg.moneyCol)) {
       report.errors.push('Configured player column names contain invalid characters');
       report.message = 'Schema check failed';
       return report;
@@ -225,6 +226,9 @@ async function inspectConfiguredSchema() {
     }
     if (report.players.exists && !playersMap[cfg.charInfoCol]) {
       report.errors.push(`Charinfo column "${cfg.charInfoCol}" was not found in "${cfg.playersTable}"`);
+    }
+    if (report.players.exists && !playersMap[cfg.moneyCol]) {
+      report.players.warnings.push(`Money column "${cfg.moneyCol}" was not found in "${cfg.playersTable}"`);
     }
     if (playersMap[cfg.charInfoCol] && !playersMap[cfg.charInfoCol].isJson) {
       report.players.warnings.push(`"${cfg.charInfoCol}" is ${playersMap[cfg.charInfoCol].dataType}, not JSON. JSON parsing fallback will be used.`);
@@ -402,6 +406,65 @@ async function getVehiclesByOwner(citizenId) {
   }
 }
 
+async function applyFineByCitizenId({ citizenId, amount, account = 'bank' }) {
+  const normalizedCitizenId = String(citizenId || '').trim();
+  const fineAmount = Number(amount || 0);
+  const accountKey = String(account || 'bank').trim();
+
+  if (!normalizedCitizenId) {
+    throw new Error('citizenId is required');
+  }
+  if (!Number.isFinite(fineAmount) || fineAmount <= 0) {
+    throw new Error('amount must be a positive number');
+  }
+  if (!IDENTIFIER_RE.test(accountKey)) {
+    throw new Error('account contains invalid characters');
+  }
+
+  const p = await getPool();
+  const { playersTable, citizenIdCol, moneyCol } = getQboxTableConfig();
+  const tableNameSql = escapeIdentifier(playersTable, 'players table');
+  const citizenIdColSql = escapeIdentifier(citizenIdCol, 'citizen ID column');
+  const moneyColSql = escapeIdentifier(moneyCol, 'money column');
+
+  const conn = await p.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query(
+      `SELECT ${moneyColSql} as money FROM ${tableNameSql} WHERE ${citizenIdColSql} = ? LIMIT 1 FOR UPDATE`,
+      [normalizedCitizenId]
+    );
+    if (!rows.length) {
+      throw new Error(`Citizen ${normalizedCitizenId} not found in ${playersTable}`);
+    }
+
+    const money = parseMaybeJson(rows[0].money);
+    const currentBalance = Number(money?.[accountKey] || 0);
+    const safeCurrent = Number.isFinite(currentBalance) ? currentBalance : 0;
+    const nextBalance = Number((safeCurrent - fineAmount).toFixed(2));
+    const nextMoney = { ...money, [accountKey]: nextBalance };
+
+    await conn.query(
+      `UPDATE ${tableNameSql} SET ${moneyColSql} = ? WHERE ${citizenIdColSql} = ?`,
+      [JSON.stringify(nextMoney), normalizedCitizenId]
+    );
+
+    await conn.commit();
+    return {
+      citizenId: normalizedCitizenId,
+      account: accountKey,
+      amount: fineAmount,
+      before: safeCurrent,
+      after: nextBalance,
+    };
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 module.exports = {
   initPool,
   testConnection,
@@ -410,4 +473,5 @@ module.exports = {
   getCharacterById,
   searchVehicles,
   getVehiclesByOwner,
+  applyFineByCitizenId,
 };

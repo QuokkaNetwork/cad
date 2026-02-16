@@ -31,6 +31,10 @@ Optional:
 - `set cad_bridge_postal_resource nearest-postal`
 - `set cad_bridge_postal_export getPostal`
 
+CAD-side fine delivery options:
+- In Admin > System Settings, `Fine Delivery Mode = Direct QBX DB` applies fines directly in the QBX players table.
+- `Fine Delivery Mode = FiveM Bridge Command` keeps the old queue polling behavior via this resource.
+
 ## QBox fine adapter
 The default adapter runs a server command using `cad_bridge_fine_command`.
 You should point this to a command/resource in your server that actually creates invoices/fines in your QBox setup.
@@ -43,6 +47,8 @@ If the configured command is not registered, CAD fine jobs will now fail with a 
 - This is a first-draft bridge and may require adapter tweaks for your billing stack.
 
 ## `/000` command
-- Players can use `/000 <details>` in-game.
+- Players can use `/000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>` in-game.
+- Quick form is also supported: `/000 <details>`.
+- Use `/000 help` to show usage in chat.
 - The bridge sends a high-priority CAD call with current street/postal location (when available).
 - CAD creates the call in an active dispatch-visible department so units can self-attach.

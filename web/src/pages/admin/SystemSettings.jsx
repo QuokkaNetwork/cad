@@ -105,6 +105,16 @@ export default function AdminSystemSettings() {
     }
   }
 
+  async function retryFineJob(jobId) {
+    try {
+      await api.post(`/api/admin/fivem/fine-jobs/${jobId}/retry`, {});
+      setTestFineResult({ success: true, message: `Fine job #${jobId} re-queued.` });
+      fetchFineJobs();
+    } catch (err) {
+      setTestFineResult({ success: false, message: formatErr(err) });
+    }
+  }
+
   useEffect(() => {
     fetchSettings();
     fetchFiveMStatus();
@@ -267,6 +277,11 @@ export default function AdminSystemSettings() {
               <input type="text" value={settings.qbox_charinfo_col || ''} onChange={e => updateSetting('qbox_charinfo_col', e.target.value)}
                 className="w-full bg-cad-surface border border-cad-border rounded px-3 py-1.5 text-xs focus:outline-none focus:border-cad-accent" placeholder="charinfo" />
             </div>
+            <div>
+              <label className="block text-xs text-cad-muted mb-1">Money Column</label>
+              <input type="text" value={settings.qbox_money_col || ''} onChange={e => updateSetting('qbox_money_col', e.target.value)}
+                className="w-full bg-cad-surface border border-cad-border rounded px-3 py-1.5 text-xs focus:outline-none focus:border-cad-accent" placeholder="money" />
+            </div>
           </div>
         </div>
 
@@ -415,6 +430,27 @@ export default function AdminSystemSettings() {
               <option value="true">Enabled</option>
             </select>
           </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Fine Delivery Mode</label>
+            <select
+              value={settings.fivem_bridge_qbox_fines_delivery_mode || 'direct_db'}
+              onChange={e => updateSetting('fivem_bridge_qbox_fines_delivery_mode', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="direct_db">Direct QBX DB</option>
+              <option value="bridge">FiveM Bridge Command</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Fine Account Key</label>
+            <input
+              type="text"
+              value={settings.qbox_fine_account_key || 'bank'}
+              onChange={e => updateSetting('qbox_fine_account_key', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="bank"
+            />
+          </div>
         </div>
 
         <div className="flex items-center gap-2 mt-4">
@@ -550,15 +586,25 @@ export default function AdminSystemSettings() {
                   <p className="text-xs text-cad-ink">
                     #{job.id} | CID {job.citizen_id} | ${Number(job.amount || 0).toFixed(0)}
                   </p>
-                  <span className={`text-[11px] font-semibold uppercase ${
-                    job.status === 'sent'
-                      ? 'text-emerald-400'
-                      : job.status === 'failed'
-                        ? 'text-red-400'
-                        : 'text-amber-300'
-                  }`}>
-                    {job.status}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[11px] font-semibold uppercase ${
+                      job.status === 'sent'
+                        ? 'text-emerald-400'
+                        : job.status === 'failed'
+                          ? 'text-red-400'
+                          : 'text-amber-300'
+                    }`}>
+                      {job.status}
+                    </span>
+                    {job.status !== 'sent' && (
+                      <button
+                        onClick={() => retryFineJob(job.id)}
+                        className="px-2 py-0.5 text-[10px] bg-cad-card text-cad-muted hover:text-cad-ink rounded border border-cad-border"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <p className="text-[11px] text-cad-muted mt-1">{job.reason || 'No reason'}</p>
                 {!!job.error && <p className="text-[11px] text-red-300 mt-1 whitespace-pre-wrap">{job.error}</p>}

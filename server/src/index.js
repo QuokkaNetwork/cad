@@ -11,6 +11,7 @@ const { initSteamAuth } = require('./auth/steam');
 const { startBot } = require('./discord/bot');
 const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
+const { startFineProcessor } = require('./services/fivemFineProcessor');
 
 // Initialize database
 console.log('Initializing database...');
@@ -108,3 +109,4 @@ startAutoUpdater().catch(err => {
 });
 
 startFiveMResourceAutoSync();
+startFineProcessor();

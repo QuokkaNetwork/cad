@@ -114,8 +114,8 @@ async function syncUserRoles(discordId) {
   const oldIsAdmin = !!user.is_admin;
   UserDepartments.setForUser(user.id, uniqueDeptIds);
   UserSubDepartments.setForUser(user.id, uniqueSubDeptIds);
-  if (hasAdminRole && !oldIsAdmin) {
-    Users.update(user.id, { is_admin: 1 });
+  if (hasAdminRole !== oldIsAdmin) {
+    Users.update(user.id, { is_admin: hasAdminRole ? 1 : 0 });
   }
   const newDepts = UserDepartments.getForUser(user.id);
   const newSubDepts = UserSubDepartments.getForUser(user.id);
@@ -195,8 +195,9 @@ async function syncAllMembers() {
 
     UserDepartments.setForUser(user.id, [...departmentIds]);
     UserSubDepartments.setForUser(user.id, [...subDepartmentIds]);
-    if (hasAdminRole && !user.is_admin) {
-      Users.update(user.id, { is_admin: 1 });
+    const isAdmin = !!user.is_admin;
+    if (hasAdminRole !== isAdmin) {
+      Users.update(user.id, { is_admin: hasAdminRole ? 1 : 0 });
     }
     synced++;
   }
