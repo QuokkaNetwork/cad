@@ -18,14 +18,19 @@ export default function Voice() {
   const [isPTTActive, setIsPTTActive] = useState(false);
   const [error, setError] = useState(null);
   const [selectedCall, setSelectedCall] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
 
   // Fetch channels and calls
   const fetchData = useCallback(async () => {
-    if (!deptId || !isDispatch) return;
+    if (!deptId || !isDispatch) {
+      setLoading(false);
+      return;
+    }
     try {
+      setLoading(true);
       const [channelsData, pendingCallsData, activeCallsData] = await Promise.all([
         api.get('/api/voice/channels'),
         api.get('/api/voice/calls/pending'),
@@ -36,6 +41,10 @@ export default function Voice() {
       setActiveCalls(activeCallsData);
     } catch (err) {
       console.error('Failed to load voice data:', err);
+      setError(`Failed to load voice data: ${err.message || 'Unknown error'}`);
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setLoading(false);
     }
   }, [deptId, isDispatch]);
 
@@ -186,7 +195,20 @@ export default function Voice() {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center text-cad-muted">
-          <p>Voice features are only available for dispatch departments.</p>
+          <p className="mb-2">Voice features are only available for dispatch departments.</p>
+          <p className="text-xs">Current department: {activeDepartment?.name || 'None'}</p>
+          <p className="text-xs">is_dispatch flag: {activeDepartment?.is_dispatch ? 'Yes' : 'No'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center text-cad-muted">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cad-accent mx-auto mb-2"></div>
+          <p>Loading voice radio...</p>
         </div>
       </div>
     );
@@ -198,10 +220,10 @@ export default function Voice() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold">Voice Radio</h2>
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-xs text-cad-muted">
-              {isConnected ? 'Connected' : 'Disconnected'}
+          <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-cad-card border border-cad-border">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+            <span className="text-xs font-medium">
+              {isConnected ? 'Voice Bridge Connected' : 'Voice Bridge Disconnected'}
             </span>
           </div>
         </div>
@@ -227,6 +249,16 @@ export default function Voice() {
         </div>
       )}
 
+      {/* Connection help banner */}
+      {!isConnected && !error && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm">
+          <p className="font-medium mb-1">Voice bridge not connected</p>
+          <p className="text-xs">
+            The voice bridge allows you to communicate with in-game units. Select a channel below to join when the connection is established.
+          </p>
+        </div>
+      )}
+
       {/* Main content */}
       <div className="flex gap-4 flex-1 min-h-0">
         {/* Radio Channels */}
@@ -235,7 +267,7 @@ export default function Voice() {
             Radio Channels ({channels.length})
           </h3>
           <div className="space-y-3">
-            {channels.map(channel => {
+            {channels.length > 0 ? channels.map(channel => {
               const isInChannel = currentChannel === channel.channel_number;
               return (
                 <div
@@ -302,10 +334,20 @@ export default function Voice() {
                   </div>
                 </div>
               );
-            })}
-            {channels.length === 0 && (
-              <div className="text-center py-12 text-cad-muted">
-                No radio channels available
+            }) : (
+              <div className="text-center py-12">
+                <div className="bg-cad-surface rounded-lg border border-cad-border p-6 max-w-md mx-auto">
+                  <svg className="w-12 h-12 text-cad-muted mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+                  </svg>
+                  <p className="text-cad-muted font-medium mb-2">No radio channels available</p>
+                  <p className="text-xs text-cad-muted mb-3">
+                    Voice channels need to be created by an administrator before you can use the radio.
+                  </p>
+                  <p className="text-xs text-cad-accent">
+                    Admin → System Settings → Voice Channels
+                  </p>
+                </div>
               </div>
             )}
           </div>
