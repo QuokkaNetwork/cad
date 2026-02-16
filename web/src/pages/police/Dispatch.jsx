@@ -714,12 +714,12 @@ export default function Dispatch() {
 
             {!isEmergency000Call(selectedCall) && (
               <div>
-                <h3 className="font-medium text-lg">{selectedCall.title}</h3>
+                <h3 className="font-medium text-lg break-words">{selectedCall.title}</h3>
                 {selectedCall.location && (
-                  <p className="text-sm text-cad-muted mt-1">Location: {selectedCall.location}</p>
+                  <p className="text-sm text-cad-muted mt-1 break-words">Location: {selectedCall.location}</p>
                 )}
                 {selectedCall.description && (
-                  <p className="text-sm mt-2">{selectedCall.description}</p>
+                  <p className="text-sm mt-2 break-words whitespace-pre-wrap">{selectedCall.description}</p>
                 )}
               </div>
             )}
@@ -733,15 +733,15 @@ export default function Dispatch() {
                   </span>
                 </div>
                 {emergencySummary.callerLine && (
-                  <p className="text-sm text-red-100 mt-2">{emergencySummary.callerLine}</p>
+                  <p className="text-sm text-red-100 mt-2 break-words">{emergencySummary.callerLine}</p>
                 )}
                 {emergencySummary.departmentLine && (
-                  <p className="text-xs text-red-200/85 mt-1">{emergencySummary.departmentLine}</p>
+                  <p className="text-xs text-red-200/85 mt-1 break-words">{emergencySummary.departmentLine}</p>
                 )}
                 {emergencySummary.details.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {emergencySummary.details.map((line, idx) => (
-                      <p key={`${selectedCall.id}-000-${idx}`} className="text-sm text-red-100/90">{line}</p>
+                      <p key={`${selectedCall.id}-000-${idx}`} className="text-sm text-red-100/90 break-words whitespace-pre-wrap">{line}</p>
                     ))}
                   </div>
                 )}
