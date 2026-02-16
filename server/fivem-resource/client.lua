@@ -259,6 +259,27 @@ local function notifyRoute(route, hadWaypoint)
   end
 end
 
+local function notifyRouteCleared(route)
+  local callId = tostring(route.call_id or '?')
+  local message = ('CAD route cleared for call #%s'):format(callId)
+
+  if GetResourceState('ox_lib') == 'started' then
+    TriggerEvent('ox_lib:notify', {
+      title = 'CAD Dispatch',
+      description = message,
+      type = 'inform',
+    })
+    return
+  end
+
+  if GetResourceState('chat') == 'started' then
+    TriggerEvent('chat:addMessage', {
+      color = { 148, 163, 184 },
+      args = { 'CAD', message },
+    })
+  end
+end
+
 local function notifyFine(payload)
   local title = tostring(payload and payload.title or 'CAD Fine Issued')
   local description = tostring(payload and payload.description or 'You have received a fine.')
@@ -282,6 +303,14 @@ end
 
 RegisterNetEvent('cad_bridge:setCallRoute', function(route)
   if type(route) ~= 'table' then return end
+  local action = tostring(route.action or ''):lower()
+  local clearWaypoint = action == 'clear' or route.clear_waypoint == true or tonumber(route.clear_waypoint or 0) == 1
+
+  if clearWaypoint then
+    SetWaypointOff()
+    notifyRouteCleared(route)
+    return
+  end
 
   local coords = parseCoords(route.position)
   if not coords then

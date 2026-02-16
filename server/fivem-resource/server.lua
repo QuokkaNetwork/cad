@@ -19,6 +19,60 @@ local function encodeJson(payload)
   return json.encode(payload or {})
 end
 
+local bridgeBackoffUntilMs = 0
+local lastBackoffLogAtMs = 0
+
+local function nowMs()
+  return tonumber(GetGameTimer() or 0) or 0
+end
+
+local function getHeaderValue(responseHeaders, keyName)
+  if type(responseHeaders) ~= 'table' then return '' end
+  local expected = tostring(keyName or ''):lower()
+  for key, value in pairs(responseHeaders) do
+    if tostring(key or ''):lower() == expected then
+      return tostring(value or '')
+    end
+  end
+  return ''
+end
+
+local function computeBackoffMs(responseHeaders, fallbackMs)
+  local retryAfterRaw = trim(getHeaderValue(responseHeaders, 'retry-after'))
+  local retryAfterSeconds = tonumber(retryAfterRaw)
+  if retryAfterSeconds and retryAfterSeconds > 0 then
+    return math.max(1000, math.floor(retryAfterSeconds * 1000))
+  end
+  return math.max(1000, math.floor(tonumber(fallbackMs) or 10000))
+end
+
+local function setBridgeBackoff(responseHeaders, fallbackMs, reason)
+  local waitMs = computeBackoffMs(responseHeaders, fallbackMs)
+  local nextUntil = nowMs() + waitMs
+  if nextUntil > bridgeBackoffUntilMs then
+    bridgeBackoffUntilMs = nextUntil
+  end
+
+  local now = nowMs()
+  if (now - lastBackoffLogAtMs) >= 2000 then
+    lastBackoffLogAtMs = now
+    print(('[cad_bridge] backing off bridge requests for %sms (%s)'):format(
+      math.max(0, bridgeBackoffUntilMs - now),
+      tostring(reason or '429')
+    ))
+  end
+end
+
+local function isBridgeBackoffActive()
+  if bridgeBackoffUntilMs <= 0 then return false end
+  local now = nowMs()
+  if now >= bridgeBackoffUntilMs then
+    bridgeBackoffUntilMs = 0
+    return false
+  end
+  return true
+end
+
 local function request(method, path, payload, cb)
   if not hasBridgeConfig() then
     if cb then cb(0, '{}', {}) end
@@ -211,6 +265,11 @@ end
 local function submitEmergencyCall(src, report)
   local s = tonumber(src)
   if not s then return end
+  if isBridgeBackoffActive() then
+    local waitSeconds = math.max(1, math.ceil((bridgeBackoffUntilMs - nowMs()) / 1000))
+    notifyPlayer(s, ('CAD bridge is rate-limited. Try /000 again in %ss.'):format(waitSeconds))
+    return
+  end
 
   local pos = PlayerPositions[s]
   local details = buildEmergencyMessage(report)
@@ -233,7 +292,7 @@ local function submitEmergencyCall(src, report)
     payload.postal = pos.postal
   end
 
-  request('POST', '/api/integration/fivem/calls', payload, function(status, body)
+  request('POST', '/api/integration/fivem/calls', payload, function(status, body, responseHeaders)
     if status >= 200 and status < 300 then
       local callId = '?'
       local ok, parsed = pcall(json.decode, body or '{}')
@@ -244,6 +303,9 @@ local function submitEmergencyCall(src, report)
         :format(payload.player_name, tostring(s), callId, report.emergency_type))
       notifyPlayer(s, ('000 call sent to CAD (Call #%s). Type: %s'):format(callId, report.emergency_type))
       return
+    end
+    if status == 429 then
+      setBridgeBackoff(responseHeaders, 15000, '/000 call')
     end
 
     local err = ('Failed to create CAD call (HTTP %s)'):format(tostring(status))
@@ -278,10 +340,14 @@ RegisterCommand('000', function(src, args)
   submitEmergencyCall(src, report)
 end, false)
 
+local heartbeatInFlight = false
 CreateThread(function()
   while true do
     Wait(math.max(1000, Config.HeartbeatIntervalMs))
     if not hasBridgeConfig() then
+      goto continue
+    end
+    if heartbeatInFlight or isBridgeBackoffActive() then
       goto continue
     end
 
@@ -333,11 +399,20 @@ CreateThread(function()
       end
     end
 
+    heartbeatInFlight = true
     request('POST', '/api/integration/fivem/heartbeat', {
       players = payloadPlayers,
       timestamp = os.time(),
-    }, function(status)
+    }, function(status, _body, responseHeaders)
+      heartbeatInFlight = false
+      if status == 429 then
+        setBridgeBackoff(responseHeaders, 15000, 'heartbeat')
+        return
+      end
       if status >= 400 then
+        if status >= 500 then
+          setBridgeBackoff(responseHeaders, 5000, 'heartbeat error')
+        end
         print(('[cad_bridge] heartbeat failed with status %s'):format(tostring(status)))
       end
     end)
@@ -616,14 +691,24 @@ local function applyJobSync(job)
   return false, ('Unknown job sync adapter: %s'):format(tostring(Config.JobSyncAdapter)), false
 end
 
+local jobPollInFlight = false
 CreateThread(function()
   while true do
     Wait(math.max(2000, Config.JobSyncPollIntervalMs))
     if not hasBridgeConfig() then
       goto continue
     end
+    if jobPollInFlight or isBridgeBackoffActive() then
+      goto continue
+    end
 
-    request('GET', '/api/integration/fivem/job-jobs?limit=25', nil, function(status, body)
+    jobPollInFlight = true
+    request('GET', '/api/integration/fivem/job-jobs?limit=25', nil, function(status, body, responseHeaders)
+      jobPollInFlight = false
+      if status == 429 then
+        setBridgeBackoff(responseHeaders, 10000, 'job poll')
+        return
+      end
       if status ~= 200 then
         return
       end
@@ -658,37 +743,53 @@ local function applyRouteJob(job)
     return false, 'Target character is not currently online', true
   end
 
+  local action = trim(job.action or 'set'):lower()
+  local clearWaypoint = job.clear_waypoint == true or tonumber(job.clear_waypoint or 0) == 1 or action == 'clear'
   local payload = {
     id = tostring(job.id or ''),
     call_id = tonumber(job.call_id) or 0,
+    action = action ~= '' and action or 'set',
+    clear_waypoint = clearWaypoint,
     call_title = tostring(job.call_title or ''),
     location = tostring(job.location or ''),
     postal = tostring(job.postal or ''),
   }
 
-  local x = tonumber(job.position_x)
-  local y = tonumber(job.position_y)
-  local z = tonumber(job.position_z)
-  if x and y then
-    payload.position = {
-      x = x,
-      y = y,
-      z = z or 0.0,
-    }
+  if not clearWaypoint then
+    local x = tonumber(job.position_x)
+    local y = tonumber(job.position_y)
+    local z = tonumber(job.position_z)
+    if x and y then
+      payload.position = {
+        x = x,
+        y = y,
+        z = z or 0.0,
+      }
+    end
   end
 
   TriggerClientEvent('cad_bridge:setCallRoute', sourceId, payload)
   return true, '', false
 end
 
+local routePollInFlight = false
 CreateThread(function()
   while true do
     Wait(math.max(2000, Config.RoutePollIntervalMs))
     if not hasBridgeConfig() then
       goto continue
     end
+    if routePollInFlight or isBridgeBackoffActive() then
+      goto continue
+    end
 
-    request('GET', '/api/integration/fivem/route-jobs?limit=25', nil, function(status, body)
+    routePollInFlight = true
+    request('GET', '/api/integration/fivem/route-jobs?limit=25', nil, function(status, body, responseHeaders)
+      routePollInFlight = false
+      if status == 429 then
+        setBridgeBackoff(responseHeaders, 10000, 'route poll')
+        return
+      end
       if status ~= 200 then
         return
       end
@@ -1003,14 +1104,24 @@ local function applyFine(job)
   return false, ('Unknown fine adapter: %s'):format(tostring(Config.FineAdapter)), false
 end
 
+local finePollInFlight = false
 CreateThread(function()
   while true do
     Wait(math.max(2000, Config.FinePollIntervalMs))
     if not hasBridgeConfig() then
       goto continue
     end
+    if finePollInFlight or isBridgeBackoffActive() then
+      goto continue
+    end
 
-    request('GET', '/api/integration/fivem/fine-jobs?limit=25', nil, function(status, body)
+    finePollInFlight = true
+    request('GET', '/api/integration/fivem/fine-jobs?limit=25', nil, function(status, body, responseHeaders)
+      finePollInFlight = false
+      if status == 429 then
+        setBridgeBackoff(responseHeaders, 10000, 'fine poll')
+        return
+      end
       if status ~= 200 then
         return
       end

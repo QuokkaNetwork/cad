@@ -353,8 +353,27 @@ function resolveCallPostal(call) {
   return extractPostalFromLocation(call?.location || '');
 }
 
-function getRouteJobId(unitId, callId) {
-  return `${Number(unitId || 0)}:${Number(callId || 0)}`;
+function getRouteJobId(unitId, callId, action = 'set') {
+  return `${Number(unitId || 0)}:${Number(callId || 0)}:${String(action || 'set').toLowerCase()}`;
+}
+
+function clearRouteJobsForAssignment(callId, unitId) {
+  const targetCallId = Number(callId || 0);
+  const targetUnitId = Number(unitId || 0);
+  if (!targetCallId || !targetUnitId) return;
+  for (const [key, job] of pendingRouteJobs.entries()) {
+    if (Number(job.unit_id || 0) !== targetUnitId) continue;
+    if (Number(job.call_id || 0) !== targetCallId) continue;
+    pendingRouteJobs.delete(key);
+  }
+}
+
+function resolveRouteCitizenIdForUnit(unit) {
+  if (!unit) return '';
+  const user = Users.findById(unit.user_id);
+  if (!user) return '';
+  const activeLink = chooseActiveLinkForUser(user);
+  return String(activeLink?.citizen_id || user.preferred_citizen_id || '').trim();
 }
 
 function queueRouteJobForAssignment(call, unit) {
@@ -362,11 +381,7 @@ function queueRouteJobForAssignment(call, unit) {
   const unitId = Number(unit?.id || 0);
   if (!callId || !unitId) return;
 
-  const user = Users.findById(unit.user_id);
-  if (!user) return;
-
-  const activeLink = chooseActiveLinkForUser(user);
-  const citizenId = String(activeLink?.citizen_id || user.preferred_citizen_id || '').trim();
+  const citizenId = resolveRouteCitizenIdForUnit(unit);
   if (!citizenId) return;
 
   const postal = String(resolveCallPostal(call) || '').trim();
@@ -376,11 +391,14 @@ function queueRouteJobForAssignment(call, unit) {
   const hasPosition = Number.isFinite(positionX) && Number.isFinite(positionY);
   if (!postal && !hasPosition) return;
 
-  const routeJobId = getRouteJobId(unitId, callId);
+  clearRouteJobsForAssignment(callId, unitId);
+  const routeJobId = getRouteJobId(unitId, callId, 'set');
   pendingRouteJobs.set(routeJobId, {
     id: routeJobId,
     unit_id: unitId,
     call_id: callId,
+    action: 'set',
+    clear_waypoint: 0,
     call_title: String(call?.title || ''),
     citizen_id: citizenId,
     location: String(call?.location || ''),
@@ -388,6 +406,34 @@ function queueRouteJobForAssignment(call, unit) {
     position_x: hasPosition ? positionX : null,
     position_y: hasPosition ? positionY : null,
     position_z: Number.isFinite(positionZ) ? positionZ : null,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  });
+}
+
+function queueRouteClearJob(call, unit, fallbackUnitId = 0) {
+  const unitId = Number(unit?.id || fallbackUnitId || 0);
+  if (!unitId) return;
+
+  const callId = Number(call?.id || 0);
+  const citizenId = resolveRouteCitizenIdForUnit(unit);
+  if (!citizenId) return;
+
+  clearRouteJobsForAssignment(callId, unitId);
+  const routeJobId = getRouteJobId(unitId, callId, 'clear');
+  pendingRouteJobs.set(routeJobId, {
+    id: routeJobId,
+    unit_id: unitId,
+    call_id: callId,
+    action: 'clear',
+    clear_waypoint: 1,
+    call_title: String(call?.title || ''),
+    citizen_id: citizenId,
+    location: String(call?.location || ''),
+    postal: '',
+    position_x: null,
+    position_y: null,
+    position_z: null,
     created_at: Date.now(),
     updated_at: Date.now(),
   });
@@ -403,20 +449,14 @@ function clearRouteJobsForUnit(unitId) {
   }
 }
 
-function clearRouteJobsForCall(callId) {
+function clearRouteJobsForCall(callId, keepClearJobs = true) {
   const target = Number(callId || 0);
   if (!target) return;
   for (const [key, job] of pendingRouteJobs.entries()) {
     if (Number(job.call_id || 0) === target) {
+      if (keepClearJobs && String(job.action || '').toLowerCase() === 'clear') continue;
       pendingRouteJobs.delete(key);
     }
-  }
-}
-
-function clearRouteJobForAssignment(callId, unitId) {
-  const key = getRouteJobId(unitId, callId);
-  if (pendingRouteJobs.has(key)) {
-    pendingRouteJobs.delete(key);
   }
 }
 
@@ -440,12 +480,22 @@ bus.on('call:assign', ({ call, unit }) => {
   }
 });
 
-bus.on('call:unassign', ({ call, unit, unit_id }) => {
-  clearRouteJobForAssignment(call?.id, unit?.id || unit_id);
+bus.on('call:unassign', ({ call, unit, unit_id, removed }) => {
+  const resolvedUnit = unit || Units.findById(Number(unit_id || 0));
+  const resolvedUnitId = resolvedUnit?.id || unit_id;
+  clearRouteJobsForAssignment(call?.id, resolvedUnitId);
+  if (!removed) return;
+  if (!resolvedUnit) return;
+
+  try {
+    queueRouteClearJob(call, resolvedUnit, resolvedUnitId);
+  } catch (err) {
+    console.warn('[FiveMBridge] Could not queue clear route job on call unassign:', err?.message || err);
+  }
 });
 
 bus.on('call:close', ({ call }) => {
-  clearRouteJobsForCall(call?.id);
+  clearRouteJobsForCall(call?.id, true);
 });
 
 bus.on('unit:offline', ({ unit }) => {

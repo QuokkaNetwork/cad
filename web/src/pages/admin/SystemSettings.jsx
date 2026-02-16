@@ -472,19 +472,8 @@ export default function AdminSystemSettings() {
               Optional legacy field for opening third-party map UIs. Not required for CAD's built-in live map view.
             </p>
           </div>
-          <div>
-            <label className="block text-xs text-cad-muted mb-1">Use Repo Map Asset</label>
-            <select
-              value={settings.live_map_use_repo_asset || 'true'}
-              onChange={e => updateSetting('live_map_use_repo_asset', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-            >
-              <option value="true">Enabled</option>
-              <option value="false">Disabled</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-cad-muted mb-1">Repo Map Image URL</label>
+          <div className="col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Server Map Resource URL</label>
             <input
               type="text"
               value={settings.live_map_repo_asset_url || ''}
@@ -495,7 +484,7 @@ export default function AdminSystemSettings() {
           </div>
           <div className="col-span-2 -mt-1">
             <p className="text-xs text-cad-muted">
-              Leave Repo Map Image URL blank to auto-detect a map file in <span className="font-mono">web/public/maps</span> (or fallback to <span className="font-mono">/maps/FullMap.png</span>).
+              Leave this blank to auto-detect the first non-legacy map file in <span className="font-mono">web/public/maps</span>.
             </p>
           </div>
           <div>
@@ -631,7 +620,7 @@ export default function AdminSystemSettings() {
             />
           </div>
           <p className="col-span-2 text-xs text-cad-muted">
-            Reverse sync requires a linked Discord account and a preferred citizen ID. Job role mappings must be configured in <span className="font-semibold">Admin > Job Bindings</span>.
+            Reverse sync requires a linked Discord account and a preferred citizen ID. Job role mappings must be configured in <span className="font-semibold">Admin &gt; Job Bindings</span>.
           </p>
         </div>
 

@@ -23,6 +23,16 @@ function normalizeBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
+function parseTrustProxyEnv(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const text = String(value).trim().toLowerCase();
+  if (['true', 'yes', 'on'].includes(text)) return 1;
+  if (['false', 'no', 'off'].includes(text)) return false;
+  const parsed = Number.parseInt(text, 10);
+  if (!Number.isNaN(parsed)) return parsed;
+  return value;
+}
+
 const nodeEnv = process.env.NODE_ENV || 'development';
 const steamRealm = normalizeBaseUrl(process.env.STEAM_REALM || 'http://localhost:3030');
 const steamReturnUrl = normalizeBaseUrl(process.env.STEAM_RETURN_URL || `${steamRealm}/api/auth/steam/callback`);
@@ -82,6 +92,16 @@ module.exports = {
     selfRestart: String(process.env.AUTO_UPDATE_SELF_RESTART || 'true').toLowerCase() === 'true',
   },
   webUrl,
+  http: {
+    trustProxy: parseTrustProxyEnv(process.env.TRUST_PROXY, false),
+  },
+  rateLimit: {
+    apiWindowMs: Math.max(1_000, parseIntEnv(process.env.API_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000)),
+    apiMax: Math.max(0, parseIntEnv(process.env.API_RATE_LIMIT_MAX, 500)),
+    apiSkipAuthenticated: parseBoolEnv(process.env.API_RATE_LIMIT_SKIP_AUTHENTICATED, true),
+    fivemWindowMs: Math.max(1_000, parseIntEnv(process.env.FIVEM_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000)),
+    fivemMax: Math.max(0, parseIntEnv(process.env.FIVEM_RATE_LIMIT_MAX, 120000)),
+  },
   sqlite: {
     file: path.resolve(__dirname, '../data/cad.sqlite'),
   },

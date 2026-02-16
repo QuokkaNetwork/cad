@@ -568,7 +568,7 @@ const Calls = {
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['title', 'priority', 'location', 'description', 'job_code', 'status', 'postal', 'position_x', 'position_y', 'position_z'];
+    const allowed = ['title', 'priority', 'location', 'description', 'job_code', 'status', 'postal', 'position_x', 'position_y', 'position_z', 'was_ever_assigned'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -578,6 +578,8 @@ const Calls = {
           values.push(String(fields[key] || '').trim());
         } else if (key === 'position_x' || key === 'position_y' || key === 'position_z') {
           values.push(Number.isFinite(Number(fields[key])) ? Number(fields[key]) : null);
+        } else if (key === 'was_ever_assigned') {
+          values.push(fields[key] ? 1 : 0);
         } else {
           values.push(fields[key]);
         }
@@ -589,10 +591,12 @@ const Calls = {
     db.prepare(`UPDATE calls SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   },
   assignUnit(callId, unitId) {
-    db.prepare('INSERT OR IGNORE INTO call_units (call_id, unit_id) VALUES (?, ?)').run(callId, unitId);
+    const info = db.prepare('INSERT OR IGNORE INTO call_units (call_id, unit_id) VALUES (?, ?)').run(callId, unitId);
+    return Number(info?.changes || 0);
   },
   unassignUnit(callId, unitId) {
-    db.prepare('DELETE FROM call_units WHERE call_id = ? AND unit_id = ?').run(callId, unitId);
+    const info = db.prepare('DELETE FROM call_units WHERE call_id = ? AND unit_id = ?').run(callId, unitId);
+    return Number(info?.changes || 0);
   },
   getAssignedCallForUnit(unitId) {
     return db.prepare(`

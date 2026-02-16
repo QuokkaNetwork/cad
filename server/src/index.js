@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const passport = require('passport');
 const path = require('path');
 const config = require('./config');
+const { verifyToken } = require('./auth/jwt');
 const { initDb } = require('./db/sqlite');
 const { initSteamAuth } = require('./auth/steam');
 const { startBot } = require('./discord/bot');
@@ -21,6 +22,9 @@ console.log('Database ready');
 // Initialize Express
 const app = express();
 app.locals.authCookieName = config.auth.cookieName;
+if (config.http?.trustProxy !== false) {
+  app.set('trust proxy', config.http.trustProxy);
+}
 
 // Security middleware
 app.use(helmet({ contentSecurityPolicy: false }));
@@ -31,23 +35,48 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
+function extractRequestAuthToken(req) {
+  const authHeader = String(req.headers.authorization || '').trim();
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  return String(req.cookies?.[config.auth.cookieName] || '').trim();
+}
+
+function hasValidRequestAuthToken(req) {
+  const token = extractRequestAuthToken(req);
+  if (!token) return false;
+  try {
+    verifyToken(token);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Rate limiting
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 500,
+  windowMs: config.rateLimit.apiWindowMs,
+  max: config.rateLimit.apiMax,
   standardHeaders: true,
   legacyHeaders: false,
   // FiveM bridge endpoints are high-frequency by design.
-  skip: (req) => req.path.startsWith('/integration/fivem/'),
+  // Authenticated CAD traffic can legitimately be bursty (SSE refreshes, dispatch fan-out).
+  skip: (req) => req.path.startsWith('/integration/fivem/')
+    || (config.rateLimit.apiSkipAuthenticated && hasValidRequestAuthToken(req)),
 });
 const fivemBridgeLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10000,
+  windowMs: config.rateLimit.fivemWindowMs,
+  max: config.rateLimit.fivemMax,
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use('/api/', apiLimiter);
-app.use('/api/integration/fivem', fivemBridgeLimiter);
+if (config.rateLimit.apiMax > 0) {
+  app.use('/api/', apiLimiter);
+}
+if (config.rateLimit.fivemMax > 0) {
+  app.use('/api/integration/fivem', fivemBridgeLimiter);
+}
 
 // Passport (Steam)
 app.use(passport.initialize());

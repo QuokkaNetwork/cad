@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 
-const DEFAULT_MAP_IMAGE_URL = '/maps/FullMap.png';
 const MAP_WIDTH = 2048;
 const MAP_HEIGHT = 3072;
 const MAP_POLL_INTERVAL_MS = 1500;
@@ -104,7 +103,7 @@ function markerColor(player) {
 export default function LiveMap() {
   const { key: locationKey } = useLocation();
   const [viewBox, setViewBox] = useState(createInitialViewBox);
-  const [mapImageUrl, setMapImageUrl] = useState(DEFAULT_MAP_IMAGE_URL);
+  const [mapImageUrl, setMapImageUrl] = useState('');
   const [mapScaleX, setMapScaleX] = useState(1);
   const [mapScaleY, setMapScaleY] = useState(1);
   const [mapOffsetX, setMapOffsetX] = useState(0);
@@ -112,7 +111,8 @@ export default function LiveMap() {
   const [players, setPlayers] = useState([]);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [mapConfigError, setMapConfigError] = useState('');
+  const [playerError, setPlayerError] = useState('');
   const [lastRefreshAt, setLastRefreshAt] = useState(0);
 
   const svgRef = useRef(null);
@@ -122,17 +122,23 @@ export default function LiveMap() {
     try {
       const cfg = await api.get('/api/units/map-config');
       const url = String(cfg?.map_image_url || '').trim();
-      setMapImageUrl(url || DEFAULT_MAP_IMAGE_URL);
+      setMapImageUrl(url);
       setMapScaleX(parseMapNumber(cfg?.map_scale_x, 1));
       setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
       setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
       setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
+      if (!url) {
+        setMapConfigError('Live map resource is not configured. Set a server map resource path in Admin > System Settings.');
+      } else {
+        setMapConfigError('');
+      }
     } catch {
-      setMapImageUrl(DEFAULT_MAP_IMAGE_URL);
+      setMapImageUrl('');
       setMapScaleX(1);
       setMapScaleY(1);
       setMapOffsetX(0);
       setMapOffsetY(0);
+      setMapConfigError('Failed to load live map configuration');
     }
   }, []);
 
@@ -141,10 +147,10 @@ export default function LiveMap() {
       const data = await api.get(`/api/units/live-map/players?max_age_ms=${MAP_ACTIVE_MAX_AGE_MS}`);
       const nextPlayers = normalizePlayers(data?.payload || []);
       setPlayers(nextPlayers);
-      setError('');
+      setPlayerError('');
       setLastRefreshAt(Date.now());
     } catch (err) {
-      setError(err?.message || 'Failed to load live map players');
+      setPlayerError(err?.message || 'Failed to load live map players');
     } finally {
       setLoading(false);
     }
@@ -304,6 +310,7 @@ export default function LiveMap() {
 
   const markerRadius = viewBox.width * 0.006;
   const labelSize = Math.max(8, markerRadius * 2.2);
+  const error = mapConfigError || playerError;
 
   return (
     <div className="space-y-4">
@@ -311,7 +318,7 @@ export default function LiveMap() {
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
           <p className="text-sm text-cad-muted">
-            CAD bridge heartbeat mapped onto the repo map resource with live calibration support.
+            CAD bridge heartbeat mapped onto your server map resource with live calibration support.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -352,15 +359,17 @@ export default function LiveMap() {
             >
               <rect x={0} y={0} width={MAP_WIDTH} height={MAP_HEIGHT} fill="#09111d" />
 
-              <image
-                href={mapImageUrl}
-                x={0}
-                y={0}
-                width={MAP_WIDTH}
-                height={MAP_HEIGHT}
-                preserveAspectRatio="none"
-                opacity="0.94"
-              />
+              {mapImageUrl && (
+                <image
+                  href={mapImageUrl}
+                  x={0}
+                  y={0}
+                  width={MAP_WIDTH}
+                  height={MAP_HEIGHT}
+                  preserveAspectRatio="none"
+                  opacity="0.94"
+                />
+              )}
 
               {markers.map(({ player, point }) => {
                 const selected = selectedMarker?.player.identifier === player.identifier;
@@ -405,6 +414,13 @@ export default function LiveMap() {
             <div className="absolute left-3 bottom-3 bg-cad-surface/90 border border-cad-border rounded px-2 py-1 text-[11px] text-cad-muted">
               Mouse wheel to zoom | Drag to pan
             </div>
+            {!mapImageUrl && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="bg-cad-surface/95 border border-cad-border rounded px-4 py-2 text-xs text-amber-300 max-w-md text-center">
+                  Server map resource not configured. Configure the map path in Admin &gt; System Settings.
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

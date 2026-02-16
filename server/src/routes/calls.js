@@ -115,7 +115,11 @@ router.post('/:id/assign', requireAuth, (req, res) => {
   const unit = Units.findById(parseInt(unit_id, 10));
   if (!unit) return res.status(404).json({ error: 'Unit not found' });
 
-  Calls.assignUnit(call.id, unit.id);
+  const assignmentChanges = Calls.assignUnit(call.id, unit.id);
+  Calls.update(call.id, {
+    status: 'active',
+    was_ever_assigned: 1,
+  });
   Units.update(unit.id, { status: 'enroute' });
   const refreshedUnit = Units.findById(unit.id);
   const updated = Calls.findById(call.id);
@@ -126,6 +130,7 @@ router.post('/:id/assign', requireAuth, (req, res) => {
     callId: call.id,
     unitId: unit.id,
     callsign: refreshedUnit?.callsign || unit.callsign,
+    assignment_created: assignmentChanges > 0,
   });
   res.json(updated);
 });
@@ -143,19 +148,39 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
 
   const parsedUnitId = parseInt(unit_id, 10);
   const unit = Units.findById(parsedUnitId);
-  Calls.unassignUnit(call.id, parsedUnitId);
-  const updated = Calls.findById(call.id);
+  const detachedUnitSnapshot = Array.isArray(call?.assigned_units)
+    ? (call.assigned_units.find(u => Number(u.id) === Number(parsedUnitId)) || null)
+    : null;
+  const unitForEvent = unit || detachedUnitSnapshot;
+  const unassignmentChanges = Calls.unassignUnit(call.id, parsedUnitId);
+  let updated = Calls.findById(call.id);
+  let autoClosed = false;
+  const assignedCount = Array.isArray(updated?.assigned_units) ? updated.assigned_units.length : 0;
+  const wasEverAssigned = Number(updated?.was_ever_assigned || call?.was_ever_assigned || 0) === 1;
+
+  if (unassignmentChanges > 0 && wasEverAssigned && assignedCount === 0 && String(updated?.status || '').toLowerCase() !== 'closed') {
+    Calls.update(call.id, { status: 'closed' });
+    updated = Calls.findById(call.id);
+    autoClosed = true;
+  }
 
   bus.emit('call:unassign', {
     departmentId: call.department_id,
     call: updated,
-    unit,
+    unit: unitForEvent,
     unit_id: parsedUnitId,
+    removed: unassignmentChanges > 0,
+    auto_closed: autoClosed,
   });
+  if (autoClosed) {
+    bus.emit('call:close', { departmentId: call.department_id, call: updated, reason: 'auto_closed_all_units_detached' });
+  }
   audit(req.user.id, 'call_unit_unassigned', {
     callId: call.id,
     unitId: parsedUnitId,
-    callsign: unit?.callsign || '',
+    callsign: unitForEvent?.callsign || '',
+    assignment_removed: unassignmentChanges > 0,
+    auto_closed: autoClosed,
   });
   res.json(updated);
 });

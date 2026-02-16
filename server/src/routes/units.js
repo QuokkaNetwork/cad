@@ -9,7 +9,6 @@ const liveMapStore = require('../services/liveMapStore');
 
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
-const DEFAULT_LIVE_MAP_IMAGE_URL = '/maps/FullMap.png';
 const REPO_MAP_DIR_CANDIDATES = [
   path.resolve(__dirname, '../../../web/public/maps'),
   path.resolve(__dirname, '../../../web/dist/maps'),
@@ -23,14 +22,6 @@ function parseMapNumber(value, fallback) {
   if (!text) return fallback;
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
-}
-
-function parseMapBoolean(value, fallback) {
-  const text = String(value ?? '').trim().toLowerCase();
-  if (!text) return fallback;
-  if (['1', 'true', 'yes', 'on'].includes(text)) return true;
-  if (['0', 'false', 'no', 'off'].includes(text)) return false;
-  return fallback;
 }
 
 function parseSqliteUtc(value) {
@@ -60,12 +51,11 @@ function findRepoMapAssetUrl() {
 
     if (!files.length) continue;
 
-    const preferred = files.find(name => name.toLowerCase() !== 'fullmap.png')
-      || files.find(name => name.toLowerCase() === 'fullmap.png')
-      || files[0];
+    // Do not use the legacy hard-coded FullMap asset as an implicit fallback.
+    const preferred = files.find(name => name.toLowerCase() !== 'fullmap.png') || '';
     if (preferred) return `/maps/${encodeURIComponent(preferred)}`;
   }
-  return DEFAULT_LIVE_MAP_IMAGE_URL;
+  return '';
 }
 
 function findDispatchDepartments() {
@@ -230,28 +220,20 @@ router.get('/map', requireAuth, (req, res) => {
 });
 
 router.get('/map-config', requireAuth, (_req, res) => {
-  const configuredUploadMap = String(Settings.get('live_map_image_url') || '').trim();
   const configuredRepoMap = normalizeMapAssetUrl(Settings.get('live_map_repo_asset_url'));
   const resolvedRepoMap = configuredRepoMap || findRepoMapAssetUrl();
-  // Backward compatibility:
-  // - If a custom upload map exists and no toggle is set, keep using it.
-  // - If a repo map is explicitly configured, default to using it.
-  const forceRepoMapAsset = parseMapBoolean(
-    Settings.get('live_map_use_repo_asset'),
-    configuredRepoMap ? true : !configuredUploadMap
-  );
   const directUrl = String(Settings.get('live_map_url') || '').trim();
   const socketUrl = String(Settings.get('live_map_socket_url') || '').trim();
   const mapScaleX = parseMapNumber(Settings.get('live_map_scale_x'), DEFAULT_MAP_SCALE);
   const mapScaleY = parseMapNumber(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
   const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
   const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
-  const mapImageUrl = forceRepoMapAsset
-    ? (resolvedRepoMap || DEFAULT_LIVE_MAP_IMAGE_URL)
-    : (configuredUploadMap || resolvedRepoMap || DEFAULT_LIVE_MAP_IMAGE_URL);
+  const mapImageUrl = resolvedRepoMap;
   res.json({
     live_map_url: directUrl,
     map_image_url: mapImageUrl,
+    map_available: !!mapImageUrl,
+    map_source: mapImageUrl ? 'server_resource' : 'none',
     live_map_socket_url: socketUrl,
     map_scale_x: mapScaleX,
     map_scale_y: mapScaleY,

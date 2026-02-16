@@ -166,7 +166,6 @@ router.post('/live-map/upload', mapUpload.single('map'), async (req, res, next) 
     fs.writeFileSync(outputPath, req.file.buffer);
     const imageUrl = `/uploads/map-images/${fileName}`;
     Settings.set('live_map_image_url', imageUrl);
-    Settings.set('live_map_use_repo_asset', 'false');
 
     if (previous.startsWith('/uploads/map-images/')) {
       const previousBase = path.basename(previous);
