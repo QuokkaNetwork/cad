@@ -368,13 +368,42 @@ RegisterCommand('000', function(src, args)
 end, false)
 
 local heartbeatInFlight = false
+local heartbeatInFlightSinceMs = 0
+
+local function resetHeartbeatInFlight(reason)
+  heartbeatInFlight = false
+  heartbeatInFlightSinceMs = 0
+  if reason and reason ~= '' then
+    print(('[cad_bridge] heartbeat in-flight reset (%s)'):format(tostring(reason)))
+  end
+end
+
+local function clearStuckHeartbeatIfNeeded()
+  if not heartbeatInFlight then return false end
+  local timeoutMs = math.max(10000, math.floor((tonumber(Config.HeartbeatIntervalMs) or 1500) * 8))
+  if heartbeatInFlightSinceMs <= 0 then
+    heartbeatInFlightSinceMs = nowMs()
+    return false
+  end
+  local elapsed = nowMs() - heartbeatInFlightSinceMs
+  if elapsed < timeoutMs then
+    return false
+  end
+  resetHeartbeatInFlight(('watchdog timeout after %sms'):format(math.floor(elapsed)))
+  setBridgeBackoff('heartbeat', nil, 3000, 'heartbeat watchdog')
+  return true
+end
+
 CreateThread(function()
   while true do
     Wait(math.max(1000, Config.HeartbeatIntervalMs))
     if not hasBridgeConfig() then
       goto continue
     end
-    if heartbeatInFlight or isBridgeBackoffActive() then
+    if heartbeatInFlight and not clearStuckHeartbeatIfNeeded() then
+      goto continue
+    end
+    if isBridgeBackoffActive('heartbeat') then
       goto continue
     end
 
@@ -427,18 +456,24 @@ CreateThread(function()
     end
 
     heartbeatInFlight = true
+    heartbeatInFlightSinceMs = nowMs()
     request('POST', '/api/integration/fivem/heartbeat', {
       players = payloadPlayers,
       timestamp = os.time(),
     }, function(status, _body, responseHeaders)
-      heartbeatInFlight = false
+      resetHeartbeatInFlight('')
       if status == 429 then
-        setBridgeBackoff(responseHeaders, 15000, 'heartbeat')
+        setBridgeBackoff('heartbeat', responseHeaders, 15000, 'heartbeat')
+        return
+      end
+      if status == 0 then
+        setBridgeBackoff('heartbeat', responseHeaders, 3000, 'heartbeat transport')
+        print('[cad_bridge] heartbeat transport failed (status 0)')
         return
       end
       if status >= 400 then
         if status >= 500 then
-          setBridgeBackoff(responseHeaders, 5000, 'heartbeat error')
+          setBridgeBackoff('heartbeat', responseHeaders, 5000, 'heartbeat error')
         end
         print(('[cad_bridge] heartbeat failed with status %s'):format(tostring(status)))
       end
@@ -725,7 +760,7 @@ CreateThread(function()
     if not hasBridgeConfig() then
       goto continue
     end
-    if jobPollInFlight or isBridgeBackoffActive() then
+    if jobPollInFlight or isBridgeBackoffActive('job_poll') then
       goto continue
     end
 
@@ -733,7 +768,7 @@ CreateThread(function()
     request('GET', '/api/integration/fivem/job-jobs?limit=25', nil, function(status, body, responseHeaders)
       jobPollInFlight = false
       if status == 429 then
-        setBridgeBackoff(responseHeaders, 10000, 'job poll')
+        setBridgeBackoff('job_poll', responseHeaders, 10000, 'job poll')
         return
       end
       if status ~= 200 then
@@ -806,7 +841,7 @@ CreateThread(function()
     if not hasBridgeConfig() then
       goto continue
     end
-    if routePollInFlight or isBridgeBackoffActive() then
+    if routePollInFlight or isBridgeBackoffActive('route_poll') then
       goto continue
     end
 
@@ -814,7 +849,7 @@ CreateThread(function()
     request('GET', '/api/integration/fivem/route-jobs?limit=25', nil, function(status, body, responseHeaders)
       routePollInFlight = false
       if status == 429 then
-        setBridgeBackoff(responseHeaders, 10000, 'route poll')
+        setBridgeBackoff('route_poll', responseHeaders, 10000, 'route poll')
         return
       end
       if status ~= 200 then
@@ -1138,7 +1173,7 @@ CreateThread(function()
     if not hasBridgeConfig() then
       goto continue
     end
-    if finePollInFlight or isBridgeBackoffActive() then
+    if finePollInFlight or isBridgeBackoffActive('fine_poll') then
       goto continue
     end
 
@@ -1146,7 +1181,7 @@ CreateThread(function()
     request('GET', '/api/integration/fivem/fine-jobs?limit=25', nil, function(status, body, responseHeaders)
       finePollInFlight = false
       if status == 429 then
-        setBridgeBackoff(responseHeaders, 10000, 'fine poll')
+        setBridgeBackoff('fine_poll', responseHeaders, 10000, 'fine poll')
         return
       end
       if status ~= 200 then

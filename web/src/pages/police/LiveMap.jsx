@@ -8,6 +8,10 @@ import { useDepartment } from '../../context/DepartmentContext';
 
 const MAP_POLL_INTERVAL_MS = 1500;
 const MAP_ACTIVE_MAX_AGE_MS = 30_000;
+const MAP_RECOVERY_MAX_AGE_MS = 5 * 60 * 1000;
+const MAP_STALE_THRESHOLD_MS = 15_000;
+const MAP_STALE_CHECK_INTERVAL_MS = 2_000;
+const MAP_RECOVERY_COOLDOWN_MS = 8_000;
 
 const DEFAULT_TILE_SIZE = 1024;
 const DEFAULT_TILE_ROWS = 3;
@@ -188,11 +192,17 @@ export default function LiveMap() {
   const [mapConfigError, setMapConfigError] = useState('');
   const [playerError, setPlayerError] = useState('');
   const [lastRefreshAt, setLastRefreshAt] = useState(0);
+  const [staleSinceAt, setStaleSinceAt] = useState(0);
+  const [recoveringStaleFeed, setRecoveringStaleFeed] = useState(false);
   const [mapInstance, setMapInstance] = useState(null);
   const [resetSignal, setResetSignal] = useState(0);
   const [calibrationDirty, setCalibrationDirty] = useState(false);
   const [calibrationSaving, setCalibrationSaving] = useState(false);
   const [calibrationNotice, setCalibrationNotice] = useState('');
+  const staleRecoveryInFlightRef = useRef(false);
+  const lastRecoveryAttemptAtRef = useRef(0);
+  const latestFeedUpdateMsRef = useRef(0);
+  const staleSinceAtRef = useRef(0);
 
   const deptId = Number(activeDepartment?.id || 0);
   const isDispatchDepartment = !!activeDepartment?.is_dispatch;
@@ -247,21 +257,41 @@ export default function LiveMap() {
     }
   }, [calibrationDirty]);
 
-  const fetchPlayers = useCallback(async () => {
+  const fetchPlayers = useCallback(async (options = {}) => {
     if (!deptId) {
       setPlayers([]);
       setLoading(false);
+      latestFeedUpdateMsRef.current = 0;
+      staleSinceAtRef.current = 0;
+      setStaleSinceAt(0);
+      setRecoveringStaleFeed(false);
       return;
     }
 
+    const recoveryMode = options?.recovery === true;
+    const maxAgeMs = recoveryMode ? MAP_RECOVERY_MAX_AGE_MS : MAP_ACTIVE_MAX_AGE_MS;
+    const cacheBuster = Date.now();
+
     try {
       const data = await api.get(
-        `/api/units/live-map/players?department_id=${deptId}&dispatch=${isDispatchDepartment ? 'true' : 'false'}&max_age_ms=${MAP_ACTIVE_MAX_AGE_MS}`
+        `/api/units/live-map/players?department_id=${deptId}&dispatch=${isDispatchDepartment ? 'true' : 'false'}&max_age_ms=${maxAgeMs}&_=${cacheBuster}`
       );
       const nextPlayers = normalizePlayers(data?.payload || []);
       setPlayers(nextPlayers);
       setPlayerError('');
       setLastRefreshAt(Date.now());
+      const latestUpdatedAtMs = nextPlayers.reduce((max, player) => {
+        const updatedAt = Number(player?.updatedAtMs || 0);
+        if (!Number.isFinite(updatedAt)) return max;
+        return Math.max(max, updatedAt);
+      }, 0);
+      const nextFeedUpdateMs = latestUpdatedAtMs || Date.now();
+      if (nextFeedUpdateMs > latestFeedUpdateMsRef.current) {
+        latestFeedUpdateMsRef.current = nextFeedUpdateMs;
+        staleSinceAtRef.current = 0;
+        setStaleSinceAt(0);
+        setRecoveringStaleFeed(false);
+      }
     } catch (err) {
       setPlayerError(err?.message || 'Failed to load live map players');
     } finally {
@@ -318,6 +348,12 @@ export default function LiveMap() {
 
   useEffect(() => {
     setLoading(true);
+    latestFeedUpdateMsRef.current = 0;
+    staleSinceAtRef.current = 0;
+    staleRecoveryInFlightRef.current = false;
+    lastRecoveryAttemptAtRef.current = 0;
+    setStaleSinceAt(0);
+    setRecoveringStaleFeed(false);
     refreshAll();
   }, [refreshAll, locationKey]);
 
@@ -330,6 +366,48 @@ export default function LiveMap() {
     const id = setInterval(fetchMapConfig, 30000);
     return () => clearInterval(id);
   }, [fetchMapConfig]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!deptId) return;
+      const latestFeedUpdateMs = latestFeedUpdateMsRef.current;
+      if (!latestFeedUpdateMs) return;
+
+      const now = Date.now();
+      const feedAgeMs = now - latestFeedUpdateMs;
+      if (feedAgeMs < MAP_STALE_THRESHOLD_MS) {
+        if (staleSinceAtRef.current > 0) {
+          staleSinceAtRef.current = 0;
+          setStaleSinceAt(0);
+        }
+        if (recoveringStaleFeed) {
+          setRecoveringStaleFeed(false);
+        }
+        return;
+      }
+
+      if (!staleSinceAtRef.current) {
+        staleSinceAtRef.current = now;
+        setStaleSinceAt(now);
+      }
+
+      if (staleRecoveryInFlightRef.current) return;
+      if ((now - lastRecoveryAttemptAtRef.current) < MAP_RECOVERY_COOLDOWN_MS) return;
+
+      staleRecoveryInFlightRef.current = true;
+      lastRecoveryAttemptAtRef.current = now;
+      setRecoveringStaleFeed(true);
+
+      Promise.all([
+        fetchMapConfig(),
+        fetchPlayers({ recovery: true }),
+      ]).finally(() => {
+        staleRecoveryInFlightRef.current = false;
+      });
+    }, MAP_STALE_CHECK_INTERVAL_MS);
+
+    return () => clearInterval(id);
+  }, [deptId, fetchMapConfig, fetchPlayers, recoveringStaleFeed]);
 
   const calibration = useMemo(() => ({
     scaleX: mapScaleX,
@@ -352,6 +430,9 @@ export default function LiveMap() {
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;
   const error = mapConfigError || playerError;
   const calibrationPrecision = Math.max(1, getIncrementPrecision(calibrationStep));
+  const staleFeedAgeSeconds = staleSinceAt
+    ? Math.max(0, Math.floor((Date.now() - Math.max(1, latestFeedUpdateMsRef.current)) / 1000))
+    : 0;
 
   return (
     <div className="space-y-4">
@@ -454,9 +535,18 @@ export default function LiveMap() {
       <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
         <div className="px-3 py-2 border-b border-cad-border flex flex-wrap items-center justify-between gap-2 text-xs text-cad-muted">
           <span>{markers.length} live marker{markers.length !== 1 ? 's' : ''}</span>
-          <span>
-            {loading ? 'Loading...' : `Updated ${lastRefreshAt ? new Date(lastRefreshAt).toLocaleTimeString() : 'never'}`}
-          </span>
+          <div className="flex items-center gap-3">
+            {staleSinceAt ? (
+              <span className="text-amber-300">
+                {recoveringStaleFeed
+                  ? `Feed stale (${staleFeedAgeSeconds}s) - recovering`
+                  : `Feed stale (${staleFeedAgeSeconds}s)`}
+              </span>
+            ) : null}
+            <span>
+              {loading ? 'Loading...' : `Updated ${lastRefreshAt ? new Date(lastRefreshAt).toLocaleTimeString() : 'never'}`}
+            </span>
+          </div>
         </div>
 
         <div className="relative h-[72vh] min-h-[500px] bg-[#0b1525]">
@@ -521,6 +611,11 @@ export default function LiveMap() {
 
       {error && (
         <p className="text-xs text-red-400 whitespace-pre-wrap">{error}</p>
+      )}
+      {staleSinceAt && (
+        <p className="text-xs text-amber-300">
+          Live map feed has not advanced for {staleFeedAgeSeconds}s. Automatic recovery is running.
+        </p>
       )}
     </div>
   );
