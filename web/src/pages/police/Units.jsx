@@ -22,6 +22,7 @@ export default function Units() {
   });
 
   const deptId = activeDepartment?.id;
+  const isDispatchDepartment = !!activeDepartment?.is_dispatch;
   const canSelfDispatch = !!(myUnit && !dispatchStatus.dispatcher_online && !dispatchStatus.is_dispatch_department);
   const hideSharedPanels = !!(dispatchStatus.dispatcher_online && !dispatchStatus.is_dispatch_department);
 
@@ -29,11 +30,11 @@ export default function Units() {
     if (!deptId) return;
     try {
       const [unitsData, myData, dispatcherData] = await Promise.all([
-        api.get(`/api/units?department_id=${deptId}`),
+        isDispatchDepartment ? api.get('/api/units/dispatchable') : api.get(`/api/units?department_id=${deptId}`),
         api.get('/api/units/me').catch(() => null),
         api.get(`/api/units/dispatcher-status?department_id=${deptId}`),
       ]);
-      setUnits(unitsData);
+      setUnits(isDispatchDepartment ? (unitsData.units || []) : unitsData);
       setMyUnit(myData);
       setDispatchStatus(dispatcherData);
       if (myData) {
@@ -50,7 +51,7 @@ export default function Units() {
     } catch (err) {
       console.error('Failed to load units:', err);
     }
-  }, [deptId]);
+  }, [deptId, isDispatchDepartment]);
 
   useEffect(() => { fetchData(); }, [fetchData, locationKey]);
 
@@ -162,7 +163,9 @@ export default function Units() {
         <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">
           <h3 className="font-semibold mb-1">Not On Duty</h3>
           <p className="text-sm text-cad-muted">
-            Use the <span className="text-cad-ink font-medium">Go On Duty</span> button in the header to set your callsign and start your shift.
+            {isDispatchDepartment
+              ? <>Use the <span className="text-cad-ink font-medium">Go On Duty</span> button in the header to go online as <span className="font-mono text-cad-ink">DISPATCH</span>.</>
+              : <>Use the <span className="text-cad-ink font-medium">Go On Duty</span> button in the header to set your callsign and start your shift.</>}
           </p>
         </div>
       )}

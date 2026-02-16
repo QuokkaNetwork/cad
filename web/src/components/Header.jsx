@@ -14,6 +14,7 @@ export default function Header() {
   const [myUnit, setMyUnit] = useState(null);
   const [showOnDutyModal, setShowOnDutyModal] = useState(false);
   const [offDutyLoading, setOffDutyLoading] = useState(false);
+  const [onDutyLoading, setOnDutyLoading] = useState(false);
   const onDepartmentPage = /^\/(dispatch|units|search|bolos|records)(\/|$)/.test(location.pathname);
 
   async function refreshMyUnit() {
@@ -45,6 +46,28 @@ export default function Header() {
       alert('Failed to go off duty: ' + err.message);
     } finally {
       setOffDutyLoading(false);
+    }
+  }
+
+  async function goOnDuty() {
+    if (!activeDepartment) return;
+
+    if (!activeDepartment.is_dispatch) {
+      setShowOnDutyModal(true);
+      return;
+    }
+
+    setOnDutyLoading(true);
+    try {
+      const unit = await api.post('/api/units/me', {
+        callsign: 'DISPATCH',
+        department_id: activeDepartment.id,
+      });
+      setMyUnit(unit);
+    } catch (err) {
+      alert('Failed to go on duty: ' + err.message);
+    } finally {
+      setOnDutyLoading(false);
     }
   }
 
@@ -86,12 +109,12 @@ export default function Header() {
                 </div>
               ) : (
                 <button
-                  onClick={() => setShowOnDutyModal(true)}
-                  disabled={onOtherDeptDuty}
+                  onClick={goOnDuty}
+                  disabled={onOtherDeptDuty || onDutyLoading}
                   className="px-3 py-1.5 text-sm bg-cad-accent hover:bg-cad-accent-light text-white rounded font-medium transition-colors disabled:opacity-50"
                   title={onOtherDeptDuty ? 'You are already on duty in another department' : 'Go On Duty'}
                 >
-                  {onOtherDeptDuty ? 'On Duty Elsewhere' : 'Go On Duty'}
+                  {onOtherDeptDuty ? 'On Duty Elsewhere' : (onDutyLoading ? '...' : 'Go On Duty')}
                 </button>
               )}
             </>

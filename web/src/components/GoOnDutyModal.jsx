@@ -8,18 +8,19 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
   const [subDepartmentId, setSubDepartmentId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const isDispatchDepartment = !!department?.is_dispatch;
 
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
       setError('');
-      setCallsign('');
+      setCallsign(isDispatchDepartment ? 'DISPATCH' : '');
       setSubDepartmentId('');
     } else {
       document.body.style.overflow = '';
     }
     return () => { document.body.style.overflow = ''; };
-  }, [open]);
+  }, [open, isDispatchDepartment]);
 
   useEffect(() => {
     async function fetchSubDepartments() {
@@ -48,8 +49,9 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
   async function submit(e) {
     e.preventDefault();
     const trimmed = callsign.trim();
-    if (!trimmed) return;
-    if (subDepartments.length > 0 && !subDepartmentId) {
+    const normalizedCallsign = isDispatchDepartment ? 'DISPATCH' : trimmed;
+    if (!normalizedCallsign) return;
+    if (!isDispatchDepartment && subDepartments.length > 0 && !subDepartmentId) {
       setError('Please select a sub-department');
       return;
     }
@@ -57,7 +59,7 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
     setError('');
     try {
       await api.post('/api/units/me', {
-        callsign: trimmed,
+        callsign: normalizedCallsign,
         department_id: department?.id,
         sub_department_id: subDepartmentId || null,
       });
@@ -90,17 +92,25 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
         </div>
 
         <form onSubmit={submit} className="px-5 py-4">
-          <label className="block text-sm text-cad-muted mb-2">Callsign</label>
-          <input
-            type="text"
-            value={callsign}
-            onChange={e => setCallsign(e.target.value)}
-            placeholder="e.g. DP-41"
-            required
-            autoFocus
-            className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-          />
-          {subDepartments.length > 0 && (
+          {!isDispatchDepartment ? (
+            <>
+              <label className="block text-sm text-cad-muted mb-2">Callsign</label>
+              <input
+                type="text"
+                value={callsign}
+                onChange={e => setCallsign(e.target.value)}
+                placeholder="e.g. DP-41"
+                required
+                autoFocus
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              />
+            </>
+          ) : (
+            <p className="text-sm text-cad-muted mb-2">
+              Dispatcher units are automatically assigned callsign <span className="font-mono text-cad-ink">DISPATCH</span>.
+            </p>
+          )}
+          {!isDispatchDepartment && subDepartments.length > 0 && (
             <>
               <label className="block text-sm text-cad-muted mb-2 mt-3">Sub-Department</label>
               <select

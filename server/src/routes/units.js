@@ -108,8 +108,8 @@ router.post('/me', requireAuth, (req, res) => {
   if (existing) return res.status(400).json({ error: 'Already on duty' });
 
   const { callsign, department_id, sub_department_id } = req.body;
-  if (!callsign || !department_id) {
-    return res.status(400).json({ error: 'Callsign and department are required' });
+  if (!department_id) {
+    return res.status(400).json({ error: 'Department is required' });
   }
 
   const deptId = parseInt(department_id, 10);
@@ -121,7 +121,7 @@ router.post('/me', requireAuth, (req, res) => {
 
   const availableSubDepts = getAvailableSubDepartments(req.user, deptId);
   let selectedSubDeptId = null;
-  if (availableSubDepts.length > 0) {
+  if (!dept.is_dispatch && availableSubDepts.length > 0) {
     selectedSubDeptId = parseInt(sub_department_id, 10);
     if (!selectedSubDeptId) {
       return res.status(400).json({ error: 'sub_department_id is required for this department' });
@@ -132,16 +132,21 @@ router.post('/me', requireAuth, (req, res) => {
     }
   }
 
+  const normalizedCallsign = dept.is_dispatch ? 'DISPATCH' : String(callsign || '').trim();
+  if (!normalizedCallsign) {
+    return res.status(400).json({ error: 'Callsign is required' });
+  }
+
   const unit = Units.create({
     user_id: req.user.id,
     department_id: deptId,
     sub_department_id: selectedSubDeptId,
-    callsign: callsign.trim(),
+    callsign: normalizedCallsign,
   });
 
   const selectedSubDept = selectedSubDeptId ? SubDepartments.findById(selectedSubDeptId) : null;
   audit(req.user.id, 'unit_on_duty', {
-    callsign,
+    callsign: normalizedCallsign,
     department: dept.short_name,
     sub_department: selectedSubDept?.short_name || '',
   });
