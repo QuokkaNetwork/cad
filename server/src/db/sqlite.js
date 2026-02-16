@@ -1169,16 +1169,58 @@ const FieldMappings = {
   findById(id) {
     return db.prepare('SELECT * FROM field_mappings WHERE id = ?').get(id);
   },
-  create({ category_id, label, table_name, column_name, is_json = 0, json_key = '', character_join_column = '', sort_order = 0, is_search_column = 0 }) {
+  create({
+    category_id,
+    label,
+    table_name,
+    column_name,
+    is_json = 0,
+    json_key = '',
+    character_join_column = '',
+    sort_order = 0,
+    is_search_column = 0,
+    field_key = '',
+    field_type = 'text',
+    preview_width = 1,
+  }) {
     const info = db.prepare(`
       INSERT INTO field_mappings
-        (category_id, label, table_name, column_name, is_json, json_key, character_join_column, sort_order, is_search_column)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(category_id, label, table_name, column_name, is_json ? 1 : 0, json_key, character_join_column, sort_order, is_search_column ? 1 : 0);
+        (
+          category_id, label, table_name, column_name, is_json, json_key,
+          character_join_column, sort_order, is_search_column, field_key, field_type, preview_width
+        )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      category_id,
+      label,
+      table_name,
+      column_name,
+      is_json ? 1 : 0,
+      json_key,
+      character_join_column,
+      sort_order,
+      is_search_column ? 1 : 0,
+      field_key,
+      field_type,
+      preview_width
+    );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['category_id', 'label', 'table_name', 'column_name', 'is_json', 'json_key', 'character_join_column', 'sort_order', 'is_search_column'];
+    const allowed = [
+      'category_id',
+      'label',
+      'table_name',
+      'column_name',
+      'is_json',
+      'json_key',
+      'character_join_column',
+      'sort_order',
+      'is_search_column',
+      'field_key',
+      'field_type',
+      'preview_width',
+    ];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -1187,6 +1229,10 @@ const FieldMappings = {
         let val = fields[key];
         if (key === 'is_json' || key === 'is_search_column') val = val ? 1 : 0;
         if (key === 'category_id') val = Number(val) || 0;
+        if (key === 'preview_width') {
+          const parsed = Number(val);
+          val = Number.isFinite(parsed) ? Math.max(1, Math.trunc(parsed)) : 1;
+        }
         values.push(val);
       }
     }

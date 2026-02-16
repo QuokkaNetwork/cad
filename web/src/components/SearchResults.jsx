@@ -1,84 +1,83 @@
+function normalizeLookupFields(item) {
+  const fields = Array.isArray(item?.lookup_fields) ? item.lookup_fields : [];
+  return [...fields]
+    .filter((field) => String(field?.display_value || '').trim().length > 0)
+    .sort((a, b) => {
+      const aSort = Number(a?.sort_order || 0);
+      const bSort = Number(b?.sort_order || 0);
+      if (aSort !== bSort) return aSort - bSort;
+      return String(a?.label || '').localeCompare(String(b?.label || ''));
+    });
+}
+
+function primaryTitle(type, item) {
+  if (type === 'person') {
+    const full = `${String(item?.firstname || '').trim()} ${String(item?.lastname || '').trim()}`.trim();
+    return full || String(item?.citizenid || 'Unknown Person');
+  }
+  return String(item?.plate || '').trim() || String(item?.vehicle || 'Unknown Vehicle');
+}
+
+function secondaryText(type, item) {
+  if (type === 'person') {
+    return String(item?.citizenid || '').trim();
+  }
+  const model = String(item?.vehicle || '').trim();
+  const owner = String(item?.owner || '').trim();
+  if (model && owner) return `${model} | Owner ${owner}`;
+  return model || owner || '';
+}
+
 export default function SearchResults({ type, results, onSelect }) {
   if (results.length === 0) {
     return <p className="text-sm text-cad-muted py-4 text-center">No results found</p>;
   }
 
-  if (type === 'person') {
-    const hasCustomFields = results.some(person => person.custom_fields && Object.keys(person.custom_fields).length > 0);
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-cad-border text-left text-xs text-cad-muted uppercase tracking-wider">
-              <th className="px-3 py-2">Name</th>
-              <th className="px-3 py-2">DOB</th>
-              <th className="px-3 py-2">Phone</th>
-              <th className="px-3 py-2">Gender</th>
-              {hasCustomFields && <th className="px-3 py-2">Custom</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((person, i) => (
-              <tr
-                key={person.citizenid || i}
-                onClick={() => onSelect?.(person)}
-                className="border-b border-cad-border/50 hover:bg-cad-card cursor-pointer transition-colors"
-              >
-                <td className="px-3 py-2 font-medium">{person.firstname} {person.lastname}</td>
-                <td className="px-3 py-2 text-cad-muted">{person.birthdate}</td>
-                <td className="px-3 py-2 text-cad-muted">{person.phone}</td>
-                <td className="px-3 py-2 text-cad-muted">{person.gender === '0' ? 'Male' : person.gender === '1' ? 'Female' : person.gender}</td>
-                {hasCustomFields && (
-                  <td className="px-3 py-2 text-cad-muted">
-                    {person.custom_fields && Object.keys(person.custom_fields).length > 0
-                      ? Object.entries(person.custom_fields).map(([key, value]) => `${key}: ${String(value)}`).join(', ')
-                      : '-'}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
-
-  // Vehicle results
-  const hasCustomFields = results.some(vehicle => vehicle.custom_fields && Object.keys(vehicle.custom_fields).length > 0);
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-cad-border text-left text-xs text-cad-muted uppercase tracking-wider">
-            <th className="px-3 py-2">Plate</th>
-            <th className="px-3 py-2">Vehicle</th>
-            <th className="px-3 py-2">Garage</th>
-            <th className="px-3 py-2">State</th>
-            {hasCustomFields && <th className="px-3 py-2">Custom</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {results.map((vehicle, i) => (
-            <tr
-              key={vehicle.plate || i}
-              onClick={() => onSelect?.(vehicle)}
-              className="border-b border-cad-border/50 hover:bg-cad-card cursor-pointer transition-colors"
-            >
-              <td className="px-3 py-2 font-mono font-bold text-cad-accent-light">{vehicle.plate}</td>
-              <td className="px-3 py-2">{vehicle.vehicle}</td>
-              <td className="px-3 py-2 text-cad-muted">{vehicle.garage}</td>
-              <td className="px-3 py-2 text-cad-muted">{vehicle.state}</td>
-              {hasCustomFields && (
-                <td className="px-3 py-2 text-cad-muted">
-                  {vehicle.custom_fields && Object.keys(vehicle.custom_fields).length > 0
-                    ? Object.entries(vehicle.custom_fields).map(([key, value]) => `${key}: ${String(value)}`).join(', ')
-                    : '-'}
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="divide-y divide-cad-border/40">
+      {results.map((item, i) => {
+        const lookupFields = normalizeLookupFields(item).slice(0, 8);
+        const title = primaryTitle(type, item);
+        const sub = secondaryText(type, item);
+        const key = type === 'person'
+          ? (item?.citizenid || `p-${i}`)
+          : (item?.plate || `v-${i}`);
+
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onSelect?.(item)}
+            className="w-full text-left px-4 py-3 hover:bg-cad-card transition-colors"
+          >
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div>
+                <p className={`font-medium ${type === 'vehicle' ? 'font-mono' : ''}`}>{title}</p>
+                {sub ? <p className="text-xs text-cad-muted">{sub}</p> : null}
+              </div>
+              <span className="text-[11px] text-cad-muted uppercase tracking-wider">
+                {type === 'person' ? 'Character' : 'Vehicle'}
+              </span>
+            </div>
+
+            {lookupFields.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {lookupFields.map((field, idx) => (
+                  <span
+                    key={`${key}-field-${idx}`}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded border border-cad-border bg-cad-surface text-xs"
+                  >
+                    <span className="text-cad-muted">{field.label}:</span>
+                    <span className="text-cad-ink">{field.display_value}</span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-cad-muted">No lookup fields mapped for this result.</p>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

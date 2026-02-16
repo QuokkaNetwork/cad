@@ -60,4 +60,17 @@ router.get('/vehicles', requireAuth, async (req, res) => {
   }
 });
 
+// Get a specific vehicle by plate
+router.get('/vehicles/:plate', requireAuth, async (req, res) => {
+  const plate = String(req.params.plate || '').trim();
+  if (!plate) return res.status(400).json({ error: 'plate is required' });
+  try {
+    const vehicle = await qbox.getVehicleByPlate(plate);
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json(vehicle);
+  } catch (err) {
+    res.status(500).json({ error: 'Lookup failed', message: err.message });
+  }
+});
+
 module.exports = router;

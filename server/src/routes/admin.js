@@ -31,6 +31,7 @@ router.use(requireAuth, requireAdmin);
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const OFFENCE_CATEGORIES = new Set(['infringement', 'summary', 'indictment']);
 const FIELD_MAPPING_ENTITY_TYPES = new Set(['person', 'vehicle']);
+const FIELD_MAPPING_TYPES = new Set(['text', 'number', 'date', 'image', 'phone', 'email', 'boolean', 'select', 'badge']);
 const IDENTIFIER_RE = /^[A-Za-z0-9_]+$/;
 const LIVE_MAP_TILE_NAMES_SET = new Set(LIVE_MAP_TILE_NAMES);
 
@@ -103,6 +104,38 @@ function parseFlagInt(value, fallback = 0) {
   if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return 1;
   if (['0', 'false', 'no', 'n', 'off'].includes(text)) return 0;
   return fallback;
+}
+
+function normalizeFieldKey(value, fallbackLabel = '') {
+  let normalized = String(value || '').trim().toLowerCase();
+  if (!normalized && fallbackLabel) {
+    normalized = String(fallbackLabel || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+  if (!normalized) return '';
+  if (!/^[a-z0-9_]+$/.test(normalized)) {
+    throw new Error('field_key contains invalid characters');
+  }
+  return normalized;
+}
+
+function normalizeFieldType(value, fallback = 'text') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (!FIELD_MAPPING_TYPES.has(normalized)) {
+    throw new Error(`field_type must be one of: ${Array.from(FIELD_MAPPING_TYPES).join(', ')}`);
+  }
+  return normalized;
+}
+
+function parsePreviewWidth(value, fallback = 1) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(4, Math.trunc(parsed)));
 }
 
 function normalizeIdentifier(value, label) {
@@ -909,6 +942,15 @@ router.post('/field-mappings', (req, res) => {
   const jsonKey = String(req.body?.json_key || '').trim();
   const sortOrder = parseSortOrder(req.body?.sort_order, 0);
   const isSearchColumn = parseFlagInt(req.body?.is_search_column, 0);
+  let fieldKey = '';
+  let fieldType = 'text';
+  try {
+    fieldKey = normalizeFieldKey(req.body?.field_key, label);
+    fieldType = normalizeFieldType(req.body?.field_type, 'text');
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  const previewWidth = parsePreviewWidth(req.body?.preview_width, 1);
 
   const mapping = FieldMappings.create({
     category_id: categoryId,
@@ -920,6 +962,9 @@ router.post('/field-mappings', (req, res) => {
     character_join_column: joinColumn,
     sort_order: sortOrder,
     is_search_column: isSearchColumn,
+    field_key: fieldKey,
+    field_type: fieldType,
+    preview_width: previewWidth,
   });
 
   audit(req.user.id, 'field_mapping_created', {
@@ -967,6 +1012,14 @@ router.patch('/field-mappings/:id', (req, res) => {
       if (!joinColumn) return res.status(400).json({ error: 'character_join_column cannot be empty' });
       updates.character_join_column = joinColumn;
     }
+    if (req.body?.field_key !== undefined) {
+      const fallbackLabel = req.body?.label !== undefined ? String(req.body.label || '').trim() : String(existing.label || '');
+      updates.field_key = normalizeFieldKey(req.body.field_key, fallbackLabel);
+      if (!updates.field_key) return res.status(400).json({ error: 'field_key cannot be empty' });
+    }
+    if (req.body?.field_type !== undefined) {
+      updates.field_type = normalizeFieldType(req.body.field_type, String(existing.field_type || 'text').trim().toLowerCase() || 'text');
+    }
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
@@ -974,6 +1027,9 @@ router.patch('/field-mappings/:id', (req, res) => {
   if (req.body?.json_key !== undefined) updates.json_key = String(req.body.json_key || '').trim();
   if (req.body?.sort_order !== undefined) updates.sort_order = parseSortOrder(req.body.sort_order, Number(existing.sort_order || 0));
   if (req.body?.is_search_column !== undefined) updates.is_search_column = parseFlagInt(req.body.is_search_column, existing.is_search_column ? 1 : 0);
+  if (req.body?.preview_width !== undefined) {
+    updates.preview_width = parsePreviewWidth(req.body.preview_width, Number(existing.preview_width || 1) || 1);
+  }
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ error: 'No valid fields supplied' });

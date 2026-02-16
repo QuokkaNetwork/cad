@@ -32,6 +32,82 @@ function formatMappedValue(value) {
   return String(value);
 }
 
+function normalizeLookupFields(lookupFields) {
+  const fields = Array.isArray(lookupFields) ? lookupFields : [];
+  return [...fields]
+    .filter((field) => String(field?.display_value || '').trim().length > 0)
+    .sort((a, b) => {
+      const aSort = Number(a?.sort_order || 0);
+      const bSort = Number(b?.sort_order || 0);
+      if (aSort !== bSort) return aSort - bSort;
+      return String(a?.label || '').localeCompare(String(b?.label || ''));
+    });
+}
+
+function toBooleanText(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (['true', '1', 'yes', 'y', 'on'].includes(text)) return 'Yes';
+  if (['false', '0', 'no', 'n', 'off'].includes(text)) return 'No';
+  return String(value || '');
+}
+
+function LookupFieldValue({ field }) {
+  const type = String(field?.field_type || 'text').toLowerCase();
+  const value = String(field?.display_value || '').trim();
+  if (!value) return null;
+
+  if (type === 'image') {
+    return (
+      <a
+        href={value}
+        target="_blank"
+        rel="noreferrer"
+        className="text-cad-accent-light underline break-all"
+      >
+        Open image
+      </a>
+    );
+  }
+
+  if (type === 'badge') {
+    return (
+      <span className="inline-flex px-2 py-0.5 rounded border border-cad-accent/40 bg-cad-accent/15 text-cad-accent-light text-xs">
+        {value}
+      </span>
+    );
+  }
+
+  if (type === 'boolean') {
+    return <span>{toBooleanText(value)}</span>;
+  }
+
+  return <span>{value}</span>;
+}
+
+function LookupFieldsSection({ title, fields }) {
+  const normalized = normalizeLookupFields(fields);
+  if (normalized.length === 0) return null;
+
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">{title}</h4>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {normalized.map((field, idx) => (
+          <div
+            key={`${field?.key || field?.label || 'lookup'}-${idx}`}
+            className="bg-cad-surface border border-cad-border rounded px-3 py-2"
+          >
+            <p className="text-xs text-cad-muted mb-0.5">{field.label || 'Field'}</p>
+            <div className="text-sm break-words">
+              <LookupFieldValue field={field} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Search() {
   const { activeDepartment } = useDepartment();
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -42,8 +118,10 @@ export default function Search() {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState(null);
+  const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [personVehicles, setPersonVehicles] = useState([]);
   const [personRecords, setPersonRecords] = useState([]);
+  const [vehicleOwner, setVehicleOwner] = useState(null);
 
   useEffect(() => {
     if (isParamedics && searchType !== 'person') {
@@ -68,6 +146,7 @@ export default function Search() {
   }
 
   async function selectPerson(person) {
+    setSelectedVehicle(null);
     setSelectedPerson(person);
     setPersonVehicles([]);
     setPersonRecords([]);
@@ -90,6 +169,33 @@ export default function Search() {
       setPersonRecords(records);
     } catch (err) {
       alert('Failed to load person details:\n' + formatErr(err));
+    }
+  }
+
+  async function selectVehicle(vehicle) {
+    setSelectedPerson(null);
+    setPersonVehicles([]);
+    setPersonRecords([]);
+    setVehicleOwner(null);
+    setSelectedVehicle(vehicle);
+
+    try {
+      const plate = String(vehicle?.plate || '').trim();
+      if (!plate) return;
+      const details = await api.get(`/api/search/vehicles/${encodeURIComponent(plate)}`);
+      setSelectedVehicle(details && typeof details === 'object' ? details : vehicle);
+
+      const ownerCitizenId = String((details && details.owner) || vehicle?.owner || '').trim();
+      if (ownerCitizenId) {
+        try {
+          const owner = await api.get(`/api/search/persons/${encodeURIComponent(ownerCitizenId)}`);
+          setVehicleOwner(owner && typeof owner === 'object' ? owner : null);
+        } catch {
+          setVehicleOwner(null);
+        }
+      }
+    } catch (err) {
+      alert('Failed to load vehicle details:\n' + formatErr(err));
     }
   }
 
@@ -154,7 +260,7 @@ export default function Search() {
           <SearchResults
             type={searchType}
             results={results}
-            onSelect={searchType === 'person' ? selectPerson : undefined}
+            onSelect={searchType === 'person' ? selectPerson : selectVehicle}
           />
         </div>
       )}
@@ -162,12 +268,22 @@ export default function Search() {
       {/* Person Detail Modal */}
       <Modal
         open={!!selectedPerson}
-        onClose={() => { setSelectedPerson(null); setPersonVehicles([]); setPersonRecords([]); }}
+        onClose={() => {
+          setSelectedPerson(null);
+          setPersonVehicles([]);
+          setPersonRecords([]);
+          setVehicleOwner(null);
+        }}
         title={selectedPerson ? `${selectedPerson.firstname} ${selectedPerson.lastname}` : ''}
         wide
       >
         {selectedPerson && (
           <div className="space-y-4">
+            <LookupFieldsSection
+              title="Lookup Preview"
+              fields={selectedPerson.lookup_fields}
+            />
+
             {/* Basic info */}
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
@@ -356,6 +472,106 @@ export default function Search() {
                 </p>
               )}
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Vehicle Detail Modal */}
+      <Modal
+        open={!!selectedVehicle}
+        onClose={() => {
+          setSelectedVehicle(null);
+          setVehicleOwner(null);
+        }}
+        title={selectedVehicle ? `Vehicle ${selectedVehicle.plate || ''}` : ''}
+        wide
+      >
+        {selectedVehicle && (
+          <div className="space-y-4">
+            <LookupFieldsSection
+              title="Lookup Preview"
+              fields={selectedVehicle.lookup_fields}
+            />
+
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <span className="text-cad-muted">Plate:</span>
+                <span className="ml-2 font-mono font-semibold text-cad-accent-light">{selectedVehicle.plate || '-'}</span>
+              </div>
+              <div>
+                <span className="text-cad-muted">Model:</span>
+                <span className="ml-2">{selectedVehicle.vehicle || '-'}</span>
+              </div>
+              <div>
+                <span className="text-cad-muted">Garage:</span>
+                <span className="ml-2">{selectedVehicle.garage || '-'}</span>
+              </div>
+              <div>
+                <span className="text-cad-muted">State:</span>
+                <span className="ml-2">{selectedVehicle.state || '-'}</span>
+              </div>
+              <div>
+                <span className="text-cad-muted">Owner Citizen ID:</span>
+                <span className="ml-2">{selectedVehicle.owner || '-'}</span>
+              </div>
+            </div>
+
+            {vehicleOwner && (
+              <div className="bg-cad-surface rounded px-3 py-2">
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-1">Registered Owner</h4>
+                <p className="text-sm">
+                  {vehicleOwner.firstname} {vehicleOwner.lastname}
+                </p>
+                <p className="text-xs text-cad-muted">
+                  DOB: {vehicleOwner.birthdate || '-'} | Phone: {vehicleOwner.phone || '-'}
+                </p>
+              </div>
+            )}
+
+            {selectedVehicle.custom_fields && Object.keys(selectedVehicle.custom_fields).length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                  Custom Fields
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  {Object.entries(selectedVehicle.custom_fields).map(([key, value]) => (
+                    <div key={key}>
+                      <span className="text-cad-muted">{key}:</span>
+                      <span className="ml-2">{String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {Array.isArray(selectedVehicle.mapped_categories) && selectedVehicle.mapped_categories.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                  Database Mappings
+                </h4>
+                <div className="space-y-3">
+                  {selectedVehicle.mapped_categories.map(category => {
+                    const fields = Array.isArray(category.fields)
+                      ? category.fields.filter(field => String(field.display_value || '').trim().length > 0)
+                      : [];
+                    if (fields.length === 0) return null;
+                    return (
+                      <div key={category.id} className="bg-cad-surface rounded px-3 py-2">
+                        <p className="text-xs text-cad-muted uppercase tracking-wider mb-1">{category.name}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-1 text-sm">
+                          {fields.map(field => (
+                            <div key={field.id}>
+                              <span className="text-cad-muted">{field.label}:</span>
+                              <span className="ml-2">{formatMappedValue(field.value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Modal>

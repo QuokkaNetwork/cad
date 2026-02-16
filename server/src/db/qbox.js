@@ -5,6 +5,7 @@ const { Settings, FieldMappingCategories, FieldMappings } = require('./sqlite');
 let pool = null;
 let poolConfigSignature = '';
 const IDENTIFIER_RE = /^[A-Za-z0-9_]+$/;
+const FIELD_MAPPING_TYPES = new Set(['text', 'number', 'date', 'image', 'phone', 'email', 'boolean', 'select', 'badge']);
 
 function getSetting(key, fallback) {
   const value = Settings.get(key);
@@ -137,6 +138,29 @@ function valueToDisplay(value) {
   return String(value);
 }
 
+function normalizeFieldKey(value, fallbackLabel = '') {
+  let key = String(value || '').trim().toLowerCase();
+  if (!key && fallbackLabel) {
+    key = String(fallbackLabel || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+  return key;
+}
+
+function normalizeFieldType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return FIELD_MAPPING_TYPES.has(normalized) ? normalized : 'text';
+}
+
+function normalizePreviewWidth(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(4, Math.trunc(parsed)));
+}
+
 function getBaseRowsForTable(baseRowsByTable, tableName) {
   if (!baseRowsByTable || typeof baseRowsByTable !== 'object') return null;
   if (Array.isArray(baseRowsByTable[tableName])) return baseRowsByTable[tableName];
@@ -175,6 +199,9 @@ function normalizeDatabaseFieldMappings(entityType = 'person') {
     const columnName = String(row.column_name || '').trim();
     const joinColumn = String(row.character_join_column || '').trim();
     const jsonKey = String(row.json_key || '').trim();
+    const fieldKey = normalizeFieldKey(row.field_key, label);
+    const fieldType = normalizeFieldType(row.field_type);
+    const previewWidth = normalizePreviewWidth(row.preview_width);
 
     if (!label || !tableName || !columnName || !joinColumn) continue;
     if (!IDENTIFIER_RE.test(tableName) || !IDENTIFIER_RE.test(columnName) || !IDENTIFIER_RE.test(joinColumn)) continue;
@@ -191,12 +218,39 @@ function normalizeDatabaseFieldMappings(entityType = 'person') {
       is_json: !!row.is_json,
       json_key: jsonKey,
       is_search_column: !!row.is_search_column,
+      field_key: fieldKey,
+      field_type: fieldType,
+      preview_width: previewWidth,
       sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
       entity_type: normalizedType,
     });
   }
 
   return { categories, mappings };
+}
+
+function flattenLookupFields(categories = []) {
+  const lookupFields = [];
+  for (const category of Array.isArray(categories) ? categories : []) {
+    const fields = Array.isArray(category?.fields) ? category.fields : [];
+    for (const field of fields) {
+      const displayValue = String(field?.display_value || '').trim();
+      if (!displayValue) continue;
+      lookupFields.push({
+        id: field.id,
+        key: String(field.field_key || '').trim() || normalizeFieldKey(field.label, field.label),
+        label: String(field.label || '').trim() || 'Field',
+        value: field.value,
+        display_value: displayValue,
+        field_type: normalizeFieldType(field.field_type),
+        preview_width: normalizePreviewWidth(field.preview_width),
+        sort_order: Number.isFinite(Number(field.sort_order)) ? Number(field.sort_order) : 0,
+        category_id: Number(field.category_id || 0),
+        category_name: String(category?.name || '').trim() || 'Uncategorized',
+      });
+    }
+  }
+  return lookupFields;
 }
 
 async function queryRowsByMappingSource({ poolRef, tableName, joinColumn, joinValue }) {
@@ -315,10 +369,15 @@ async function resolveMappedFieldData({
     if (category) {
       category.fields.push({
         id: mapping.id,
+        key: mapping.field_key,
         label: mapping.label,
         value: fieldValue,
         display_value: displayValue,
         is_empty: !isMeaningfulValue(fieldValue),
+        field_key: mapping.field_key,
+        field_type: mapping.field_type,
+        preview_width: mapping.preview_width,
+        category_id: mapping.category_id,
         table_name: mapping.table_name,
         column_name: mapping.column_name,
         character_join_column: mapping.character_join_column,
@@ -663,6 +722,14 @@ async function searchCharacters(term) {
         baseRowsByTable: { [playersTable]: [row] },
         includeSearchOnly: true,
       });
+      const mappedLookupFields = flattenLookupFields(mapped.categories);
+      const fallbackLookupFields = [
+        { key: 'first_name', label: 'First Name', display_value: String(info.firstname || '').trim(), field_type: 'text', preview_width: 1, sort_order: 0, category_name: 'Identity' },
+        { key: 'last_name', label: 'Last Name', display_value: String(info.lastname || '').trim(), field_type: 'text', preview_width: 1, sort_order: 1, category_name: 'Identity' },
+        { key: 'dob', label: 'DOB', display_value: String(info.birthdate || '').trim(), field_type: 'date', preview_width: 1, sort_order: 2, category_name: 'Identity' },
+        { key: 'phone', label: 'Phone', display_value: String(info.phone || '').trim(), field_type: 'phone', preview_width: 1, sort_order: 3, category_name: 'Contact' },
+      ].filter((field) => String(field.display_value || '').trim().length > 0);
+      const lookupFields = mappedLookupFields.length > 0 ? mappedLookupFields : fallbackLookupFields;
 
       return {
         citizenid: citizenId,
@@ -676,6 +743,7 @@ async function searchCharacters(term) {
           ...legacyCustomFields,
           ...mapped.custom_fields,
         },
+        lookup_fields: lookupFields,
       };
     }));
   } catch (err) {
@@ -713,6 +781,12 @@ async function getCharacterById(citizenId) {
       joinValue: normalizedCitizenId,
       baseRowsByTable: { [playersTable]: [row] },
     });
+    const mappedLookup = await resolveMappedFieldData({
+      entityType: 'person',
+      joinValue: normalizedCitizenId,
+      baseRowsByTable: { [playersTable]: [row] },
+      includeSearchOnly: true,
+    });
     const extractedJob = extractJobFromCharacterRow(row, info, jobCol);
 
     return {
@@ -729,6 +803,7 @@ async function getCharacterById(citizenId) {
         ...mapped.custom_fields,
       },
       mapped_categories: mapped.categories,
+      lookup_fields: flattenLookupFields(mappedLookup.categories),
       raw: row,
     };
   } catch (err) {
@@ -774,6 +849,13 @@ async function searchVehicles(term) {
           includeSearchOnly: true,
         })
         : { custom_fields: {} };
+      const mappedLookupFields = flattenLookupFields(mapped.categories || []);
+      const fallbackLookupFields = [
+        { key: 'plate', label: 'Plate', display_value: String(row.plate || '').trim(), field_type: 'text', preview_width: 1, sort_order: 0, category_name: 'Vehicle' },
+        { key: 'model', label: 'Model', display_value: String(row.vehicle || '').trim(), field_type: 'text', preview_width: 1, sort_order: 1, category_name: 'Vehicle' },
+        { key: 'state', label: 'State', display_value: row.state !== undefined ? String(row.state) : '', field_type: 'text', preview_width: 1, sort_order: 2, category_name: 'Vehicle' },
+      ].filter((field) => String(field.display_value || '').trim().length > 0);
+      const lookupFields = mappedLookupFields.length > 0 ? mappedLookupFields : fallbackLookupFields;
 
       return {
         plate: row.plate || '',
@@ -785,6 +867,7 @@ async function searchVehicles(term) {
           ...legacyCustomFields,
           ...mapped.custom_fields,
         },
+        lookup_fields: lookupFields,
       };
     }));
   } catch (err) {
@@ -815,6 +898,14 @@ async function getVehiclesByOwner(citizenId) {
           baseRowsByTable: { [vehiclesTable]: [row] },
         })
         : { categories: [], custom_fields: {} };
+      const mappedLookup = ownerCitizenId
+        ? await resolveMappedFieldData({
+          entityType: 'vehicle',
+          joinValue: ownerCitizenId,
+          baseRowsByTable: { [vehiclesTable]: [row] },
+          includeSearchOnly: true,
+        })
+        : { categories: [] };
 
       return {
         plate: row.plate || '',
@@ -827,10 +918,73 @@ async function getVehiclesByOwner(citizenId) {
           ...mapped.custom_fields,
         },
         mapped_categories: mapped.categories,
+        lookup_fields: flattenLookupFields(mappedLookup.categories),
       };
     }));
   } catch (err) {
     console.error('QBox get vehicles error:', err);
+    throw new Error(`QBox vehicle lookup error: ${err.message}`);
+  }
+}
+
+async function getVehicleByPlate(plate) {
+  try {
+    const normalizedPlate = String(plate || '').trim();
+    if (!normalizedPlate) return null;
+
+    const p = await getPool();
+    const { vehiclesTable } = getQboxTableConfig();
+    const tableNameSql = escapeIdentifier(vehiclesTable, 'vehicles table');
+    const vehicleMappings = normalizeCustomFields(parseJsonSetting('qbox_vehicle_custom_fields', []), ['column', 'row']);
+
+    let rows = [];
+    [rows] = await p.query(
+      `SELECT * FROM ${tableNameSql} WHERE plate = ? LIMIT 1`,
+      [normalizedPlate]
+    );
+    if (!Array.isArray(rows) || rows.length === 0) {
+      [rows] = await p.query(
+        `SELECT * FROM ${tableNameSql} WHERE REPLACE(plate, ' ', '') = REPLACE(?, ' ', '') LIMIT 1`,
+        [normalizedPlate]
+      );
+    }
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const row = rows[0];
+    const ownerCitizenId = String(row.citizenid || row.owner || '').trim();
+    const legacyCustomFields = buildCustomFieldValues({ row, charinfo: {}, mappings: vehicleMappings });
+    const mapped = ownerCitizenId
+      ? await resolveMappedFieldData({
+        entityType: 'vehicle',
+        joinValue: ownerCitizenId,
+        baseRowsByTable: { [vehiclesTable]: [row] },
+      })
+      : { categories: [], custom_fields: {} };
+    const mappedLookup = ownerCitizenId
+      ? await resolveMappedFieldData({
+        entityType: 'vehicle',
+        joinValue: ownerCitizenId,
+        baseRowsByTable: { [vehiclesTable]: [row] },
+        includeSearchOnly: true,
+      })
+      : { categories: [] };
+
+    return {
+      plate: row.plate || '',
+      vehicle: row.vehicle || '',
+      owner: ownerCitizenId,
+      garage: row.garage || '',
+      state: row.state !== undefined ? String(row.state) : '',
+      custom_fields: {
+        ...legacyCustomFields,
+        ...mapped.custom_fields,
+      },
+      mapped_categories: mapped.categories,
+      lookup_fields: flattenLookupFields(mappedLookup.categories),
+      raw: row,
+    };
+  } catch (err) {
+    console.error('QBox get vehicle by plate error:', err);
     throw new Error(`QBox vehicle lookup error: ${err.message}`);
   }
 }
@@ -903,6 +1057,7 @@ module.exports = {
   getCharacterById,
   getCharacterJobById,
   searchVehicles,
+  getVehicleByPlate,
   getVehiclesByOwner,
   applyFineByCitizenId,
 };
