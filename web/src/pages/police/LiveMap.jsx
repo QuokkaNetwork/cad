@@ -284,9 +284,6 @@ export default function LiveMap() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
-          <p className="text-sm text-cad-muted">
-            Snaily-style tile map fed by CAD bridge heartbeat data.
-          </p>
         </div>
         <div className="flex items-center gap-2">
           <button

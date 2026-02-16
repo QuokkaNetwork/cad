@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
+import Modal from '../../components/Modal';
+import GoOnDutyModal from '../../components/GoOnDutyModal';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
+
+const UNIT_STATUSES = [
+  { value: 'available', label: 'Available' },
+  { value: 'busy', label: 'Busy' },
+  { value: 'enroute', label: 'En Route' },
+  { value: 'on-scene', label: 'On Scene' },
+];
 
 const DEFAULT_STATS = Object.freeze({
   active_calls: 0,
@@ -11,6 +20,8 @@ const DEFAULT_STATS = Object.freeze({
   on_duty_units: 0,
   available_units: 0,
   assigned_units: 0,
+  active_bolos: 0,
+  active_warrants: 0,
 });
 const REFRESH_DEBOUNCE_MS = 350;
 
@@ -32,6 +43,11 @@ function normalizeCallsPayload(payload) {
   return [];
 }
 
+function normalizeBolosPayload(payload) {
+  if (Array.isArray(payload)) return payload;
+  return [];
+}
+
 export default function DepartmentHome() {
   const navigate = useNavigate();
   const { activeDepartment } = useDepartment();
@@ -40,13 +56,37 @@ export default function DepartmentHome() {
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
   const [now, setNow] = useState(() => new Date());
+  const [myUnit, setMyUnit] = useState(null);
+  const [showOnDutyModal, setShowOnDutyModal] = useState(false);
+  const [onDutyLoading, setOnDutyLoading] = useState(false);
+  const [offDutyLoading, setOffDutyLoading] = useState(false);
+  const [statusLoading, setStatusLoading] = useState('');
+  const [showBoloModal, setShowBoloModal] = useState(false);
+  const [savingBolo, setSavingBolo] = useState(false);
+  const [boloForm, setBoloForm] = useState({
+    type: 'person',
+    title: '',
+    description: '',
+  });
   const refreshTimerRef = useRef(null);
   const requestInFlightRef = useRef(false);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
   const layoutType = getDepartmentLayoutType(activeDepartment);
+  const isPoliceDepartment = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT && !isDispatch;
   const slogan = String(activeDepartment?.slogan || '').trim() || getDefaultSlogan(activeDepartment, layoutType);
+  const onActiveDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id === activeDepartment.id);
+  const onOtherDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id !== activeDepartment.id);
+
+  const refreshMyUnit = useCallback(async () => {
+    try {
+      const unit = await api.get('/api/units/me');
+      setMyUnit(unit);
+    } catch {
+      setMyUnit(null);
+    }
+  }, []);
 
   const fetchStats = useCallback(async () => {
     if (!deptId || requestInFlightRef.current) return;
@@ -60,10 +100,18 @@ export default function DepartmentHome() {
       const unitsRequest = isDispatch
         ? api.get('/api/units/dispatchable')
         : api.get(`/api/units?department_id=${deptId}`);
+      const bolosRequest = isPoliceDepartment
+        ? api.get(`/api/bolos?department_id=${deptId}`)
+        : Promise.resolve([]);
 
-      const [callsPayload, unitsPayload] = await Promise.all([callsRequest, unitsRequest]);
+      const [callsPayload, unitsPayload, bolosPayload] = await Promise.all([
+        callsRequest,
+        unitsRequest,
+        bolosRequest,
+      ]);
       const calls = normalizeCallsPayload(callsPayload);
       const units = normalizeUnitsPayload(unitsPayload);
+      const bolos = normalizeBolosPayload(bolosPayload);
 
       const activeCalls = calls.filter(call => String(call?.status || '').toLowerCase() !== 'closed');
       const urgentCalls = activeCalls.filter((call) => {
@@ -74,6 +122,9 @@ export default function DepartmentHome() {
       const assignedUnits = activeCalls.reduce((total, call) => (
         total + (Array.isArray(call?.assigned_units) ? call.assigned_units.length : 0)
       ), 0);
+      const activeWarrants = bolos.filter(
+        bolo => String(bolo?.type || '').toLowerCase() === 'person'
+      ).length;
 
       setStats({
         active_calls: activeCalls.length,
@@ -81,6 +132,8 @@ export default function DepartmentHome() {
         on_duty_units: units.length,
         available_units: availableUnits.length,
         assigned_units: assignedUnits,
+        active_bolos: bolos.length,
+        active_warrants: activeWarrants,
       });
       setLastUpdated(new Date());
     } catch (err) {
@@ -89,7 +142,7 @@ export default function DepartmentHome() {
       requestInFlightRef.current = false;
       setLoading(false);
     }
-  }, [deptId, isDispatch]);
+  }, [deptId, isDispatch, isPoliceDepartment]);
 
   const scheduleRefresh = useCallback(() => {
     if (refreshTimerRef.current) {
@@ -105,7 +158,8 @@ export default function DepartmentHome() {
     setStats(DEFAULT_STATS);
     setLastUpdated(null);
     fetchStats();
-  }, [fetchStats]);
+    refreshMyUnit();
+  }, [fetchStats, refreshMyUnit]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
@@ -119,16 +173,101 @@ export default function DepartmentHome() {
     }
   }, []);
 
+  const handleUnitEvent = useCallback(() => {
+    refreshMyUnit();
+    scheduleRefresh();
+  }, [refreshMyUnit, scheduleRefresh]);
+
   useEventSource({
-    'unit:online': scheduleRefresh,
-    'unit:offline': scheduleRefresh,
-    'unit:update': scheduleRefresh,
+    'unit:online': handleUnitEvent,
+    'unit:offline': handleUnitEvent,
+    'unit:update': handleUnitEvent,
     'call:create': scheduleRefresh,
     'call:update': scheduleRefresh,
     'call:close': scheduleRefresh,
     'call:assign': scheduleRefresh,
     'call:unassign': scheduleRefresh,
+    'bolo:create': scheduleRefresh,
+    'bolo:resolve': scheduleRefresh,
+    'bolo:cancel': scheduleRefresh,
+    'sync:department': handleUnitEvent,
   });
+
+  async function goOffDuty() {
+    setOffDutyLoading(true);
+    try {
+      await api.delete('/api/units/me');
+      setMyUnit(null);
+      scheduleRefresh();
+    } catch (err) {
+      alert('Failed to go off duty: ' + err.message);
+    } finally {
+      setOffDutyLoading(false);
+    }
+  }
+
+  async function goOnDuty() {
+    if (!activeDepartment) return;
+
+    if (!activeDepartment.is_dispatch) {
+      setShowOnDutyModal(true);
+      return;
+    }
+
+    setOnDutyLoading(true);
+    try {
+      const unit = await api.post('/api/units/me', {
+        callsign: 'DISPATCH',
+        department_id: activeDepartment.id,
+      });
+      setMyUnit(unit);
+      scheduleRefresh();
+    } catch (err) {
+      alert('Failed to go on duty: ' + err.message);
+    } finally {
+      setOnDutyLoading(false);
+    }
+  }
+
+  async function updateStatus(status) {
+    if (!status || !myUnit) return;
+    setStatusLoading(status);
+    try {
+      await api.patch('/api/units/me', { status });
+      await refreshMyUnit();
+      scheduleRefresh();
+    } catch (err) {
+      alert('Failed to update status: ' + err.message);
+    } finally {
+      setStatusLoading('');
+    }
+  }
+
+  async function createBolo(e) {
+    e.preventDefault();
+    if (!deptId) return;
+
+    const title = String(boloForm.title || '').trim();
+    if (!title) return;
+
+    setSavingBolo(true);
+    try {
+      await api.post('/api/bolos', {
+        department_id: deptId,
+        type: boloForm.type,
+        title,
+        description: String(boloForm.description || '').trim(),
+        details: {},
+      });
+      setShowBoloModal(false);
+      setBoloForm({ type: 'person', title: '', description: '' });
+      scheduleRefresh();
+    } catch (err) {
+      alert('Failed to create BOLO: ' + err.message);
+    } finally {
+      setSavingBolo(false);
+    }
+  }
 
   const clockDateLabel = useMemo(() => now.toLocaleDateString(undefined, {
     weekday: 'long',
@@ -153,7 +292,7 @@ export default function DepartmentHome() {
   return (
     <div className="space-y-5">
       <section className="bg-cad-card border border-cad-border rounded-2xl p-6">
-        <div className="flex flex-col lg:flex-row gap-6 lg:items-center lg:justify-between">
+        <div className="flex flex-col lg:flex-row gap-6 lg:items-start lg:justify-between">
           <div className="flex items-start gap-4 min-w-0">
             {activeDepartment?.icon ? (
               <img
@@ -191,10 +330,68 @@ export default function DepartmentHome() {
             </div>
           </div>
 
-          <div className="bg-cad-surface border border-cad-border rounded-xl px-4 py-3 min-w-[220px]">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">Local Time</p>
-            <p className="text-2xl font-semibold mt-1 tabular-nums">{clockTimeLabel}</p>
-            <p className="text-sm text-cad-muted mt-1">{clockDateLabel}</p>
+          <div className="w-full lg:w-[340px] space-y-3">
+            <div className="bg-cad-surface border border-cad-border rounded-xl px-4 py-3">
+              <p className="text-xs text-cad-muted uppercase tracking-wider">Local Time</p>
+              <p className="text-2xl font-semibold mt-1 tabular-nums">{clockTimeLabel}</p>
+              <p className="text-sm text-cad-muted mt-1">{clockDateLabel}</p>
+            </div>
+
+            <div className="bg-cad-surface border border-cad-border rounded-xl px-4 py-3">
+              <p className="text-xs text-cad-muted uppercase tracking-wider mb-2">Duty</p>
+              {onActiveDeptDuty ? (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
+                      On Duty: {myUnit.callsign}{myUnit.sub_department_short_name ? ` (${myUnit.sub_department_short_name})` : ''}
+                    </span>
+                    <button
+                      onClick={goOffDuty}
+                      disabled={offDutyLoading}
+                      className="px-2.5 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {offDutyLoading ? '...' : 'Go Off Duty'}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1 mt-2 flex-wrap">
+                    {UNIT_STATUSES.map((status) => {
+                      const selected = myUnit.status === status.value;
+                      const disabled = selected || !!statusLoading;
+                      return (
+                        <button
+                          key={status.value}
+                          onClick={() => updateStatus(status.value)}
+                          disabled={disabled}
+                          className={`text-xs px-2 py-1 rounded transition-colors ${
+                            selected
+                              ? 'bg-cad-accent/20 text-cad-accent-light cursor-default'
+                              : 'bg-cad-card text-cad-muted hover:text-cad-ink hover:bg-cad-border'
+                          } ${statusLoading && !selected ? 'opacity-60' : ''}`}
+                        >
+                          {statusLoading === status.value ? '...' : status.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={goOnDuty}
+                    disabled={onOtherDeptDuty || onDutyLoading}
+                    className="w-full px-3 py-2 text-sm bg-cad-accent hover:bg-cad-accent-light text-white rounded font-medium transition-colors disabled:opacity-50"
+                    title={onOtherDeptDuty ? 'You are already on duty in another department' : 'Go On Duty'}
+                  >
+                    {onOtherDeptDuty ? 'On Duty Elsewhere' : (onDutyLoading ? '...' : 'Go On Duty')}
+                  </button>
+                  {onOtherDeptDuty && (
+                    <p className="text-xs text-cad-muted mt-2">
+                      You are on duty in another department.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -208,33 +405,112 @@ export default function DepartmentHome() {
         ))}
       </section>
 
-      <section className="bg-cad-card border border-cad-border rounded-2xl p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => navigate(isDispatch ? '/dispatch' : '/units')}
-            className="px-4 py-2 rounded-lg bg-cad-accent hover:bg-cad-accent-light text-white text-sm font-medium transition-colors"
-          >
-            Open Dispatch
-          </button>
-          <button
-            onClick={() => navigate('/map')}
-            className="px-4 py-2 rounded-lg bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-sm transition-colors"
-          >
-            Open Live Map
-          </button>
-          <button
-            onClick={() => navigate('/search')}
-            className="px-4 py-2 rounded-lg bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-sm transition-colors"
-          >
-            Search
-          </button>
-        </div>
-        {error && (
-          <p className="text-xs text-red-400 mt-3">
-            {error}
-          </p>
-        )}
-      </section>
+      {isPoliceDepartment && (
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div className="bg-cad-card border border-cad-border rounded-xl p-4">
+            <p className="text-xs text-cad-muted uppercase tracking-wider">Active Warrants</p>
+            <p className="text-3xl font-semibold text-amber-300 mt-2">{loading ? '...' : stats.active_warrants}</p>
+            <p className="text-xs text-cad-muted mt-2">Derived from active person BOLO entries.</p>
+          </div>
+
+          <div className="bg-cad-card border border-cad-border rounded-xl p-4">
+            <p className="text-xs text-cad-muted uppercase tracking-wider">Active BOLOs</p>
+            <p className="text-3xl font-semibold text-cad-accent-light mt-2">{loading ? '...' : stats.active_bolos}</p>
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={() => setShowBoloModal(true)}
+                className="px-3 py-1.5 rounded bg-cad-accent hover:bg-cad-accent-light text-white text-xs font-medium transition-colors"
+              >
+                + New BOLO
+              </button>
+              <button
+                onClick={() => navigate('/bolos')}
+                className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-xs transition-colors"
+              >
+                View BOLOs
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-400 whitespace-pre-wrap">{error}</p>
+      )}
+
+      <Modal open={showBoloModal} onClose={() => setShowBoloModal(false)} title="Create BOLO">
+        <form onSubmit={createBolo} className="space-y-3">
+          <div className="flex bg-cad-surface rounded-lg border border-cad-border overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setBoloForm(f => ({ ...f, type: 'person' }))}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                boloForm.type === 'person' ? 'bg-amber-500/20 text-amber-300' : 'text-cad-muted'
+              }`}
+            >
+              Person
+            </button>
+            <button
+              type="button"
+              onClick={() => setBoloForm(f => ({ ...f, type: 'vehicle' }))}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                boloForm.type === 'vehicle' ? 'bg-blue-500/20 text-blue-300' : 'text-cad-muted'
+              }`}
+            >
+              Vehicle
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Title *</label>
+            <input
+              type="text"
+              required
+              value={boloForm.title}
+              onChange={(e) => setBoloForm(f => ({ ...f, title: e.target.value }))}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder={boloForm.type === 'person' ? 'e.g. Wanted male in red hoodie' : 'e.g. Stolen black Sultan'}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Description</label>
+            <textarea
+              value={boloForm.description}
+              onChange={(e) => setBoloForm(f => ({ ...f, description: e.target.value }))}
+              className="w-full h-24 bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+              placeholder="Additional details..."
+            />
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button
+              disabled={savingBolo}
+              type="submit"
+              className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {savingBolo ? 'Saving...' : 'Create BOLO'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBoloModal(false)}
+              className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <GoOnDutyModal
+        open={showOnDutyModal}
+        onClose={() => setShowOnDutyModal(false)}
+        department={activeDepartment}
+        onSuccess={async () => {
+          await refreshMyUnit();
+          scheduleRefresh();
+        }}
+      />
     </div>
   );
 }

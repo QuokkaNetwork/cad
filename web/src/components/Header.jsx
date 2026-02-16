@@ -1,152 +1,43 @@
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api/client';
-import GoOnDutyModal from './GoOnDutyModal';
 import { useEventSource } from '../hooks/useEventSource';
-
-const UNIT_STATUSES = [
-  { value: 'available', label: 'Available' },
-  { value: 'busy', label: 'Busy' },
-  { value: 'enroute', label: 'En Route' },
-  { value: 'on-scene', label: 'On Scene' },
-];
 
 export default function Header() {
   const { user, logout, refreshUser } = useAuth();
   const { activeDepartment } = useDepartment();
   const navigate = useNavigate();
-  const location = useLocation();
   const [open, setOpen] = useState(false);
-  const [myUnit, setMyUnit] = useState(null);
-  const [showOnDutyModal, setShowOnDutyModal] = useState(false);
-  const [offDutyLoading, setOffDutyLoading] = useState(false);
-  const [onDutyLoading, setOnDutyLoading] = useState(false);
-  const [statusLoading, setStatusLoading] = useState('');
-  const onDepartmentPage = /^\/(department|dispatch|units|map|search|bolos|records)(\/|$)/.test(location.pathname);
 
-  const refreshMyUnit = useCallback(async () => {
-    if (!user) {
-      setMyUnit(null);
-      return;
-    }
-
-    try {
-      const unit = await api.get('/api/units/me');
-      setMyUnit(unit);
-    } catch (err) {
-      if (err?.status === 401) {
-        await refreshUser();
-      }
-      setMyUnit(null);
-    }
+  const refreshAuth = useCallback(async () => {
+    if (!user) return;
+    await refreshUser();
   }, [user, refreshUser]);
 
-  useEffect(() => {
-    refreshMyUnit();
-  }, [refreshMyUnit, activeDepartment?.id]);
-
-  const handleLiveUnitEvent = useCallback((payload) => {
-    if (!user?.id) return;
-    const eventUserId = payload?.unit?.user_id;
-    if (!eventUserId || Number(eventUserId) === Number(user.id)) {
-      refreshMyUnit();
-    }
-  }, [user?.id, refreshMyUnit]);
-
   useEventSource({
-    'unit:online': handleLiveUnitEvent,
-    'unit:offline': handleLiveUnitEvent,
-    'unit:update': handleLiveUnitEvent,
-    'sync:department': async () => {
-      await refreshUser();
-      await refreshMyUnit();
-    },
+    'sync:department': refreshAuth,
   });
 
   useEffect(() => {
     if (!user) return undefined;
 
-    const pollId = setInterval(() => {
-      refreshMyUnit();
-    }, 15000);
-
     const onFocus = () => {
       refreshUser();
-      refreshMyUnit();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        onFocus();
+        refreshUser();
       }
     };
 
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      clearInterval(pollId);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [user, refreshMyUnit, refreshUser]);
-
-  useEffect(() => {
-    if (!onDepartmentPage && showOnDutyModal) {
-      setShowOnDutyModal(false);
-    }
-  }, [onDepartmentPage, showOnDutyModal]);
-
-  async function goOffDuty() {
-    setOffDutyLoading(true);
-    try {
-      await api.delete('/api/units/me');
-      setMyUnit(null);
-    } catch (err) {
-      alert('Failed to go off duty: ' + err.message);
-    } finally {
-      setOffDutyLoading(false);
-    }
-  }
-
-  async function goOnDuty() {
-    if (!activeDepartment) return;
-
-    if (!activeDepartment.is_dispatch) {
-      setShowOnDutyModal(true);
-      return;
-    }
-
-    setOnDutyLoading(true);
-    try {
-      const unit = await api.post('/api/units/me', {
-        callsign: 'DISPATCH',
-        department_id: activeDepartment.id,
-      });
-      setMyUnit(unit);
-    } catch (err) {
-      alert('Failed to go on duty: ' + err.message);
-    } finally {
-      setOnDutyLoading(false);
-    }
-  }
-
-  async function updateStatus(status) {
-    if (!status || !myUnit) return;
-    setStatusLoading(status);
-    try {
-      await api.patch('/api/units/me', { status });
-      await refreshMyUnit();
-    } catch (err) {
-      alert('Failed to update status: ' + err.message);
-    } finally {
-      setStatusLoading('');
-    }
-  }
-
-  const onActiveDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id === activeDepartment.id);
-  const onOtherDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id !== activeDepartment.id);
-  const showHeaderStatusButtons = !!(activeDepartment && onDepartmentPage && onActiveDeptDuty);
+  }, [user, refreshUser]);
 
   return (
     <header>
@@ -165,59 +56,8 @@ export default function Header() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-4 flex-wrap justify-end">
-          {activeDepartment && onDepartmentPage && (
-            <>
-              {onActiveDeptDuty ? (
-                <div className="flex items-center gap-3 flex-wrap justify-end">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
-                      On Duty: {myUnit.callsign}{myUnit.sub_department_short_name ? ` (${myUnit.sub_department_short_name})` : ''}
-                    </span>
-                    <button
-                      onClick={goOffDuty}
-                      disabled={offDutyLoading}
-                      className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors disabled:opacity-50"
-                    >
-                      {offDutyLoading ? '...' : 'Go Off Duty'}
-                    </button>
-                  </div>
-                  {showHeaderStatusButtons && (
-                    <div className="flex items-center gap-1">
-                      {UNIT_STATUSES.map((status) => {
-                        const selected = myUnit.status === status.value;
-                        const disabled = selected || !!statusLoading;
-                        return (
-                          <button
-                            key={status.value}
-                            onClick={() => updateStatus(status.value)}
-                            disabled={disabled}
-                            className={`text-xs px-2 py-1 rounded transition-colors ${
-                              selected
-                                ? 'bg-cad-accent/20 text-cad-accent-light cursor-default'
-                                : 'bg-cad-surface text-cad-muted hover:text-cad-ink hover:bg-cad-card'
-                            } ${statusLoading && !selected ? 'opacity-60' : ''}`}
-                          >
-                            {statusLoading === status.value ? '...' : status.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <button
-                  onClick={goOnDuty}
-                  disabled={onOtherDeptDuty || onDutyLoading}
-                  className="px-3 py-1.5 text-sm bg-cad-accent hover:bg-cad-accent-light text-white rounded font-medium transition-colors disabled:opacity-50"
-                  title={onOtherDeptDuty ? 'You are already on duty in another department' : 'Go On Duty'}
-                >
-                  {onOtherDeptDuty ? 'On Duty Elsewhere' : (onDutyLoading ? '...' : 'Go On Duty')}
-                </button>
-              )}
-            </>
-          )}
 
+        <div className="flex items-center gap-4 flex-wrap justify-end">
           {user && (
             <div className="relative">
               <button
@@ -259,12 +99,6 @@ export default function Header() {
           )}
         </div>
       </div>
-      <GoOnDutyModal
-        open={showOnDutyModal}
-        onClose={() => setShowOnDutyModal(false)}
-        department={activeDepartment}
-        onSuccess={refreshMyUnit}
-      />
     </header>
   );
 }
