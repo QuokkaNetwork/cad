@@ -23,6 +23,9 @@ Optional:
 - `set cad_bridge_fine_poll_ms 7000`
 - `set cad_bridge_fine_adapter command`
 - `set cad_bridge_fine_command qbx_fine {citizenid} {amount} {reason}`
+- `set cad_bridge_use_nearest_postal true`
+- `set cad_bridge_postal_resource nearest-postal`
+- `set cad_bridge_postal_export getPostal`
 
 ## QBox fine adapter
 The default adapter runs a server command using `cad_bridge_fine_command`.
@@ -31,4 +34,5 @@ You should point this to a command/resource in your server that actually creates
 ## Notes
 - Steam identifiers are required for CAD user matching.
 - CAD must have the same Steam IDs for logged-in users.
+- If nearest-postal export is unavailable, CAD falls back to street names and then XYZ.
 - This is a first-draft bridge and may require adapter tweaks for your billing stack.

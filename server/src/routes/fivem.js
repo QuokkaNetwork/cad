@@ -38,25 +38,30 @@ function steamHexToSteam64(hexValue) {
 
 function parseSteamIdentifier(identifiers = []) {
   if (!Array.isArray(identifiers)) return '';
-  const hit = identifiers.find(i => typeof i === 'string' && i.startsWith('steam:'));
+  const hit = identifiers.find(i => typeof i === 'string' && i.toLowerCase().startsWith('steam:'));
   if (!hit) return '';
-  const steam64 = steamHexToSteam64(hit);
-  return steam64 || hit.slice('steam:'.length);
+  const normalized = String(hit).toLowerCase();
+  const steam64 = steamHexToSteam64(normalized);
+  return steam64 || normalized.slice('steam:'.length);
 }
 
 function formatUnitLocation(payload) {
   const street = String(payload?.street || '').trim();
   const crossing = String(payload?.crossing || '').trim();
+  const postal = String(payload?.postal || '').trim();
+
+  const withPostal = (base) => (postal ? `${base} (${postal})` : base);
   if (street && crossing && street.toLowerCase() !== crossing.toLowerCase()) {
-    return `${street} / ${crossing}`;
+    return withPostal(`${street} / ${crossing}`);
   }
-  if (street) return street;
-  if (crossing) return crossing;
+  if (street) return withPostal(street);
+  if (crossing) return withPostal(crossing);
 
   const x = Number(payload?.position?.x || 0).toFixed(1);
   const y = Number(payload?.position?.y || 0).toFixed(1);
   const z = Number(payload?.position?.z || 0).toFixed(1);
-  return `X:${x} Y:${y} Z:${z}`;
+  const fallback = `X:${x} Y:${y} Z:${z}`;
+  return postal ? `${fallback} (${postal})` : fallback;
 }
 
 // Heartbeat from FiveM resource with online players + position.

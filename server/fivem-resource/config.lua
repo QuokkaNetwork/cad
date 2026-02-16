@@ -12,6 +12,12 @@ Config.FinePollIntervalMs = tonumber(GetConvar('cad_bridge_fine_poll_ms', '7000'
 -- If true, publish all online players. If false, only players with steam identifiers are published.
 Config.PublishAllPlayers = false
 
+-- Nearest postal integration (client-side export lookup).
+-- Typical script: nearest-postal with export getPostal.
+Config.UseNearestPostal = GetConvar('cad_bridge_use_nearest_postal', 'true') == 'true'
+Config.NearestPostalResource = GetConvar('cad_bridge_postal_resource', 'nearest-postal')
+Config.NearestPostalExport = GetConvar('cad_bridge_postal_export', 'getPostal')
+
 -- Fine processing adapter
 -- 'command' -> ExecuteCommand with template below
 -- 'none' -> mark failed unless you customize server.lua

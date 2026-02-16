@@ -78,6 +78,7 @@ RegisterNetEvent('cad_bridge:clientPosition', function(position)
     speed = tonumber(position.speed) or 0.0,
     street = tostring(position.street or ''),
     crossing = tostring(position.crossing or ''),
+    postal = tostring(position.postal or ''),
   }
 end)
 
@@ -113,6 +114,7 @@ CreateThread(function()
             speed = 0.0,
             street = '',
             crossing = '',
+            postal = '',
           }
           payloadPlayers[#payloadPlayers + 1] = {
             source = s,
@@ -128,6 +130,7 @@ CreateThread(function()
             speed = pos.speed,
             street = pos.street,
             crossing = pos.crossing,
+            postal = pos.postal,
           }
         end
       end
