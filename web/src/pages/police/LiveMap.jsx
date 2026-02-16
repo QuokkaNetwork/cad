@@ -16,6 +16,12 @@ const WORLD_HEIGHT = WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY;
 const DEFAULT_MAP_BACKGROUND_URL = '/maps/FullMap.png';
 const MAP_BACKGROUND_ENV_URL = String(import.meta.env.VITE_CAD_MAP_IMAGE || '').trim();
 const INITIAL_MAP_BACKGROUND_URL = MAP_BACKGROUND_ENV_URL || DEFAULT_MAP_BACKGROUND_URL;
+const DEFAULT_MAP_TRANSFORM = {
+  scaleX: 1,
+  scaleY: 1,
+  offsetX: 0,
+  offsetY: 0,
+};
 
 const STATUS_COLORS = {
   available: '#22c55e',
@@ -51,6 +57,21 @@ function getMarkerColor(unit) {
   return STATUS_COLORS[unit.status] || '#94a3b8';
 }
 
+function parseMapNumber(value, fallback) {
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function isDispatchUnit(unit) {
+  const callsign = String(unit?.callsign || '').trim().toUpperCase();
+  if (callsign === 'DISPATCH') return true;
+  if (unit?.is_dispatch) return true;
+  const short = String(unit?.department_short_name || '').trim().toUpperCase();
+  return short === 'DISPATCH';
+}
+
 export default function LiveMap() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -63,6 +84,7 @@ export default function LiveMap() {
   const [selectedUnitId, setSelectedUnitId] = useState(null);
   const [viewBox, setViewBox] = useState(createInitialViewBox);
   const [mapBackgroundUrl, setMapBackgroundUrl] = useState(INITIAL_MAP_BACKGROUND_URL);
+  const [mapTransform, setMapTransform] = useState(DEFAULT_MAP_TRANSFORM);
 
   const svgRef = useRef(null);
   const dragRef = useRef(null);
@@ -73,7 +95,8 @@ export default function LiveMap() {
     try {
       const query = isDispatch ? '&dispatch=true' : '';
       const data = await api.get(`/api/units/map?department_id=${deptId}${query}`);
-      setUnits(Array.isArray(data) ? data : []);
+      const incoming = Array.isArray(data) ? data : [];
+      setUnits(incoming.filter(unit => !isDispatchUnit(unit)));
     } catch (err) {
       console.error('Failed to load live map units:', err);
     } finally {
@@ -86,8 +109,15 @@ export default function LiveMap() {
       const config = await api.get('/api/units/map-config');
       const configured = String(config?.map_image_url || '').trim();
       setMapBackgroundUrl(configured || INITIAL_MAP_BACKGROUND_URL);
+      setMapTransform({
+        scaleX: parseMapNumber(config?.map_scale_x, DEFAULT_MAP_TRANSFORM.scaleX),
+        scaleY: parseMapNumber(config?.map_scale_y, DEFAULT_MAP_TRANSFORM.scaleY),
+        offsetX: parseMapNumber(config?.map_offset_x, DEFAULT_MAP_TRANSFORM.offsetX),
+        offsetY: parseMapNumber(config?.map_offset_y, DEFAULT_MAP_TRANSFORM.offsetY),
+      });
     } catch {
       setMapBackgroundUrl(INITIAL_MAP_BACKGROUND_URL);
+      setMapTransform(DEFAULT_MAP_TRANSFORM);
     }
   }, []);
 
@@ -246,6 +276,15 @@ export default function LiveMap() {
 
   const markerRadius = Math.max(24, viewBox.width * 0.0042);
   const labelSize = Math.max(58, markerRadius * 2.1);
+  const translateToMapPoint = useCallback((rawX, rawY) => {
+    const unitX = Number(rawX);
+    const unitY = Number(rawY);
+    if (!Number.isFinite(unitX) || !Number.isFinite(unitY)) return null;
+    return {
+      x: (unitX * mapTransform.scaleX) + mapTransform.offsetX,
+      y: ((-unitY) * mapTransform.scaleY) + mapTransform.offsetY,
+    };
+  }, [mapTransform]);
 
   return (
     <div className="space-y-4">
@@ -335,15 +374,14 @@ export default function LiveMap() {
               />
 
               {visibleUnits.map((unit) => {
-                const x = Number(unit.position_x);
-                const y = Number(unit.position_y);
-                const mapY = -y;
+                const mapPoint = translateToMapPoint(unit.position_x, unit.position_y);
+                if (!mapPoint) return null;
                 const selected = unit.id === selectedUnit?.id;
                 const stale = !!unit.position_stale;
                 return (
                   <g
                     key={unit.id}
-                    transform={`translate(${x} ${mapY})`}
+                    transform={`translate(${mapPoint.x} ${mapPoint.y})`}
                     onClick={() => setSelectedUnitId(unit.id)}
                     style={{ cursor: 'pointer' }}
                     opacity={stale ? 0.5 : 1}
@@ -429,6 +467,9 @@ export default function LiveMap() {
             <p>
               Default map image is hardcoded to <span className="font-mono">/maps/FullMap.png</span>.
               Admins can upload a replacement PNG in <span className="font-semibold">System Settings</span>.
+            </p>
+            <p className="mt-1">
+              Calibration: X = (gameX * {mapTransform.scaleX}) + {mapTransform.offsetX}, Y = ((-gameY) * {mapTransform.scaleY}) + {mapTransform.offsetY}
             </p>
             <p className="mt-1">
               Optional calibration vars: `VITE_CAD_MAP_MIN_X`, `VITE_CAD_MAP_MAX_X`, `VITE_CAD_MAP_MIN_Y`, `VITE_CAD_MAP_MAX_Y`.

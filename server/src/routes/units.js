@@ -7,6 +7,15 @@ const bus = require('../utils/eventBus');
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_LIVE_MAP_IMAGE_URL = '/maps/FullMap.png';
+const DEFAULT_MAP_SCALE = 1;
+const DEFAULT_MAP_OFFSET = 0;
+
+function parseMapNumber(value, fallback) {
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -141,6 +150,15 @@ router.get('/map', requireAuth, (req, res) => {
     units = Units.listByDepartment(deptId);
   }
 
+  // Live map should only show field units, never dispatch units.
+  const dispatchDeptIds = new Set(findDispatchDepartments().map(d => d.id));
+  units = units.filter(unit => {
+    if (dispatchDeptIds.has(Number(unit.department_id))) return false;
+    const callsign = String(unit.callsign || '').trim().toUpperCase();
+    if (callsign === 'DISPATCH') return false;
+    return true;
+  });
+
   const userCache = new Map();
   const payload = units.map((unit) => {
     let user = userCache.get(unit.user_id);
@@ -170,8 +188,16 @@ router.get('/map', requireAuth, (req, res) => {
 
 router.get('/map-config', requireAuth, (_req, res) => {
   const configured = String(Settings.get('live_map_image_url') || '').trim();
+  const mapScaleX = parseMapNumber(Settings.get('live_map_scale_x'), DEFAULT_MAP_SCALE);
+  const mapScaleY = parseMapNumber(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
+  const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
+  const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
   res.json({
     map_image_url: configured || DEFAULT_LIVE_MAP_IMAGE_URL,
+    map_scale_x: mapScaleX,
+    map_scale_y: mapScaleY,
+    map_offset_x: mapOffsetX,
+    map_offset_y: mapOffsetY,
   });
 });
 

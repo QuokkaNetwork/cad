@@ -484,6 +484,56 @@ export default function AdminSystemSettings() {
               Default hardcoded map is <span className="font-mono">/maps/FullMap.png</span>. Uploading a PNG below updates this setting automatically.
             </p>
           </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Live Map Scale X</label>
+            <input
+              type="number"
+              step="any"
+              value={settings.live_map_scale_x || '1'}
+              onChange={e => updateSetting('live_map_scale_x', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="1"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Live Map Scale Y</label>
+            <input
+              type="number"
+              step="any"
+              value={settings.live_map_scale_y || '1'}
+              onChange={e => updateSetting('live_map_scale_y', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="1"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Live Map Offset X</label>
+            <input
+              type="number"
+              step="any"
+              value={settings.live_map_offset_x || '0'}
+              onChange={e => updateSetting('live_map_offset_x', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="0"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Live Map Offset Y</label>
+            <input
+              type="number"
+              step="any"
+              value={settings.live_map_offset_y || '0'}
+              onChange={e => updateSetting('live_map_offset_y', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="0"
+            />
+          </div>
+          <div className="col-span-2 -mt-1">
+            <p className="text-xs text-cad-muted">
+              Marker transform uses: <span className="font-mono">X = (gameX * scaleX) + offsetX</span>,
+              <span className="font-mono"> Y = ((-gameY) * scaleY) + offsetY</span>.
+            </p>
+          </div>
           <div className="col-span-2">
             <label className="block text-xs text-cad-muted mb-1">Upload Live Map PNG</label>
             <div className="flex items-center gap-2 flex-wrap">

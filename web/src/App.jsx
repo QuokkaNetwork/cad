@@ -49,7 +49,7 @@ export default function App() {
             <Route path="/map" element={<RequireDepartment><LiveMap /></RequireDepartment>} />
             <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
-            <Route path="/records" element={<RequireDepartment><Records /></RequireDepartment>} />
+            <Route path="/records" element={<RequireDepartment allowDispatch={false}><Records /></RequireDepartment>} />
 
             {/* Admin */}
             <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminHome /></ProtectedRoute>} />

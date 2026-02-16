@@ -107,10 +107,13 @@ export default function Sidebar() {
   });
 
   const hideUnitsTab = !!(activeDepartment && !isDispatchDepartment && dispatcherOnline);
+  const hideRecordsTab = !!activeDepartment?.is_dispatch;
   const departmentNavItems = getNavItemsForLayout(layoutType);
-  const navItems = hideUnitsTab
-    ? departmentNavItems.filter(item => item.to !== '/units')
-    : departmentNavItems;
+  const navItems = departmentNavItems.filter((item) => {
+    if (hideUnitsTab && item.to === '/units') return false;
+    if (hideRecordsTab && item.to === '/records') return false;
+    return true;
+  });
 
   return (
     <aside className="w-56 bg-cad-surface border-r border-cad-border flex flex-col h-full">
