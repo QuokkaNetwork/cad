@@ -3,10 +3,12 @@ const {
   Settings,
   Users,
   Units,
+  Departments,
   FiveMPlayerLinks,
   FiveMFineJobs,
 } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
+const { audit } = require('../utils/audit');
 
 const router = express.Router();
 
@@ -97,6 +99,42 @@ function resolveCadUserFromIdentifiers(identifiers = {}) {
   return null;
 }
 
+function getDispatchDepartmentIds() {
+  return new Set(
+    Departments.list()
+      .filter(d => d.is_dispatch)
+      .map(d => d.id)
+  );
+}
+
+function offDutyIfNotDispatch(unit, source) {
+  if (!unit) return false;
+  const dept = Departments.findById(unit.department_id);
+  if (dept && dept.is_dispatch) return false;
+
+  Units.remove(unit.id);
+  bus.emit('unit:offline', { departmentId: unit.department_id, unit });
+  audit(null, 'unit_off_duty_not_detected', {
+    source,
+    unitId: unit.id,
+    userId: unit.user_id,
+    callsign: unit.callsign,
+    departmentId: unit.department_id,
+  });
+  return true;
+}
+
+function enforceInGamePresenceForOnDutyUnits(detectedCadUserIds, source) {
+  const dispatchDeptIds = getDispatchDepartmentIds();
+  let removed = 0;
+  for (const unit of Units.list()) {
+    if (dispatchDeptIds.has(unit.department_id)) continue;
+    if (detectedCadUserIds.has(unit.user_id)) continue;
+    if (offDutyIfNotDispatch(unit, source)) removed += 1;
+  }
+  return removed;
+}
+
 function formatUnitLocation(payload) {
   const street = String(payload?.street || '').trim();
   const crossing = String(payload?.crossing || '').trim();
@@ -120,6 +158,7 @@ function formatUnitLocation(payload) {
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];
   const seenLinks = new Set();
+  const detectedCadUserIds = new Set();
 
   for (const player of players) {
     const ids = resolveLinkIdentifiers(player.identifiers);
@@ -141,6 +180,7 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
 
     const cadUser = resolveCadUserFromIdentifiers(ids);
     if (!cadUser) continue;
+    detectedCadUserIds.add(cadUser.id);
     const unit = Units.findByUserId(cadUser.id);
     if (!unit) continue;
 
@@ -153,7 +193,8 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
   }
 
-  res.json({ ok: true, tracked: seenLinks.size });
+  const autoOffDutyCount = enforceInGamePresenceForOnDutyUnits(detectedCadUserIds, 'heartbeat');
+  res.json({ ok: true, tracked: seenLinks.size, auto_off_duty: autoOffDutyCount });
 });
 
 // Optional player disconnect event.
@@ -161,7 +202,13 @@ router.post('/offline', requireBridgeAuth, (req, res) => {
   const ids = resolveLinkIdentifiers(req.body?.identifiers || []);
   if (ids.steamId) FiveMPlayerLinks.removeBySteamId(ids.steamId);
   if (ids.discordId) FiveMPlayerLinks.removeBySteamId(`discord:${ids.discordId}`);
-  res.json({ ok: true });
+
+  let autoOffDuty = false;
+  const cadUser = resolveCadUserFromIdentifiers(ids);
+  if (cadUser) {
+    autoOffDuty = offDutyIfNotDispatch(Units.findByUserId(cadUser.id), 'offline_event');
+  }
+  res.json({ ok: true, auto_off_duty: autoOffDuty });
 });
 
 // FiveM resource polls pending fine jobs and applies them through QBox-side logic.
