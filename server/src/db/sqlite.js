@@ -1083,6 +1083,84 @@ const Announcements = {
   },
 };
 
+// --- Field Mapping Categories ---
+const FieldMappingCategories = {
+  list(entityType = 'person') {
+    return db.prepare(
+      'SELECT * FROM field_mapping_categories WHERE entity_type = ? ORDER BY sort_order ASC, id ASC'
+    ).all(entityType);
+  },
+  findById(id) {
+    return db.prepare('SELECT * FROM field_mapping_categories WHERE id = ?').get(id);
+  },
+  create({ name, entity_type = 'person', sort_order = 0 }) {
+    const info = db.prepare(
+      'INSERT INTO field_mapping_categories (name, entity_type, sort_order) VALUES (?, ?, ?)'
+    ).run(name, entity_type, sort_order);
+    return this.findById(info.lastInsertRowid);
+  },
+  update(id, { name, sort_order }) {
+    const updates = [];
+    const values = [];
+    if (name !== undefined) { updates.push('name = ?'); values.push(name); }
+    if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
+    if (updates.length === 0) return;
+    values.push(id);
+    db.prepare(`UPDATE field_mapping_categories SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  },
+  delete(id) {
+    db.prepare('DELETE FROM field_mapping_categories WHERE id = ?').run(id);
+  },
+};
+
+// --- Field Mappings ---
+const FieldMappings = {
+  listByCategory(categoryId) {
+    return db.prepare(
+      'SELECT * FROM field_mappings WHERE category_id = ? ORDER BY sort_order ASC, id ASC'
+    ).all(categoryId);
+  },
+  listAll(entityType = 'person') {
+    return db.prepare(`
+      SELECT fm.*, fmc.name as category_name, fmc.sort_order as category_sort_order
+      FROM field_mappings fm
+      JOIN field_mapping_categories fmc ON fmc.id = fm.category_id
+      WHERE fmc.entity_type = ?
+      ORDER BY fmc.sort_order ASC, fmc.id ASC, fm.sort_order ASC, fm.id ASC
+    `).all(entityType);
+  },
+  findById(id) {
+    return db.prepare('SELECT * FROM field_mappings WHERE id = ?').get(id);
+  },
+  create({ category_id, label, table_name, column_name, is_json = 0, json_key = '', character_join_column = '', sort_order = 0, is_search_column = 0 }) {
+    const info = db.prepare(`
+      INSERT INTO field_mappings
+        (category_id, label, table_name, column_name, is_json, json_key, character_join_column, sort_order, is_search_column)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(category_id, label, table_name, column_name, is_json ? 1 : 0, json_key, character_join_column, sort_order, is_search_column ? 1 : 0);
+    return this.findById(info.lastInsertRowid);
+  },
+  update(id, fields) {
+    const allowed = ['label', 'table_name', 'column_name', 'is_json', 'json_key', 'character_join_column', 'sort_order', 'is_search_column'];
+    const updates = [];
+    const values = [];
+    for (const key of allowed) {
+      if (fields[key] !== undefined) {
+        updates.push(`${key} = ?`);
+        let val = fields[key];
+        if (key === 'is_json' || key === 'is_search_column') val = val ? 1 : 0;
+        values.push(val);
+      }
+    }
+    if (updates.length === 0) return;
+    values.push(id);
+    db.prepare(`UPDATE field_mappings SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  },
+  delete(id) {
+    db.prepare('DELETE FROM field_mappings WHERE id = ?').run(id);
+  },
+};
+
 module.exports = {
   initDb,
   getDb: () => db,
@@ -1103,4 +1181,6 @@ module.exports = {
   Settings,
   AuditLog,
   Announcements,
+  FieldMappingCategories,
+  FieldMappings,
 };

@@ -472,6 +472,19 @@ export default function AdminSystemSettings() {
             />
           </div>
           <div className="col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">LiveMap Socket URL</label>
+            <input
+              type="text"
+              value={settings.live_map_socket_url || ''}
+              onChange={e => updateSetting('live_map_socket_url', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="ws://127.0.0.1:30121 or wss://your-proxy.example"
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              Used by CAD Live Map to connect to the <span className="font-mono">live_map-3.2.1</span> websocket. Leave blank to use CAD host + port 30121.
+            </p>
+          </div>
+          <div className="col-span-2">
             <label className="block text-xs text-cad-muted mb-1">Live Map Image URL</label>
             <input
               type="text"

@@ -1,6 +1,6 @@
 const mysql = require('mysql2/promise');
 const config = require('../config');
-const { Settings } = require('./sqlite');
+const { Settings, FieldMappingCategories, FieldMappings } = require('./sqlite');
 
 let pool = null;
 let poolConfigSignature = '';
