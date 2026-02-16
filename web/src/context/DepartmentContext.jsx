@@ -10,40 +10,34 @@ export function DepartmentProvider({ children }) {
 
   useEffect(() => {
     if (departments.length === 0) {
-      if (activeDepartment) setActiveDepartment(null);
+      setActiveDepartment(null);
       return;
     }
 
-    if (activeDepartment) {
-      const matchingDepartment = departments.find(d => d.id === activeDepartment.id);
-      if (matchingDepartment) {
-        if (matchingDepartment !== activeDepartment) {
-          setActiveDepartment(matchingDepartment);
+    setActiveDepartment((prev) => {
+      if (prev) {
+        const matchingDepartment = departments.find(d => d.id === prev.id);
+        if (matchingDepartment) return matchingDepartment;
+      }
+
+      let nextDepartment = null;
+      try {
+        const storedId = parseInt(localStorage.getItem(ACTIVE_DEPT_STORAGE_KEY) || '', 10);
+        if (storedId) {
+          nextDepartment = departments.find(d => d.id === storedId) || null;
         }
-        return;
+      } catch {
+        // Ignore storage access errors and fall back to first available department.
       }
-    }
 
-    let nextDepartment = null;
-    try {
-      const storedId = parseInt(localStorage.getItem(ACTIVE_DEPT_STORAGE_KEY) || '', 10);
-      if (storedId) {
-        nextDepartment = departments.find(d => d.id === storedId) || null;
-      }
-    } catch {
-      // Ignore storage access errors and fall back to first available department.
-    }
-
-    if (!nextDepartment) nextDepartment = departments[0] || null;
-    if (nextDepartment) setActiveDepartment(nextDepartment);
-  }, [departments, activeDepartment]);
+      return nextDepartment || departments[0] || null;
+    });
+  }, [departments]);
 
   useEffect(() => {
     try {
       if (activeDepartment?.id) {
         localStorage.setItem(ACTIVE_DEPT_STORAGE_KEY, String(activeDepartment.id));
-      } else {
-        localStorage.removeItem(ACTIVE_DEPT_STORAGE_KEY);
       }
     } catch {
       // Ignore storage access errors.

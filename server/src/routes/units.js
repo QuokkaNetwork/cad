@@ -1,6 +1,8 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Settings } = require('../db/sqlite');
+const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Settings, Calls } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const liveMapStore = require('../services/liveMapStore');
@@ -8,6 +10,11 @@ const liveMapStore = require('../services/liveMapStore');
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_LIVE_MAP_IMAGE_URL = '/maps/FullMap.png';
+const REPO_MAP_DIR_CANDIDATES = [
+  path.resolve(__dirname, '../../../web/public/maps'),
+  path.resolve(__dirname, '../../../web/dist/maps'),
+];
+const REPO_MAP_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const DEFAULT_MAP_SCALE = 1;
 const DEFAULT_MAP_OFFSET = 0;
 
@@ -32,6 +39,33 @@ function parseSqliteUtc(value) {
   const base = text.replace(' ', 'T');
   const normalized = base.endsWith('Z') ? base : `${base}Z`;
   return Date.parse(normalized);
+}
+
+function normalizeMapAssetUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.startsWith('/') ? text : `/${text}`;
+}
+
+function findRepoMapAssetUrl() {
+  for (const dir of REPO_MAP_DIR_CANDIDATES) {
+    if (!fs.existsSync(dir)) continue;
+
+    const files = fs.readdirSync(dir)
+      .filter((name) => {
+        const ext = path.extname(name).toLowerCase();
+        return REPO_MAP_IMAGE_EXTENSIONS.has(ext);
+      })
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+    if (!files.length) continue;
+
+    const preferred = files.find(name => name.toLowerCase() !== 'fullmap.png')
+      || files.find(name => name.toLowerCase() === 'fullmap.png')
+      || files[0];
+    if (preferred) return `/maps/${encodeURIComponent(preferred)}`;
+  }
+  return DEFAULT_LIVE_MAP_IMAGE_URL;
 }
 
 function findDispatchDepartments() {
@@ -196,17 +230,28 @@ router.get('/map', requireAuth, (req, res) => {
 });
 
 router.get('/map-config', requireAuth, (_req, res) => {
-  const forceRepoMapAsset = parseMapBoolean(Settings.get('live_map_use_repo_asset'), true);
-  const configured = String(Settings.get('live_map_image_url') || '').trim();
+  const configuredUploadMap = String(Settings.get('live_map_image_url') || '').trim();
+  const configuredRepoMap = normalizeMapAssetUrl(Settings.get('live_map_repo_asset_url'));
+  const resolvedRepoMap = configuredRepoMap || findRepoMapAssetUrl();
+  // Backward compatibility:
+  // - If a custom upload map exists and no toggle is set, keep using it.
+  // - If a repo map is explicitly configured, default to using it.
+  const forceRepoMapAsset = parseMapBoolean(
+    Settings.get('live_map_use_repo_asset'),
+    configuredRepoMap ? true : !configuredUploadMap
+  );
   const directUrl = String(Settings.get('live_map_url') || '').trim();
   const socketUrl = String(Settings.get('live_map_socket_url') || '').trim();
   const mapScaleX = parseMapNumber(Settings.get('live_map_scale_x'), DEFAULT_MAP_SCALE);
   const mapScaleY = parseMapNumber(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
   const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
   const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
+  const mapImageUrl = forceRepoMapAsset
+    ? (resolvedRepoMap || DEFAULT_LIVE_MAP_IMAGE_URL)
+    : (configuredUploadMap || resolvedRepoMap || DEFAULT_LIVE_MAP_IMAGE_URL);
   res.json({
     live_map_url: directUrl,
-    map_image_url: forceRepoMapAsset ? DEFAULT_LIVE_MAP_IMAGE_URL : (configured || DEFAULT_LIVE_MAP_IMAGE_URL),
+    map_image_url: mapImageUrl,
     live_map_socket_url: socketUrl,
     map_scale_x: mapScaleX,
     map_scale_y: mapScaleY,
@@ -243,6 +288,24 @@ router.get('/me', requireAuth, (req, res) => {
   const unit = Units.findByUserId(req.user.id);
   if (!unit) return res.status(404).json({ error: 'Not on duty' });
   res.json(unit);
+});
+
+// Get current user's active assigned call (if any)
+router.get('/me/active-call', requireAuth, (req, res) => {
+  const unit = Units.findByUserId(req.user.id);
+  if (!unit) return res.status(404).json({ error: 'Not on duty' });
+
+  const assigned = Calls.getAssignedCallForUnit(unit.id);
+  if (!assigned) return res.json(null);
+
+  const call = Calls.findById(assigned.id) || assigned;
+  const department = Departments.findById(Number(call.department_id));
+  res.json({
+    ...call,
+    department_name: department?.name || '',
+    department_short_name: department?.short_name || '',
+    department_color: department?.color || '',
+  });
 });
 
 // Go on duty

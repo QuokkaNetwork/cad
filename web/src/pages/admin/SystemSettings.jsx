@@ -472,9 +472,30 @@ export default function AdminSystemSettings() {
               Optional legacy field for opening third-party map UIs. Not required for CAD's built-in live map view.
             </p>
           </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Use Repo Map Asset</label>
+            <select
+              value={settings.live_map_use_repo_asset || 'true'}
+              onChange={e => updateSetting('live_map_use_repo_asset', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Repo Map Image URL</label>
+            <input
+              type="text"
+              value={settings.live_map_repo_asset_url || ''}
+              onChange={e => updateSetting('live_map_repo_asset_url', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="/maps/YourMap.png"
+            />
+          </div>
           <div className="col-span-2 -mt-1">
             <p className="text-xs text-cad-muted">
-              Legacy custom map image/calibration settings are no longer required for the default Live Map page.
+              Leave Repo Map Image URL blank to auto-detect a map file in <span className="font-mono">web/public/maps</span> (or fallback to <span className="font-mono">/maps/FullMap.png</span>).
             </p>
           </div>
           <div>

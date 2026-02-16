@@ -5,6 +5,7 @@ import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
 import UnitCard from '../../components/UnitCard';
 import StatusBadge from '../../components/StatusBadge';
+import Modal from '../../components/Modal';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 
 export default function Units() {
@@ -13,6 +14,8 @@ export default function Units() {
   const [units, setUnits] = useState([]);
   const [myUnit, setMyUnit] = useState(null);
   const [calls, setCalls] = useState([]);
+  const [currentCall, setCurrentCall] = useState(null);
+  const [selectedCall, setSelectedCall] = useState(null);
   const [dispatchStatus, setDispatchStatus] = useState({
     dispatch_department: null,
     dispatcher_online: false,
@@ -31,14 +34,16 @@ export default function Units() {
   const fetchData = useCallback(async () => {
     if (!deptId) return;
     try {
-      const [unitsData, myData, dispatcherData] = await Promise.all([
+      const [unitsData, myData, dispatcherData, currentCallData] = await Promise.all([
         isDispatchDepartment ? api.get('/api/units/dispatchable') : api.get(`/api/units?department_id=${deptId}`),
         api.get('/api/units/me').catch(() => null),
         api.get(`/api/units/dispatcher-status?department_id=${deptId}`),
+        api.get('/api/units/me/active-call').catch(() => null),
       ]);
       setUnits(isDispatchDepartment ? (unitsData.units || []) : unitsData);
       setMyUnit(myData);
       setDispatchStatus(dispatcherData);
+      setCurrentCall(myData && currentCallData ? currentCallData : null);
 
       if (dispatcherData.dispatcher_online || dispatcherData.is_dispatch_department) {
         setCalls([]);
@@ -69,6 +74,8 @@ export default function Units() {
     try {
       await api.delete('/api/units/me');
       setMyUnit(null);
+      setCurrentCall(null);
+      setSelectedCall(null);
       fetchData();
     } catch (err) {
       alert('Failed to go off duty: ' + err.message);
@@ -95,6 +102,19 @@ export default function Units() {
     }
   }
 
+  useEffect(() => {
+    if (!selectedCall?.id) return;
+    const refreshedFromList = calls.find(call => call.id === selectedCall.id);
+    const refreshed = refreshedFromList || (currentCall?.id === selectedCall.id ? currentCall : null);
+    if (!refreshed) {
+      setSelectedCall(null);
+      return;
+    }
+    if (refreshed !== selectedCall) {
+      setSelectedCall(refreshed);
+    }
+  }, [calls, currentCall, selectedCall]);
+
   return (
     <div>
       <h2 className="text-xl font-bold mb-6">
@@ -115,6 +135,42 @@ export default function Units() {
           </div>
 
           <UnitCard unit={myUnit} />
+
+          <div className="mt-4 bg-cad-surface border border-cad-border rounded-lg p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <h4 className="text-xs font-semibold text-cad-muted uppercase tracking-wider">Current Attached Call</h4>
+              {currentCall && (
+                <button
+                  onClick={() => setSelectedCall(currentCall)}
+                  className="px-2 py-1 text-[11px] bg-cad-card border border-cad-border rounded text-cad-muted hover:text-cad-ink"
+                >
+                  Open Details
+                </button>
+              )}
+            </div>
+
+            {!currentCall ? (
+              <p className="text-sm text-cad-muted">You are not attached to an active call.</p>
+            ) : (
+              <div className="space-y-2">
+                <div>
+                  <p className="text-sm font-medium">#{currentCall.id} {currentCall.title}</p>
+                  <p className="text-xs text-cad-muted">{currentCall.location || 'No location'} | Priority {currentCall.priority}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={currentCall.status} />
+                  {currentCall.status !== 'closed' && (
+                    <button
+                      onClick={() => unassignMyUnit(currentCall.id)}
+                      className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+                    >
+                      Leave Call
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">
@@ -164,6 +220,12 @@ export default function Units() {
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setSelectedCall(call)}
+                              className="px-2 py-1 text-xs bg-cad-card border border-cad-border rounded text-cad-muted hover:text-cad-ink transition-colors"
+                            >
+                              Details
+                            </button>
                             <StatusBadge status={call.status} />
                             {assigned ? (
                               <button
@@ -205,6 +267,80 @@ export default function Units() {
           </div>
         </>
       )}
+
+      <Modal open={!!selectedCall} onClose={() => setSelectedCall(null)} title={`Call #${selectedCall?.id}`} wide>
+        {selectedCall && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              <StatusBadge status={selectedCall.status} />
+              {selectedCall.department_short_name && (
+                <span
+                  className="text-xs px-2 py-0.5 rounded font-semibold"
+                  style={{
+                    backgroundColor: `${selectedCall.department_color || '#64748b'}22`,
+                    color: selectedCall.department_color || '#cbd5e1',
+                    border: `1px solid ${selectedCall.department_color || '#64748b'}44`,
+                  }}
+                >
+                  {selectedCall.department_short_name}
+                </span>
+              )}
+              <span className="text-xs text-cad-muted">
+                Priority {selectedCall.priority} | {selectedCall.job_code || 'No job code'}
+              </span>
+            </div>
+
+            <div>
+              <h3 className="font-medium text-lg">{selectedCall.title}</h3>
+              {selectedCall.location && (
+                <p className="text-sm text-cad-muted mt-1">Location: {selectedCall.location}</p>
+              )}
+              {selectedCall.description && (
+                <p className="text-sm mt-2">{selectedCall.description}</p>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              {myUnit && selectedCall.status !== 'closed' && selectedCall.assigned_units?.some(u => u.id === myUnit.id) && (
+                <button
+                  onClick={() => unassignMyUnit(selectedCall.id)}
+                  className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+                >
+                  Leave Call
+                </button>
+              )}
+              {myUnit && selectedCall.status !== 'closed' && !selectedCall.assigned_units?.some(u => u.id === myUnit.id) && (
+                <button
+                  onClick={() => assignMyUnit(selectedCall.id)}
+                  disabled={!canSelfDispatch}
+                  className="px-3 py-1.5 text-xs bg-cad-accent/20 text-cad-accent-light border border-cad-accent/30 rounded hover:bg-cad-accent/30 transition-colors disabled:opacity-50"
+                >
+                  Self Assign
+                </button>
+              )}
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Assigned Units</h4>
+              {selectedCall.assigned_units?.length > 0 ? (
+                <div className="space-y-1">
+                  {selectedCall.assigned_units.map(u => (
+                    <div key={u.id} className="flex items-center justify-between bg-cad-surface rounded px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-cad-accent-light">{u.callsign}</span>
+                        <span className="text-sm text-cad-muted">{u.user_name}</span>
+                        <StatusBadge status={u.status} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-cad-muted">No units assigned</p>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
