@@ -5,11 +5,16 @@ const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 const router = express.Router();
-const DISPATCH_SHORT_NAME = 'DISPATCH';
 
-function findDispatchDepartment() {
-  const all = Departments.list();
-  return all.find(d => String(d.short_name || '').toUpperCase() === DISPATCH_SHORT_NAME) || null;
+function findDispatchDepartments() {
+  return Departments.list().filter(d => d.is_dispatch);
+}
+
+function isUserInDispatchDepartment(user) {
+  const dispatchDepts = findDispatchDepartments();
+  if (!dispatchDepts.length) return false;
+  const dispatchIds = dispatchDepts.map(d => d.id);
+  return user.departments.some(d => dispatchIds.includes(d.id));
 }
 
 function getAvailableSubDepartments(user, deptId) {
@@ -46,8 +51,8 @@ router.get('/dispatcher-status', requireAuth, (req, res) => {
   const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
   if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
 
-  const dispatchDepartment = findDispatchDepartment();
-  if (!dispatchDepartment) {
+  const dispatchDepts = findDispatchDepartments();
+  if (!dispatchDepts.length) {
     return res.json({
       dispatch_department: null,
       dispatcher_online: false,
@@ -56,13 +61,27 @@ router.get('/dispatcher-status', requireAuth, (req, res) => {
     });
   }
 
-  const dispatchUnits = Units.listByDepartment(dispatchDepartment.id);
+  const dispatchIds = dispatchDepts.map(d => d.id);
+  const dispatchUnits = Units.listByDepartmentIds(dispatchIds);
+  const isDispatchDept = dispatchIds.includes(deptId);
   return res.json({
-    dispatch_department: dispatchDepartment,
+    dispatch_department: dispatchDepts[0],
     dispatcher_online: dispatchUnits.length > 0,
     online_count: dispatchUnits.length,
-    is_dispatch_department: dispatchDepartment.id === deptId,
+    is_dispatch_department: isDispatchDept,
   });
+});
+
+// Get all units from dispatch-visible departments (for dispatch centres)
+router.get('/dispatchable', requireAuth, (req, res) => {
+  if (!req.user.is_admin && !isUserInDispatchDepartment(req.user)) {
+    return res.status(403).json({ error: 'Only dispatch departments can access this' });
+  }
+
+  const visibleDepts = Departments.listDispatchVisible();
+  const deptIds = visibleDepts.map(d => d.id);
+  const units = Units.listByDepartmentIds(deptIds);
+  res.json({ departments: visibleDepts, units });
 });
 
 // List sub-departments available to current user for a department

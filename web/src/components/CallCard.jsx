@@ -14,7 +14,7 @@ const PRIORITY_COLORS = {
   '4': 'bg-gray-500/20 text-gray-400 border-gray-500/30',
 };
 
-export default function CallCard({ call, onClick, onAssign, onClose, units = [] }) {
+export default function CallCard({ call, onClick, onAssign, onClose, units = [], showDepartment = false }) {
   const priorityStyle = PRIORITY_COLORS[call.priority] || PRIORITY_COLORS['3'];
 
   return (
@@ -29,6 +29,18 @@ export default function CallCard({ call, onClick, onAssign, onClose, units = [] 
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold border ${priorityStyle}`}>
               {PRIORITY_LABELS[call.priority] || 'P3'}
             </span>
+            {showDepartment && call.department_short_name && (
+              <span
+                className="text-xs px-1.5 py-0.5 rounded font-semibold"
+                style={{
+                  backgroundColor: `${call.department_color || '#64748b'}22`,
+                  color: call.department_color || '#cbd5e1',
+                  border: `1px solid ${call.department_color || '#64748b'}44`,
+                }}
+              >
+                {call.department_short_name}
+              </span>
+            )}
             {call.job_code && (
               <span className="text-xs text-cad-muted font-mono">{call.job_code}</span>
             )}

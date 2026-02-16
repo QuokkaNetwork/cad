@@ -1,19 +1,39 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Calls, Units } = require('../db/sqlite');
+const { Calls, Units, Departments } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 const router = express.Router();
 
-// List calls for a department
+function isUserInDispatchDepartment(user) {
+  const dispatchDepts = Departments.list().filter(d => d.is_dispatch);
+  if (!dispatchDepts.length) return false;
+  const dispatchIds = dispatchDepts.map(d => d.id);
+  return user.departments.some(d => dispatchIds.includes(d.id));
+}
+
+function getDispatchVisibleDeptIds() {
+  return Departments.listDispatchVisible().map(d => d.id);
+}
+
+// List calls for a department (or all dispatch-visible departments)
 router.get('/', requireAuth, (req, res) => {
-  const { department_id, include_closed } = req.query;
+  const { department_id, include_closed, dispatch } = req.query;
   if (!department_id) return res.status(400).json({ error: 'department_id is required' });
 
   const deptId = parseInt(department_id, 10);
   const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
   if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
+
+  // Dispatch mode: return calls from all dispatch-visible departments
+  if (dispatch === 'true' && (req.user.is_admin || isUserInDispatchDepartment(req.user))) {
+    const visibleIds = getDispatchVisibleDeptIds();
+    // Also include the dispatch department's own calls
+    if (!visibleIds.includes(deptId)) visibleIds.push(deptId);
+    const calls = Calls.listByDepartmentIds(visibleIds, include_closed === 'true');
+    return res.json(calls);
+  }
 
   const calls = Calls.listByDepartment(deptId, include_closed === 'true');
   res.json(calls);
@@ -28,7 +48,18 @@ router.post('/', requireAuth, (req, res) => {
 
   const deptId = parseInt(department_id, 10);
   const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
-  if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
+
+  // Dispatchers can create calls for any dispatch-visible department
+  const isDispatcher = isUserInDispatchDepartment(req.user);
+  if (!hasDept && !isDispatcher) {
+    return res.status(403).json({ error: 'Department access denied' });
+  }
+  if (isDispatcher && !hasDept) {
+    const visibleIds = getDispatchVisibleDeptIds();
+    if (!visibleIds.includes(deptId)) {
+      return res.status(403).json({ error: 'Target department is not visible to dispatch' });
+    }
+  }
 
   const call = Calls.create({
     department_id: deptId,
@@ -51,7 +82,8 @@ router.patch('/:id', requireAuth, (req, res) => {
   if (!call) return res.status(404).json({ error: 'Call not found' });
 
   const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === call.department_id);
-  if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
+  const isDispatcher = isUserInDispatchDepartment(req.user);
+  if (!hasDept && !isDispatcher) return res.status(403).json({ error: 'Department access denied' });
 
   const { title, priority, location, description, job_code, status } = req.body;
   Calls.update(call.id, { title, priority, location, description, job_code, status });

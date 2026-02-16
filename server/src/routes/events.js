@@ -37,9 +37,20 @@ router.get('/', (req, res) => {
   });
   res.write('\n');
 
-  const userDeptIds = user.is_admin
+  let userDeptIds = user.is_admin
     ? null // Admin gets all events
     : user.departments.map(d => d.id);
+
+  // If user is in a dispatch department, also include all dispatch-visible departments
+  if (userDeptIds) {
+    const isInDispatch = user.departments.some(d => d.is_dispatch);
+    if (isInDispatch) {
+      const visibleDepts = Departments.listDispatchVisible();
+      for (const vd of visibleDepts) {
+        if (!userDeptIds.includes(vd.id)) userDeptIds.push(vd.id);
+      }
+    }
+  }
 
   function shouldSend(departmentId) {
     if (!userDeptIds) return true; // Admin

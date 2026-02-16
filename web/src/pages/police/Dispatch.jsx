@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
@@ -13,25 +13,38 @@ export default function Dispatch() {
   const { key: locationKey } = useLocation();
   const [calls, setCalls] = useState([]);
   const [units, setUnits] = useState([]);
+  const [visibleDepartments, setVisibleDepartments] = useState([]);
   const [showNewCall, setShowNewCall] = useState(false);
   const [selectedCall, setSelectedCall] = useState(null);
-  const [form, setForm] = useState({ title: '', priority: '3', location: '', description: '', job_code: '' });
+  const [form, setForm] = useState({ title: '', priority: '3', location: '', description: '', job_code: '', department_id: '' });
 
   const deptId = activeDepartment?.id;
+  const isDispatch = !!activeDepartment?.is_dispatch;
 
   const fetchData = useCallback(async () => {
     if (!deptId) return;
     try {
-      const [callsData, unitsData] = await Promise.all([
-        api.get(`/api/calls?department_id=${deptId}`),
-        api.get(`/api/units?department_id=${deptId}`),
-      ]);
-      setCalls(callsData);
-      setUnits(unitsData);
+      if (isDispatch) {
+        const [callsData, dispatchData] = await Promise.all([
+          api.get(`/api/calls?department_id=${deptId}&dispatch=true`),
+          api.get('/api/units/dispatchable'),
+        ]);
+        setCalls(callsData);
+        setUnits(dispatchData.units || []);
+        setVisibleDepartments(dispatchData.departments || []);
+      } else {
+        const [callsData, unitsData] = await Promise.all([
+          api.get(`/api/calls?department_id=${deptId}`),
+          api.get(`/api/units?department_id=${deptId}`),
+        ]);
+        setCalls(callsData);
+        setUnits(unitsData);
+        setVisibleDepartments([]);
+      }
     } catch (err) {
       console.error('Failed to load dispatch data:', err);
     }
-  }, [deptId]);
+  }, [deptId, isDispatch]);
 
   useEffect(() => { fetchData(); }, [fetchData, locationKey]);
 
@@ -47,12 +60,35 @@ export default function Dispatch() {
     'unit:update': () => fetchData(),
   });
 
+  // Group units by department for dispatch view
+  const unitsByDept = useMemo(() => {
+    if (!isDispatch) return null;
+    const grouped = {};
+    for (const unit of units) {
+      const key = unit.department_id;
+      if (!grouped[key]) {
+        grouped[key] = {
+          department_id: key,
+          department_name: unit.department_name || 'Unknown',
+          department_short_name: unit.department_short_name || '???',
+          department_color: unit.department_color || '#64748b',
+          units: [],
+        };
+      }
+      grouped[key].units.push(unit);
+    }
+    return Object.values(grouped);
+  }, [units, isDispatch]);
+
   async function createCall(e) {
     e.preventDefault();
     try {
-      await api.post('/api/calls', { ...form, department_id: deptId });
+      const targetDeptId = isDispatch && form.department_id
+        ? parseInt(form.department_id, 10)
+        : deptId;
+      await api.post('/api/calls', { ...form, department_id: targetDeptId });
       setShowNewCall(false);
-      setForm({ title: '', priority: '3', location: '', description: '', job_code: '' });
+      setForm({ title: '', priority: '3', location: '', description: '', job_code: '', department_id: '' });
       fetchData();
     } catch (err) {
       alert('Failed to create call: ' + err.message);
@@ -95,7 +131,14 @@ export default function Dispatch() {
     <div className="h-full flex flex-col">
       {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">Dispatch Board</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-bold">Dispatch Board</h2>
+          {isDispatch && (
+            <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+              Multi-Department View
+            </span>
+          )}
+        </div>
         <button
           onClick={() => setShowNewCall(true)}
           className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
@@ -118,29 +161,85 @@ export default function Dispatch() {
               key={call.id}
               call={call}
               onClick={() => setSelectedCall(call)}
+              showDepartment={isDispatch}
             />
           ))}
         </div>
 
         {/* Units panel */}
         <div className="w-72 flex-shrink-0 overflow-y-auto">
-          <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-3">
-            On Duty ({units.length})
-          </h3>
-          <div className="space-y-2">
-            {units.map(unit => (
-              <UnitCard key={unit.id} unit={unit} compact />
-            ))}
-            {units.length === 0 && (
-              <p className="text-sm text-cad-muted py-4 text-center">No units on duty</p>
-            )}
-          </div>
+          {isDispatch && unitsByDept ? (
+            /* Dispatch mode: group by department */
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">
+                All Units ({units.length})
+              </h3>
+              {unitsByDept.map(group => (
+                <div key={group.department_id}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span
+                      className="text-xs font-semibold px-2 py-0.5 rounded"
+                      style={{
+                        backgroundColor: `${group.department_color}25`,
+                        color: group.department_color,
+                        border: `1px solid ${group.department_color}40`,
+                      }}
+                    >
+                      {group.department_short_name}
+                    </span>
+                    <span className="text-xs text-cad-muted">
+                      {group.units.length} unit{group.units.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {group.units.map(unit => (
+                      <UnitCard key={unit.id} unit={unit} compact />
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {units.length === 0 && (
+                <p className="text-sm text-cad-muted py-4 text-center">No units on duty</p>
+              )}
+            </div>
+          ) : (
+            /* Normal mode: flat list */
+            <>
+              <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-3">
+                On Duty ({units.length})
+              </h3>
+              <div className="space-y-2">
+                {units.map(unit => (
+                  <UnitCard key={unit.id} unit={unit} compact />
+                ))}
+                {units.length === 0 && (
+                  <p className="text-sm text-cad-muted py-4 text-center">No units on duty</p>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
       {/* New Call Modal */}
       <Modal open={showNewCall} onClose={() => setShowNewCall(false)} title="New Dispatch Call">
         <form onSubmit={createCall} className="space-y-3">
+          {isDispatch && visibleDepartments.length > 0 && (
+            <div>
+              <label className="block text-sm text-cad-muted mb-1">Target Department *</label>
+              <select
+                required
+                value={form.department_id}
+                onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              >
+                <option value="">Select department...</option>
+                {visibleDepartments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name} ({d.short_name})</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-sm text-cad-muted mb-1">Title *</label>
             <input
@@ -221,6 +320,18 @@ export default function Dispatch() {
           <div className="space-y-4">
             <div className="flex items-center gap-2 flex-wrap">
               <StatusBadge status={selectedCall.status} />
+              {isDispatch && selectedCall.department_short_name && (
+                <span
+                  className="text-xs px-2 py-0.5 rounded font-semibold"
+                  style={{
+                    backgroundColor: `${selectedCall.department_color || '#64748b'}22`,
+                    color: selectedCall.department_color || '#cbd5e1',
+                    border: `1px solid ${selectedCall.department_color || '#64748b'}44`,
+                  }}
+                >
+                  {selectedCall.department_short_name}
+                </span>
+              )}
               <span className="text-xs text-cad-muted">
                 Priority {selectedCall.priority} | {selectedCall.job_code || 'No job code'}
               </span>
@@ -265,6 +376,18 @@ export default function Dispatch() {
                     <div key={u.id} className="flex items-center justify-between bg-cad-surface rounded px-3 py-2">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-cad-accent-light">{u.callsign}</span>
+                        {isDispatch && u.department_short_name && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                            style={{
+                              backgroundColor: `${u.department_color || '#64748b'}22`,
+                              color: u.department_color || '#cbd5e1',
+                              border: `1px solid ${u.department_color || '#64748b'}44`,
+                            }}
+                          >
+                            {u.department_short_name}
+                          </span>
+                        )}
                         {u.sub_department_short_name && (
                           <span
                             className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
@@ -305,7 +428,16 @@ export default function Dispatch() {
                         key={u.id}
                         onClick={() => assignUnit(selectedCall.id, u.id)}
                         className="text-xs px-2 py-1 bg-cad-surface text-cad-muted hover:text-cad-ink hover:bg-cad-card rounded transition-colors font-mono"
+                        title={isDispatch ? `${u.department_short_name || ''} - ${u.callsign}` : u.callsign}
                       >
+                        {isDispatch && u.department_short_name && (
+                          <span
+                            className="inline-block mr-1 text-[10px] px-1 py-0 rounded"
+                            style={{ color: u.department_color || '#cbd5e1' }}
+                          >
+                            {u.department_short_name}
+                          </span>
+                        )}
                         {u.callsign}
                       </button>
                     ))}

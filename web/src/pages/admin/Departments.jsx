@@ -13,7 +13,7 @@ export default function AdminDepartments() {
   const [showNewSub, setShowNewSub] = useState(false);
   const [showEditSub, setShowEditSub] = useState(false);
   const [form, setForm] = useState({ name: '', short_name: '', color: '#0052C2', icon: '' });
-  const [editForm, setEditForm] = useState({ id: null, name: '', short_name: '', color: '#0052C2', icon: '', is_active: 1 });
+  const [editForm, setEditForm] = useState({ id: null, name: '', short_name: '', color: '#0052C2', icon: '', is_active: 1, is_dispatch: 0, dispatch_visible: 0 });
   const [subForm, setSubForm] = useState({ department_id: '', name: '', short_name: '', color: '#0052C2', is_active: 1 });
   const [editSubForm, setEditSubForm] = useState({ id: null, department_id: '', name: '', short_name: '', color: '#0052C2', is_active: 1 });
   const [newIconFile, setNewIconFile] = useState(null);
@@ -79,6 +79,8 @@ export default function AdminDepartments() {
       color: dept.color || '#0052C2',
       icon: dept.icon || '',
       is_active: dept.is_active ? 1 : 0,
+      is_dispatch: dept.is_dispatch ? 1 : 0,
+      dispatch_visible: dept.dispatch_visible ? 1 : 0,
     });
     setEditIconFile(null);
     setShowEdit(true);
@@ -98,6 +100,8 @@ export default function AdminDepartments() {
         color: editForm.color,
         icon,
         is_active: editForm.is_active ? 1 : 0,
+        is_dispatch: editForm.is_dispatch ? 1 : 0,
+        dispatch_visible: editForm.dispatch_visible ? 1 : 0,
       });
       setShowEdit(false);
       setEditIconFile(null);
@@ -216,6 +220,16 @@ export default function AdminDepartments() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {!!dept.is_dispatch && (
+                <span className="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                  Dispatch Centre
+                </span>
+              )}
+              {!!dept.dispatch_visible && (
+                <span className="text-xs px-2 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/30">
+                  Visible to Dispatch
+                </span>
+              )}
               <span className={`text-xs px-2 py-0.5 rounded ${dept.is_active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-500/20 text-gray-400'}`}>
                 {dept.is_active ? 'Active' : 'Inactive'}
               </span>
@@ -362,6 +376,29 @@ export default function AdminDepartments() {
             />
             Department is active
           </label>
+          <div className="bg-cad-card border border-cad-border rounded-lg p-3 space-y-2">
+            <p className="text-xs font-semibold text-cad-ink">Dispatch Settings</p>
+            <label className="flex items-center gap-2 text-sm text-cad-muted">
+              <input
+                type="checkbox"
+                checked={!!editForm.is_dispatch}
+                onChange={e => setEditForm(f => ({ ...f, is_dispatch: e.target.checked ? 1 : 0 }))}
+                className="rounded"
+              />
+              Dispatch centre
+            </label>
+            <p className="text-xs text-cad-muted ml-6">This department can see and manage units/calls from other departments.</p>
+            <label className="flex items-center gap-2 text-sm text-cad-muted">
+              <input
+                type="checkbox"
+                checked={!!editForm.dispatch_visible}
+                onChange={e => setEditForm(f => ({ ...f, dispatch_visible: e.target.checked ? 1 : 0 }))}
+                className="rounded"
+              />
+              Units visible to dispatch
+            </label>
+            <p className="text-xs text-cad-muted ml-6">On-duty units from this department will appear on dispatch boards.</p>
+          </div>
           <div className="flex gap-2 pt-2">
             <button disabled={saving} type="submit" className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
             <button type="button" onClick={() => setShowEdit(false)} className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors">Cancel</button>

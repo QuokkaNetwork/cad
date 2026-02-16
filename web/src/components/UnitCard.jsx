@@ -1,12 +1,24 @@
 import StatusBadge from './StatusBadge';
 
-export default function UnitCard({ unit, onStatusChange, compact = false }) {
+export default function UnitCard({ unit, onStatusChange, compact = false, showDepartment = false }) {
   const statuses = ['available', 'busy', 'enroute', 'on-scene'];
 
   if (compact) {
     return (
       <div className="flex items-center gap-2 px-2 py-1.5 bg-cad-surface rounded text-sm">
         <span className="font-mono font-medium text-cad-accent-light">{unit.callsign}</span>
+        {showDepartment && unit.department_short_name && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+            style={{
+              backgroundColor: `${unit.department_color || '#64748b'}22`,
+              color: unit.department_color || '#cbd5e1',
+              border: `1px solid ${unit.department_color || '#64748b'}44`,
+            }}
+          >
+            {unit.department_short_name}
+          </span>
+        )}
         {unit.sub_department_short_name && (
           <span
             className="text-[10px] px-1.5 py-0.5 rounded font-semibold"

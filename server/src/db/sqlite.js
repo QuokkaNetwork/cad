@@ -96,7 +96,7 @@ const Departments = {
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['name', 'short_name', 'color', 'icon', 'is_active'];
+    const allowed = ['name', 'short_name', 'color', 'icon', 'is_active', 'dispatch_visible', 'is_dispatch'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -108,6 +108,9 @@ const Departments = {
     if (updates.length === 0) return;
     values.push(id);
     db.prepare(`UPDATE departments SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  },
+  listDispatchVisible() {
+    return db.prepare('SELECT * FROM departments WHERE dispatch_visible = 1 AND is_active = 1 ORDER BY id').all();
   },
   delete(id) {
     db.prepare('DELETE FROM departments WHERE id = ?').run(id);
@@ -289,6 +292,28 @@ const Units = {
   listByDepartment(departmentId) {
     return db.prepare(`${this._baseSelect()} WHERE u.department_id = ? ORDER BY u.callsign`).all(departmentId);
   },
+  listByDepartmentIds(departmentIds) {
+    if (!departmentIds.length) return [];
+    const placeholders = departmentIds.map(() => '?').join(',');
+    return db.prepare(`
+      SELECT
+        u.*,
+        us.steam_name as user_name,
+        us.avatar_url as user_avatar,
+        sd.name as sub_department_name,
+        sd.short_name as sub_department_short_name,
+        sd.color as sub_department_color,
+        d.name as department_name,
+        d.short_name as department_short_name,
+        d.color as department_color
+      FROM units u
+      JOIN users us ON us.id = u.user_id
+      JOIN departments d ON d.id = u.department_id
+      LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
+      WHERE u.department_id IN (${placeholders})
+      ORDER BY d.id, u.callsign
+    `).all(...departmentIds);
+  },
   list() {
     return db.prepare(`${this._baseSelect()} ORDER BY u.callsign`).all();
   },
@@ -354,6 +379,39 @@ const Calls = {
       FROM call_units cu
       JOIN units u ON u.id = cu.unit_id
       JOIN users us ON us.id = u.user_id
+      LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
+      WHERE cu.call_id = ?
+    `);
+
+    for (const call of calls) {
+      call.assigned_units = getUnits.all(call.id);
+    }
+    return calls;
+  },
+  listByDepartmentIds(departmentIds, includeCompleted = false) {
+    if (!departmentIds.length) return [];
+    const placeholders = departmentIds.map(() => '?').join(',');
+    const statusFilter = includeCompleted ? '' : "AND c.status != 'closed'";
+    const calls = db.prepare(`
+      SELECT c.*, us.steam_name as creator_name,
+             d.name as department_name, d.short_name as department_short_name, d.color as department_color
+      FROM calls c
+      LEFT JOIN users us ON us.id = c.created_by
+      JOIN departments d ON d.id = c.department_id
+      WHERE c.department_id IN (${placeholders}) ${statusFilter}
+      ORDER BY
+        CASE c.priority WHEN '1' THEN 1 WHEN '2' THEN 2 WHEN '3' THEN 3 ELSE 4 END,
+        c.created_at DESC
+    `).all(...departmentIds);
+
+    const getUnits = db.prepare(`
+      SELECT u.id, u.callsign, u.status, us.steam_name as user_name,
+             sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color,
+             d.short_name as department_short_name, d.color as department_color
+      FROM call_units cu
+      JOIN units u ON u.id = cu.unit_id
+      JOIN users us ON us.id = u.user_id
+      JOIN departments d ON d.id = u.department_id
       LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
       WHERE cu.call_id = ?
     `);
