@@ -111,6 +111,30 @@ local function notifyPlayer(src, message)
   })
 end
 
+local function registerEmergencySuggestion(target)
+  if GetResourceState('chat') ~= 'started' then return end
+  TriggerClientEvent('chat:addSuggestion', target, '/000', 'Send emergency call to CAD', {
+    { name = 'type', help = 'Emergency type (e.g. Armed Robbery, Shots Fired, Stabbing)' },
+    { name = 'details', help = 'Format: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>' },
+  })
+end
+
+AddEventHandler('onResourceStart', function(resourceName)
+  if resourceName ~= GetCurrentResourceName() then return end
+  CreateThread(function()
+    Wait(500)
+    registerEmergencySuggestion(-1)
+  end)
+end)
+
+AddEventHandler('playerJoining', function()
+  local src = source
+  CreateThread(function()
+    Wait(3000)
+    registerEmergencySuggestion(src)
+  end)
+end)
+
 local function splitByPipe(text)
   local input = tostring(text or '')
   local parts = {}
@@ -128,7 +152,7 @@ local function splitByPipe(text)
 end
 
 local function sendEmergencyUsage(src)
-  notifyPlayer(src, 'Usage: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>')
+  notifyPlayer(src, 'Template: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>')
   notifyPlayer(src, 'Example: /000 Armed Robbery | 24/7 in Sandy | 2 masked males | Black Sultan | shots fired')
 end
 
