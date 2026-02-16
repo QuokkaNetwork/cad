@@ -17,7 +17,10 @@ function npm(command) {
 }
 
 function shellQuote(value) {
-  return `"${String(value || '').replace(/"/g, '\\"')}"`;
+  const str = String(value || '');
+  // On Windows cmd, double quotes are the standard quoting mechanism.
+  // Escape any existing double quotes inside the value.
+  return `"${str.replace(/"/g, '\\"')}"`;
 }
 
 function run(command, cwd, env = {}) {
@@ -102,12 +105,12 @@ function restartCurrentProcess() {
 }
 
 function gitCleanCommand() {
-  const excludes = preservePaths
-    .map(path => String(path || '').trim())
+  const excludeArgs = preservePaths
+    .map(p => String(p || '').trim())
     .filter(Boolean)
-    .map(path => `-e ${shellQuote(path)}`)
-    .join(' ');
-  return git(`clean -fd ${excludes}`.trim());
+    .map(p => `-e ${shellQuote(p)}`);
+  const args = ['clean', '-fd', ...excludeArgs].join(' ');
+  return git(args);
 }
 
 async function discardLocalChanges(repoRoot) {
@@ -137,7 +140,14 @@ async function checkForUpdates(repoRoot, branch) {
       await discardLocalChanges(repoRoot);
     }
 
-    await run(git(`fetch origin ${branch}`), repoRoot);
+    try {
+      await run(git(`fetch origin ${branch}`), repoRoot);
+    } catch (fetchErr) {
+      console.warn('[AutoUpdate] Could not fetch from remote (network issue?). Will retry next interval.');
+      logCommandFailure('[AutoUpdate] Fetch error:', fetchErr);
+      return;
+    }
+
     const { stdout: behindOut } = await run(git(`rev-list --count HEAD..origin/${branch}`), repoRoot);
     const behind = Number.parseInt(behindOut.trim(), 10) || 0;
 

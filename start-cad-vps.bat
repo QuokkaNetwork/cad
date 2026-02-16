@@ -19,7 +19,9 @@ set "npm_config_include=dev"
 echo [CAD] Starting self-install launcher...
 
 REM --- Detect app directory ---
-if exist "%APP_DIR%package.json" if exist "%APP_DIR%server" if exist "%APP_DIR%web" goto :deps_check
+REM Check if this BAT lives inside an existing CAD repo checkout
+if exist "%APP_DIR%\package.json" if exist "%APP_DIR%\server" if exist "%APP_DIR%\web" goto :deps_check
+REM Not inside a repo checkout — use a subdirectory
 set "APP_DIR=%SCRIPT_DIR%\%CAD_SUBDIR%"
 if not exist "%APP_DIR%" mkdir "%APP_DIR%"
 
@@ -90,33 +92,34 @@ if not exist "%APP_DIR%\package.json" (
 
 cd /d "%APP_DIR%"
 
-REM --- Runtime structure bootstrap ---
+REM --- Ensure we have a git repo ---
 if not exist ".git" (
+  echo [CAD] No .git directory found in %APP_DIR%.
+  REM Try initializing git and connecting to the remote
   if "%CAD_REPO_URL%"=="https://github.com/YOUR_ORG/YOUR_CAD_REPO.git" (
-    echo [CAD] ERROR: Existing files are not a git repo and CAD_REPO_URL is not configured.
-    echo [CAD] Set CAD_REPO_URL at top of this BAT, then run again.
+    echo [CAD] ERROR: Directory is not a git repo and CAD_REPO_URL is not configured.
+    echo [CAD] Set CAD_REPO_URL at the top of this BAT, then run again.
     pause
     exit /b 1
   )
-  if /I "%APP_DIR%"=="%SCRIPT_DIR%" (
-    set "APP_DIR=%SCRIPT_DIR%\%CAD_SUBDIR%"
-    set "APP_DIR=%APP_DIR:"=%"
-    if "%APP_DIR:~-1%"=="\" set "APP_DIR=%APP_DIR:~0,-1%"
-    if not exist "%APP_DIR%" mkdir "%APP_DIR%"
-    echo [CAD] Current folder is not a git checkout. Installing into subfolder: %APP_DIR%
-  ) else (
-    cd /d "%SCRIPT_DIR%"
-    if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%"
-    echo [CAD] Local files are not a git checkout. Re-cloning from repository...
-  )
-  echo [CAD] Cloning to: %APP_DIR%
-  git clone --branch "%CAD_REPO_BRANCH%" "%CAD_REPO_URL%" "%APP_DIR%"
+  echo [CAD] Initializing git repo and connecting to remote...
+  git init
+  git remote add origin "%CAD_REPO_URL%"
+  git fetch origin "%CAD_REPO_BRANCH%"
   if errorlevel 1 (
-    echo [CAD] ERROR: Repository clone failed.
+    echo [CAD] ERROR: Could not fetch from remote. Check CAD_REPO_URL.
     pause
     exit /b 1
   )
-  cd /d "%APP_DIR%"
+  git reset --hard "origin/%CAD_REPO_BRANCH%"
+  if errorlevel 1 (
+    echo [CAD] ERROR: Could not sync to origin/%CAD_REPO_BRANCH%.
+    pause
+    exit /b 1
+  )
+  git branch -M "%CAD_REPO_BRANCH%"
+  git branch --set-upstream-to="origin/%CAD_REPO_BRANCH%" "%CAD_REPO_BRANCH%"
+  echo [CAD] Git repo initialized and synced to origin/%CAD_REPO_BRANCH%.
 )
 
 if not exist ".env" (
@@ -130,8 +133,10 @@ if not exist "server\data\uploads" mkdir "server\data\uploads"
 
 set "AUTO_UPDATE_BRANCH=%CAD_REPO_BRANCH%"
 if exist ".env" (
-  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
-    if /I "%%A"=="AUTO_UPDATE_BRANCH" set "AUTO_UPDATE_BRANCH=%%B"
+  for /f "usebackq eol=# tokens=1,* delims==" %%A in (".env") do (
+    set "_KEY=%%A"
+    REM Skip blank lines
+    if defined _KEY if /I "!_KEY!"=="AUTO_UPDATE_BRANCH" set "AUTO_UPDATE_BRANCH=%%B"
   )
 )
 if "%AUTO_UPDATE_BRANCH%"=="" set "AUTO_UPDATE_BRANCH=%CAD_REPO_BRANCH%"
@@ -144,25 +149,36 @@ set "UPDATED=0"
 echo [CAD] Checking for updates on startup...
 for /f %%I in ('git rev-parse HEAD 2^>nul') do set "LOCAL_HEAD=%%I"
 git fetch origin %AUTO_UPDATE_BRANCH% --quiet
-if errorlevel 1 goto :fail
-for /f %%I in ('git rev-parse origin/%AUTO_UPDATE_BRANCH% 2^>nul') do set "REMOTE_HEAD=%%I"
+if errorlevel 1 (
+  echo [CAD] WARNING: Could not fetch updates ^(network issue?^). Continuing with current version...
+  goto :skip_update
+)
+for /f %%I in ('git rev-parse "origin/%AUTO_UPDATE_BRANCH%" 2^>nul') do set "REMOTE_HEAD=%%I"
+
+if not defined REMOTE_HEAD (
+  echo [CAD] WARNING: Could not determine remote HEAD. Skipping update.
+  goto :skip_update
+)
 
 if not defined LOCAL_HEAD (
   echo [CAD] No local commit detected. Syncing to origin/%AUTO_UPDATE_BRANCH%...
-  git reset --hard origin/%AUTO_UPDATE_BRANCH%
+  git reset --hard "origin/%AUTO_UPDATE_BRANCH%"
   if errorlevel 1 goto :fail
   git clean -fd -e .env -e server/data/
   if errorlevel 1 goto :fail
   set "UPDATED=1"
 ) else if /I not "!LOCAL_HEAD!"=="!REMOTE_HEAD!" (
-  echo [CAD] Update found on origin/%AUTO_UPDATE_BRANCH%.
-  git reset --hard origin/%AUTO_UPDATE_BRANCH%
+  echo [CAD] Update found on origin/%AUTO_UPDATE_BRANCH%. Local: !LOCAL_HEAD:~0,8! Remote: !REMOTE_HEAD:~0,8!
+  git reset --hard "origin/%AUTO_UPDATE_BRANCH%"
   if errorlevel 1 goto :fail
   git clean -fd -e .env -e server/data/
   if errorlevel 1 goto :fail
   set "UPDATED=1"
+) else (
+  echo [CAD] Already up to date ^(!LOCAL_HEAD:~0,8!^).
 )
 
+:skip_update
 if "!UPDATED!"=="1" (
   echo [CAD] Installing dependencies...
   %NPM_BIN% install %NPM_INSTALL_FLAGS%
@@ -198,6 +214,7 @@ if "!UPDATED!"=="1" (
 
 echo [CAD] Launching server...
 set NODE_ENV=production
+set AUTO_UPDATE_ENABLED=true
 set AUTO_UPDATE_SELF_RESTART=false
 set AUTO_UPDATE_EXIT_ON_UPDATE=true
 %NPM_BIN% run start
