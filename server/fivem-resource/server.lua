@@ -166,17 +166,50 @@ local function shellEscape(value)
   return value
 end
 
+local function commandExists(commandName)
+  commandName = tostring(commandName or ''):gsub('^/', ''):lower()
+  if commandName == '' then return false end
+
+  local ok, commands = pcall(GetRegisteredCommands)
+  if not ok or type(commands) ~= 'table' then
+    -- If the runtime cannot provide command metadata, do not hard-fail here.
+    return true
+  end
+
+  for _, entry in ipairs(commands) do
+    local name = ''
+    if type(entry) == 'table' then
+      name = tostring(entry.name or '')
+    elseif type(entry) == 'string' then
+      name = entry
+    end
+    if name:gsub('^/', ''):lower() == commandName then
+      return true
+    end
+  end
+  return false
+end
+
 local function applyFine(job)
   if Config.FineAdapter == 'none' then
     return false, 'Fine adapter disabled (Config.FineAdapter=none)'
   end
 
   if Config.FineAdapter == 'command' then
-    local cmd = tostring(Config.FineCommandTemplate or '')
-    if cmd == '' then
+    local cmdTemplate = tostring(Config.FineCommandTemplate or '')
+    if cmdTemplate == '' then
       return false, 'Fine command template is empty'
     end
 
+    local commandName = cmdTemplate:match('^%s*([^%s]+)') or ''
+    if commandName == '' then
+      return false, 'Fine command template has no command name'
+    end
+    if not commandExists(commandName) then
+      return false, ('Fine command not registered: %s'):format(commandName)
+    end
+
+    local cmd = cmdTemplate
     cmd = cmd:gsub('{citizenid}', shellEscape(job.citizen_id or ''))
     cmd = cmd:gsub('{amount}', shellEscape(job.amount or 0))
     cmd = cmd:gsub('{reason}', shellEscape(job.reason or ''))

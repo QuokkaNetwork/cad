@@ -52,7 +52,7 @@ router.post('/', requireAuth, (req, res) => {
     department_id: department_id || (unit ? unit.department_id : null),
   });
 
-  const fivemFineEnabled = String(Settings.get('fivem_bridge_qbox_fines_enabled') || 'false').toLowerCase() === 'true';
+  const fivemFineEnabled = String(Settings.get('fivem_bridge_qbox_fines_enabled') || 'true').toLowerCase() === 'true';
   if (type === 'fine' && Number(fine_amount || 0) > 0 && fivemFineEnabled) {
     FiveMFineJobs.create({
       citizen_id,

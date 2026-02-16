@@ -69,6 +69,37 @@ function resolveTargetDir() {
   return path.join(path.resolve(installPath), RESOURCE_NAME);
 }
 
+function escapeLuaSingleQuoted(value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+
+function applyRuntimeConfig(targetDir) {
+  const configPath = path.join(targetDir, 'config.lua');
+  if (!fs.existsSync(configPath)) return;
+
+  const baseUrl = getSetting('fivem_bridge_base_url', 'http://127.0.0.1:3030');
+  const token = getSetting('fivem_bridge_shared_token', '');
+  const escapedBaseUrl = escapeLuaSingleQuoted(baseUrl);
+  const escapedToken = escapeLuaSingleQuoted(token);
+
+  let content = fs.readFileSync(configPath, 'utf8');
+  content = content.replace(
+    /^Config\.CadBaseUrl\s*=.*$/m,
+    `Config.CadBaseUrl = GetConvar('cad_bridge_base_url', '${escapedBaseUrl}')`
+  );
+  content = content.replace(
+    /^Config\.SharedToken\s*=.*$/m,
+    `Config.SharedToken = GetConvar('cad_bridge_token', '${escapedToken}')`
+  );
+  content = content.replace(
+    /^Config\.PublishAllPlayers\s*=.*$/m,
+    "Config.PublishAllPlayers = GetConvar('cad_bridge_publish_all_players', 'true') == 'true'"
+  );
+  fs.writeFileSync(configPath, content, 'utf8');
+}
+
 function writeVersionFile(targetDir, version) {
   const content = JSON.stringify({ version, updated_at: new Date().toISOString() }, null, 2);
   fs.writeFileSync(path.join(targetDir, VERSION_FILE_NAME), content, 'utf8');
@@ -95,6 +126,7 @@ function installOrUpdateResource() {
   fs.mkdirSync(targetDir, { recursive: true });
 
   fs.cpSync(TEMPLATE_DIR, targetDir, { recursive: true, force: true });
+  applyRuntimeConfig(targetDir);
   writeVersionFile(targetDir, version);
 
   return {
@@ -161,6 +193,9 @@ function startFiveMResourceAutoSync() {
       if (!status.installed || !status.upToDate) {
         const result = installOrUpdateResource();
         console.log(`[FiveMBridge] Resource synced to ${result.targetDir}`);
+      } else if (status.targetDir) {
+        // Keep runtime token/base URL defaults in sync with CAD settings.
+        applyRuntimeConfig(status.targetDir);
       }
     } catch (err) {
       console.error('[FiveMBridge] Auto-sync failed:', err.message);

@@ -34,6 +34,8 @@ export default function AdminSystemSettings() {
   const [testFineReason, setTestFineReason] = useState('CAD admin test fine');
   const [queueingTestFine, setQueueingTestFine] = useState(false);
   const [testFineResult, setTestFineResult] = useState(null);
+  const [fineJobs, setFineJobs] = useState([]);
+  const [loadingFineJobs, setLoadingFineJobs] = useState(false);
 
   async function fetchSettings() {
     try {
@@ -59,8 +61,25 @@ export default function AdminSystemSettings() {
   async function fetchFineTargets() {
     setLoadingFineTargets(true);
     try {
-      const data = await api.get('/api/admin/fivem/links?active=true');
-      const links = Array.isArray(data) ? data : [];
+      const activeData = await api.get('/api/admin/fivem/links?active=true');
+      let links = Array.isArray(activeData) ? activeData : [];
+      if (links.length === 0) {
+        const allData = await api.get('/api/admin/fivem/links');
+        links = Array.isArray(allData) ? allData : [];
+        if (links.length > 0) {
+          setTestFineResult({
+            success: false,
+            message: 'Players were found in FiveM links, but none are currently active. Check bridge token/base URL and resource heartbeat.',
+          });
+        } else {
+          setTestFineResult({
+            success: false,
+            message: 'No FiveM links found yet. Ensure cad_bridge is running and posting heartbeats to CAD.',
+          });
+        }
+      } else {
+        setTestFineResult(null);
+      }
       setFineTargets(links);
       setSelectedFineTarget(prev => (
         links.some(link => link.steam_id === prev) ? prev : (links[0]?.steam_id || '')
@@ -74,10 +93,23 @@ export default function AdminSystemSettings() {
     }
   }
 
+  async function fetchFineJobs() {
+    setLoadingFineJobs(true);
+    try {
+      const data = await api.get('/api/admin/fivem/fine-jobs?limit=20');
+      setFineJobs(Array.isArray(data) ? data : []);
+    } catch {
+      setFineJobs([]);
+    } finally {
+      setLoadingFineJobs(false);
+    }
+  }
+
   useEffect(() => {
     fetchSettings();
     fetchFiveMStatus();
     fetchFineTargets();
+    fetchFineJobs();
   }, [locationKey]);
 
   function updateSetting(key, value) {
@@ -163,6 +195,7 @@ export default function AdminSystemSettings() {
         success: true,
         message: `Queued fine job #${result?.job?.id || '?'} for ${playerName}.`,
       });
+      fetchFineJobs();
     } catch (err) {
       setTestFineResult({ success: false, message: formatErr(err) });
     } finally {
@@ -317,6 +350,19 @@ export default function AdminSystemSettings() {
             </p>
           </div>
           <div className="col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">CAD API Base URL</label>
+            <input
+              type="text"
+              value={settings.fivem_bridge_base_url || ''}
+              onChange={e => updateSetting('fivem_bridge_base_url', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="http://127.0.0.1:3030"
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              Used as the default CAD endpoint inside the installed <span className="font-mono">cad_bridge</span> resource.
+            </p>
+          </div>
+          <div className="col-span-2">
             <label className="block text-xs text-cad-muted mb-1">Shared Bridge Token</label>
             <input
               type="text"
@@ -361,7 +407,7 @@ export default function AdminSystemSettings() {
           <div>
             <label className="block text-xs text-cad-muted mb-1">Queue QBox Fines From CAD</label>
             <select
-              value={settings.fivem_bridge_qbox_fines_enabled || 'false'}
+              value={settings.fivem_bridge_qbox_fines_enabled || 'true'}
               onChange={e => updateSetting('fivem_bridge_qbox_fines_enabled', e.target.value)}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
             >
@@ -480,6 +526,45 @@ export default function AdminSystemSettings() {
           <p className={`text-xs mt-3 whitespace-pre-wrap ${testFineResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
             {testFineResult.message}
           </p>
+        )}
+      </div>
+
+      <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Fine Job Status</h3>
+          <button
+            onClick={fetchFineJobs}
+            disabled={loadingFineJobs}
+            className="px-3 py-1.5 text-xs bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
+          >
+            {loadingFineJobs ? 'Refreshing...' : 'Refresh Jobs'}
+          </button>
+        </div>
+        {fineJobs.length === 0 ? (
+          <p className="text-xs text-cad-muted">No fine jobs recorded yet.</p>
+        ) : (
+          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+            {fineJobs.map(job => (
+              <div key={job.id} className="bg-cad-surface border border-cad-border rounded px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-cad-ink">
+                    #{job.id} | CID {job.citizen_id} | ${Number(job.amount || 0).toFixed(0)}
+                  </p>
+                  <span className={`text-[11px] font-semibold uppercase ${
+                    job.status === 'sent'
+                      ? 'text-emerald-400'
+                      : job.status === 'failed'
+                        ? 'text-red-400'
+                        : 'text-amber-300'
+                  }`}>
+                    {job.status}
+                  </span>
+                </div>
+                <p className="text-[11px] text-cad-muted mt-1">{job.reason || 'No reason'}</p>
+                {!!job.error && <p className="text-[11px] text-red-300 mt-1 whitespace-pre-wrap">{job.error}</p>}
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

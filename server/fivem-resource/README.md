@@ -8,6 +8,7 @@ This resource links FiveM/QBox to CAD for:
 ## Install
 1. In CAD Admin > System Settings > FiveM CAD Bridge:
 - Set `FiveM Resources Directory`
+- Set `CAD API Base URL` (usually `http://127.0.0.1:3030` if CAD is on the same host)
 - Set `Shared Bridge Token`
 - Click `Install / Update Resource`
 
@@ -17,6 +18,8 @@ This resource links FiveM/QBox to CAD for:
 3. Add convars in `server.cfg`:
 - `set cad_bridge_base_url http://YOUR_CAD_HOST:3030`
 - `set cad_bridge_token YOUR_SHARED_TOKEN`
+
+If those convars are missing, the installed resource now falls back to the CAD values saved in System Settings.
 
 Optional:
 - `set cad_bridge_heartbeat_ms 5000`
@@ -30,6 +33,7 @@ Optional:
 ## QBox fine adapter
 The default adapter runs a server command using `cad_bridge_fine_command`.
 You should point this to a command/resource in your server that actually creates invoices/fines in your QBox setup.
+If the configured command is not registered, CAD fine jobs will now fail with a clear error instead of being marked sent.
 
 ## Notes
 - Steam identifiers are required for CAD user matching.

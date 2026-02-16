@@ -11,6 +11,7 @@ const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
 
 const router = express.Router();
+const liveLinkUserCache = new Map();
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
@@ -116,6 +117,33 @@ function resolveCadUserFromIdentifiers(identifiers = {}) {
   return null;
 }
 
+function normalizeIdentityToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function buildOnDutyNameIndex(units = []) {
+  const index = new Map();
+  for (const unit of units) {
+    const key = normalizeIdentityToken(unit.user_name);
+    if (!key) continue;
+    const bucket = index.get(key) || [];
+    bucket.push(unit);
+    index.set(key, bucket);
+  }
+  return index;
+}
+
+function resolveCadUserByName(playerName, onDutyNameIndex) {
+  const key = normalizeIdentityToken(playerName);
+  if (!key) return null;
+  const matches = onDutyNameIndex.get(key) || [];
+  if (matches.length !== 1) return null;
+  return Users.findById(matches[0].user_id) || null;
+}
+
 function getDispatchDepartmentIds() {
   return new Set(
     Departments.list()
@@ -176,6 +204,9 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];
   const seenLinks = new Set();
   const detectedCadUserIds = new Set();
+  const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
+  let mappedUnits = 0;
+  let unmatchedPlayers = 0;
 
   for (const player of players) {
     const ids = resolveLinkIdentifiers(player.identifiers);
@@ -195,34 +226,75 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       speed: Number(player.speed || 0),
     });
 
-    const cadUser = resolveCadUserFromIdentifiers(ids);
-    if (!cadUser) continue;
+    let cadUser = resolveCadUserFromIdentifiers(ids);
+    let idSource = ids.source || '';
+    if (!cadUser) {
+      const cachedUserId = liveLinkUserCache.get(ids.linkKey);
+      if (cachedUserId) {
+        const cached = Users.findById(cachedUserId);
+        if (cached) {
+          cadUser = cached;
+          idSource = 'cached';
+        }
+      }
+    }
+    if (!cadUser) {
+      const byName = resolveCadUserByName(player.name, onDutyNameIndex);
+      if (byName) {
+        cadUser = byName;
+        idSource = 'name';
+      }
+    }
+    if (!cadUser) {
+      unmatchedPlayers += 1;
+      continue;
+    }
+
+    if (ids.steamId) liveLinkUserCache.set(ids.steamId, cadUser.id);
+    if (ids.discordId) liveLinkUserCache.set(`discord:${ids.discordId}`, cadUser.id);
+    if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
     detectedCadUserIds.add(cadUser.id);
     const unit = Units.findByUserId(cadUser.id);
     if (!unit) continue;
 
-    const idSource = ids.source || 'unknown';
+    mappedUnits += 1;
+    const sourceLabel = idSource || 'unknown';
     Units.update(unit.id, {
       location: formatUnitLocation(player),
-      note: `In-game #${link.game_id} ${link.player_name || ''} (${idSource})`.trim(),
+      note: `In-game #${link.game_id} ${link.player_name || ''} (${sourceLabel})`.trim(),
     });
     const updated = Units.findById(unit.id);
     bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
   }
 
   const autoOffDutyCount = enforceInGamePresenceForOnDutyUnits(detectedCadUserIds, 'heartbeat');
-  res.json({ ok: true, tracked: seenLinks.size, auto_off_duty: autoOffDutyCount });
+  res.json({
+    ok: true,
+    tracked: seenLinks.size,
+    mapped_units: mappedUnits,
+    unmatched_players: unmatchedPlayers,
+    auto_off_duty: autoOffDutyCount,
+  });
 });
 
 // Optional player disconnect event.
 router.post('/offline', requireBridgeAuth, (req, res) => {
   const ids = resolveLinkIdentifiers(req.body?.identifiers || []);
+  const cachedUserId = ids.linkKey ? liveLinkUserCache.get(ids.linkKey) : null;
+  let cadUser = resolveCadUserFromIdentifiers(ids);
+  if (!cadUser && cachedUserId) {
+    cadUser = Users.findById(cachedUserId) || null;
+  }
+
   if (ids.steamId) FiveMPlayerLinks.removeBySteamId(ids.steamId);
   if (ids.discordId) FiveMPlayerLinks.removeBySteamId(`discord:${ids.discordId}`);
   if (ids.licenseId) FiveMPlayerLinks.removeBySteamId(`license:${ids.licenseId}`);
+  if (ids.steamId) liveLinkUserCache.delete(ids.steamId);
+  if (ids.discordId) liveLinkUserCache.delete(`discord:${ids.discordId}`);
+  if (ids.licenseId) liveLinkUserCache.delete(`license:${ids.licenseId}`);
+  if (ids.linkKey) liveLinkUserCache.delete(ids.linkKey);
 
   let autoOffDuty = false;
-  const cadUser = resolveCadUserFromIdentifiers(ids);
   if (cadUser) {
     autoOffDuty = offDutyIfNotDispatch(Units.findByUserId(cadUser.id), 'offline_event');
   }
