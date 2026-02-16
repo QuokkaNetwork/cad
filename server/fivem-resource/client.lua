@@ -57,6 +57,107 @@ local function getNearestPostal()
   return ''
 end
 
+local function getWeaponName(ped)
+  if not ped or ped == 0 then return '' end
+  local weaponHash = GetSelectedPedWeapon(ped)
+  if not weaponHash or weaponHash == 0 then return '' end
+  if weaponHash == GetHashKey('WEAPON_UNARMED') then return '' end
+
+  local weaponLabel = GetWeaponDisplayNameFromHash(weaponHash)
+  if not weaponLabel or weaponLabel == '' or weaponLabel == 'WT_INVALID' then
+    return ''
+  end
+
+  local localized = GetLabelText(weaponLabel)
+  if localized and localized ~= '' and localized ~= 'NULL' then
+    return localized
+  end
+  return tostring(weaponLabel)
+end
+
+local function isTowTruckModel(modelHash)
+  return modelHash == GetHashKey('towtruck') or modelHash == GetHashKey('towtruck2')
+end
+
+local function getVehicleSnapshot(ped)
+  local snapshot = {
+    vehicle = '',
+    license_plate = '',
+    has_siren_enabled = false,
+    icon = 6,
+  }
+
+  if not ped or ped == 0 then
+    return snapshot
+  end
+
+  if not IsPedInAnyVehicle(ped, false) then
+    return snapshot
+  end
+
+  local vehicle = GetVehiclePedIsIn(ped, false)
+  if not vehicle or vehicle == 0 then
+    return snapshot
+  end
+
+  local modelHash = GetEntityModel(vehicle)
+  local vehicleName = GetDisplayNameFromVehicleModel(modelHash)
+  if vehicleName and vehicleName ~= '' then
+    local localized = GetLabelText(vehicleName)
+    if localized and localized ~= '' and localized ~= 'NULL' then
+      vehicleName = localized
+    end
+  else
+    vehicleName = ''
+  end
+
+  local vehicleClass = GetVehicleClass(vehicle)
+  local icon = 225
+  if vehicleClass == 18 then
+    icon = 56
+  elseif isTowTruckModel(modelHash) then
+    icon = 68
+  elseif IsThisModelAHeli(modelHash) then
+    icon = 64
+  end
+
+  local hasSiren = IsVehicleSirenOn(vehicle) or IsVehicleSirenAudioOn(vehicle) or IsVehicleSirenSoundOn(vehicle)
+  local sirenEnabled = hasSiren == true or hasSiren == 1
+
+  snapshot.vehicle = tostring(vehicleName or '')
+  snapshot.license_plate = tostring(GetVehicleNumberPlateText(vehicle) or '')
+  snapshot.has_siren_enabled = sirenEnabled
+  snapshot.icon = icon
+  return snapshot
+end
+
+local function buildLocationText(street, crossing, postal, coords)
+  local road = tostring(street or '')
+  local cross = tostring(crossing or '')
+  local post = tostring(postal or '')
+  local base = ''
+
+  if road ~= '' and cross ~= '' and road:lower() ~= cross:lower() then
+    base = road .. ' / ' .. cross
+  elseif road ~= '' then
+    base = road
+  elseif cross ~= '' then
+    base = cross
+  end
+
+  if base == '' then
+    local x = tonumber(coords and coords.x) or 0.0
+    local y = tonumber(coords and coords.y) or 0.0
+    local z = tonumber(coords and coords.z) or 0.0
+    base = ('X:%.1f Y:%.1f Z:%.1f'):format(x, y, z)
+  end
+
+  if post ~= '' then
+    return ('%s (%s)'):format(base, post)
+  end
+  return base
+end
+
 local function parseCoords(value)
   if value == nil then return nil end
   local t = type(value)
@@ -211,6 +312,9 @@ CreateThread(function()
       if crossingHash and crossingHash ~= 0 then
         crossing = GetStreetNameFromHashKey(crossingHash) or ''
       end
+      local vehicleSnapshot = getVehicleSnapshot(ped)
+      local weapon = getWeaponName(ped)
+      local location = buildLocationText(street, crossing, postal, coords)
       TriggerServerEvent('cad_bridge:clientPosition', {
         x = coords.x,
         y = coords.y,
@@ -220,6 +324,12 @@ CreateThread(function()
         street = street,
         crossing = crossing,
         postal = postal,
+        location = location,
+        vehicle = vehicleSnapshot.vehicle,
+        license_plate = vehicleSnapshot.license_plate,
+        has_siren_enabled = vehicleSnapshot.has_siren_enabled,
+        icon = vehicleSnapshot.icon,
+        weapon = weapon,
       })
     end
   end

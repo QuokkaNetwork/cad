@@ -89,6 +89,12 @@ RegisterNetEvent('cad_bridge:clientPosition', function(position)
     street = tostring(position.street or ''),
     crossing = tostring(position.crossing or ''),
     postal = tostring(position.postal or ''),
+    location = tostring(position.location or ''),
+    vehicle = tostring(position.vehicle or ''),
+    license_plate = tostring(position.license_plate or ''),
+    has_siren_enabled = position.has_siren_enabled == true or position.has_siren_enabled == 1,
+    icon = tonumber(position.icon) or 6,
+    weapon = tostring(position.weapon or ''),
   }
 end)
 
@@ -294,6 +300,12 @@ CreateThread(function()
             street = '',
             crossing = '',
             postal = '',
+            location = '',
+            vehicle = '',
+            license_plate = '',
+            has_siren_enabled = false,
+            icon = 6,
+            weapon = '',
           }
           payloadPlayers[#payloadPlayers + 1] = {
             source = s,
@@ -310,6 +322,12 @@ CreateThread(function()
             street = pos.street,
             crossing = pos.crossing,
             postal = pos.postal,
+            location = pos.location,
+            vehicle = pos.vehicle,
+            license_plate = pos.license_plate,
+            has_siren_enabled = pos.has_siren_enabled,
+            icon = pos.icon,
+            weapon = pos.weapon,
           }
         end
       end

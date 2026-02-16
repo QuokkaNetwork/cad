@@ -3,6 +3,7 @@ const { requireAuth } = require('../auth/middleware');
 const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
+const liveMapStore = require('../services/liveMapStore');
 
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
@@ -202,6 +203,18 @@ router.get('/map-config', requireAuth, (_req, res) => {
     map_scale_y: mapScaleY,
     map_offset_x: mapOffsetX,
     map_offset_y: mapOffsetY,
+  });
+});
+
+router.get('/live-map/players', requireAuth, (req, res) => {
+  const maxAgeMs = Math.max(5_000, parseInt(req.query.max_age_ms, 10) || liveMapStore.ACTIVE_PLAYER_MAX_AGE_MS);
+  const players = liveMapStore.listPlayers(maxAgeMs);
+  res.json({
+    type: 'playerData',
+    payload: players,
+    total: players.length,
+    max_age_ms: maxAgeMs,
+    timestamp: Date.now(),
   });
 });
 

@@ -6,7 +6,8 @@ Config.CadBaseUrl = GetConvar('cad_bridge_base_url', 'http://127.0.0.1:3030')
 Config.SharedToken = GetConvar('cad_bridge_token', '')
 
 -- Sync intervals (milliseconds)
-Config.HeartbeatIntervalMs = tonumber(GetConvar('cad_bridge_heartbeat_ms', '5000')) or 5000
+-- Lower default keeps CAD Live Map responsive while staying light on HTTP requests.
+Config.HeartbeatIntervalMs = tonumber(GetConvar('cad_bridge_heartbeat_ms', '1500')) or 1500
 Config.FinePollIntervalMs = tonumber(GetConvar('cad_bridge_fine_poll_ms', '7000')) or 7000
 Config.JobSyncPollIntervalMs = tonumber(GetConvar('cad_bridge_job_sync_poll_ms', '5000')) or 5000
 Config.RoutePollIntervalMs = tonumber(GetConvar('cad_bridge_route_poll_ms', '4000')) or 4000

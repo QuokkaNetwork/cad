@@ -23,7 +23,7 @@ This resource links FiveM/QBox to CAD for:
 If those convars are missing, the installed resource now falls back to the CAD values saved in System Settings.
 
 Optional:
-- `set cad_bridge_heartbeat_ms 5000`
+- `set cad_bridge_heartbeat_ms 1500`
 - `set cad_bridge_fine_poll_ms 7000`
 - `set cad_bridge_job_sync_poll_ms 5000`
 - `set cad_bridge_route_poll_ms 4000`
@@ -57,6 +57,7 @@ Command adapter execution now waits for the target character to be online.
 - CAD must have the same Steam IDs for logged-in users.
 - If nearest-postal export is unavailable, CAD falls back to street names and then XYZ.
 - Assigned call routes are pushed to in-game clients by postal/coords when available.
+- Heartbeat payload now includes map metadata (`weapon`, `vehicle`, `license_plate`, `icon`, siren status) used by CAD Live Map.
 - This is a first-draft bridge and may require adapter tweaks for your billing stack.
 
 ## `/000` command

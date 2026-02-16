@@ -11,6 +11,7 @@ const {
 } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
+const liveMapStore = require('../services/liveMapStore');
 
 const router = express.Router();
 const liveLinkUserCache = new Map();
@@ -455,6 +456,7 @@ bus.on('unit:offline', ({ unit }) => {
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];
   const seenLinks = new Set();
+  const seenLiveMapIdentifiers = new Set();
   const detectedCadUserIds = new Set();
   const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
   let mappedUnits = 0;
@@ -464,6 +466,7 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     const ids = resolveLinkIdentifiers(player.identifiers);
     if (!ids.linkKey) continue;
     seenLinks.add(ids.linkKey);
+    seenLiveMapIdentifiers.add(ids.linkKey);
 
     const position = player.position || {};
     FiveMPlayerLinks.upsert({
@@ -476,6 +479,26 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       position_z: Number(position.z || 0),
       heading: Number(player.heading || 0),
       speed: Number(player.speed || 0),
+    });
+
+    liveMapStore.upsertPlayer(ids.linkKey, {
+      name: String(player.name || ''),
+      pos: {
+        x: Number(position.x || 0),
+        y: Number(position.y || 0),
+        z: Number(position.z || 0),
+      },
+      speed: Number(player.speed || 0),
+      heading: Number(player.heading || 0),
+      location: String(player.location || '') || formatUnitLocation(player),
+      vehicle: String(player.vehicle || ''),
+      license_plate: String(player.license_plate || ''),
+      weapon: String(player.weapon || ''),
+      icon: Number(player.icon || 6),
+      has_siren_enabled: !!player.has_siren_enabled,
+      steam_id: ids.steamId,
+      discord_id: ids.discordId,
+      citizenid: String(player.citizenid || ''),
     });
 
     let cadUser = resolveCadUserFromIdentifiers(ids);
@@ -523,6 +546,8 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
   }
 
+  liveMapStore.retainOnly(seenLiveMapIdentifiers);
+
   const autoOffDutyCount = enforceInGamePresenceForOnDutyUnits(detectedCadUserIds, 'heartbeat');
   res.json({
     ok: true,
@@ -549,6 +574,10 @@ router.post('/offline', requireBridgeAuth, (req, res) => {
   if (ids.discordId) liveLinkUserCache.delete(`discord:${ids.discordId}`);
   if (ids.licenseId) liveLinkUserCache.delete(`license:${ids.licenseId}`);
   if (ids.linkKey) liveLinkUserCache.delete(ids.linkKey);
+  if (ids.steamId) liveMapStore.removePlayer(ids.steamId);
+  if (ids.discordId) liveMapStore.removePlayer(`discord:${ids.discordId}`);
+  if (ids.licenseId) liveMapStore.removePlayer(`license:${ids.licenseId}`);
+  if (ids.linkKey) liveMapStore.removePlayer(ids.linkKey);
 
   let autoOffDuty = false;
   if (cadUser) {
