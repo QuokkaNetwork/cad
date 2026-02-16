@@ -24,7 +24,7 @@ export default function Header() {
   const [offDutyLoading, setOffDutyLoading] = useState(false);
   const [onDutyLoading, setOnDutyLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState('');
-  const onDepartmentPage = /^\/(dispatch|units|map|search|bolos|records)(\/|$)/.test(location.pathname);
+  const onDepartmentPage = /^\/(department|dispatch|units|map|search|bolos|records)(\/|$)/.test(location.pathname);
 
   const refreshMyUnit = useCallback(async () => {
     if (!user) {

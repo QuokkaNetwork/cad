@@ -10,6 +10,7 @@ import Home from './pages/Home';
 import Settings from './pages/Settings';
 import Dispatch from './pages/police/Dispatch';
 import Units from './pages/police/Units';
+import DepartmentHome from './pages/police/DepartmentHome';
 import LiveMap from './pages/police/LiveMap';
 import Search from './pages/police/Search';
 import BOLOs from './pages/police/BOLOs';
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="/settings" element={<Settings />} />
 
             {/* Police MDT */}
+            <Route path="/department" element={<RequireDepartment><DepartmentHome /></RequireDepartment>} />
             <Route path="/dispatch" element={<RequireDepartment><Dispatch /></RequireDepartment>} />
             <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
             <Route path="/map" element={<RequireDepartment><LiveMap /></RequireDepartment>} />

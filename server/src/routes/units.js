@@ -22,6 +22,12 @@ const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_MAP_SCALE = 1;
 const DEFAULT_MAP_OFFSET = 0;
+const DEFAULT_MAP_GAME_BOUNDS = Object.freeze({
+  x1: -4230,
+  y1: 8420,
+  x2: 370,
+  y2: -640,
+});
 
 function parseMapNumber(value, fallback) {
   const text = String(value ?? '').trim();
@@ -232,6 +238,10 @@ router.get('/map-config', requireAuth, (_req, res) => {
   const mapScaleY = parseMapNumber(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
   const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
   const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
+  const mapGameX1 = parseMapNumber(Settings.get('live_map_game_x1'), DEFAULT_MAP_GAME_BOUNDS.x1);
+  const mapGameY1 = parseMapNumber(Settings.get('live_map_game_y1'), DEFAULT_MAP_GAME_BOUNDS.y1);
+  const mapGameX2 = parseMapNumber(Settings.get('live_map_game_x2'), DEFAULT_MAP_GAME_BOUNDS.x2);
+  const mapGameY2 = parseMapNumber(Settings.get('live_map_game_y2'), DEFAULT_MAP_GAME_BOUNDS.y2);
   const missingTiles = listMissingLiveMapTiles();
   const mapAvailable = hasCompleteLiveMapTiles();
   res.json({
@@ -244,6 +254,16 @@ router.get('/map-config', requireAuth, (_req, res) => {
     map_scale_y: mapScaleY,
     map_offset_x: mapOffsetX,
     map_offset_y: mapOffsetY,
+    map_game_x1: mapGameX1,
+    map_game_y1: mapGameY1,
+    map_game_x2: mapGameX2,
+    map_game_y2: mapGameY2,
+    map_game_bounds: {
+      x1: mapGameX1,
+      y1: mapGameY1,
+      x2: mapGameX2,
+      y2: mapGameY2,
+    },
     tile_url_template: LIVE_MAP_TILE_URL_TEMPLATE,
     tile_names: LIVE_MAP_TILE_NAMES,
     tile_size: LIVE_MAP_TILE_SIZE,

@@ -23,6 +23,7 @@ export default function AdminDepartments() {
     short_name: '',
     color: '#0052C2',
     icon: '',
+    slogan: '',
     layout_type: DEPARTMENT_LAYOUT.LAW_ENFORCEMENT,
     fivem_job_name: '',
     fivem_job_grade: 0,
@@ -33,6 +34,7 @@ export default function AdminDepartments() {
     short_name: '',
     color: '#0052C2',
     icon: '',
+    slogan: '',
     is_active: 1,
     is_dispatch: 0,
     dispatch_visible: 0,
@@ -126,6 +128,7 @@ export default function AdminDepartments() {
       await api.post('/api/admin/departments', {
         ...form,
         icon,
+        slogan: String(form.slogan || '').trim(),
         layout_type: normalizeDepartmentLayoutType(form.layout_type),
         fivem_job_name: String(form.fivem_job_name || '').trim(),
         fivem_job_grade: Number(form.fivem_job_grade || 0),
@@ -136,6 +139,7 @@ export default function AdminDepartments() {
         short_name: '',
         color: '#0052C2',
         icon: '',
+        slogan: '',
         layout_type: DEPARTMENT_LAYOUT.LAW_ENFORCEMENT,
         fivem_job_name: '',
         fivem_job_grade: 0,
@@ -203,6 +207,7 @@ export default function AdminDepartments() {
       short_name: dept.short_name || '',
       color: dept.color || '#0052C2',
       icon: dept.icon || '',
+      slogan: dept.slogan || '',
       is_active: dept.is_active ? 1 : 0,
       is_dispatch: dept.is_dispatch ? 1 : 0,
       dispatch_visible: dept.dispatch_visible ? 1 : 0,
@@ -227,6 +232,7 @@ export default function AdminDepartments() {
         short_name: editForm.short_name,
         color: editForm.color,
         icon,
+        slogan: String(editForm.slogan || '').trim(),
         is_active: editForm.is_active ? 1 : 0,
         is_dispatch: editForm.is_dispatch ? 1 : 0,
         dispatch_visible: editForm.dispatch_visible ? 1 : 0,
@@ -414,6 +420,11 @@ export default function AdminDepartments() {
                     </span>
                   )}
                 </div>
+                {String(dept.slogan || '').trim() && (
+                  <p className="text-xs text-cad-muted mt-1 italic">
+                    "{dept.slogan}"
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -551,6 +562,16 @@ export default function AdminDepartments() {
               className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent" placeholder="e.g. VicPol" />
           </div>
           <div>
+            <label className="block text-sm text-cad-muted mb-1">Slogan</label>
+            <input
+              type="text"
+              value={form.slogan}
+              onChange={e => setForm(f => ({ ...f, slogan: e.target.value }))}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="e.g. Protecting with integrity"
+            />
+          </div>
+          <div>
             <label className="block text-sm text-cad-muted mb-1">Department Layout</label>
             <select
               value={form.layout_type}
@@ -625,6 +646,16 @@ export default function AdminDepartments() {
             <label className="block text-sm text-cad-muted mb-1">Short Name</label>
             <input type="text" value={editForm.short_name} onChange={e => setEditForm(f => ({ ...f, short_name: e.target.value }))}
               className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent" />
+          </div>
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Slogan</label>
+            <input
+              type="text"
+              value={editForm.slogan}
+              onChange={e => setEditForm(f => ({ ...f, slogan: e.target.value }))}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="e.g. Protecting with integrity"
+            />
           </div>
           <div>
             <label className="block text-sm text-cad-muted mb-1">Department Layout</label>

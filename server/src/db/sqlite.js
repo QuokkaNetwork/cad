@@ -114,17 +114,18 @@ const Departments = {
   findByShortName(shortName) {
     return db.prepare('SELECT * FROM departments WHERE short_name = ?').get(shortName);
   },
-  create({ name, short_name, color, icon, layout_type, fivem_job_name, fivem_job_grade, sort_order }) {
+  create({ name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order }) {
     const resolvedSortOrder = Number.isFinite(Number(sort_order))
       ? Math.max(0, Math.trunc(Number(sort_order)))
       : getNextSortOrder('departments');
     const info = db.prepare(
-      'INSERT INTO departments (name, short_name, color, icon, layout_type, fivem_job_name, fivem_job_grade, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO departments (name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(
       name,
       short_name || '',
       color || '#0052C2',
       icon || '',
+      String(slogan || '').trim(),
       normalizeDepartmentLayoutType(layout_type),
       String(fivem_job_name || '').trim(),
       Number.isFinite(Number(fivem_job_grade)) ? Math.max(0, Math.trunc(Number(fivem_job_grade))) : 0,
@@ -133,13 +134,13 @@ const Departments = {
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['name', 'short_name', 'color', 'icon', 'is_active', 'dispatch_visible', 'is_dispatch', 'layout_type', 'fivem_job_name', 'fivem_job_grade', 'sort_order'];
+    const allowed = ['name', 'short_name', 'color', 'icon', 'slogan', 'is_active', 'dispatch_visible', 'is_dispatch', 'layout_type', 'fivem_job_name', 'fivem_job_grade', 'sort_order'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
       if (fields[key] !== undefined) {
         updates.push(`${key} = ?`);
-        if (key === 'fivem_job_name') {
+        if (key === 'fivem_job_name' || key === 'slogan') {
           values.push(String(fields[key] || '').trim());
         } else if (key === 'fivem_job_grade') {
           const grade = Number(fields[key]);

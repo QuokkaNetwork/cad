@@ -14,13 +14,12 @@ const DEFAULT_TILE_URL_TEMPLATE = '/tiles/minimap_sea_{y}_{x}.webp';
 const DEFAULT_MIN_ZOOM = -2;
 const DEFAULT_MAX_ZOOM = 4;
 const DEFAULT_NATIVE_ZOOM = 0;
-
-const SNAILY_GAME_BOUNDS = {
+const DEFAULT_GAME_BOUNDS = Object.freeze({
   x1: -4230,
   y1: 8420,
   x2: 370,
   y2: -640,
-};
+});
 
 function parseMapNumber(value, fallback) {
   const num = Number(value);
@@ -55,8 +54,7 @@ function normalizePlayers(payload) {
   const players = [];
   for (const raw of payload) {
     const player = normalizeMapPlayer(raw);
-    if (!player.identifier) continue;
-    if (seen.has(player.identifier)) continue;
+    if (!player.identifier || seen.has(player.identifier)) continue;
     seen.add(player.identifier);
     players.push(player);
   }
@@ -71,7 +69,7 @@ function getMapBounds(map, tileConfig) {
   return latLngBounds(southWest, northEast);
 }
 
-function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration) {
+function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration, gameBounds) {
   const x = Number(rawX);
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !map) return null;
@@ -82,10 +80,8 @@ function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration) {
   const latLng1 = map.unproject([0, 0], 0);
   const latLng2 = map.unproject([width / 2, height - tileConfig.tileSize], 0);
 
-  let lng = latLng1.lng
-    + ((x - SNAILY_GAME_BOUNDS.x1) * (latLng1.lng - latLng2.lng)) / (SNAILY_GAME_BOUNDS.x1 - SNAILY_GAME_BOUNDS.x2);
-  let lat = latLng1.lat
-    + ((y - SNAILY_GAME_BOUNDS.y1) * (latLng1.lat - latLng2.lat)) / (SNAILY_GAME_BOUNDS.y1 - SNAILY_GAME_BOUNDS.y2);
+  let lng = latLng1.lng + ((x - gameBounds.x1) * (latLng1.lng - latLng2.lng)) / (gameBounds.x1 - gameBounds.x2);
+  let lat = latLng1.lat + ((y - gameBounds.y1) * (latLng1.lat - latLng2.lat)) / (gameBounds.y1 - gameBounds.y2);
 
   const hasCalibration = calibration.scaleX !== 1
     || calibration.scaleY !== 1
@@ -102,12 +98,6 @@ function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration) {
   }
 
   return { lat, lng };
-}
-
-function formatSpeedMph(value) {
-  const speed = Number(value || 0);
-  if (!Number.isFinite(speed) || speed <= 0) return '0 mph';
-  return `${Math.round(speed * 2.23694)} mph`;
 }
 
 function markerColor(player) {
@@ -137,6 +127,7 @@ function MapBoundsController({ tileConfig, resetSignal, onMapReady }) {
     if (map.getZoom() < tileConfig.minZoom || map.getZoom() > tileConfig.maxZoom) {
       map.setZoom(Math.max(tileConfig.minZoom, Math.min(0, tileConfig.maxZoom)));
     }
+
     appliedRef.current = key;
   }, [map, tileConfig, resetSignal, onMapReady]);
 
@@ -161,8 +152,8 @@ export default function LiveMap() {
   const [mapScaleY, setMapScaleY] = useState(1);
   const [mapOffsetX, setMapOffsetX] = useState(0);
   const [mapOffsetY, setMapOffsetY] = useState(0);
+  const [gameBounds, setGameBounds] = useState(DEFAULT_GAME_BOUNDS);
   const [players, setPlayers] = useState([]);
-  const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [mapConfigError, setMapConfigError] = useState('');
   const [playerError, setPlayerError] = useState('');
@@ -195,6 +186,15 @@ export default function LiveMap() {
       setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
       setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
       setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
+
+      const cfgBounds = cfg?.map_game_bounds || {};
+      const nextGameBounds = {
+        x1: parseMapNumber(cfgBounds?.x1 ?? cfg?.map_game_x1, DEFAULT_GAME_BOUNDS.x1),
+        y1: parseMapNumber(cfgBounds?.y1 ?? cfg?.map_game_y1, DEFAULT_GAME_BOUNDS.y1),
+        x2: parseMapNumber(cfgBounds?.x2 ?? cfg?.map_game_x2, DEFAULT_GAME_BOUNDS.x2),
+        y2: parseMapNumber(cfgBounds?.y2 ?? cfg?.map_game_y2, DEFAULT_GAME_BOUNDS.y2),
+      };
+      setGameBounds(nextGameBounds);
 
       if (!mapAvailable) {
         const missingText = missingTiles.length > 0 ? ` Missing: ${missingTiles.join(', ')}` : '';
@@ -251,24 +251,12 @@ export default function LiveMap() {
     if (!mapInstance) return [];
     return players
       .map((player) => {
-        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, calibration);
+        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, calibration, gameBounds);
         if (!latLng) return null;
         return { player, latLng };
       })
       .filter(Boolean);
-  }, [players, mapInstance, tileConfig, calibration]);
-
-  const selectedMarker = useMemo(() => {
-    const byId = markers.find((marker) => marker.player.identifier === selectedPlayerId);
-    return byId || markers[0] || null;
-  }, [markers, selectedPlayerId]);
-
-  useEffect(() => {
-    if (!selectedPlayerId) return;
-    if (!markers.some((marker) => marker.player.identifier === selectedPlayerId)) {
-      setSelectedPlayerId(null);
-    }
-  }, [markers, selectedPlayerId]);
+  }, [players, mapInstance, tileConfig, calibration, gameBounds]);
 
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;
   const error = mapConfigError || playerError;
@@ -298,130 +286,76 @@ export default function LiveMap() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
-        <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
-          <div className="px-3 py-2 border-b border-cad-border flex flex-wrap items-center justify-between gap-2 text-xs text-cad-muted">
-            <span>{markers.length} live marker{markers.length !== 1 ? 's' : ''}</span>
-            <span>
-              {loading ? 'Loading...' : `Updated ${lastRefreshAt ? new Date(lastRefreshAt).toLocaleTimeString() : 'never'}`}
-            </span>
-          </div>
+      <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
+        <div className="px-3 py-2 border-b border-cad-border flex flex-wrap items-center justify-between gap-2 text-xs text-cad-muted">
+          <span>{markers.length} live marker{markers.length !== 1 ? 's' : ''}</span>
+          <span>
+            {loading ? 'Loading...' : `Updated ${lastRefreshAt ? new Date(lastRefreshAt).toLocaleTimeString() : 'never'}`}
+          </span>
+        </div>
 
-          <div className="relative h-[72vh] min-h-[500px] bg-[#0b1525]">
-            <MapContainer
-              key={mapKey}
-              crs={CRS.Simple}
-              center={[0, 0]}
-              zoom={tileConfig.minZoom}
+        <div className="relative h-[72vh] min-h-[500px] bg-[#0b1525]">
+          <MapContainer
+            key={mapKey}
+            crs={CRS.Simple}
+            center={[0, 0]}
+            zoom={tileConfig.minZoom}
+            minZoom={tileConfig.minZoom}
+            maxZoom={tileConfig.maxZoom}
+            zoomControl
+            className="w-full h-full"
+          >
+            <MapBoundsController
+              tileConfig={tileConfig}
+              resetSignal={resetSignal}
+              onMapReady={setMapInstance}
+            />
+            <TileLayer
+              url={tileConfig.tileUrlTemplate}
+              tileSize={tileConfig.tileSize}
               minZoom={tileConfig.minZoom}
               maxZoom={tileConfig.maxZoom}
-              zoomControl
-              className="w-full h-full"
-            >
-              <MapBoundsController
-                tileConfig={tileConfig}
-                resetSignal={resetSignal}
-                onMapReady={setMapInstance}
-              />
-              <TileLayer
-                url={tileConfig.tileUrlTemplate}
-                tileSize={tileConfig.tileSize}
-                minZoom={tileConfig.minZoom}
-                maxZoom={tileConfig.maxZoom}
-                minNativeZoom={tileConfig.minNativeZoom}
-                maxNativeZoom={tileConfig.maxNativeZoom}
-                noWrap
-              />
+              minNativeZoom={tileConfig.minNativeZoom}
+              maxNativeZoom={tileConfig.maxNativeZoom}
+              noWrap
+            />
 
-              {markers.map(({ player, latLng }) => {
-                const selected = selectedMarker?.player.identifier === player.identifier;
-                return (
-                  <CircleMarker
-                    key={player.identifier}
-                    center={[latLng.lat, latLng.lng]}
-                    radius={selected ? 10 : 7}
-                    pathOptions={{
-                      color: selected ? '#f8fafc' : '#0f172a',
-                      weight: selected ? 3 : 2,
-                      fillColor: markerColor(player),
-                      fillOpacity: 0.95,
-                    }}
-                    eventHandlers={{
-                      click: () => setSelectedPlayerId(player.identifier),
-                    }}
-                  >
-                    <Tooltip direction="top" offset={[0, -8]} opacity={1} className="!bg-slate-900 !text-slate-100 !border-slate-700">
-                      <div className="text-xs">
-                        <p className="font-semibold">{player.name}</p>
-                        {player.vehicle ? <p>{player.vehicle}</p> : null}
-                        <p>{player.location || 'No location'}</p>
-                      </div>
-                    </Tooltip>
-                  </CircleMarker>
-                );
-              })}
-            </MapContainer>
+            {markers.map(({ player, latLng }) => (
+              <CircleMarker
+                key={player.identifier}
+                center={[latLng.lat, latLng.lng]}
+                radius={7}
+                pathOptions={{
+                  color: '#0f172a',
+                  weight: 2,
+                  fillColor: markerColor(player),
+                  fillOpacity: 0.95,
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -8]} opacity={1} className="!bg-slate-900 !text-slate-100 !border-slate-700">
+                  <div className="text-xs">
+                    <p className="font-semibold">{player.name}</p>
+                    {player.vehicle ? <p>{player.vehicle}</p> : null}
+                    <p>{player.location || 'No location'}</p>
+                  </div>
+                </Tooltip>
+              </CircleMarker>
+            ))}
+          </MapContainer>
 
-            {!tileConfig.mapAvailable && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="bg-cad-surface/95 border border-cad-border rounded px-4 py-2 text-xs text-amber-300 max-w-md text-center">
-                  Live map tiles are missing. Upload all required files in Admin &gt; System Settings.
-                </div>
+          {!tileConfig.mapAvailable && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="bg-cad-surface/95 border border-cad-border rounded px-4 py-2 text-xs text-amber-300 max-w-md text-center">
+                Live map tiles are missing. Upload all required files in Admin &gt; System Settings.
               </div>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div className="bg-cad-card border border-cad-border rounded-lg p-3">
-            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Selected Marker</h3>
-            {selectedMarker ? (
-              <div className="space-y-1 text-sm">
-                <p className="font-mono text-cad-accent-light">{selectedMarker.player.name}</p>
-                {selectedMarker.player.location && (
-                  <p className="text-cad-muted break-words">Location: {selectedMarker.player.location}</p>
-                )}
-                <p className="text-cad-muted">Speed: {formatSpeedMph(selectedMarker.player.speed)}</p>
-                <p className="text-cad-muted">
-                  X {Number(selectedMarker.player.pos.x || 0).toFixed(1)} | Y {Number(selectedMarker.player.pos.y || 0).toFixed(1)}
-                </p>
-                {selectedMarker.player.vehicle ? (
-                  <p className="text-cad-muted">Vehicle: {selectedMarker.player.vehicle}</p>
-                ) : (
-                  <p className="text-cad-muted">Vehicle: On Foot</p>
-                )}
-                {selectedMarker.player.licensePlate && (
-                  <p className="text-cad-muted">Plate: {selectedMarker.player.licensePlate}</p>
-                )}
-                {selectedMarker.player.weapon && (
-                  <p className="text-cad-muted">Weapon: {selectedMarker.player.weapon}</p>
-                )}
-                <p className="text-xs text-cad-muted break-all">Identifier: {selectedMarker.player.identifier}</p>
-                <p className="text-xs text-cad-muted">
-                  Last update: {new Date(selectedMarker.player.updatedAtMs).toLocaleTimeString()}
-                </p>
-              </div>
-            ) : (
-              <p className="text-sm text-cad-muted">No active players on the live map yet.</p>
-            )}
-          </div>
-
-          <div className="bg-cad-card border border-cad-border rounded-lg p-3 text-xs text-cad-muted space-y-1">
-            <p>Tile template: <span className="font-mono">{tileConfig.tileUrlTemplate}</span></p>
-            <p>Tile grid: {tileConfig.tileColumns} x {tileConfig.tileRows} at {tileConfig.tileSize}px</p>
-            <p>Zoom range: {tileConfig.minZoom} to {tileConfig.maxZoom}</p>
-            <p>Refresh interval: {MAP_POLL_INTERVAL_MS}ms</p>
-            <p>Max age window: {Math.round(MAP_ACTIVE_MAX_AGE_MS / 1000)}s</p>
-            <p>
-              Calibration: ScaleX {mapScaleX}, ScaleY {mapScaleY}, OffsetX {mapOffsetX}, OffsetY {mapOffsetY}
-            </p>
-            {tileConfig.missingTiles.length > 0 && (
-              <p className="text-amber-300 whitespace-pre-wrap">Missing tiles: {tileConfig.missingTiles.join(', ')}</p>
-            )}
-            {error && <p className="text-red-400 whitespace-pre-wrap">{error}</p>}
-          </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {error && (
+        <p className="text-xs text-red-400 whitespace-pre-wrap">{error}</p>
+      )}
     </div>
   );
 }
