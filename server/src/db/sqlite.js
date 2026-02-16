@@ -159,7 +159,13 @@ const Departments = {
     db.prepare(`UPDATE departments SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   },
   listDispatchVisible() {
-    return db.prepare('SELECT * FROM departments WHERE dispatch_visible = 1 AND is_active = 1 ORDER BY sort_order ASC, id ASC').all();
+    const explicit = db.prepare(
+      'SELECT * FROM departments WHERE dispatch_visible = 1 AND is_active = 1 AND is_dispatch = 0 ORDER BY sort_order ASC, id ASC'
+    ).all();
+    if (explicit.length > 0) return explicit;
+    return db.prepare(
+      'SELECT * FROM departments WHERE is_active = 1 AND is_dispatch = 0 ORDER BY sort_order ASC, id ASC'
+    ).all();
   },
   reorder(orderedIds) {
     const tx = db.transaction(() => {

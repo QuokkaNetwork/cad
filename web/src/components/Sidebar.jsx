@@ -31,12 +31,6 @@ const FIRE_NAV = [
   { to: '/records', label: 'Incident Reports', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
 ];
 
-const DISPATCH_NAV_ITEM = {
-  to: '/dispatch',
-  label: 'Dispatch',
-  icon: 'M3 5h18M3 12h18M3 19h18',
-};
-
 function getNavItemsForLayout(layoutType) {
   if (layoutType === DEPARTMENT_LAYOUT.PARAMEDICS) return EMS_NAV;
   if (layoutType === DEPARTMENT_LAYOUT.FIRE) return FIRE_NAV;
@@ -116,11 +110,9 @@ export default function Sidebar() {
   const hideRecordsTab = !!activeDepartment?.is_dispatch;
   const baseNavItems = getNavItemsForLayout(layoutType);
   const departmentNavItems = activeDepartment?.is_dispatch
-    ? [
-      ...(baseNavItems.slice(0, 1)),
-      DISPATCH_NAV_ITEM,
-      ...(baseNavItems.slice(1)),
-    ]
+    ? baseNavItems.map(item => (item.to === '/units'
+      ? { ...item, to: '/dispatch' }
+      : item))
     : baseNavItems;
   const navItems = departmentNavItems.filter((item) => {
     if (hideUnitsTab && item.to === '/units') return false;
