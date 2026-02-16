@@ -416,7 +416,7 @@ export default function AdminSystemSettings() {
               {fineTargets.length === 0 && <option value="">No active players with citizen IDs</option>}
               {fineTargets.map(link => (
                 <option key={link.steam_id} value={link.steam_id}>
-                  #{link.game_id || '?'} {link.player_name || 'Unknown'} | CID {link.citizen_id}
+                  #{link.game_id || '?'} {link.player_name || 'Unknown'} | CAD {link.cad_user_name || 'Unlinked'} | CID {link.citizen_id}
                 </option>
               ))}
             </select>

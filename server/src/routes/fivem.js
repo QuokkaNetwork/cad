@@ -36,13 +36,65 @@ function steamHexToSteam64(hexValue) {
   }
 }
 
-function parseSteamIdentifier(identifiers = []) {
+function parseIdentifier(identifiers = [], prefix = '') {
   if (!Array.isArray(identifiers)) return '';
-  const hit = identifiers.find(i => typeof i === 'string' && i.toLowerCase().startsWith('steam:'));
+  const normalizedPrefix = `${String(prefix || '').toLowerCase()}:`;
+  if (!normalizedPrefix || normalizedPrefix === ':') return '';
+  const hit = identifiers.find(i => typeof i === 'string' && i.toLowerCase().startsWith(normalizedPrefix));
   if (!hit) return '';
-  const normalized = String(hit).toLowerCase();
-  const steam64 = steamHexToSteam64(normalized);
-  return steam64 || normalized.slice('steam:'.length);
+  const raw = String(hit);
+  return raw.slice(raw.indexOf(':') + 1).trim();
+}
+
+function parseSteamIdentifier(identifiers = []) {
+  const steamRaw = parseIdentifier(identifiers, 'steam');
+  if (!steamRaw) return '';
+  const steam64 = steamHexToSteam64(steamRaw);
+  return steam64 || String(steamRaw).toLowerCase();
+}
+
+function parseDiscordIdentifier(identifiers = []) {
+  return parseIdentifier(identifiers, 'discord');
+}
+
+function resolveLinkIdentifiers(identifiers = []) {
+  const steamId = parseSteamIdentifier(identifiers);
+  const discordId = parseDiscordIdentifier(identifiers);
+
+  if (steamId) {
+    return {
+      linkKey: steamId,
+      steamId,
+      discordId,
+      source: 'steam',
+    };
+  }
+  if (discordId) {
+    return {
+      linkKey: `discord:${discordId}`,
+      steamId: '',
+      discordId,
+      source: 'discord',
+    };
+  }
+  return {
+    linkKey: '',
+    steamId: '',
+    discordId: '',
+    source: '',
+  };
+}
+
+function resolveCadUserFromIdentifiers(identifiers = {}) {
+  if (identifiers.steamId) {
+    const bySteam = Users.findBySteamId(identifiers.steamId);
+    if (bySteam) return bySteam;
+  }
+  if (identifiers.discordId) {
+    const byDiscord = Users.findByDiscordId(identifiers.discordId);
+    if (byDiscord) return byDiscord;
+  }
+  return null;
 }
 
 function formatUnitLocation(payload) {
@@ -67,16 +119,16 @@ function formatUnitLocation(payload) {
 // Heartbeat from FiveM resource with online players + position.
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];
-  const seenSteamIds = new Set();
+  const seenLinks = new Set();
 
   for (const player of players) {
-    const steamHex = parseSteamIdentifier(player.identifiers);
-    if (!steamHex) continue;
-    seenSteamIds.add(steamHex);
+    const ids = resolveLinkIdentifiers(player.identifiers);
+    if (!ids.linkKey) continue;
+    seenLinks.add(ids.linkKey);
 
     const position = player.position || {};
     const link = FiveMPlayerLinks.upsert({
-      steam_id: steamHex,
+      steam_id: ids.linkKey,
       game_id: String(player.source ?? ''),
       citizen_id: String(player.citizenid || ''),
       player_name: String(player.name || ''),
@@ -87,28 +139,28 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       speed: Number(player.speed || 0),
     });
 
-    const cadUser = Users.findBySteamId(steamHex);
+    const cadUser = resolveCadUserFromIdentifiers(ids);
     if (!cadUser) continue;
     const unit = Units.findByUserId(cadUser.id);
     if (!unit) continue;
 
+    const idSource = ids.source === 'discord' ? 'discord' : 'steam';
     Units.update(unit.id, {
       location: formatUnitLocation(player),
-      note: `In-game #${link.game_id} ${link.player_name || ''}`.trim(),
+      note: `In-game #${link.game_id} ${link.player_name || ''} (${idSource})`.trim(),
     });
     const updated = Units.findById(unit.id);
     bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
   }
 
-  res.json({ ok: true, tracked: seenSteamIds.size });
+  res.json({ ok: true, tracked: seenLinks.size });
 });
 
 // Optional player disconnect event.
 router.post('/offline', requireBridgeAuth, (req, res) => {
-  const steamHex = parseSteamIdentifier(req.body?.identifiers || []);
-  if (steamHex) {
-    FiveMPlayerLinks.removeBySteamId(steamHex);
-  }
+  const ids = resolveLinkIdentifiers(req.body?.identifiers || []);
+  if (ids.steamId) FiveMPlayerLinks.removeBySteamId(ids.steamId);
+  if (ids.discordId) FiveMPlayerLinks.removeBySteamId(`discord:${ids.discordId}`);
   res.json({ ok: true });
 });
 

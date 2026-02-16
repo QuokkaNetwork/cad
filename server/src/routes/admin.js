@@ -340,7 +340,24 @@ router.post('/fivem-resource/install', (req, res) => {
 router.get('/fivem/links', (_req, res) => {
   const activeOnly = String(_req.query.active || '').toLowerCase() === 'true';
   const links = FiveMPlayerLinks.list();
-  res.json(activeOnly ? links.filter(isActiveFiveMLink) : links);
+  const filtered = activeOnly ? links.filter(isActiveFiveMLink) : links;
+  const enriched = filtered.map((link) => {
+    const key = String(link.steam_id || '');
+    const isDiscordKey = key.startsWith('discord:');
+    const discordId = isDiscordKey ? key.slice('discord:'.length) : '';
+    const cadUser = isDiscordKey
+      ? Users.findByDiscordId(discordId)
+      : (Users.findBySteamId(key) || null);
+    return {
+      ...link,
+      identifier_type: isDiscordKey ? 'discord' : 'steam',
+      steam_id_resolved: isDiscordKey ? '' : key,
+      discord_id_resolved: isDiscordKey ? discordId : (cadUser?.discord_id || ''),
+      cad_user_id: cadUser?.id || null,
+      cad_user_name: cadUser?.steam_name || '',
+    };
+  });
+  res.json(enriched);
 });
 
 router.get('/fivem/fine-jobs', (req, res) => {
