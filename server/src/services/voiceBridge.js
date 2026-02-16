@@ -15,6 +15,7 @@ try {
 
 const OPUS_FRAME_SIZE = 960; // 20ms @ 48kHz mono
 const OPUS_FRAME_BYTES = OPUS_FRAME_SIZE * 2;
+const MAX_WHISPER_TARGETS = 30;
 
 function parseBool(value, fallback = false) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -45,6 +46,43 @@ function toBuffer(payload) {
   } catch {
     return Buffer.alloc(0);
   }
+}
+
+function normalizePositiveInt(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
+function normalizeRouteMembersByChannel(rawValue) {
+  const normalized = new Map();
+  if (!rawValue || typeof rawValue !== 'object') return normalized;
+
+  const entries = rawValue instanceof Map
+    ? Array.from(rawValue.entries())
+    : Object.entries(rawValue);
+
+  for (const [channelKey, membersRaw] of entries) {
+    const channelNumber = normalizePositiveInt(channelKey);
+    if (!channelNumber) continue;
+
+    const input = Array.isArray(membersRaw)
+      ? membersRaw
+      : (membersRaw instanceof Set ? Array.from(membersRaw.values()) : []);
+    const seen = new Set();
+    const members = [];
+    for (const candidate of input) {
+      const memberId = normalizePositiveInt(candidate);
+      if (!memberId || seen.has(memberId)) continue;
+      seen.add(memberId);
+      members.push(memberId);
+    }
+    if (members.length > 0) {
+      normalized.set(channelNumber, members);
+    }
+  }
+
+  return normalized;
 }
 
 function waitForReady(client, timeoutMs = 15000) {
@@ -101,6 +139,8 @@ class VoiceBridgeServer {
     this.dispatcherEncoders = new Map();        // dispatcherId -> Opus encoder
     this.dispatcherPcmBuffers = new Map();      // dispatcherId -> Buffer remainder
     this.dispatcherDecoders = new Map();        // dispatcherId -> Map<sessionId, Opus decoder>
+    this.routeMembersByChannel = new Map();     // channelNumber -> Array<gameId/channelId>
+    this.dispatcherWhisperTargets = new Map();  // dispatcherId -> { signature, targets }
     this.clientAudioHandlers = new Map();       // dispatcherId -> fn
     this.clientDisconnectHandlers = new Map();  // dispatcherId -> fn
     this.clientErrorHandlers = new Map();       // dispatcherId -> fn
@@ -287,6 +327,95 @@ class VoiceBridgeServer {
       channelNumber: Number.isInteger(numericChannel) && numericChannel > 0 ? numericChannel : null,
       channelName: String(targetChannel.name || ''),
     });
+    this.dispatcherWhisperTargets.delete(dispatcherId);
+  }
+
+  setRouteMembersByChannel(rawValue) {
+    this.routeMembersByChannel = normalizeRouteMembersByChannel(rawValue);
+    this.dispatcherWhisperTargets.clear();
+  }
+
+  getDispatcherSessionsByChannel() {
+    const byChannel = new Map();
+    for (const [dispatcherId, active] of this.activeChannels.entries()) {
+      const channelNumber = normalizePositiveInt(active?.channelNumber);
+      if (!channelNumber) continue;
+      const client = this.mumbleClients.get(dispatcherId);
+      const sessionId = normalizePositiveInt(client?.session);
+      if (!sessionId) continue;
+
+      const bucket = byChannel.get(channelNumber) || [];
+      bucket.push({
+        dispatcherId: normalizePositiveInt(dispatcherId),
+        session: sessionId,
+      });
+      byChannel.set(channelNumber, bucket);
+    }
+    return byChannel;
+  }
+
+  getRouteMembersForDispatcher(dispatcherId) {
+    const active = this.activeChannels.get(dispatcherId);
+    const channelNumber = normalizePositiveInt(active?.channelNumber);
+    if (!channelNumber) return [];
+    return this.routeMembersByChannel.get(channelNumber) || [];
+  }
+
+  buildWhisperTargetSignature(dispatcherId, members) {
+    const active = this.activeChannels.get(dispatcherId);
+    const channelNumber = normalizePositiveInt(active?.channelNumber);
+    if (!channelNumber || !Array.isArray(members) || members.length === 0) {
+      return `${channelNumber}:none`;
+    }
+    return `${channelNumber}:${members.join(',')}`;
+  }
+
+  refreshDispatcherWhisperTargets(dispatcherId) {
+    const client = this.mumbleClients.get(dispatcherId);
+    if (!client || !client.isReady) return [];
+
+    const members = this.getRouteMembersForDispatcher(dispatcherId)
+      .filter((member) => normalizePositiveInt(member) > 0)
+      .slice(0, MAX_WHISPER_TARGETS);
+    const signature = this.buildWhisperTargetSignature(dispatcherId, members);
+    const existing = this.dispatcherWhisperTargets.get(dispatcherId);
+    if (existing && existing.signature === signature) {
+      return existing.targets;
+    }
+
+    const targets = [];
+    for (let i = 0; i < members.length; i += 1) {
+      const channelId = members[i];
+      const targetId = i + 1;
+      try {
+        client.setVoiceTarget(targetId, channelId, { links: false, children: false });
+        targets.push({ targetId, channelId });
+      } catch (error) {
+        console.warn('[VoiceBridge] Could not set whisper target:', error?.message || error);
+      }
+    }
+
+    this.dispatcherWhisperTargets.set(dispatcherId, { signature, targets });
+    return targets;
+  }
+
+  sendAudioToDispatcherTargets(dispatcherId, client, opusData, isLastFrame = false) {
+    const targets = this.refreshDispatcherWhisperTargets(dispatcherId);
+    if (!Array.isArray(targets) || targets.length === 0) {
+      client.sendAudio(Buffer.from(opusData), isLastFrame, 0);
+      return true;
+    }
+
+    let sent = false;
+    for (const target of targets) {
+      try {
+        client.sendAudio(Buffer.from(opusData), isLastFrame, Number(target.targetId || 0));
+        sent = true;
+      } catch {
+        // Ignore per-target send failure to keep remaining targets flowing.
+      }
+    }
+    return sent;
   }
 
   sendTerminatorFrame(dispatcherId) {
@@ -298,7 +427,7 @@ class VoiceBridgeServer {
       const silencePcm = Buffer.alloc(OPUS_FRAME_BYTES);
       const opus = encoder.encode(silencePcm, OPUS_FRAME_SIZE);
       if (opus && opus.length) {
-        client.sendAudio(Buffer.from(opus), true, 0);
+        this.sendAudioToDispatcherTargets(dispatcherId, client, Buffer.from(opus), true);
       }
     } catch {
       // Best effort to end transmission cleanly.
@@ -322,6 +451,7 @@ class VoiceBridgeServer {
     }
 
     this.activeChannels.delete(dispatcherId);
+    this.dispatcherWhisperTargets.delete(dispatcherId);
   }
 
   sendDispatcherAudio(dispatcherId, pcmChunk) {
@@ -347,8 +477,7 @@ class VoiceBridgeServer {
       try {
         const opus = encoder.encode(frame, OPUS_FRAME_SIZE);
         if (!opus || !opus.length) continue;
-        client.sendAudio(Buffer.from(opus), false, 0);
-        sentAny = true;
+        sentAny = this.sendAudioToDispatcherTargets(dispatcherId, client, Buffer.from(opus), false) || sentAny;
       } catch {
         // Skip malformed frame, continue.
       }
@@ -410,6 +539,7 @@ class VoiceBridgeServer {
     this.dispatcherPcmBuffers.delete(dispatcherId);
     this.dispatcherDecoders.delete(dispatcherId);
     this.activeChannels.delete(dispatcherId);
+    this.dispatcherWhisperTargets.delete(dispatcherId);
     this.audioListeners.delete(dispatcherId);
   }
 
@@ -436,6 +566,7 @@ class VoiceBridgeServer {
     this.dispatcherEncoders.delete(dispatcherId);
     this.dispatcherPcmBuffers.delete(dispatcherId);
     this.dispatcherDecoders.delete(dispatcherId);
+    this.dispatcherWhisperTargets.delete(dispatcherId);
   }
 
   getStatus() {

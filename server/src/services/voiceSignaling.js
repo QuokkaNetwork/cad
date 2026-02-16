@@ -10,6 +10,7 @@ const {
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
+const { handleParticipantJoin, handleParticipantLeave } = require('./voiceBridgeSync');
 
 function isWsOpen(ws) {
   return Number(ws?.readyState) === 1;
@@ -180,6 +181,9 @@ class VoiceSignalingServer {
         unitId: unit?.id || null,
       });
 
+      // Update voice bridge routing
+      handleParticipantJoin(parsedChannelNumber);
+
       audit(user.id, 'voice_bridge_joined_channel', {
         channelNumber: parsedChannelNumber,
         channelName: channel.name,
@@ -212,6 +216,10 @@ class VoiceSignalingServer {
             channelNumber: Number(channelInfo.channelNumber),
             userId: user.id,
           });
+
+          // Update voice bridge routing
+          handleParticipantLeave(Number(channelInfo.channelNumber));
+
           audit(user.id, 'voice_bridge_left_channel', {
             channelNumber: Number(channelInfo.channelNumber),
             channelName: channel.name,

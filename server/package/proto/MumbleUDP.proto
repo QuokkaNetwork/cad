@@ -1,0 +1,44 @@
+// Mumble UDP Protocol Messages (1.5.0+)
+// Based on https://github.com/mumble-voip/mumble/blob/master/src/MumbleUDP.proto
+
+syntax = "proto3";
+
+package MumbleUDP;
+
+message Audio {
+  oneof Header {
+    // When sent by client to server: target of the audio data
+    // 0 = normal talking, 31 = server loopback, others = VoiceTarget IDs
+    uint32 target = 1;
+    // When sent by server to client: context of the audio
+    // 0 = Normal, 1 = Shout, 2 = Whisper, 3 = Channel listener
+    uint32 context = 2;
+  }
+
+  // Session of the sender (set by server, not required from client)
+  uint32 sender_session = 3;
+
+  // Frame number in the audio stream
+  uint64 frame_number = 4;
+
+  // Opus audio payload
+  bytes opus_data = 5;
+
+  // Positional data [X, Y, Z] in meters (optional)
+  repeated float positional_data = 6;
+
+  // Volume adjustment from server (0 = unset)
+  float volume_adjustment = 7;
+
+  // End of transmission flag
+  bool is_terminator = 16;
+}
+
+message Ping {
+  uint64 timestamp = 1;
+  bool request_extended_information = 2;
+  uint64 server_version_v2 = 3;
+  uint32 user_count = 4;
+  uint32 max_user_count = 5;
+  uint32 max_bandwidth_per_user = 6;
+}

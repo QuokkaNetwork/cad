@@ -11,6 +11,7 @@ const {
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const { getVoiceBridge } = require('../services/voiceBridge');
+const { handleParticipantJoin, handleParticipantLeave, getRoutingStatus } = require('../services/voiceBridgeSync');
 
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
@@ -25,6 +26,19 @@ router.get('/bridge/status', requireAuth, (req, res) => {
     res.json({
       available: false,
       error: 'Voice bridge not initialized',
+    });
+  }
+});
+
+// Get voice bridge routing debug info
+router.get('/bridge/routing', requireAuth, (req, res) => {
+  try {
+    const routingStatus = getRoutingStatus();
+    res.json(routingStatus);
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to get routing status',
+      message: error.message,
     });
   }
 });
@@ -111,16 +125,15 @@ router.post('/channels/:id/join', requireAuth, (req, res) => {
 
   // Check if user has a unit on duty
   const unit = Units.findByUserId(req.user.id);
-  const link = resolveActiveLinkForUser(req.user);
-  const gameId = String(link?.game_id || '').trim();
-  const citizenId = String(link?.citizen_id || '').trim();
 
+  // Dispatchers joining via CAD don't need game_id/citizen_id (they're not in-game)
+  // Only in-game players will have these fields populated via FiveM bridge
   const participant = VoiceParticipants.add({
     channel_id: channelId,
     user_id: req.user.id,
     unit_id: unit?.id || null,
-    citizen_id: citizenId,
-    game_id: gameId,
+    citizen_id: '',
+    game_id: '',
   });
 
   bus.emit('voice:join', {
@@ -128,10 +141,13 @@ router.post('/channels/:id/join', requireAuth, (req, res) => {
     channelNumber: channel.channel_number,
     userId: req.user.id,
     unitId: unit?.id || null,
-    gameId,
-    citizenId,
+    gameId: '',
+    citizenId: '',
     participant,
   });
+
+  // Update voice bridge routing
+  handleParticipantJoin(channel.channel_number);
 
   audit(req.user.id, 'voice_channel_joined', {
     channelId,
@@ -162,6 +178,9 @@ router.post('/channels/:id/leave', requireAuth, (req, res) => {
     gameId: String(participant?.game_id || '').trim(),
     citizenId: String(participant?.citizen_id || '').trim(),
   });
+
+  // Update voice bridge routing
+  handleParticipantLeave(channel.channel_number);
 
   audit(req.user.id, 'voice_channel_left', {
     channelId,

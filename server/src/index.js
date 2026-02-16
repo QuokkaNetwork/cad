@@ -149,9 +149,12 @@ let voiceSignaling = null;
 try {
   const { getVoiceBridge } = require('./services/voiceBridge');
   const VoiceSignalingServer = require('./services/voiceSignaling');
+  const { initVoiceBridgeSync } = require('./services/voiceBridgeSync');
+
   voiceBridge = getVoiceBridge();
   if (voiceBridge?.getStatus?.().available) {
     voiceSignaling = new VoiceSignalingServer(httpServer, voiceBridge);
+    initVoiceBridgeSync(voiceBridge);
     console.log('[VoiceBridge] Voice bridge initialized successfully');
   } else {
     const missing = voiceBridge?.getStatus?.().dependency_missing || 'unknown';
