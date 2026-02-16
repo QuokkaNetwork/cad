@@ -34,6 +34,8 @@ Optional:
 - `set cad_bridge_use_nearest_postal true`
 - `set cad_bridge_postal_resource nearest-postal`
 - `set cad_bridge_postal_export getPostal`
+- `set cad_bridge_npwd_resource npwd`
+- `set cad_bridge_npwd_emergency_numbers 000`
 
 CAD-side fine delivery options:
 - In Admin > System Settings, `Fine Delivery Mode = Direct QBX DB` applies fines directly in the QBX players table.
@@ -67,3 +69,9 @@ Command adapter execution now waits for the target character to be online.
 - Use `/000 help` to show usage in chat.
 - The bridge sends a high-priority CAD call with current street/postal location (when available).
 - CAD creates the call in an active dispatch-visible department so units can self-attach.
+
+## NPWD 000 phone hook (no NPWD edits)
+- `cad_bridge` now registers NPWD emergency handlers directly via NPWD exports (`onCall`).
+- This means NPWD source files do not need to be patched/replaced for 000->CAD call creation.
+- Set `cad_bridge_npwd_resource` if your phone resource name is not `npwd`.
+- Set `cad_bridge_npwd_emergency_numbers` to a comma-separated list if you use additional emergency numbers.

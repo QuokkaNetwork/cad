@@ -206,6 +206,20 @@ local function registerEmergencySuggestion(target)
 end
 
 local startNpwdEmergencyHandlerRegistration
+local npwdEmergencyHandlersRegistered = {}
+
+local function triggerNpwdEmergencyHandlerRegistration()
+  if type(startNpwdEmergencyHandlerRegistration) ~= 'function' then
+    CreateThread(function()
+      Wait(1000)
+      if type(startNpwdEmergencyHandlerRegistration) == 'function' then
+        startNpwdEmergencyHandlerRegistration()
+      end
+    end)
+    return
+  end
+  startNpwdEmergencyHandlerRegistration()
+end
 
 local function getNpwdResourceName()
   local name = trim(GetConvar('cad_bridge_npwd_resource', 'npwd'))
@@ -219,12 +233,18 @@ AddEventHandler('onResourceStart', function(resourceName)
     Wait(500)
     registerEmergencySuggestion(-1)
   end)
-  startNpwdEmergencyHandlerRegistration()
+  triggerNpwdEmergencyHandlerRegistration()
 end)
 
 AddEventHandler('onResourceStart', function(resourceName)
   if resourceName ~= getNpwdResourceName() then return end
-  startNpwdEmergencyHandlerRegistration()
+  npwdEmergencyHandlersRegistered = {}
+  triggerNpwdEmergencyHandlerRegistration()
+end)
+
+AddEventHandler('onResourceStop', function(resourceName)
+  if resourceName ~= getNpwdResourceName() then return end
+  npwdEmergencyHandlersRegistered = {}
 end)
 
 AddEventHandler('playerJoining', function()
@@ -422,8 +442,6 @@ local function submitEmergencyCall(src, report)
     notifyPlayer(s, '000 call failed to send to CAD. Check server logs.')
   end)
 end
-
-local npwdEmergencyHandlersRegistered = {}
 
 local function splitByComma(text)
   local value = trim(text)
