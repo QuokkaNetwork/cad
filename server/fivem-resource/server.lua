@@ -76,6 +76,8 @@ RegisterNetEvent('cad_bridge:clientPosition', function(position)
     z = tonumber(position.z) or 0.0,
     heading = tonumber(position.heading) or 0.0,
     speed = tonumber(position.speed) or 0.0,
+    street = tostring(position.street or ''),
+    crossing = tostring(position.crossing or ''),
   }
 end)
 
@@ -103,7 +105,15 @@ CreateThread(function()
         local identifiers = GetPlayerIdentifiers(s)
         local steam = getSteamIdentifier(s)
         if Config.PublishAllPlayers or steam then
-          local pos = PlayerPositions[s] or { x = 0.0, y = 0.0, z = 0.0, heading = 0.0, speed = 0.0 }
+          local pos = PlayerPositions[s] or {
+            x = 0.0,
+            y = 0.0,
+            z = 0.0,
+            heading = 0.0,
+            speed = 0.0,
+            street = '',
+            crossing = '',
+          }
           payloadPlayers[#payloadPlayers + 1] = {
             source = s,
             name = GetPlayerName(s) or ('Player ' .. tostring(s)),
@@ -116,6 +126,8 @@ CreateThread(function()
             },
             heading = pos.heading,
             speed = pos.speed,
+            street = pos.street,
+            crossing = pos.crossing,
           }
         end
       end

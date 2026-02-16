@@ -5,32 +5,39 @@ export default function UnitCard({ unit, onStatusChange, compact = false, showDe
 
   if (compact) {
     return (
-      <div className="flex items-center gap-2 px-2 py-1.5 bg-cad-surface rounded text-sm">
-        <span className="font-mono font-medium text-cad-accent-light">{unit.callsign}</span>
-        {showDepartment && unit.department_short_name && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
-            style={{
-              backgroundColor: `${unit.department_color || '#64748b'}22`,
-              color: unit.department_color || '#cbd5e1',
-              border: `1px solid ${unit.department_color || '#64748b'}44`,
-            }}
-          >
-            {unit.department_short_name}
-          </span>
+      <div className="px-2 py-1.5 bg-cad-surface rounded">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-mono font-medium text-cad-accent-light">{unit.callsign}</span>
+          {showDepartment && unit.department_short_name && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+              style={{
+                backgroundColor: `${unit.department_color || '#64748b'}22`,
+                color: unit.department_color || '#cbd5e1',
+                border: `1px solid ${unit.department_color || '#64748b'}44`,
+              }}
+            >
+              {unit.department_short_name}
+            </span>
+          )}
+          {unit.sub_department_short_name && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+              style={{
+                backgroundColor: `${unit.sub_department_color || '#64748b'}33`,
+                color: unit.sub_department_color || '#cbd5e1',
+              }}
+            >
+              {unit.sub_department_short_name}
+            </span>
+          )}
+          <StatusBadge status={unit.status} />
+        </div>
+        {unit.location && (
+          <p className="text-[11px] text-cad-muted mt-1 truncate" title={unit.location}>
+            <span className="text-cad-muted/60">Location:</span> {unit.location}
+          </p>
         )}
-        {unit.sub_department_short_name && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
-            style={{
-              backgroundColor: `${unit.sub_department_color || '#64748b'}33`,
-              color: unit.sub_department_color || '#cbd5e1',
-            }}
-          >
-            {unit.sub_department_short_name}
-          </span>
-        )}
-        <StatusBadge status={unit.status} />
       </div>
     );
   }

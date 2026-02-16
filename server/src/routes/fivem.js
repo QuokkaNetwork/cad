@@ -45,6 +45,14 @@ function parseSteamIdentifier(identifiers = []) {
 }
 
 function formatUnitLocation(payload) {
+  const street = String(payload?.street || '').trim();
+  const crossing = String(payload?.crossing || '').trim();
+  if (street && crossing && street.toLowerCase() !== crossing.toLowerCase()) {
+    return `${street} / ${crossing}`;
+  }
+  if (street) return street;
+  if (crossing) return crossing;
+
   const x = Number(payload?.position?.x || 0).toFixed(1);
   const y = Number(payload?.position?.y || 0).toFixed(1);
   const z = Number(payload?.position?.z || 0).toFixed(1);
