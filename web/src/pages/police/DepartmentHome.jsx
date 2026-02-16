@@ -7,13 +7,6 @@ import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 
-const UNIT_STATUSES = [
-  { value: 'available', label: 'Available' },
-  { value: 'busy', label: 'Busy' },
-  { value: 'enroute', label: 'En Route' },
-  { value: 'on-scene', label: 'On Scene' },
-];
-
 const DEFAULT_STATS = Object.freeze({
   active_calls: 0,
   urgent_calls: 0,
@@ -60,7 +53,6 @@ export default function DepartmentHome() {
   const [showOnDutyModal, setShowOnDutyModal] = useState(false);
   const [onDutyLoading, setOnDutyLoading] = useState(false);
   const [offDutyLoading, setOffDutyLoading] = useState(false);
-  const [statusLoading, setStatusLoading] = useState('');
   const [showBoloModal, setShowBoloModal] = useState(false);
   const [savingBolo, setSavingBolo] = useState(false);
   const [boloForm, setBoloForm] = useState({
@@ -229,20 +221,6 @@ export default function DepartmentHome() {
     }
   }
 
-  async function updateStatus(status) {
-    if (!status || !myUnit) return;
-    setStatusLoading(status);
-    try {
-      await api.patch('/api/units/me', { status });
-      await refreshMyUnit();
-      scheduleRefresh();
-    } catch (err) {
-      alert('Failed to update status: ' + err.message);
-    } finally {
-      setStatusLoading('');
-    }
-  }
-
   async function createBolo(e) {
     e.preventDefault();
     if (!deptId) return;
@@ -340,40 +318,13 @@ export default function DepartmentHome() {
             <div className="bg-cad-surface border border-cad-border rounded-xl px-4 py-3">
               <p className="text-xs text-cad-muted uppercase tracking-wider mb-2">Duty</p>
               {onActiveDeptDuty ? (
-                <>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
-                      On Duty: {myUnit.callsign}{myUnit.sub_department_short_name ? ` (${myUnit.sub_department_short_name})` : ''}
-                    </span>
-                    <button
-                      onClick={goOffDuty}
-                      disabled={offDutyLoading}
-                      className="px-2.5 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors disabled:opacity-50"
-                    >
-                      {offDutyLoading ? '...' : 'Go Off Duty'}
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1 mt-2 flex-wrap">
-                    {UNIT_STATUSES.map((status) => {
-                      const selected = myUnit.status === status.value;
-                      const disabled = selected || !!statusLoading;
-                      return (
-                        <button
-                          key={status.value}
-                          onClick={() => updateStatus(status.value)}
-                          disabled={disabled}
-                          className={`text-xs px-2 py-1 rounded transition-colors ${
-                            selected
-                              ? 'bg-cad-accent/20 text-cad-accent-light cursor-default'
-                              : 'bg-cad-card text-cad-muted hover:text-cad-ink hover:bg-cad-border'
-                          } ${statusLoading && !selected ? 'opacity-60' : ''}`}
-                        >
-                          {statusLoading === status.value ? '...' : status.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
+                <button
+                  onClick={goOffDuty}
+                  disabled={offDutyLoading}
+                  className="w-full px-3 py-2 text-sm bg-red-500/10 text-red-400 border border-red-500/30 rounded font-medium hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                >
+                  {offDutyLoading ? '...' : 'Go Off Duty'}
+                </button>
               ) : (
                 <>
                   <button

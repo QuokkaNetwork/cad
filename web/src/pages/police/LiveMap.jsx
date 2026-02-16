@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { CRS, latLngBounds } from 'leaflet';
 import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 import { useDepartment } from '../../context/DepartmentContext';
 
 const MAP_POLL_INTERVAL_MS = 1500;
@@ -25,6 +26,10 @@ const DEFAULT_GAME_BOUNDS = Object.freeze({
 function parseMapNumber(value, fallback) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function roundCalibrationValue(value) {
+  return Math.round(Number(value) * 1000) / 1000;
 }
 
 function normalizeMapPlayer(entry) {
@@ -142,6 +147,7 @@ function MapBoundsController({ tileConfig, resetSignal, onMapReady }) {
 
 export default function LiveMap() {
   const { key: locationKey } = useLocation();
+  const { isAdmin } = useAuth();
   const { activeDepartment } = useDepartment();
   const [tileConfig, setTileConfig] = useState({
     mapAvailable: false,
@@ -167,6 +173,9 @@ export default function LiveMap() {
   const [lastRefreshAt, setLastRefreshAt] = useState(0);
   const [mapInstance, setMapInstance] = useState(null);
   const [resetSignal, setResetSignal] = useState(0);
+  const [calibrationDirty, setCalibrationDirty] = useState(false);
+  const [calibrationSaving, setCalibrationSaving] = useState(false);
+  const [calibrationNotice, setCalibrationNotice] = useState('');
 
   const deptId = Number(activeDepartment?.id || 0);
   const isDispatchDepartment = !!activeDepartment?.is_dispatch;
@@ -192,10 +201,12 @@ export default function LiveMap() {
         missingTiles,
       });
 
-      setMapScaleX(parseMapNumber(cfg?.map_scale_x, 1));
-      setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
-      setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
-      setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
+      if (!calibrationDirty) {
+        setMapScaleX(parseMapNumber(cfg?.map_scale_x, 1));
+        setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
+        setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
+        setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
+      }
 
       const cfgBounds = cfg?.map_game_bounds || {};
       const nextGameBounds = {
@@ -215,7 +226,7 @@ export default function LiveMap() {
     } catch {
       setMapConfigError('Failed to load live map tile configuration');
     }
-  }, []);
+  }, [calibrationDirty]);
 
   const fetchPlayers = useCallback(async () => {
     if (!deptId) {
@@ -242,6 +253,41 @@ export default function LiveMap() {
   const refreshAll = useCallback(async () => {
     await Promise.all([fetchMapConfig(), fetchPlayers()]);
   }, [fetchMapConfig, fetchPlayers]);
+
+  const nudgeCalibration = useCallback((deltaX, deltaY) => {
+    setMapOffsetX((prev) => roundCalibrationValue(prev + deltaX));
+    setMapOffsetY((prev) => roundCalibrationValue(prev + deltaY));
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, []);
+
+  const resetCalibrationOffsets = useCallback(() => {
+    setMapOffsetX(0);
+    setMapOffsetY(0);
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, []);
+
+  const saveCalibrationOffsets = useCallback(async () => {
+    if (!isAdmin || calibrationSaving) return;
+    setCalibrationSaving(true);
+    setCalibrationNotice('');
+    try {
+      await api.put('/api/admin/settings', {
+        settings: {
+          live_map_offset_x: String(mapOffsetX),
+          live_map_offset_y: String(mapOffsetY),
+        },
+      });
+      setCalibrationDirty(false);
+      setCalibrationNotice('Calibration saved');
+      fetchMapConfig();
+    } catch (err) {
+      setCalibrationNotice(err?.message || 'Failed to save calibration');
+    } finally {
+      setCalibrationSaving(false);
+    }
+  }, [isAdmin, calibrationSaving, mapOffsetX, mapOffsetY, fetchMapConfig]);
 
   useEffect(() => {
     setLoading(true);
@@ -300,6 +346,71 @@ export default function LiveMap() {
           </button>
         </div>
       </div>
+
+      {isAdmin && (
+        <div className="bg-cad-card border border-cad-border rounded-lg px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-cad-muted">Calibration</span>
+            <button
+              type="button"
+              onClick={() => nudgeCalibration(0, -1)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Up
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeCalibration(0, 1)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Down
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeCalibration(-1, 0)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Left
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeCalibration(1, 0)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Right
+            </button>
+            <button
+              type="button"
+              onClick={resetCalibrationOffsets}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Reset Offsets
+            </button>
+            <button
+              type="button"
+              onClick={saveCalibrationOffsets}
+              disabled={!calibrationDirty || calibrationSaving}
+              className="px-2 py-1 bg-cad-accent text-white border border-cad-accent/40 rounded hover:bg-cad-accent-light transition-colors disabled:opacity-50"
+            >
+              {calibrationSaving ? 'Saving...' : 'Save'}
+            </button>
+            <span className="font-mono text-cad-muted">
+              offsetX {mapOffsetX.toFixed(1)} | offsetY {mapOffsetY.toFixed(1)}
+            </span>
+            {calibrationDirty && (
+              <span className="text-amber-300">Unsaved changes</span>
+            )}
+            {calibrationNotice && (
+              <span className={calibrationNotice === 'Calibration saved' ? 'text-emerald-400' : 'text-red-400'}>
+                {calibrationNotice}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-cad-muted">
+            If markers appear low compared to in-game, use Up. If markers appear high, use Down.
+          </p>
+        </div>
+      )}
 
       <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
         <div className="px-3 py-2 border-b border-cad-border flex flex-wrap items-center justify-between gap-2 text-xs text-cad-muted">
