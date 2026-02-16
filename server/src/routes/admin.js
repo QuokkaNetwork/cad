@@ -75,6 +75,8 @@ function parseOrderedIds(value) {
 
 const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
 fs.mkdirSync(uploadRoot, { recursive: true });
+const mapUploadRoot = path.resolve(__dirname, '../../data/uploads/map-images');
+fs.mkdirSync(mapUploadRoot, { recursive: true });
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -83,6 +85,16 @@ const upload = multer({
     const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
     if (allowed.has(file.mimetype)) return cb(null, true);
     cb(new Error('Only PNG, JPG, WEBP, or GIF images are allowed'));
+  },
+});
+
+const mapUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 40 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+    if (allowed.has(file.mimetype)) return cb(null, true);
+    cb(new Error('Only image files are allowed'));
   },
 });
 
@@ -102,6 +114,40 @@ router.post('/departments/upload-icon', upload.single('icon'), async (req, res, 
       .toFile(outputPath);
 
     res.json({ icon: `/uploads/department-icons/${fileName}` });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/live-map/upload', mapUpload.single('map'), async (req, res, next) => {
+  if (!req.file) return res.status(400).json({ error: 'map file is required' });
+  if (req.file.mimetype !== 'image/png') {
+    return res.status(400).json({ error: 'Only PNG images are allowed' });
+  }
+
+  try {
+    const previous = String(Settings.get('live_map_image_url') || '').trim();
+    const fileName = `map-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.png`;
+    const outputPath = path.join(mapUploadRoot, fileName);
+
+    fs.writeFileSync(outputPath, req.file.buffer);
+    const imageUrl = `/uploads/map-images/${fileName}`;
+    Settings.set('live_map_image_url', imageUrl);
+
+    if (previous.startsWith('/uploads/map-images/')) {
+      const previousBase = path.basename(previous);
+      const previousPath = path.join(mapUploadRoot, previousBase);
+      if (previousPath !== outputPath && fs.existsSync(previousPath)) {
+        fs.unlinkSync(previousPath);
+      }
+    }
+
+    audit(req.user.id, 'live_map_uploaded', {
+      image_url: imageUrl,
+      size_bytes: req.file.size || 0,
+    });
+
+    res.json({ image_url: imageUrl });
   } catch (err) {
     next(err);
   }

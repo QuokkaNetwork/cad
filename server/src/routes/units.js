@@ -1,11 +1,12 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks } = require('../db/sqlite');
+const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
+const DEFAULT_LIVE_MAP_IMAGE_URL = '/maps/FullMap.png';
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -165,6 +166,13 @@ router.get('/map', requireAuth, (req, res) => {
   });
 
   res.json(payload);
+});
+
+router.get('/map-config', requireAuth, (_req, res) => {
+  const configured = String(Settings.get('live_map_image_url') || '').trim();
+  res.json({
+    map_image_url: configured || DEFAULT_LIVE_MAP_IMAGE_URL,
+  });
 });
 
 // List sub-departments available to current user for a department

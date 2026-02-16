@@ -81,7 +81,8 @@ app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   if (err?.name === 'MulterError') {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'Image too large (max 2MB)' });
+      const maxMb = err.field === 'map' ? 40 : 2;
+      return res.status(400).json({ error: `Image too large (max ${maxMb}MB)` });
     }
     return res.status(400).json({ error: err.message || 'Upload error' });
   }

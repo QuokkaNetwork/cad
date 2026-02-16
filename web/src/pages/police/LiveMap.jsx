@@ -13,7 +13,9 @@ const WORLD_BOUNDS = {
 
 const WORLD_WIDTH = WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX;
 const WORLD_HEIGHT = WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY;
-const MAP_BACKGROUND_URL = import.meta.env.VITE_CAD_MAP_IMAGE || '';
+const DEFAULT_MAP_BACKGROUND_URL = '/maps/FullMap.png';
+const MAP_BACKGROUND_ENV_URL = String(import.meta.env.VITE_CAD_MAP_IMAGE || '').trim();
+const INITIAL_MAP_BACKGROUND_URL = MAP_BACKGROUND_ENV_URL || DEFAULT_MAP_BACKGROUND_URL;
 
 const STATUS_COLORS = {
   available: '#22c55e',
@@ -60,6 +62,7 @@ export default function LiveMap() {
   const [showStale, setShowStale] = useState(true);
   const [selectedUnitId, setSelectedUnitId] = useState(null);
   const [viewBox, setViewBox] = useState(createInitialViewBox);
+  const [mapBackgroundUrl, setMapBackgroundUrl] = useState(INITIAL_MAP_BACKGROUND_URL);
 
   const svgRef = useRef(null);
   const dragRef = useRef(null);
@@ -78,9 +81,23 @@ export default function LiveMap() {
     }
   }, [deptId, isDispatch]);
 
+  const fetchMapConfig = useCallback(async () => {
+    try {
+      const config = await api.get('/api/units/map-config');
+      const configured = String(config?.map_image_url || '').trim();
+      setMapBackgroundUrl(configured || INITIAL_MAP_BACKGROUND_URL);
+    } catch {
+      setMapBackgroundUrl(INITIAL_MAP_BACKGROUND_URL);
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
   }, [fetchData, locationKey]);
+
+  useEffect(() => {
+    fetchMapConfig();
+  }, [fetchMapConfig, locationKey]);
 
   useEventSource({
     'unit:online': () => fetchData(),
@@ -92,9 +109,10 @@ export default function LiveMap() {
   useEffect(() => {
     const id = setInterval(() => {
       fetchData();
+      fetchMapConfig();
     }, 5000);
     return () => clearInterval(id);
-  }, [fetchData]);
+  }, [fetchData, fetchMapConfig]);
 
   useEffect(() => {
     if (!selectedUnitId) return;
@@ -290,9 +308,9 @@ export default function LiveMap() {
                 fill="#09111d"
               />
 
-              {MAP_BACKGROUND_URL && (
+              {mapBackgroundUrl && (
                 <image
-                  href={MAP_BACKGROUND_URL}
+                  href={mapBackgroundUrl}
                   x={WORLD_BOUNDS.minX}
                   y={-WORLD_BOUNDS.maxY}
                   width={WORLD_WIDTH}
@@ -404,8 +422,8 @@ export default function LiveMap() {
 
           <div className="bg-cad-card border border-cad-border rounded-lg p-3 text-xs text-cad-muted">
             <p>
-              If you want your own map artwork, convert GTA `.ydd` assets into a single web image
-              (`.png`/`.webp`) and set `VITE_CAD_MAP_IMAGE` in your web environment.
+              Default map image is hardcoded to <span className="font-mono">/maps/FullMap.png</span>.
+              Admins can upload a replacement PNG in <span className="font-semibold">System Settings</span>.
             </p>
             <p className="mt-1">
               Optional calibration vars: `VITE_CAD_MAP_MIN_X`, `VITE_CAD_MAP_MAX_X`, `VITE_CAD_MAP_MIN_Y`, `VITE_CAD_MAP_MAX_Y`.
