@@ -29,7 +29,7 @@ const NEW_MAPPING_TEMPLATE = {
   character_join_column: '',
   is_json: false,
   json_key: '',
-  is_search_column: true,
+  is_search_column: false,
   sort_order: '0',
 };
 
@@ -315,10 +315,6 @@ export default function AdminFieldMappings() {
       return Number(a.id || 0) - Number(b.id || 0);
     });
   }, [categories, mappings]);
-
-  const lookupPreviewFields = useMemo(() => {
-    return allMappingsSorted.filter((mapping) => parseFlag(mapping.is_search_column));
-  }, [allMappingsSorted]);
 
   const canCreateMapping = !!selectedCategory
     && String(newMapping.label || '').trim().length > 0
@@ -875,17 +871,6 @@ export default function AdminFieldMappings() {
 
         <div className="space-y-4">
           <div className="bg-cad-card border border-cad-border rounded-lg p-4">
-            <h3 className="text-sm font-semibold mb-2">Lookup Preview</h3>
-            <p className="text-xs text-cad-muted mb-3">
-              Fields flagged as lookup columns (`is_search_column`) are shown in search results.
-            </p>
-            <PreviewGrid
-              fields={lookupPreviewFields}
-              emptyText="No lookup fields marked yet. Enable 'Lookup' on at least one field."
-            />
-          </div>
-
-          <div className="bg-cad-card border border-cad-border rounded-lg p-4">
             <h3 className="text-sm font-semibold mb-2">Record Preview</h3>
             <p className="text-xs text-cad-muted mb-3">Full record view combining all mapped sections.</p>
             <PreviewGrid
@@ -1029,14 +1014,6 @@ export default function AdminFieldMappings() {
                     />
                     JSON Column
                   </label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!!newMapping.is_search_column}
-                      onChange={(e) => setNewMapping((prev) => ({ ...prev, is_search_column: e.target.checked }))}
-                    />
-                    Lookup Column
-                  </label>
                 </div>
                 <div className="md:col-span-2">
                   <button
@@ -1126,14 +1103,6 @@ export default function AdminFieldMappings() {
                           />
                         </div>
                         <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-cad-muted">
-                          <label className="inline-flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={!!draft.is_search_column}
-                              onChange={(e) => updateDraft(mapping.id, 'is_search_column', e.target.checked)}
-                            />
-                            Lookup
-                          </label>
                           <label className="inline-flex items-center gap-2">
                             <input
                               type="checkbox"

@@ -311,14 +311,9 @@ export default function Search() {
       >
         {selectedPerson && (
           <div className="space-y-4">
-            <LookupFieldsSection
-              title="Lookup Preview"
-              fields={selectedPerson.lookup_fields}
-            />
-
             <div>
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                Record Preview
+                Character Information
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <div className="bg-cad-surface border border-cad-border rounded px-3 py-2">
@@ -345,6 +340,11 @@ export default function Search() {
                 </div>
               </div>
             </div>
+
+            <LookupFieldsSection
+              title="Additional Information"
+              fields={selectedPerson.lookup_fields}
+            />
 
             {!isParamedics && (
               <details className="bg-cad-surface border border-cad-border rounded-lg">
@@ -425,11 +425,6 @@ export default function Search() {
       >
         {selectedVehicle && (
           <div className="space-y-4">
-            <LookupFieldsSection
-              title="Lookup Preview"
-              fields={selectedVehicle.lookup_fields}
-            />
-
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-cad-muted">Plate:</span>
@@ -452,6 +447,11 @@ export default function Search() {
                 <span className="ml-2">{selectedVehicle.owner || '-'}</span>
               </div>
             </div>
+
+            <LookupFieldsSection
+              title="Additional Information"
+              fields={selectedVehicle.lookup_fields}
+            />
 
             {vehicleOwner && (
               <div className="bg-cad-surface rounded px-3 py-2">

@@ -291,7 +291,7 @@ async function resolveMappedFieldData({
   entityType = 'person',
   joinValue,
   baseRowsByTable = {},
-  includeSearchOnly = false,
+  includeSearchOnly = false, // DEPRECATED: All fields are now always included
 }) {
   const normalizedJoinValue = String(joinValue || '').trim();
   if (!normalizedJoinValue) {
@@ -299,9 +299,8 @@ async function resolveMappedFieldData({
   }
 
   const { categories, mappings } = normalizeDatabaseFieldMappings(entityType);
-  const activeMappings = includeSearchOnly
-    ? mappings.filter(mapping => mapping.is_search_column)
-    : mappings;
+  // Always include all mappings - the includeSearchOnly parameter is deprecated
+  const activeMappings = mappings;
 
   if (activeMappings.length === 0) {
     return { categories: [], custom_fields: {} };
