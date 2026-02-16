@@ -110,6 +110,82 @@ function chooseActiveLinkForUser(user) {
   return selected;
 }
 
+function parsePositiveInt(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
+function normalizeLookupToken(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function pickLatestPlayer(existing, candidate) {
+  if (!existing) return candidate;
+  const existingTs = Number(existing?.updatedAtMs || 0);
+  const candidateTs = Number(candidate?.updatedAtMs || 0);
+  return candidateTs >= existingTs ? candidate : existing;
+}
+
+function setIndexedPlayer(index, key, player) {
+  const normalizedKey = normalizeLookupToken(key);
+  if (!normalizedKey) return;
+  index.set(normalizedKey, pickLatestPlayer(index.get(normalizedKey), player));
+}
+
+function buildLiveMapPlayerIndexes(players = []) {
+  const byCadUserId = new Map();
+  const bySteamId = new Map();
+  const byDiscordId = new Map();
+  const byCitizenId = new Map();
+
+  for (const player of players) {
+    const candidate = player || {};
+    const cadUserId = parsePositiveInt(candidate.cadUserId ?? candidate.cad_user_id);
+    if (cadUserId) {
+      byCadUserId.set(cadUserId, pickLatestPlayer(byCadUserId.get(cadUserId), candidate));
+    }
+
+    setIndexedPlayer(bySteamId, candidate.steamId || candidate.steam_id, candidate);
+    setIndexedPlayer(byDiscordId, candidate.discordId || candidate.discord_id, candidate);
+    setIndexedPlayer(byCitizenId, candidate.citizenid, candidate);
+  }
+
+  return { byCadUserId, bySteamId, byDiscordId, byCitizenId };
+}
+
+function resolveLiveMapPlayerForUnit(unit, user, indexes) {
+  const unitUserId = parsePositiveInt(unit?.user_id);
+  if (unitUserId && indexes.byCadUserId.has(unitUserId)) {
+    return indexes.byCadUserId.get(unitUserId) || null;
+  }
+
+  const steamId = normalizeLookupToken(user?.steam_id);
+  if (steamId && indexes.bySteamId.has(steamId)) {
+    return indexes.bySteamId.get(steamId) || null;
+  }
+
+  const discordId = normalizeLookupToken(user?.discord_id);
+  if (discordId && indexes.byDiscordId.has(discordId)) {
+    return indexes.byDiscordId.get(discordId) || null;
+  }
+
+  const preferredCitizenId = normalizeLookupToken(user?.preferred_citizen_id);
+  if (preferredCitizenId && indexes.byCitizenId.has(preferredCitizenId)) {
+    return indexes.byCitizenId.get(preferredCitizenId) || null;
+  }
+
+  return null;
+}
+
+function isFieldUnit(unit, dispatchDeptIds) {
+  if (!unit) return false;
+  if (dispatchDeptIds.has(Number(unit.department_id))) return false;
+  const callsign = String(unit.callsign || '').trim().toUpperCase();
+  if (!callsign || callsign === 'DISPATCH') return false;
+  return true;
+}
+
 function getAvailableSubDepartments(user, deptId) {
   const allForDept = SubDepartments.listByDepartment(deptId, true);
   if (user.is_admin) return allForDept;
@@ -197,12 +273,7 @@ router.get('/map', requireAuth, (req, res) => {
 
   // Live map should only show field units, never dispatch units.
   const dispatchDeptIds = new Set(findDispatchDepartments().map(d => d.id));
-  units = units.filter(unit => {
-    if (dispatchDeptIds.has(Number(unit.department_id))) return false;
-    const callsign = String(unit.callsign || '').trim().toUpperCase();
-    if (callsign === 'DISPATCH') return false;
-    return true;
-  });
+  units = units.filter(unit => isFieldUnit(unit, dispatchDeptIds));
 
   const userCache = new Map();
   const payload = units.map((unit) => {
@@ -278,12 +349,100 @@ router.get('/map-config', requireAuth, (_req, res) => {
 });
 
 router.get('/live-map/players', requireAuth, (req, res) => {
+  const deptId = parseInt(req.query.department_id, 10);
+  if (!deptId) return res.status(400).json({ error: 'department_id is required' });
+
+  const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
+  if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
+
+  let units = [];
+  const dispatchMode = req.query.dispatch === 'true';
+  if (dispatchMode && (req.user.is_admin || isUserInDispatchDepartment(req.user))) {
+    const visibleIds = Departments.listDispatchVisible().map(d => d.id);
+    if (!visibleIds.includes(deptId)) visibleIds.push(deptId);
+    units = Units.listByDepartmentIds(visibleIds);
+  } else {
+    units = Units.listByDepartment(deptId);
+  }
+
+  const dispatchDeptIds = new Set(findDispatchDepartments().map(d => d.id));
+  const fieldUnits = units.filter(unit => isFieldUnit(unit, dispatchDeptIds));
+
   const maxAgeMs = Math.max(5_000, parseInt(req.query.max_age_ms, 10) || liveMapStore.ACTIVE_PLAYER_MAX_AGE_MS);
+  const now = Date.now();
   const players = liveMapStore.listPlayers(maxAgeMs);
+  const indexes = buildLiveMapPlayerIndexes(players);
+  const userCache = new Map();
+  const payload = [];
+
+  for (const unit of fieldUnits) {
+    let user = userCache.get(unit.user_id);
+    if (user === undefined) {
+      user = Users.findById(unit.user_id) || null;
+      userCache.set(unit.user_id, user);
+    }
+
+    const livePlayer = resolveLiveMapPlayerForUnit(unit, user, indexes);
+    const link = chooseActiveLinkForUser(user);
+    const linkTs = parseSqliteUtc(link?.updated_at);
+    const hasFreshLink = !!link && !Number.isNaN(linkTs) && (now - linkTs) <= maxAgeMs;
+
+    const positionX = livePlayer
+      ? Number(livePlayer?.pos?.x)
+      : (hasFreshLink ? Number(link.position_x || 0) : NaN);
+    const positionY = livePlayer
+      ? Number(livePlayer?.pos?.y)
+      : (hasFreshLink ? Number(link.position_y || 0) : NaN);
+    const positionZ = livePlayer
+      ? Number(livePlayer?.pos?.z)
+      : (hasFreshLink ? Number(link.position_z || 0) : NaN);
+
+    if (!Number.isFinite(positionX) || !Number.isFinite(positionY)) continue;
+
+    const resolvedIdentifier = String(
+      livePlayer?.identifier
+      || livePlayer?.steamId
+      || livePlayer?.steam_id
+      || link?.steam_id
+      || `unit:${unit.id}`
+    ).trim();
+
+    payload.push({
+      identifier: resolvedIdentifier || `unit:${unit.id}`,
+      cad_user_id: Number(user?.id || unit.user_id || 0),
+      unit_id: Number(unit.id || 0),
+      callsign: String(unit.callsign || '').trim(),
+      status: String(unit.status || '').trim().toLowerCase(),
+      name: String(livePlayer?.cadName || livePlayer?.name || unit.user_name || user?.steam_name || '').trim() || 'Unknown',
+      location: String(livePlayer?.location || unit.location || '').trim(),
+      vehicle: String(livePlayer?.vehicle || '').trim(),
+      licensePlate: String(livePlayer?.licensePlate || livePlayer?.license_plate || '').trim(),
+      weapon: String(livePlayer?.weapon || '').trim(),
+      icon: Number.isFinite(Number(livePlayer?.icon)) ? Number(livePlayer.icon) : 6,
+      hasSirenEnabled: livePlayer?.hasSirenEnabled === true || livePlayer?.has_siren_enabled === true,
+      speed: Number.isFinite(Number(livePlayer?.speed))
+        ? Number(livePlayer.speed)
+        : (hasFreshLink ? Number(link.speed || 0) : 0),
+      heading: Number.isFinite(Number(livePlayer?.heading))
+        ? Number(livePlayer.heading)
+        : (hasFreshLink ? Number(link.heading || 0) : 0),
+      pos: {
+        x: positionX,
+        y: positionY,
+        z: Number.isFinite(positionZ) ? positionZ : 0,
+      },
+      updatedAtMs: Number.isFinite(Number(livePlayer?.updatedAtMs))
+        ? Number(livePlayer.updatedAtMs)
+        : (hasFreshLink ? linkTs : now),
+      department_id: Number(unit.department_id || 0),
+      department_short_name: String(unit.department_short_name || ''),
+    });
+  }
+
   res.json({
     type: 'playerData',
-    payload: players,
-    total: players.length,
+    payload,
+    total: payload.length,
     max_age_ms: maxAgeMs,
     timestamp: Date.now(),
   });

@@ -152,6 +152,29 @@ function resolveCadUserFromIdentifiers(identifiers = {}) {
   return null;
 }
 
+function parseCadUserId(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
+function resolveCadUserFromHeartbeatPayload(player = {}) {
+  const candidates = [
+    player?.cad_user_id,
+    player?.cadUserId,
+    player?.cad_id,
+    player?.cadId,
+  ];
+
+  for (const candidate of candidates) {
+    const userId = parseCadUserId(candidate);
+    if (!userId) continue;
+    const user = Users.findById(userId);
+    if (user) return user;
+  }
+  return null;
+}
+
 function normalizeIdentityToken(value) {
   return String(value || '')
     .trim()
@@ -531,6 +554,30 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       speed: Number(player.speed || 0),
     });
 
+    const cadUserFromIdentifiers = resolveCadUserFromIdentifiers(ids);
+    const cadUserFromPayload = resolveCadUserFromHeartbeatPayload(player);
+    let cadUser = cadUserFromIdentifiers || cadUserFromPayload;
+    if (cadUserFromIdentifiers && cadUserFromPayload && Number(cadUserFromIdentifiers.id) !== Number(cadUserFromPayload.id)) {
+      // Prefer identifier-based mapping if heartbeat-provided CAD id conflicts.
+      cadUser = cadUserFromIdentifiers;
+    }
+    if (!cadUser) {
+      const cachedUserId = liveLinkUserCache.get(ids.linkKey);
+      if (cachedUserId) {
+        const cached = Users.findById(cachedUserId);
+        if (cached) {
+          cadUser = cached;
+        }
+      }
+    }
+    if (!cadUser) {
+      const byName = resolveCadUserByName(player.name, onDutyNameIndex);
+      if (byName) {
+        cadUser = byName;
+      }
+    }
+
+    const mappedUnit = cadUser ? Units.findByUserId(cadUser.id) : null;
     liveMapStore.upsertPlayer(ids.linkKey, {
       name: String(player.name || ''),
       pos: {
@@ -549,24 +596,14 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       steam_id: ids.steamId,
       discord_id: ids.discordId,
       citizenid: String(player.citizenid || ''),
+      cad_user_id: Number(cadUser?.id || 0),
+      unit_id: Number(mappedUnit?.id || 0),
+      callsign: String(mappedUnit?.callsign || ''),
+      unit_status: String(mappedUnit?.status || ''),
+      department_id: Number(mappedUnit?.department_id || 0),
+      cad_name: String(cadUser?.steam_name || ''),
     });
 
-    let cadUser = resolveCadUserFromIdentifiers(ids);
-    if (!cadUser) {
-      const cachedUserId = liveLinkUserCache.get(ids.linkKey);
-      if (cachedUserId) {
-        const cached = Users.findById(cachedUserId);
-        if (cached) {
-          cadUser = cached;
-        }
-      }
-    }
-    if (!cadUser) {
-      const byName = resolveCadUserByName(player.name, onDutyNameIndex);
-      if (byName) {
-        cadUser = byName;
-      }
-    }
     if (!cadUser) {
       unmatchedPlayers += 1;
       continue;
@@ -576,7 +613,7 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     if (ids.discordId) liveLinkUserCache.set(`discord:${ids.discordId}`, cadUser.id);
     if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
     detectedCadUserIds.add(cadUser.id);
-    const unit = Units.findByUserId(cadUser.id);
+    const unit = mappedUnit;
     if (!unit) continue;
 
     mappedUnits += 1;

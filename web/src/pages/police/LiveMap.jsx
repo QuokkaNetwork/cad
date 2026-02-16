@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { CRS, latLngBounds } from 'leaflet';
 import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import { api } from '../../api/client';
+import { useDepartment } from '../../context/DepartmentContext';
 
 const MAP_POLL_INTERVAL_MS = 1500;
 const MAP_ACTIVE_MAX_AGE_MS = 30_000;
@@ -27,9 +28,14 @@ function parseMapNumber(value, fallback) {
 }
 
 function normalizeMapPlayer(entry) {
+  const unitId = Number(entry?.unit_id || 0);
   const pos = entry?.pos || {};
   return {
-    identifier: String(entry?.identifier || '').trim(),
+    identifier: String(entry?.identifier || (unitId ? `unit:${unitId}` : '')).trim(),
+    callsign: String(entry?.callsign || '').trim(),
+    cadUserId: Number(entry?.cad_user_id || 0),
+    unitId,
+    unitStatus: String(entry?.status || '').trim().toLowerCase(),
     name: String(entry?.name || 'Unknown').trim() || 'Unknown',
     location: String(entry?.location || '').trim(),
     vehicle: String(entry?.vehicle || '').trim(),
@@ -136,6 +142,7 @@ function MapBoundsController({ tileConfig, resetSignal, onMapReady }) {
 
 export default function LiveMap() {
   const { key: locationKey } = useLocation();
+  const { activeDepartment } = useDepartment();
   const [tileConfig, setTileConfig] = useState({
     mapAvailable: false,
     tileUrlTemplate: DEFAULT_TILE_URL_TEMPLATE,
@@ -160,6 +167,9 @@ export default function LiveMap() {
   const [lastRefreshAt, setLastRefreshAt] = useState(0);
   const [mapInstance, setMapInstance] = useState(null);
   const [resetSignal, setResetSignal] = useState(0);
+
+  const deptId = Number(activeDepartment?.id || 0);
+  const isDispatchDepartment = !!activeDepartment?.is_dispatch;
 
   const fetchMapConfig = useCallback(async () => {
     try {
@@ -208,8 +218,16 @@ export default function LiveMap() {
   }, []);
 
   const fetchPlayers = useCallback(async () => {
+    if (!deptId) {
+      setPlayers([]);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const data = await api.get(`/api/units/live-map/players?max_age_ms=${MAP_ACTIVE_MAX_AGE_MS}`);
+      const data = await api.get(
+        `/api/units/live-map/players?department_id=${deptId}&dispatch=${isDispatchDepartment ? 'true' : 'false'}&max_age_ms=${MAP_ACTIVE_MAX_AGE_MS}`
+      );
       const nextPlayers = normalizePlayers(data?.payload || []);
       setPlayers(nextPlayers);
       setPlayerError('');
@@ -219,7 +237,7 @@ export default function LiveMap() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [deptId, isDispatchDepartment]);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([fetchMapConfig(), fetchPlayers()]);
@@ -335,6 +353,7 @@ export default function LiveMap() {
                 <Tooltip direction="top" offset={[0, -8]} opacity={1} className="!bg-slate-900 !text-slate-100 !border-slate-700">
                   <div className="text-xs">
                     <p className="font-semibold">{player.name}</p>
+                    {player.callsign ? <p className="font-mono text-cyan-300">{player.callsign}</p> : null}
                     {player.vehicle ? <p>{player.vehicle}</p> : null}
                     <p>{player.location || 'No location'}</p>
                   </div>

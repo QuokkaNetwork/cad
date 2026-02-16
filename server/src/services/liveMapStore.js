@@ -41,6 +41,12 @@ function upsertPlayer(identifier, payload = {}) {
     steamId: normalizeString(payload.steamId || payload.steam_id),
     discordId: normalizeString(payload.discordId || payload.discord_id),
     citizenid: normalizeString(payload.citizenid),
+    cadUserId: Math.max(0, Math.trunc(normalizeNumber(payload.cadUserId || payload.cad_user_id, 0))),
+    unitId: Math.max(0, Math.trunc(normalizeNumber(payload.unitId || payload.unit_id, 0))),
+    callsign: normalizeString(payload.callsign),
+    unitStatus: normalizeString(payload.unitStatus || payload.unit_status),
+    departmentId: Math.max(0, Math.trunc(normalizeNumber(payload.departmentId || payload.department_id, 0))),
+    cadName: normalizeString(payload.cadName || payload.cad_name),
     updatedAtMs: Date.now(),
   });
 }
