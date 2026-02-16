@@ -1361,6 +1361,209 @@ const FieldMappings = {
   },
 };
 
+// --- Voice Channels ---
+const VoiceChannels = {
+  list() {
+    return db.prepare(`
+      SELECT vc.*, d.name as department_name, d.short_name as department_short_name
+      FROM voice_channels vc
+      LEFT JOIN departments d ON d.id = vc.department_id
+      WHERE vc.is_active = 1
+      ORDER BY vc.channel_number ASC
+    `).all();
+  },
+  findById(id) {
+    return db.prepare(`
+      SELECT vc.*, d.name as department_name, d.short_name as department_short_name
+      FROM voice_channels vc
+      LEFT JOIN departments d ON d.id = vc.department_id
+      WHERE vc.id = ?
+    `).get(id);
+  },
+  findByChannelNumber(channelNumber) {
+    return db.prepare(`
+      SELECT vc.*, d.name as department_name, d.short_name as department_short_name
+      FROM voice_channels vc
+      LEFT JOIN departments d ON d.id = vc.department_id
+      WHERE vc.channel_number = ?
+    `).get(channelNumber);
+  },
+  listByDepartment(departmentId) {
+    return db.prepare(`
+      SELECT * FROM voice_channels
+      WHERE department_id = ? AND is_active = 1
+      ORDER BY channel_number ASC
+    `).all(departmentId);
+  },
+  create({ channel_number, department_id, name, description }) {
+    const info = db.prepare(`
+      INSERT INTO voice_channels (channel_number, department_id, name, description)
+      VALUES (?, ?, ?, ?)
+    `).run(channel_number, department_id || null, name, description || '');
+    return this.findById(info.lastInsertRowid);
+  },
+  update(id, fields) {
+    const allowed = ['name', 'description', 'is_active'];
+    const updates = [];
+    const values = [];
+    for (const key of allowed) {
+      if (fields[key] !== undefined) {
+        updates.push(`${key} = ?`);
+        values.push(fields[key]);
+      }
+    }
+    if (updates.length === 0) return;
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+    db.prepare(`UPDATE voice_channels SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  },
+};
+
+// --- Voice Participants ---
+const VoiceParticipants = {
+  listByChannel(channelId) {
+    return db.prepare(`
+      SELECT vp.*,
+             u.steam_name as user_name,
+             u.avatar_url as user_avatar,
+             un.callsign as unit_callsign,
+             un.status as unit_status,
+             d.name as department_name,
+             d.short_name as department_short_name
+      FROM voice_participants vp
+      LEFT JOIN users u ON u.id = vp.user_id
+      LEFT JOIN units un ON un.id = vp.unit_id
+      LEFT JOIN departments d ON d.id = un.department_id
+      WHERE vp.channel_id = ?
+      ORDER BY vp.joined_at DESC
+    `).all(channelId);
+  },
+  findByUserAndChannel(userId, channelId) {
+    return db.prepare(`
+      SELECT * FROM voice_participants
+      WHERE user_id = ? AND channel_id = ?
+    `).get(userId, channelId);
+  },
+  add({ channel_id, user_id, unit_id, citizen_id, game_id }) {
+    const existing = this.findByUserAndChannel(user_id, channel_id);
+    if (existing) {
+      db.prepare(`
+        UPDATE voice_participants
+        SET unit_id = ?, citizen_id = ?, game_id = ?, last_activity_at = datetime('now')
+        WHERE id = ?
+      `).run(unit_id || null, citizen_id || '', game_id || '', existing.id);
+      return existing;
+    }
+    const info = db.prepare(`
+      INSERT INTO voice_participants (channel_id, user_id, unit_id, citizen_id, game_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(channel_id, user_id, unit_id || null, citizen_id || '', game_id || '');
+    return db.prepare('SELECT * FROM voice_participants WHERE id = ?').get(info.lastInsertRowid);
+  },
+  updateTalkingStatus(participantId, isTalking) {
+    db.prepare(`
+      UPDATE voice_participants
+      SET is_talking = ?, last_activity_at = datetime('now')
+      WHERE id = ?
+    `).run(isTalking ? 1 : 0, participantId);
+  },
+  remove(participantId) {
+    db.prepare('DELETE FROM voice_participants WHERE id = ?').run(participantId);
+  },
+  removeByUser(userId, channelId) {
+    db.prepare('DELETE FROM voice_participants WHERE user_id = ? AND channel_id = ?').run(userId, channelId);
+  },
+};
+
+// --- Voice Call Sessions ---
+const VoiceCallSessions = {
+  findByCallId(callId) {
+    return db.prepare(`
+      SELECT vcs.*,
+             c.title as call_title,
+             c.location as call_location,
+             u.steam_name as accepted_by_name
+      FROM voice_call_sessions vcs
+      JOIN calls c ON c.id = vcs.call_id
+      LEFT JOIN users u ON u.id = vcs.accepted_by_user_id
+      WHERE vcs.call_id = ?
+    `).get(callId);
+  },
+  findById(id) {
+    return db.prepare(`
+      SELECT vcs.*,
+             c.title as call_title,
+             c.location as call_location,
+             u.steam_name as accepted_by_name
+      FROM voice_call_sessions vcs
+      JOIN calls c ON c.id = vcs.call_id
+      LEFT JOIN users u ON u.id = vcs.accepted_by_user_id
+      WHERE vcs.id = ?
+    `).get(id);
+  },
+  listPending() {
+    return db.prepare(`
+      SELECT vcs.*,
+             c.title as call_title,
+             c.location as call_location,
+             c.description as call_description,
+             c.priority as call_priority
+      FROM voice_call_sessions vcs
+      JOIN calls c ON c.id = vcs.call_id
+      WHERE vcs.status = 'pending'
+      ORDER BY vcs.created_at DESC
+    `).all();
+  },
+  listActive() {
+    return db.prepare(`
+      SELECT vcs.*,
+             c.title as call_title,
+             c.location as call_location,
+             u.steam_name as accepted_by_name
+      FROM voice_call_sessions vcs
+      JOIN calls c ON c.id = vcs.call_id
+      LEFT JOIN users u ON u.id = vcs.accepted_by_user_id
+      WHERE vcs.status = 'active'
+      ORDER BY vcs.accepted_at DESC
+    `).all();
+  },
+  create({ call_id, call_channel_number, caller_citizen_id, caller_game_id, caller_name }) {
+    const info = db.prepare(`
+      INSERT INTO voice_call_sessions (call_id, call_channel_number, caller_citizen_id, caller_game_id, caller_name, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+    `).run(call_id, call_channel_number, caller_citizen_id || '', caller_game_id || '', caller_name || '');
+    return this.findById(info.lastInsertRowid);
+  },
+  accept(id, userId) {
+    db.prepare(`
+      UPDATE voice_call_sessions
+      SET status = 'active', accepted_by_user_id = ?, accepted_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(userId, id);
+  },
+  decline(id) {
+    db.prepare(`
+      UPDATE voice_call_sessions
+      SET status = 'declined', ended_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  },
+  end(id) {
+    db.prepare(`
+      UPDATE voice_call_sessions
+      SET status = 'ended', ended_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  },
+  endByCallId(callId) {
+    db.prepare(`
+      UPDATE voice_call_sessions
+      SET status = 'ended', ended_at = datetime('now'), updated_at = datetime('now')
+      WHERE call_id = ? AND status IN ('pending', 'active')
+    `).run(callId);
+  },
+};
+
 module.exports = {
   initDb,
   getDb: () => db,
@@ -1384,4 +1587,7 @@ module.exports = {
   Announcements,
   FieldMappingCategories,
   FieldMappings,
+  VoiceChannels,
+  VoiceParticipants,
+  VoiceCallSessions,
 };

@@ -1,4 +1,5 @@
 const express = require('express');
+const http = require('http');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
@@ -15,6 +16,8 @@ const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
 const { ensureLiveMapTilesDir } = require('./services/liveMapTiles');
+const { getVoiceBridge } = require('./services/voiceBridge');
+const VoiceSignalingServer = require('./services/voiceSignaling');
 
 // Initialize database
 console.log('Initializing database...');
@@ -94,6 +97,7 @@ app.use('/api/search', require('./routes/search'));
 app.use('/api/records', require('./routes/records'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/voice', require('./routes/voice'));
 app.use('/api/integration/fivem', require('./routes/fivem'));
 
 // Announcements (public, auth-required)
@@ -137,10 +141,30 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// Create HTTP server for Express + WebSocket
+const httpServer = http.createServer(app);
+
+// Initialize Voice Bridge (optional - only if dependencies are installed)
+let voiceBridge = null;
+let voiceSignaling = null;
+
+try {
+  voiceBridge = getVoiceBridge();
+  voiceSignaling = new VoiceSignalingServer(httpServer, voiceBridge);
+  console.log('[VoiceBridge] Voice bridge initialized successfully');
+} catch (error) {
+  console.warn('[VoiceBridge] Voice bridge not available:', error.message);
+  console.warn('[VoiceBridge] Install dependencies: npm install ws wrtc node-opus mumble simple-peer');
+  console.warn('[VoiceBridge] CAD will run without voice bridge support');
+}
+
 // Start server
-app.listen(config.port, () => {
+httpServer.listen(config.port, () => {
   console.log(`CAD server running on port ${config.port}`);
   console.log(`Environment: ${config.nodeEnv}`);
+  if (voiceBridge) {
+    console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
+  }
 });
 
 // Start Discord bot
