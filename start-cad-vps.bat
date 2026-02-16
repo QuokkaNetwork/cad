@@ -1,13 +1,30 @@
 @echo off
 setlocal ENABLEDELAYEDEXPANSION
 
+REM --- Self-relocate to temp copy ---
+REM cmd.exe reads .bat files from disk line-by-line. If git updates this file mid-run
+REM the interpreter loses its place and the window closes. Copy to temp and re-launch.
+if not defined CAD_RUNNING_FROM_TEMP (
+  set "CAD_TEMP_BAT=%TEMP%\cad-launcher-%RANDOM%.bat"
+  copy /Y "%~f0" "!CAD_TEMP_BAT!" >nul 2>nul
+  set "CAD_RUNNING_FROM_TEMP=1"
+  set "CAD_ORIGINAL_DIR=%~dp0"
+  cmd /c ""!CAD_TEMP_BAT!""
+  del "!CAD_TEMP_BAT!" >nul 2>nul
+  exit /b !ERRORLEVEL!
+)
+
 REM --- Bootstrap config ---
 REM Set this to your repo URL if running this BAT outside an existing CAD repo checkout.
 set "CAD_REPO_URL=https://github.com/QuokkaNetwork/cad.git"
 set "CAD_REPO_BRANCH=main"
 set "CAD_SUBDIR=cad"
 
-set "SCRIPT_DIR=%~dp0"
+if defined CAD_ORIGINAL_DIR (
+  set "SCRIPT_DIR=%CAD_ORIGINAL_DIR%"
+) else (
+  set "SCRIPT_DIR=%~dp0"
+)
 for %%I in ("%SCRIPT_DIR%.") do set "SCRIPT_DIR=%%~fI"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "APP_DIR=%SCRIPT_DIR%"
@@ -217,13 +234,25 @@ set NODE_ENV=production
 set AUTO_UPDATE_ENABLED=true
 set AUTO_UPDATE_SELF_RESTART=false
 set AUTO_UPDATE_EXIT_ON_UPDATE=true
+echo [CAD] Running: %NPM_BIN% run start
+echo.
 %NPM_BIN% run start
 set "SERVER_EXIT=!ERRORLEVEL!"
-echo [CAD] Server exited with code !SERVER_EXIT!. Restarting launcher loop...
-timeout /t 2 /nobreak >nul
+echo.
+echo [CAD] Server exited with code !SERVER_EXIT!.
+if "!SERVER_EXIT!"=="0" (
+  echo [CAD] Clean exit ^(likely auto-update restart^). Restarting in 2 seconds...
+  timeout /t 2 /nobreak >nul
+) else (
+  echo [CAD] Server crashed. Restarting in 5 seconds...
+  echo [CAD] If this keeps happening, check the error above and your .env configuration.
+  timeout /t 5 /nobreak >nul
+)
 goto :main_loop
 
 :fail
-echo [CAD] Startup failed.
-pause
+echo.
+echo [CAD] Startup failed. See error above.
+echo [CAD] Press any key to exit...
+pause >nul
 exit /b 1
