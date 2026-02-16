@@ -16,6 +16,7 @@ const PRIORITY_COLORS = {
 
 export default function CallCard({ call, onClick, onAssign, onClose, units = [], showDepartment = false }) {
   const priorityStyle = PRIORITY_COLORS[call.priority] || PRIORITY_COLORS['3'];
+  const isEmergency000 = String(call?.job_code || '').trim() === '000';
 
   return (
     <div
@@ -41,9 +42,13 @@ export default function CallCard({ call, onClick, onAssign, onClose, units = [],
                 {call.department_short_name}
               </span>
             )}
-            {call.job_code && (
+            {isEmergency000 ? (
+              <span className="text-[11px] px-1.5 py-0.5 rounded border border-red-500/35 bg-red-500/15 text-red-300 font-semibold">
+                000 Emergency
+              </span>
+            ) : call.job_code ? (
               <span className="text-xs text-cad-muted font-mono">{call.job_code}</span>
-            )}
+            ) : null}
             <StatusBadge status={call.status} />
           </div>
           <span className="text-xs text-cad-muted">

@@ -139,7 +139,7 @@ export default function Home() {
 
   function selectDepartment(dept) {
     setActiveDepartment(dept);
-    navigate('/units');
+    navigate(dept?.is_dispatch ? '/dispatch' : '/units');
   }
 
   const needsSetup = !user?.discord_id || departments.length === 0;

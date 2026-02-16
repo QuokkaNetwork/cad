@@ -38,6 +38,19 @@ function getUnitPostal(unit) {
   return extractPostalToken(unit?.location || '');
 }
 
+function isEmergency000Call(call) {
+  return String(call?.job_code || '').trim() === '000';
+}
+
+function parseSqliteUtc(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const normalized = text.replace(' ', 'T');
+  const withZone = normalized.endsWith('Z') ? normalized : `${normalized}Z`;
+  const ts = Date.parse(withZone);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
 function chooseClosestUnitByPostal(call, candidates = []) {
   const targetPostalRaw = getCallPostal(call);
   const targetPostal = normalizePostalToken(targetPostalRaw);
@@ -187,13 +200,35 @@ export default function Dispatch() {
     }
   }
 
-  const activeCalls = calls.filter(c => c.status !== 'closed');
+  const activeCalls = useMemo(() => (
+    calls
+      .filter(c => c.status !== 'closed')
+      .slice()
+      .sort((a, b) => {
+        const aEmergency = isEmergency000Call(a) ? 1 : 0;
+        const bEmergency = isEmergency000Call(b) ? 1 : 0;
+        if (aEmergency !== bEmergency) return bEmergency - aEmergency;
+
+        const aPriority = Number(a.priority || 3);
+        const bPriority = Number(b.priority || 3);
+        if (aPriority !== bPriority) return aPriority - bPriority;
+
+        return parseSqliteUtc(b.created_at) - parseSqliteUtc(a.created_at);
+      })
+  ), [calls]);
+
+  const incomingEmergencyCalls = useMemo(
+    () => activeCalls.filter(call => isEmergency000Call(call)),
+    [activeCalls]
+  );
+
   const dispatchSelectedCall = useMemo(() => {
     if (!isDispatch) return null;
+    const fallback = incomingEmergencyCalls[0] || activeCalls[0] || null;
     const selectedId = Number(dispatchCallId || 0);
-    if (!selectedId) return activeCalls[0] || null;
-    return activeCalls.find(c => c.id === selectedId) || activeCalls[0] || null;
-  }, [isDispatch, dispatchCallId, activeCalls]);
+    if (!selectedId) return fallback;
+    return activeCalls.find(c => c.id === selectedId) || fallback;
+  }, [isDispatch, dispatchCallId, activeCalls, incomingEmergencyCalls]);
 
   useEffect(() => {
     if (!isDispatch) return;
@@ -201,12 +236,14 @@ export default function Dispatch() {
       if (dispatchCallId) setDispatchCallId('');
       return;
     }
+    const fallback = incomingEmergencyCalls[0] || activeCalls[0] || null;
+    if (!fallback) return;
     const selectedId = Number(dispatchCallId || 0);
     const stillExists = selectedId && activeCalls.some(c => c.id === selectedId);
     if (!stillExists) {
-      setDispatchCallId(String(activeCalls[0].id));
+      setDispatchCallId(String(fallback.id));
     }
-  }, [isDispatch, activeCalls, dispatchCallId]);
+  }, [isDispatch, activeCalls, dispatchCallId, incomingEmergencyCalls]);
 
   const dispatchAssignableUnits = useMemo(() => {
     if (!dispatchSelectedCall) return [];
@@ -242,6 +279,11 @@ export default function Dispatch() {
           {isDispatch && (
             <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
               Multi-Department View
+            </span>
+          )}
+          {isDispatch && incomingEmergencyCalls.length > 0 && (
+            <span className="text-xs px-2 py-1 rounded bg-red-500/15 text-red-300 border border-red-500/35 font-semibold">
+              000 Calls: {incomingEmergencyCalls.length}
             </span>
           )}
         </div>
@@ -298,6 +340,30 @@ export default function Dispatch() {
                 <p className="text-xs text-cad-muted">No active calls to dispatch.</p>
               ) : (
                 <>
+                  {incomingEmergencyCalls.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-[11px] text-red-300 uppercase tracking-wider mb-1">Incoming 000 Calls</p>
+                      <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
+                        {incomingEmergencyCalls.slice(0, 6).map(call => {
+                          const selected = dispatchSelectedCall?.id === call.id;
+                          return (
+                            <button
+                              key={call.id}
+                              onClick={() => setDispatchCallId(String(call.id))}
+                              className={`w-full text-left px-2 py-1 rounded border text-xs transition-colors ${
+                                selected
+                                  ? 'bg-red-500/20 text-red-200 border-red-500/40'
+                                  : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
+                              }`}
+                            >
+                              #{call.id} {call.title}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <label className="block text-xs text-cad-muted mb-1">Selected Call</label>
                   <select
                     value={dispatchSelectedCall ? String(dispatchSelectedCall.id) : ''}
@@ -323,16 +389,31 @@ export default function Dispatch() {
                           )}
                         </div>
                         {suggestedDispatchUnit ? (
-                          <p className="mt-1">
-                            Suggested nearest unit:{' '}
-                            <span className="text-cad-accent-light font-mono">
-                              {suggestedDispatchUnit.callsign}
-                            </span>{' '}
-                            ({getUnitPostal(suggestedDispatchUnit) || 'no postal'})
-                          </p>
+                          <div className="mt-1 space-y-1">
+                            <p>
+                              Suggested nearest unit:{' '}
+                              <span className="text-cad-accent-light font-mono">
+                                {suggestedDispatchUnit.callsign}
+                              </span>{' '}
+                              ({getUnitPostal(suggestedDispatchUnit) || 'no postal'})
+                            </p>
+                            {dispatchSelectedCall.status !== 'closed' && (
+                              <button
+                                type="button"
+                                onClick={() => assignUnit(dispatchSelectedCall.id, suggestedDispatchUnit.id)}
+                                className="text-[11px] px-2 py-1 rounded bg-cad-accent/20 text-cad-accent-light border border-cad-accent/40 hover:bg-cad-accent/30"
+                              >
+                                Attach Suggested Unit
+                              </button>
+                            )}
+                          </div>
                         ) : (
                           <p className="mt-1">No postal-based recommendation available.</p>
                         )}
+                        <p className="mt-1">
+                          Assigning a unit marks them <span className="text-cad-ink">En Route</span> and pushes a
+                          route waypoint in-game when postal data is available.
+                        </p>
                       </div>
 
                       <div>
