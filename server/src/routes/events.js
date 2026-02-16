@@ -77,7 +77,12 @@ router.get('/', (req, res) => {
 
   for (const event of events) {
     handlers[event] = (data) => {
-      if (shouldSend(data.departmentId)) {
+      const unitDeptId = data?.unit?.department_id;
+      const dispatchUnitEvent = event.startsWith('unit:')
+        && unitDeptId
+        && !!Departments.findById(unitDeptId)?.is_dispatch;
+
+      if (dispatchUnitEvent || shouldSend(data.departmentId)) {
         send(event, data);
       }
     };

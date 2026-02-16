@@ -3,6 +3,7 @@ const {
   Settings,
   Users,
   Units,
+  Calls,
   Departments,
   FiveMPlayerLinks,
   FiveMFineJobs,
@@ -199,6 +200,52 @@ function formatUnitLocation(payload) {
   return postal ? `${fallback} (${postal})` : fallback;
 }
 
+function formatCallLocation(payload) {
+  const explicit = String(payload?.location || '').trim();
+  if (explicit) return explicit;
+
+  const hasStreet = !!String(payload?.street || '').trim();
+  const hasCrossing = !!String(payload?.crossing || '').trim();
+  const hasPostal = !!String(payload?.postal || '').trim();
+  const hasPosition = payload?.position
+    && (payload.position.x !== undefined || payload.position.y !== undefined || payload.position.z !== undefined);
+
+  if (!hasStreet && !hasCrossing && !hasPostal && !hasPosition) return '';
+  return formatUnitLocation(payload);
+}
+
+function normalizePriority(value) {
+  const priority = String(value || '1').trim();
+  return ['1', '2', '3', '4'].includes(priority) ? priority : '1';
+}
+
+function chooseCallDepartmentId(cadUser, requestedDepartmentId) {
+  if (cadUser) {
+    const onDutyUnit = Units.findByUserId(cadUser.id);
+    if (onDutyUnit) {
+      const unitDept = Departments.findById(onDutyUnit.department_id);
+      if (unitDept && unitDept.is_active && !unitDept.is_dispatch) {
+        return unitDept.id;
+      }
+    }
+  }
+
+  const requestedId = parseInt(requestedDepartmentId, 10);
+  if (requestedId) {
+    const requestedDept = Departments.findById(requestedId);
+    if (requestedDept && requestedDept.is_active) return requestedDept.id;
+  }
+
+  const dispatchVisible = Departments.listDispatchVisible().find(d => d.is_active && !d.is_dispatch);
+  if (dispatchVisible) return dispatchVisible.id;
+
+  const activeNonDispatch = Departments.listActive().find(d => !d.is_dispatch);
+  if (activeNonDispatch) return activeNonDispatch.id;
+
+  const activeAny = Departments.listActive()[0];
+  return activeAny ? activeAny.id : null;
+}
+
 // Heartbeat from FiveM resource with online players + position.
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];
@@ -299,6 +346,64 @@ router.post('/offline', requireBridgeAuth, (req, res) => {
     autoOffDuty = offDutyIfNotDispatch(Units.findByUserId(cadUser.id), 'offline_event');
   }
   res.json({ ok: true, auto_off_duty: autoOffDuty });
+});
+
+// Create CAD calls from in-game bridge events (e.g. /000 command).
+router.post('/calls', requireBridgeAuth, (req, res) => {
+  const payload = req.body || {};
+  const ids = resolveLinkIdentifiers(payload.identifiers || []);
+  const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Caller';
+  const sourceId = String(payload.source ?? '').trim();
+  const details = String(payload.message || payload.details || '').trim();
+
+  let cadUser = resolveCadUserFromIdentifiers(ids);
+  if (!cadUser && ids.linkKey) {
+    const cachedUserId = liveLinkUserCache.get(ids.linkKey);
+    if (cachedUserId) cadUser = Users.findById(cachedUserId) || null;
+  }
+  if (!cadUser) {
+    const byName = resolveCadUserByName(playerName, buildOnDutyNameIndex(Units.list()));
+    if (byName) cadUser = byName;
+  }
+  if (cadUser) {
+    if (ids.steamId) liveLinkUserCache.set(ids.steamId, cadUser.id);
+    if (ids.discordId) liveLinkUserCache.set(`discord:${ids.discordId}`, cadUser.id);
+    if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
+  }
+
+  const departmentId = chooseCallDepartmentId(cadUser, payload.department_id);
+  if (!departmentId) {
+    return res.status(400).json({ error: 'No active department available to create call' });
+  }
+
+  const location = formatCallLocation(payload);
+  const title = String(payload.title || '').trim() || (details ? details.slice(0, 120) : `000 Call from ${playerName}`);
+  const descriptionParts = [];
+  descriptionParts.push(`000 call from ${playerName}${sourceId ? ` (#${sourceId})` : ''}`);
+  if (details) descriptionParts.push(details);
+  if (ids.linkKey) descriptionParts.push(`Link: ${ids.linkKey}`);
+  const description = descriptionParts.join(' | ');
+
+  const call = Calls.create({
+    department_id: departmentId,
+    title,
+    priority: normalizePriority(payload.priority || '1'),
+    location,
+    description,
+    job_code: '000',
+    created_by: cadUser?.id || null,
+  });
+
+  bus.emit('call:create', { departmentId, call });
+  audit(cadUser?.id || null, 'fivem_000_call_created', {
+    callId: call.id,
+    departmentId,
+    playerName,
+    sourceId,
+    matchedUserId: cadUser?.id || null,
+  });
+
+  res.status(201).json({ ok: true, call });
 });
 
 // FiveM resource polls pending fine jobs and applies them through QBox-side logic.

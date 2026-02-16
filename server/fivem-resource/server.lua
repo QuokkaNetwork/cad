@@ -102,6 +102,70 @@ AddEventHandler('playerDropped', function(_reason)
   }, function() end)
 end)
 
+local function notifyPlayer(src, message)
+  if not src or src <= 0 then return end
+  if GetResourceState('chat') ~= 'started' then return end
+  TriggerClientEvent('chat:addMessage', src, {
+    color = { 0, 170, 255 },
+    args = { 'CAD', tostring(message or '') },
+  })
+end
+
+local function submitEmergencyCall(src, details)
+  local s = tonumber(src)
+  if not s then return end
+
+  local pos = PlayerPositions[s]
+  local payload = {
+    source = s,
+    player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
+    identifiers = GetPlayerIdentifiers(s),
+    message = tostring(details or ''),
+    priority = '1',
+    job_code = '000',
+  }
+
+  if pos then
+    payload.position = { x = pos.x, y = pos.y, z = pos.z }
+    payload.heading = pos.heading
+    payload.speed = pos.speed
+    payload.street = pos.street
+    payload.crossing = pos.crossing
+    payload.postal = pos.postal
+  end
+
+  request('POST', '/api/integration/fivem/calls', payload, function(status, body)
+    if status >= 200 and status < 300 then
+      local callId = '?'
+      local ok, parsed = pcall(json.decode, body or '{}')
+      if ok and type(parsed) == 'table' and type(parsed.call) == 'table' and parsed.call.id then
+        callId = tostring(parsed.call.id)
+      end
+      print(('[cad_bridge] /000 call created by %s (#%s) as CAD call #%s')
+        :format(payload.player_name, tostring(s), callId))
+      notifyPlayer(s, ('000 call sent to CAD (Call #%s).'):format(callId))
+      return
+    end
+
+    local err = ('Failed to create CAD call (HTTP %s)'):format(tostring(status))
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if ok and type(parsed) == 'table' and parsed.error then
+      err = err .. ': ' .. tostring(parsed.error)
+    end
+    print('[cad_bridge] ' .. err)
+    notifyPlayer(s, '000 call failed to send to CAD. Check server logs.')
+  end)
+end
+
+RegisterCommand('000', function(src, args)
+  if not src or src == 0 then
+    print('[cad_bridge] /000 command is in-game only')
+    return
+  end
+  local details = table.concat(args or {}, ' ')
+  submitEmergencyCall(src, details)
+end, false)
+
 CreateThread(function()
   while true do
     Wait(math.max(1000, Config.HeartbeatIntervalMs))

@@ -4,6 +4,7 @@ This resource links FiveM/QBox to CAD for:
 - Steam identifier to in-game source mapping
 - Unit position heartbeat updates into CAD
 - CAD fine queue polling (for QBox billing integration)
+- `/000` in-game emergency command to create CAD calls
 
 ## Install
 1. In CAD Admin > System Settings > FiveM CAD Bridge:
@@ -40,3 +41,8 @@ If the configured command is not registered, CAD fine jobs will now fail with a 
 - CAD must have the same Steam IDs for logged-in users.
 - If nearest-postal export is unavailable, CAD falls back to street names and then XYZ.
 - This is a first-draft bridge and may require adapter tweaks for your billing stack.
+
+## `/000` command
+- Players can use `/000 <details>` in-game.
+- The bridge sends a high-priority CAD call with current street/postal location (when available).
+- CAD creates the call in an active dispatch-visible department so units can self-attach.
