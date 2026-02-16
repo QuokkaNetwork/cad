@@ -712,15 +712,17 @@ export default function Dispatch() {
               </span>
             </div>
 
-            <div>
-              <h3 className="font-medium text-lg">{selectedCall.title}</h3>
-              {selectedCall.location && (
-                <p className="text-sm text-cad-muted mt-1">Location: {selectedCall.location}</p>
-              )}
-              {selectedCall.description && (
-                <p className="text-sm mt-2">{selectedCall.description}</p>
-              )}
-            </div>
+            {!isEmergency000Call(selectedCall) && (
+              <div>
+                <h3 className="font-medium text-lg">{selectedCall.title}</h3>
+                {selectedCall.location && (
+                  <p className="text-sm text-cad-muted mt-1">Location: {selectedCall.location}</p>
+                )}
+                {selectedCall.description && (
+                  <p className="text-sm mt-2">{selectedCall.description}</p>
+                )}
+              </div>
+            )}
 
             {isEmergency000Call(selectedCall) && (
               <div className="rounded-xl border border-red-500/35 bg-gradient-to-r from-red-500/12 via-rose-500/8 to-transparent p-4">

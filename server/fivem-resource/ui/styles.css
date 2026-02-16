@@ -1,13 +1,15 @@
 :root {
-  --bg-1: rgba(6, 10, 19, 0.85);
-  --bg-2: rgba(8, 23, 44, 0.9);
-  --panel: rgba(8, 19, 36, 0.94);
-  --panel-border: rgba(64, 105, 166, 0.45);
-  --ink: #e5eefc;
-  --muted: #8ea6c8;
-  --accent: #2dd4bf;
-  --accent-strong: #14b8a6;
-  --danger: #ff6b6b;
+  --cad-bg: #0a0f1a;
+  --cad-surface: #111827;
+  --cad-card: #1a2332;
+  --cad-border: #2a3a4e;
+  --cad-ink: #d4dce8;
+  --cad-muted: #7a8ea6;
+  --cad-accent: #0052C2;
+  --cad-accent-light: #2b7fff;
+  --cad-accent-dim: #032261;
+  --danger: #ef4444;
+  --cad-amber: #f59e0b;
 }
 
 *,
@@ -23,8 +25,8 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  color: var(--ink);
-  font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif;
+  color: var(--cad-ink);
+  font-family: "Inter", "Segoe UI", Tahoma, sans-serif;
   background: transparent;
 }
 
@@ -42,11 +44,7 @@ body * {
   display: grid;
   place-items: center;
   padding: 1.5rem;
-  background:
-    radial-gradient(1200px 700px at 20% 0%, rgba(20, 184, 166, 0.1), transparent 65%),
-    radial-gradient(900px 600px at 80% 100%, rgba(59, 130, 246, 0.12), transparent 65%),
-    linear-gradient(160deg, var(--bg-1), var(--bg-2));
-  backdrop-filter: blur(3px);
+  background: rgba(10, 15, 26, 0.75);
   z-index: 9999;
   pointer-events: auto;
 }
@@ -60,14 +58,12 @@ body * {
   width: min(880px, 95vw);
   max-height: 92vh;
   overflow: auto;
-  border-radius: 18px;
-  border: 1px solid var(--panel-border);
-  background:
-    linear-gradient(180deg, rgba(16, 37, 66, 0.45), rgba(8, 19, 36, 0.92)),
-    var(--panel);
+  border-radius: 12px;
+  border: 1px solid var(--cad-border);
+  background: var(--cad-card);
   box-shadow:
-    0 22px 50px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(45, 212, 191, 0.08) inset;
+    0 20px 40px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(0, 82, 194, 0.1) inset;
   padding: 1.1rem 1.15rem 1rem;
   animation: panel-enter 180ms ease-out;
 }
@@ -98,21 +94,21 @@ body * {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #ffce88;
+  color: var(--cad-amber);
   padding: 0.26rem 0.52rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 206, 136, 0.45);
-  background: rgba(241, 167, 42, 0.12);
+  border-radius: 6px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.1);
 }
 
 .icon-btn {
   appearance: none;
-  border: 1px solid rgba(142, 166, 200, 0.35);
-  background: rgba(10, 20, 37, 0.85);
-  color: var(--muted);
+  border: 1px solid var(--cad-border);
+  background: var(--cad-surface);
+  color: var(--cad-muted);
   width: 2rem;
   height: 2rem;
-  border-radius: 0.55rem;
+  border-radius: 0.5rem;
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
@@ -120,9 +116,9 @@ body * {
 }
 
 .icon-btn:hover {
-  color: var(--ink);
-  border-color: rgba(45, 212, 191, 0.55);
-  background: rgba(14, 30, 51, 0.95);
+  color: var(--cad-ink);
+  border-color: var(--cad-accent);
+  background: var(--cad-card);
 }
 
 h1 {
@@ -133,7 +129,7 @@ h1 {
 
 .subtitle {
   margin: 0.35rem 0 0.95rem;
-  color: var(--muted);
+  color: var(--cad-muted);
   font-size: 0.88rem;
 }
 
@@ -143,9 +139,9 @@ h1 {
 }
 
 .field {
-  background: rgba(8, 21, 39, 0.6);
-  border: 1px solid rgba(72, 98, 138, 0.45);
-  border-radius: 12px;
+  background: var(--cad-surface);
+  border: 1px solid var(--cad-border);
+  border-radius: 8px;
   padding: 0.7rem;
 }
 
@@ -154,7 +150,7 @@ h1 {
   margin-bottom: 0.45rem;
   font-size: 0.8rem;
   font-weight: 600;
-  color: #c8d9f3;
+  color: var(--cad-ink);
 }
 
 .required {
@@ -164,10 +160,10 @@ h1 {
 input[type="text"],
 textarea {
   width: 100%;
-  border: 1px solid rgba(99, 131, 179, 0.4);
-  background: rgba(5, 14, 29, 0.8);
-  color: var(--ink);
-  border-radius: 9px;
+  border: 1px solid var(--cad-border);
+  background: var(--cad-bg);
+  color: var(--cad-ink);
+  border-radius: 6px;
   padding: 0.62rem 0.65rem;
   font-size: 0.9rem;
   outline: none;
@@ -176,9 +172,9 @@ textarea {
 
 input[type="text"]:focus,
 textarea:focus {
-  border-color: rgba(45, 212, 191, 0.75);
-  box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.22);
-  background: rgba(6, 17, 34, 0.92);
+  border-color: var(--cad-accent);
+  box-shadow: 0 0 0 2px rgba(0, 82, 194, 0.2);
+  background: var(--cad-bg);
 }
 
 textarea {
@@ -198,12 +194,12 @@ textarea {
 }
 
 .counter {
-  color: var(--muted);
+  color: var(--cad-muted);
   font-size: 0.75rem;
 }
 
 .error {
-  color: #ff9f9f;
+  color: var(--danger);
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -217,15 +213,15 @@ textarea {
 }
 
 .dept-hint {
-  color: var(--muted);
+  color: var(--cad-muted);
   font-size: 0.74rem;
 }
 
 .empty-state {
-  color: var(--muted);
+  color: var(--cad-muted);
   font-size: 0.8rem;
-  border: 1px dashed rgba(142, 166, 200, 0.35);
-  border-radius: 10px;
+  border: 1px dashed var(--cad-border);
+  border-radius: 8px;
   padding: 0.6rem 0.65rem;
 }
 
@@ -241,10 +237,10 @@ textarea {
 .dept-btn {
   appearance: none;
   width: 100%;
-  border: 1px solid rgba(78, 108, 149, 0.5);
-  background: rgba(9, 22, 41, 0.88);
-  color: #d4e2f8;
-  border-radius: 9px;
+  border: 1px solid var(--cad-border);
+  background: var(--cad-surface);
+  color: var(--cad-ink);
+  border-radius: 6px;
   padding: 0.52rem 0.6rem;
   text-align: left;
   cursor: pointer;
@@ -253,14 +249,14 @@ textarea {
 
 .dept-btn:hover {
   transform: translateY(-1px);
-  border-color: rgba(45, 212, 191, 0.48);
-  background: rgba(10, 27, 49, 0.95);
+  border-color: var(--cad-accent-light);
+  background: var(--cad-card);
 }
 
 .dept-btn.active {
-  border-color: rgba(45, 212, 191, 0.8);
-  background: linear-gradient(135deg, rgba(8, 44, 58, 0.9), rgba(12, 28, 48, 0.95));
-  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.2) inset;
+  border-color: var(--cad-accent);
+  background: var(--cad-accent-dim);
+  box-shadow: 0 0 0 1px var(--cad-accent) inset;
 }
 
 .dept-title {
@@ -276,7 +272,7 @@ textarea {
   display: block;
   margin-top: 0.14rem;
   font-size: 0.73rem;
-  color: #9cb2d3;
+  color: var(--cad-muted);
 }
 
 .actions {
@@ -311,15 +307,15 @@ textarea {
 }
 
 .btn-primary {
-  color: #082233;
-  border-color: rgba(45, 212, 191, 0.7);
-  background: linear-gradient(135deg, var(--accent), #67e8f9);
+  color: white;
+  border-color: var(--cad-accent);
+  background: linear-gradient(135deg, var(--cad-accent), var(--cad-accent-light));
 }
 
 .btn-ghost {
-  color: #cbd8ec;
-  border-color: rgba(113, 142, 183, 0.6);
-  background: rgba(9, 22, 41, 0.82);
+  color: var(--cad-ink);
+  border-color: var(--cad-border);
+  background: var(--cad-surface);
 }
 
 @media (max-width: 760px) {
@@ -329,7 +325,7 @@ textarea {
 
   .panel {
     width: 100%;
-    border-radius: 14px;
+    border-radius: 12px;
     max-height: 95vh;
   }
 
