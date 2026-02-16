@@ -5,6 +5,10 @@ import StatusBadge from '../../components/StatusBadge';
 import { useEventSource } from '../../hooks/useEventSource';
 import { useDepartment } from '../../context/DepartmentContext';
 
+function normalizeUnitStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 export default function CallDetails() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -12,32 +16,96 @@ export default function CallDetails() {
   const [myUnit, setMyUnit] = useState(null);
   const [activeCall, setActiveCall] = useState(null);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const [unit, call] = await Promise.all([
-        api.get('/api/units/me').catch(() => null),
-        api.get('/api/units/me/active-call').catch(() => null),
+        api.get('/api/units/me').catch((err) => {
+          if (err?.status === 404) return null;
+          throw err;
+        }),
+        api.get('/api/units/me/active-call').catch((err) => {
+          if (err?.status === 404) return null;
+          throw err;
+        }),
       ]);
       setMyUnit(unit);
       setActiveCall(unit && call ? call : null);
+    } catch (err) {
+      console.error('Failed to refresh call details:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchData();
+    fetchData({ silent: false });
   }, [fetchData, locationKey, activeDepartment?.id]);
 
   useEventSource({
-    'unit:online': () => fetchData(),
-    'unit:offline': () => fetchData(),
-    'unit:update': () => fetchData(),
-    'call:update': () => fetchData(),
-    'call:assign': () => fetchData(),
-    'call:unassign': () => fetchData(),
-    'call:close': () => fetchData(),
+    'unit:online': () => fetchData({ silent: true }),
+    'unit:offline': () => fetchData({ silent: true }),
+    'unit:update': (payload) => {
+      const updatedUnitId = Number(payload?.unit?.id || 0);
+      if (!updatedUnitId) return;
+
+      const myUnitId = Number(myUnit?.id || 0);
+      if (myUnitId > 0 && updatedUnitId === myUnitId) {
+        const currentStatus = normalizeUnitStatus(myUnit?.status);
+        const nextStatus = normalizeUnitStatus(payload?.unit?.status);
+        if (nextStatus && nextStatus !== currentStatus) {
+          fetchData({ silent: true });
+        }
+        return;
+      }
+
+      const matchingAssignedUnit = Array.isArray(activeCall?.assigned_units)
+        ? activeCall.assigned_units.find((unit) => Number(unit?.id) === updatedUnitId)
+        : null;
+      if (!matchingAssignedUnit) return;
+
+      const currentStatus = normalizeUnitStatus(matchingAssignedUnit?.status);
+      const nextStatus = normalizeUnitStatus(payload?.unit?.status);
+      if (nextStatus && nextStatus !== currentStatus) {
+        fetchData({ silent: true });
+      }
+    },
+    'call:update': (payload) => {
+      const currentCallId = Number(activeCall?.id || 0);
+      const eventCallId = Number(payload?.call?.id || 0);
+      if (!eventCallId) return;
+      if (currentCallId > 0 && eventCallId !== currentCallId) return;
+      fetchData({ silent: true });
+    },
+    'call:assign': (payload) => {
+      const currentCallId = Number(activeCall?.id || 0);
+      const eventCallId = Number(payload?.call?.id || 0);
+      const eventUnitId = Number(payload?.unit?.id || 0);
+      const myUnitId = Number(myUnit?.id || 0);
+      const isMyAssignment = myUnitId > 0 && eventUnitId === myUnitId;
+      const isCurrentCallEvent = currentCallId > 0 && eventCallId === currentCallId;
+      if (isMyAssignment || isCurrentCallEvent || currentCallId === 0) {
+        fetchData({ silent: true });
+      }
+    },
+    'call:unassign': (payload) => {
+      const currentCallId = Number(activeCall?.id || 0);
+      const eventCallId = Number(payload?.call?.id || 0);
+      const eventUnitId = Number(payload?.unit?.id || payload?.unit_id || 0);
+      const myUnitId = Number(myUnit?.id || 0);
+      const isMyUnassignment = myUnitId > 0 && eventUnitId === myUnitId;
+      const isCurrentCallEvent = currentCallId > 0 && eventCallId === currentCallId;
+      if (isMyUnassignment || isCurrentCallEvent || currentCallId === 0) {
+        fetchData({ silent: true });
+      }
+    },
+    'call:close': (payload) => {
+      const currentCallId = Number(activeCall?.id || 0);
+      const eventCallId = Number(payload?.call?.id || 0);
+      if (!eventCallId) return;
+      if (currentCallId > 0 && eventCallId !== currentCallId) return;
+      fetchData({ silent: true });
+    },
   });
 
   async function leaveCall() {

@@ -69,9 +69,36 @@ export default function Sidebar() {
   const [isOnDuty, setIsOnDuty] = useState(false);
   const [hasActiveCall, setHasActiveCall] = useState(false);
   const prevDispatcherOnlineRef = useRef(null);
+  const callAssignAudioRef = useRef(null);
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
+
+  useEffect(() => {
+    const audio = new Audio('/sounds/cad-added-call.mp3');
+    audio.preload = 'auto';
+    callAssignAudioRef.current = audio;
+    return () => {
+      if (callAssignAudioRef.current) {
+        callAssignAudioRef.current.pause();
+        callAssignAudioRef.current = null;
+      }
+    };
+  }, []);
+
+  const playCallAssignSound = useCallback(() => {
+    const audio = callAssignAudioRef.current;
+    if (!audio) return;
+    try {
+      audio.currentTime = 0;
+      const maybePromise = audio.play();
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch(() => {});
+      }
+    } catch {
+      // Ignore autoplay/user gesture restrictions.
+    }
+  }, []);
 
   const fetchDispatcherStatus = useCallback(async () => {
     if (!deptId) {
@@ -105,9 +132,11 @@ export default function Sidebar() {
     try {
       await api.get('/api/units/me');
       setIsOnDuty(true);
-    } catch {
-      setIsOnDuty(false);
-      setHasActiveCall(false);
+    } catch (err) {
+      if (err?.status === 404 || err?.status === 401) {
+        setIsOnDuty(false);
+        setHasActiveCall(false);
+      }
     }
   }, []);
 
@@ -120,8 +149,10 @@ export default function Sidebar() {
     try {
       const activeCall = await api.get('/api/units/me/active-call');
       setHasActiveCall(!!activeCall?.id);
-    } catch {
-      setHasActiveCall(false);
+    } catch (err) {
+      if (err?.status === 404 || err?.status === 401) {
+        setHasActiveCall(false);
+      }
     }
   }, [deptId]);
 
@@ -142,12 +173,11 @@ export default function Sidebar() {
       fetchOnDutyStatus();
       fetchActiveCallStatus();
     },
-    'unit:update': () => {
-      fetchOnDutyStatus();
-      fetchActiveCallStatus();
-    },
     'call:assign': () => {
       fetchActiveCallStatus();
+      if (isOnDuty) {
+        playCallAssignSound();
+      }
     },
     'call:unassign': () => {
       fetchActiveCallStatus();
