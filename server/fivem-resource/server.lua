@@ -19,11 +19,18 @@ local function encodeJson(payload)
   return json.encode(payload or {})
 end
 
-local bridgeBackoffUntilMs = 0
-local lastBackoffLogAtMs = 0
+local DEFAULT_BACKOFF_SCOPE = 'global'
+local bridgeBackoffUntilMsByScope = {}
+local lastBackoffLogAtMsByScope = {}
 
 local function nowMs()
   return tonumber(GetGameTimer() or 0) or 0
+end
+
+local function normalizeBackoffScope(scope)
+  local normalized = trim(scope)
+  if normalized == '' then return DEFAULT_BACKOFF_SCOPE end
+  return normalized
 end
 
 local function getHeaderValue(responseHeaders, keyName)
@@ -46,31 +53,51 @@ local function computeBackoffMs(responseHeaders, fallbackMs)
   return math.max(1000, math.floor(tonumber(fallbackMs) or 10000))
 end
 
-local function setBridgeBackoff(responseHeaders, fallbackMs, reason)
+local function setBridgeBackoff(scope, responseHeaders, fallbackMs, reason)
+  local normalizedScope = normalizeBackoffScope(scope)
   local waitMs = computeBackoffMs(responseHeaders, fallbackMs)
   local nextUntil = nowMs() + waitMs
-  if nextUntil > bridgeBackoffUntilMs then
-    bridgeBackoffUntilMs = nextUntil
+  local currentUntil = tonumber(bridgeBackoffUntilMsByScope[normalizedScope] or 0) or 0
+  if nextUntil > currentUntil then
+    bridgeBackoffUntilMsByScope[normalizedScope] = nextUntil
   end
 
   local now = nowMs()
-  if (now - lastBackoffLogAtMs) >= 2000 then
-    lastBackoffLogAtMs = now
-    print(('[cad_bridge] backing off bridge requests for %sms (%s)'):format(
-      math.max(0, bridgeBackoffUntilMs - now),
+  local lastLogAt = tonumber(lastBackoffLogAtMsByScope[normalizedScope] or 0) or 0
+  if (now - lastLogAt) >= 2000 then
+    lastBackoffLogAtMsByScope[normalizedScope] = now
+    local scopeSuffix = normalizedScope ~= DEFAULT_BACKOFF_SCOPE and (' [' .. normalizedScope .. ']') or ''
+    print(('[cad_bridge] backing off bridge requests%s for %sms (%s)'):format(
+      scopeSuffix,
+      math.max(0, (tonumber(bridgeBackoffUntilMsByScope[normalizedScope] or 0) or 0) - now),
       tostring(reason or '429')
     ))
   end
 end
 
-local function isBridgeBackoffActive()
-  if bridgeBackoffUntilMs <= 0 then return false end
+local function getBackoffRemainingMs(scope)
+  local normalizedScope = normalizeBackoffScope(scope)
+  local untilMs = tonumber(bridgeBackoffUntilMsByScope[normalizedScope] or 0) or 0
+  if untilMs <= 0 then return 0 end
   local now = nowMs()
-  if now >= bridgeBackoffUntilMs then
-    bridgeBackoffUntilMs = 0
-    return false
+  if now >= untilMs then
+    bridgeBackoffUntilMsByScope[normalizedScope] = 0
+    return 0
   end
-  return true
+  return untilMs - now
+end
+
+local function getEffectiveBackoffRemainingMs(scope)
+  local normalizedScope = normalizeBackoffScope(scope)
+  local globalRemaining = getBackoffRemainingMs(DEFAULT_BACKOFF_SCOPE)
+  if normalizedScope == DEFAULT_BACKOFF_SCOPE then return globalRemaining end
+  local scopedRemaining = getBackoffRemainingMs(normalizedScope)
+  if scopedRemaining > globalRemaining then return scopedRemaining end
+  return globalRemaining
+end
+
+local function isBridgeBackoffActive(scope)
+  return getEffectiveBackoffRemainingMs(scope) > 0
 end
 
 local function request(method, path, payload, cb)
@@ -265,8 +292,8 @@ end
 local function submitEmergencyCall(src, report)
   local s = tonumber(src)
   if not s then return end
-  if isBridgeBackoffActive() then
-    local waitSeconds = math.max(1, math.ceil((bridgeBackoffUntilMs - nowMs()) / 1000))
+  if isBridgeBackoffActive('calls') then
+    local waitSeconds = math.max(1, math.ceil(getEffectiveBackoffRemainingMs('calls') / 1000))
     notifyPlayer(s, ('CAD bridge is rate-limited. Try /000 again in %ss.'):format(waitSeconds))
     return
   end
@@ -305,7 +332,7 @@ local function submitEmergencyCall(src, report)
       return
     end
     if status == 429 then
-      setBridgeBackoff(responseHeaders, 15000, '/000 call')
+      setBridgeBackoff('calls', responseHeaders, 15000, '/000 call')
     end
 
     local err = ('Failed to create CAD call (HTTP %s)'):format(tostring(status))
