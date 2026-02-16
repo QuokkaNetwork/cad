@@ -200,32 +200,32 @@ if not defined LOCAL_HEAD (
 :skip_update
 if "!UPDATED!"=="1" (
   echo [CAD] Installing dependencies...
-  %NPM_BIN% install %NPM_INSTALL_FLAGS%
+  call %NPM_BIN% install %NPM_INSTALL_FLAGS%
   if errorlevel 1 goto :fail
 
   echo [CAD] Building web app...
-  %NPM_BIN% run build
+  call %NPM_BIN% run build
   if errorlevel 1 (
     echo [CAD] Build failed. Re-installing web workspace dev dependencies and retrying...
-    %NPM_BIN% install --workspace=web %NPM_INSTALL_FLAGS%
+    call %NPM_BIN% install --workspace=web %NPM_INSTALL_FLAGS%
     if errorlevel 1 goto :fail
-    %NPM_BIN% run build
+    call %NPM_BIN% run build
     if errorlevel 1 goto :fail
   )
 ) else (
   if not exist "node_modules" (
     echo [CAD] Dependencies missing. Running npm install...
-    %NPM_BIN% install %NPM_INSTALL_FLAGS%
+    call %NPM_BIN% install %NPM_INSTALL_FLAGS%
     if errorlevel 1 goto :fail
   )
   if not exist "web\dist\index.html" (
     echo [CAD] Web build missing. Running npm run build...
-    %NPM_BIN% run build
+    call %NPM_BIN% run build
     if errorlevel 1 (
       echo [CAD] Build failed. Re-installing web workspace dev dependencies and retrying...
-      %NPM_BIN% install --workspace=web %NPM_INSTALL_FLAGS%
+      call %NPM_BIN% install --workspace=web %NPM_INSTALL_FLAGS%
       if errorlevel 1 goto :fail
-      %NPM_BIN% run build
+      call %NPM_BIN% run build
       if errorlevel 1 goto :fail
     )
   )
@@ -238,7 +238,7 @@ set AUTO_UPDATE_SELF_RESTART=false
 set AUTO_UPDATE_EXIT_ON_UPDATE=true
 echo [CAD] Running: %NPM_BIN% run start
 echo.
-%NPM_BIN% run start
+call %NPM_BIN% run start
 set "SERVER_EXIT=!ERRORLEVEL!"
 echo.
 echo [CAD] Server exited with code !SERVER_EXIT!.
