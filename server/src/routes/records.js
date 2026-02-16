@@ -67,4 +67,82 @@ router.post('/', requireAuth, (req, res) => {
   res.status(201).json(record);
 });
 
+// Update a record
+router.patch('/:id', requireAuth, (req, res) => {
+  const recordId = parseInt(req.params.id, 10);
+  const record = CriminalRecords.findById(recordId);
+  if (!record) return res.status(404).json({ error: 'Record not found' });
+
+  const { type, title, description, fine_amount } = req.body || {};
+  const updates = {};
+
+  if (type !== undefined) {
+    if (!['charge', 'fine', 'warning'].includes(type)) {
+      return res.status(400).json({ error: 'type must be charge, fine, or warning' });
+    }
+    updates.type = type;
+  }
+
+  if (title !== undefined) {
+    const normalized = String(title || '').trim();
+    if (!normalized) return res.status(400).json({ error: 'title is required' });
+    updates.title = normalized;
+  }
+
+  if (description !== undefined) {
+    updates.description = String(description || '');
+  }
+
+  const nextType = updates.type || record.type;
+  if (fine_amount !== undefined) {
+    const amount = Number(fine_amount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return res.status(400).json({ error: 'fine_amount must be a non-negative number' });
+    }
+    updates.fine_amount = nextType === 'fine' ? amount : 0;
+  } else if (updates.type !== undefined && nextType !== 'fine') {
+    updates.fine_amount = 0;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid update fields supplied' });
+  }
+
+  CriminalRecords.update(recordId, updates);
+  const updated = CriminalRecords.findById(recordId);
+
+  if (updated.type === 'fine' && Number(updated.fine_amount || 0) > 0) {
+    if (updates.type !== undefined || updates.title !== undefined || updates.fine_amount !== undefined) {
+      FiveMFineJobs.updatePendingBySourceRecordId(recordId, {
+        amount: Number(updated.fine_amount || 0),
+        reason: updated.title || '',
+      });
+    }
+  } else {
+    FiveMFineJobs.detachSourceRecord(recordId, 'Record updated to non-fine');
+  }
+
+  audit(req.user.id, 'record_updated', { recordId, updates });
+  res.json(updated);
+});
+
+// Delete a record
+router.delete('/:id', requireAuth, (req, res) => {
+  const recordId = parseInt(req.params.id, 10);
+  const record = CriminalRecords.findById(recordId);
+  if (!record) return res.status(404).json({ error: 'Record not found' });
+
+  const detachedJobs = FiveMFineJobs.detachSourceRecord(recordId, 'Record deleted');
+  CriminalRecords.delete(recordId);
+
+  audit(req.user.id, 'record_deleted', {
+    recordId,
+    citizen_id: record.citizen_id,
+    type: record.type,
+    title: record.title,
+    detachedJobs,
+  });
+  res.json({ success: true });
+});
+
 module.exports = router;

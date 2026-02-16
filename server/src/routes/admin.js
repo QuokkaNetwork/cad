@@ -19,6 +19,21 @@ const {
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
+const ACTIVE_LINK_MAX_AGE_MS = 2 * 60 * 1000;
+
+function parseSqliteUtc(value) {
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  const base = text.replace(' ', 'T');
+  const normalized = base.endsWith('Z') ? base : `${base}Z`;
+  return Date.parse(normalized);
+}
+
+function isActiveFiveMLink(link) {
+  const ts = parseSqliteUtc(link?.updated_at);
+  if (Number.isNaN(ts)) return false;
+  return (Date.now() - ts) <= ACTIVE_LINK_MAX_AGE_MS;
+}
 
 const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
 fs.mkdirSync(uploadRoot, { recursive: true });
@@ -323,12 +338,59 @@ router.post('/fivem-resource/install', (req, res) => {
 });
 
 router.get('/fivem/links', (_req, res) => {
-  res.json(FiveMPlayerLinks.list());
+  const activeOnly = String(_req.query.active || '').toLowerCase() === 'true';
+  const links = FiveMPlayerLinks.list();
+  res.json(activeOnly ? links.filter(isActiveFiveMLink) : links);
 });
 
 router.get('/fivem/fine-jobs', (req, res) => {
   const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
   res.json(FiveMFineJobs.listRecent(limit));
+});
+
+router.post('/fivem/test-fine', (req, res) => {
+  const { steam_id, citizen_id, amount, reason } = req.body || {};
+  const fineAmount = Number(amount);
+  if (!Number.isFinite(fineAmount) || fineAmount <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive number' });
+  }
+
+  let link = null;
+  if (steam_id) {
+    link = FiveMPlayerLinks.findBySteamId(String(steam_id));
+  } else if (citizen_id) {
+    link = FiveMPlayerLinks.findByCitizenId(String(citizen_id));
+  }
+
+  if (!link) {
+    return res.status(404).json({ error: 'Player not found in active FiveM links' });
+  }
+  if (!isActiveFiveMLink(link)) {
+    return res.status(400).json({ error: 'Player is not currently detected in server' });
+  }
+  if (!String(link.citizen_id || '').trim()) {
+    return res.status(400).json({ error: 'Selected player has no citizen_id available for fines' });
+  }
+
+  const jobReason = String(reason || 'CAD admin test fine').trim() || 'CAD admin test fine';
+  const job = FiveMFineJobs.create({
+    citizen_id: String(link.citizen_id),
+    amount: fineAmount,
+    reason: jobReason,
+    issued_by_user_id: req.user.id,
+    source_record_id: null,
+  });
+
+  audit(req.user.id, 'fivem_test_fine_queued', {
+    fineJobId: job.id,
+    steam_id: link.steam_id,
+    game_id: link.game_id,
+    citizen_id: link.citizen_id,
+    amount: fineAmount,
+    reason: jobReason,
+  });
+
+  res.status(201).json({ success: true, job, player: link });
 });
 
 // --- Audit Log ---

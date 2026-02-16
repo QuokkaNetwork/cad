@@ -23,6 +23,13 @@ export default function AdminSystemSettings() {
   const [bridgeStatus, setBridgeStatus] = useState(null);
   const [testResult, setTestResult] = useState(null);
   const [schemaResult, setSchemaResult] = useState(null);
+  const [fineTargets, setFineTargets] = useState([]);
+  const [loadingFineTargets, setLoadingFineTargets] = useState(false);
+  const [selectedFineTarget, setSelectedFineTarget] = useState('');
+  const [testFineAmount, setTestFineAmount] = useState('250');
+  const [testFineReason, setTestFineReason] = useState('CAD admin test fine');
+  const [queueingTestFine, setQueueingTestFine] = useState(false);
+  const [testFineResult, setTestFineResult] = useState(null);
 
   async function fetchSettings() {
     try {
@@ -45,9 +52,30 @@ export default function AdminSystemSettings() {
     }
   }
 
+  async function fetchFineTargets() {
+    setLoadingFineTargets(true);
+    try {
+      const data = await api.get('/api/admin/fivem/links?active=true');
+      const links = Array.isArray(data)
+        ? data.filter(link => String(link?.citizen_id || '').trim())
+        : [];
+      setFineTargets(links);
+      setSelectedFineTarget(prev => (
+        links.some(link => link.steam_id === prev) ? prev : (links[0]?.steam_id || '')
+      ));
+    } catch (err) {
+      setFineTargets([]);
+      setSelectedFineTarget('');
+      setTestFineResult({ success: false, message: 'Failed to load active players: ' + formatErr(err) });
+    } finally {
+      setLoadingFineTargets(false);
+    }
+  }
+
   useEffect(() => {
     fetchSettings();
     fetchFiveMStatus();
+    fetchFineTargets();
   }, [locationKey]);
 
   function updateSetting(key, value) {
@@ -97,6 +125,37 @@ export default function AdminSystemSettings() {
       alert('Failed to sync FiveM resource:\n' + formatErr(err));
     } finally {
       setInstallingBridge(false);
+    }
+  }
+
+  async function queueTestFine() {
+    if (!selectedFineTarget) {
+      alert('Select an active player first');
+      return;
+    }
+    const amount = Number(testFineAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('Test fine amount must be greater than 0');
+      return;
+    }
+
+    setQueueingTestFine(true);
+    setTestFineResult(null);
+    try {
+      const result = await api.post('/api/admin/fivem/test-fine', {
+        steam_id: selectedFineTarget,
+        amount,
+        reason: testFineReason,
+      });
+      const playerName = result?.player?.player_name || result?.player?.citizen_id || 'player';
+      setTestFineResult({
+        success: true,
+        message: `Queued fine job #${result?.job?.id || '?'} for ${playerName}.`,
+      });
+    } catch (err) {
+      setTestFineResult({ success: false, message: formatErr(err) });
+    } finally {
+      setQueueingTestFine(false);
     }
   }
 
@@ -340,6 +399,71 @@ export default function AdminSystemSettings() {
       </div>
 
       {/* Save button */}
+      <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-4">
+        <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-4">QBox Fine Test</h3>
+        <p className="text-xs text-cad-muted mb-3">
+          Queue a test fine for a player currently detected by the FiveM bridge.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Detected Player</label>
+            <select
+              value={selectedFineTarget}
+              onChange={e => setSelectedFineTarget(e.target.value)}
+              disabled={loadingFineTargets || fineTargets.length === 0}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent disabled:opacity-60"
+            >
+              {fineTargets.length === 0 && <option value="">No active players with citizen IDs</option>}
+              {fineTargets.map(link => (
+                <option key={link.steam_id} value={link.steam_id}>
+                  #{link.game_id || '?'} {link.player_name || 'Unknown'} | CID {link.citizen_id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Amount</label>
+            <input
+              type="number"
+              min="1"
+              value={testFineAmount}
+              onChange={e => setTestFineAmount(e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Reason</label>
+            <input
+              type="text"
+              value={testFineReason}
+              onChange={e => setTestFineReason(e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 mt-4">
+          <button
+            onClick={queueTestFine}
+            disabled={queueingTestFine || fineTargets.length === 0}
+            className="px-3 py-1.5 text-sm bg-cad-accent hover:bg-cad-accent-light text-white rounded border border-cad-accent/40 transition-colors disabled:opacity-50"
+          >
+            {queueingTestFine ? 'Queueing...' : 'Queue Test Fine'}
+          </button>
+          <button
+            onClick={fetchFineTargets}
+            disabled={loadingFineTargets}
+            className="px-3 py-1.5 text-sm bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
+          >
+            {loadingFineTargets ? 'Refreshing...' : 'Refresh Players'}
+          </button>
+        </div>
+        {testFineResult && (
+          <p className={`text-xs mt-3 whitespace-pre-wrap ${testFineResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+            {testFineResult.message}
+          </p>
+        )}
+      </div>
+
       <button
         onClick={saveSettings}
         disabled={saving}

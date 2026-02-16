@@ -505,6 +505,23 @@ const CriminalRecords = {
     ).run(citizen_id, type, title, description || '', fine_amount || 0, officer_name || '', officer_callsign || '', department_id);
     return this.findById(info.lastInsertRowid);
   },
+  update(id, fields) {
+    const allowed = ['type', 'title', 'description', 'fine_amount'];
+    const updates = [];
+    const values = [];
+    for (const key of allowed) {
+      if (fields[key] !== undefined) {
+        updates.push(`${key} = ?`);
+        values.push(fields[key]);
+      }
+    }
+    if (updates.length === 0) return;
+    values.push(id);
+    db.prepare(`UPDATE criminal_records SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  },
+  delete(id) {
+    db.prepare('DELETE FROM criminal_records WHERE id = ?').run(id);
+  },
   list(limit = 50, offset = 0) {
     return db.prepare(
       'SELECT * FROM criminal_records ORDER BY created_at DESC LIMIT ? OFFSET ?'
@@ -597,6 +614,28 @@ const FiveMFineJobs = {
       SET status = 'pending', error = '', updated_at = datetime('now')
       WHERE id = ?
     `).run(id);
+  },
+  updatePendingBySourceRecordId(sourceRecordId, { amount, reason }) {
+    db.prepare(`
+      UPDATE fivem_fine_jobs
+      SET amount = ?, reason = ?, updated_at = datetime('now')
+      WHERE source_record_id = ? AND status = 'pending'
+    `).run(Number(amount || 0), String(reason || ''), sourceRecordId);
+  },
+  detachSourceRecord(sourceRecordId, errorMessage = 'Source record deleted') {
+    const info = db.prepare(`
+      UPDATE fivem_fine_jobs
+      SET
+        status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+        error = CASE
+          WHEN status = 'pending' AND (error IS NULL OR error = '') THEN ?
+          ELSE error
+        END,
+        source_record_id = NULL,
+        updated_at = datetime('now')
+      WHERE source_record_id = ?
+    `).run(String(errorMessage || 'Source record deleted'), sourceRecordId);
+    return info.changes || 0;
   },
   listRecent(limit = 100) {
     return db.prepare('SELECT * FROM fivem_fine_jobs ORDER BY created_at DESC LIMIT ?').all(limit);
