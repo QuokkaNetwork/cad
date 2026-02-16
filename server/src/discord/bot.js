@@ -10,6 +10,7 @@ const {
   FiveMJobSyncJobs,
   Settings,
 } = require('../db/sqlite');
+const qbox = require('../db/qbox');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -54,6 +55,14 @@ function getRoleRemovedJobTarget() {
 
 function isJobSyncEnabled() {
   return toBool(Settings.get('fivem_bridge_job_sync_enabled'), true);
+}
+
+function isGameToDiscordJobSyncEnabled() {
+  return toBool(Settings.get('fivem_bridge_job_sync_reverse_enabled'), true);
+}
+
+function normalizeJobNameKey(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function choosePreferredTarget(candidates = []) {
@@ -189,7 +198,120 @@ function queueJobSyncIfNeeded(user, oldDepts, oldSubDepts, newDepts, newSubDepts
   return job;
 }
 
-function syncLinkedUserAccess(user, member, mappings) {
+async function syncJobRolesFromGame(user, member, mappings) {
+  if (!isGameToDiscordJobSyncEnabled()) {
+    return { enabled: false, changed: false, reason: 'disabled' };
+  }
+
+  const jobMappings = (Array.isArray(mappings) ? mappings : [])
+    .filter(mapping => mapping.target_type === 'job' && String(mapping.discord_role_id || '').trim() !== '');
+  if (jobMappings.length === 0) {
+    return { enabled: true, changed: false, reason: 'no_job_mappings' };
+  }
+
+  const citizenId = String(user.preferred_citizen_id || '').trim();
+  if (!citizenId) {
+    return { enabled: true, changed: false, reason: 'no_preferred_citizen_id' };
+  }
+
+  let gameJob = null;
+  try {
+    gameJob = await qbox.getCharacterJobById(citizenId);
+  } catch (err) {
+    const msg = String(err?.message || err || 'Unknown QBX lookup error');
+    console.warn(`[Discord] Reverse job role sync lookup failed for user ${user.id} (${citizenId}): ${msg}`);
+    return { enabled: true, changed: false, reason: 'lookup_failed', error: msg };
+  }
+
+  const jobName = String(gameJob?.name || '').trim();
+  if (!jobName) {
+    return { enabled: true, changed: false, reason: 'game_job_not_found' };
+  }
+  const jobGrade = normalizeGrade(gameJob?.grade || 0);
+  const jobNameKey = normalizeJobNameKey(jobName);
+
+  const desiredRoleIds = new Set(
+    jobMappings
+      .filter(mapping => (
+        normalizeJobNameKey(mapping.job_name) === jobNameKey
+        && normalizeGrade(mapping.job_grade) === jobGrade
+      ))
+      .map(mapping => String(mapping.discord_role_id))
+  );
+  const managedRoleIds = new Set(jobMappings.map(mapping => String(mapping.discord_role_id)));
+  const currentRoleIds = new Set(member.roles.cache.map(role => String(role.id)));
+
+  const toAdd = [];
+  const toRemove = [];
+
+  for (const roleId of desiredRoleIds) {
+    if (!currentRoleIds.has(roleId)) {
+      toAdd.push(roleId);
+    }
+  }
+  for (const roleId of currentRoleIds) {
+    if (managedRoleIds.has(roleId) && !desiredRoleIds.has(roleId)) {
+      toRemove.push(roleId);
+    }
+  }
+
+  if (toAdd.length === 0 && toRemove.length === 0) {
+    return {
+      enabled: true,
+      changed: false,
+      reason: 'already_synced',
+      job_name: jobName,
+      job_grade: jobGrade,
+    };
+  }
+
+  const addedRoles = [];
+  const removedRoles = [];
+  const errors = [];
+
+  for (const roleId of toAdd) {
+    try {
+      await member.roles.add(roleId, `CAD reverse job sync: ${jobName} (${jobGrade})`);
+      addedRoles.push(roleId);
+    } catch (err) {
+      errors.push(`add ${roleId}: ${String(err?.message || err || 'unknown error')}`);
+    }
+  }
+  for (const roleId of toRemove) {
+    try {
+      await member.roles.remove(roleId, `CAD reverse job sync: ${jobName} (${jobGrade})`);
+      removedRoles.push(roleId);
+    } catch (err) {
+      errors.push(`remove ${roleId}: ${String(err?.message || err || 'unknown error')}`);
+    }
+  }
+
+  if (addedRoles.length > 0 || removedRoles.length > 0 || errors.length > 0) {
+    audit(user.id, 'discord_job_role_sync_from_game', {
+      discordId: user.discord_id,
+      citizenId,
+      job_name: jobName,
+      job_grade: jobGrade,
+      added_roles: addedRoles,
+      removed_roles: removedRoles,
+      errors,
+    });
+  }
+
+  return {
+    enabled: true,
+    changed: addedRoles.length > 0 || removedRoles.length > 0,
+    reason: errors.length > 0 ? 'partial' : 'synced',
+    job_name: jobName,
+    job_grade: jobGrade,
+    added_roles: addedRoles,
+    removed_roles: removedRoles,
+    errors,
+  };
+}
+
+async function syncLinkedUserAccess(user, member, mappings) {
+  const reverseJobSync = await syncJobRolesFromGame(user, member, mappings);
   const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
   const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
   const { departmentIds, subDepartmentIds, roleJobs } = getMappedTargets(memberRoleIds, mappings);
@@ -246,6 +368,7 @@ function syncLinkedUserAccess(user, member, mappings) {
     is_admin: newIsAdmin,
     departments: newDepts,
     sub_departments: newSubDepts,
+    reverse_job_role_sync: reverseJobSync,
     queued_job_sync_id: queuedJob?.id || null,
   };
 }
@@ -329,13 +452,14 @@ async function syncUserRoles(discordId) {
   }
 
   const mappings = DiscordRoleMappings.list();
-  const synced = syncLinkedUserAccess(user, member, mappings);
+  const synced = await syncLinkedUserAccess(user, member, mappings);
 
   return {
     synced: true,
     is_admin: synced.is_admin,
     departments: synced.departments.map(d => d.short_name),
     sub_departments: synced.sub_departments.map(d => d.short_name),
+    reverse_job_role_sync: synced.reverse_job_role_sync,
     queued_job_sync_id: synced.queued_job_sync_id,
   };
 }
@@ -354,7 +478,7 @@ async function syncAllMembers() {
   for (const [, member] of members) {
     const user = Users.findByDiscordId(member.id);
     if (!user) { skipped++; continue; }
-    syncLinkedUserAccess(user, member, mappings);
+    await syncLinkedUserAccess(user, member, mappings);
     synced++;
   }
 

@@ -75,15 +75,6 @@ export default function Units() {
     }
   }
 
-  async function updateStatus(status) {
-    try {
-      await api.patch('/api/units/me', { status });
-      fetchData();
-    } catch (err) {
-      alert('Failed to update status: ' + err.message);
-    }
-  }
-
   async function assignMyUnit(callId) {
     if (!myUnit) return;
     try {
@@ -123,7 +114,7 @@ export default function Units() {
             </button>
           </div>
 
-          <UnitCard unit={myUnit} onStatusChange={updateStatus} />
+          <UnitCard unit={myUnit} />
         </div>
       ) : (
         <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">

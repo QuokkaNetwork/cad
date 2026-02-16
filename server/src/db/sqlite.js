@@ -682,6 +682,14 @@ const OffenceCatalog = {
   delete(id) {
     db.prepare('DELETE FROM offence_catalog WHERE id = ?').run(id);
   },
+  clearAll() {
+    const tx = db.transaction(() => {
+      const info = db.prepare('DELETE FROM offence_catalog').run();
+      db.prepare("DELETE FROM sqlite_sequence WHERE name = 'offence_catalog'").run();
+      return Number(info?.changes || 0);
+    });
+    return tx();
+  },
 };
 
 // --- Criminal Records ---

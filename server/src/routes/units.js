@@ -1,10 +1,19 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments, SubDepartments } = require('../db/sqlite');
+const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 const router = express.Router();
+const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
+
+function parseSqliteUtc(value) {
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  const base = text.replace(' ', 'T');
+  const normalized = base.endsWith('Z') ? base : `${base}Z`;
+  return Date.parse(normalized);
+}
 
 function findDispatchDepartments() {
   return Departments.list().filter(d => d.is_dispatch);
@@ -15,6 +24,35 @@ function isUserInDispatchDepartment(user) {
   if (!dispatchDepts.length) return false;
   const dispatchIds = dispatchDepts.map(d => d.id);
   return user.departments.some(d => dispatchIds.includes(d.id));
+}
+
+function chooseActiveLinkForUser(user) {
+  if (!user) return null;
+
+  const candidates = [];
+  const steamId = String(user.steam_id || '').trim();
+  const discordId = String(user.discord_id || '').trim();
+
+  if (steamId) {
+    const bySteam = FiveMPlayerLinks.findBySteamId(steamId);
+    if (bySteam) candidates.push(bySteam);
+  }
+  if (discordId) {
+    const byDiscord = FiveMPlayerLinks.findBySteamId(`discord:${discordId}`);
+    if (byDiscord) candidates.push(byDiscord);
+  }
+
+  let selected = null;
+  let selectedTs = NaN;
+  for (const candidate of candidates) {
+    const ts = parseSqliteUtc(candidate?.updated_at);
+    if (Number.isNaN(ts)) continue;
+    if (!selected || ts > selectedTs) {
+      selected = candidate;
+      selectedTs = ts;
+    }
+  }
+  return selected;
 }
 
 function getAvailableSubDepartments(user, deptId) {
@@ -82,6 +120,51 @@ router.get('/dispatchable', requireAuth, (req, res) => {
   const deptIds = visibleDepts.map(d => d.id);
   const units = Units.listByDepartmentIds(deptIds);
   res.json({ departments: visibleDepts, units });
+});
+
+// List units with live FiveM map coordinates.
+router.get('/map', requireAuth, (req, res) => {
+  const deptId = parseInt(req.query.department_id, 10);
+  if (!deptId) return res.status(400).json({ error: 'department_id is required' });
+
+  const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
+  if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
+
+  let units = [];
+  const dispatchMode = req.query.dispatch === 'true';
+  if (dispatchMode && (req.user.is_admin || isUserInDispatchDepartment(req.user))) {
+    const visibleIds = Departments.listDispatchVisible().map(d => d.id);
+    if (!visibleIds.includes(deptId)) visibleIds.push(deptId);
+    units = Units.listByDepartmentIds(visibleIds);
+  } else {
+    units = Units.listByDepartment(deptId);
+  }
+
+  const userCache = new Map();
+  const payload = units.map((unit) => {
+    let user = userCache.get(unit.user_id);
+    if (!user) {
+      user = Users.findById(unit.user_id) || null;
+      userCache.set(unit.user_id, user);
+    }
+
+    const link = chooseActiveLinkForUser(user);
+    const linkTs = parseSqliteUtc(link?.updated_at);
+    const stale = !link || Number.isNaN(linkTs) || (Date.now() - linkTs) > ACTIVE_LINK_MAX_AGE_MS;
+
+    return {
+      ...unit,
+      position_x: link ? Number(link.position_x || 0) : null,
+      position_y: link ? Number(link.position_y || 0) : null,
+      position_z: link ? Number(link.position_z || 0) : null,
+      position_heading: link ? Number(link.heading || 0) : null,
+      position_speed: link ? Number(link.speed || 0) : null,
+      position_updated_at: link?.updated_at || null,
+      position_stale: stale,
+    };
+  });
+
+  res.json(payload);
 });
 
 // List sub-departments available to current user for a department

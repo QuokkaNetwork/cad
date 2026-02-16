@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import Modal from '../../components/Modal';
@@ -36,6 +36,117 @@ function sortOffences(list) {
   });
 }
 
+function downloadFile(fileName, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildJsonTemplate() {
+  return {
+    notes: [
+      'Fill the offences array with one object per charge.',
+      'Allowed categories: infringement, summary, indictment.',
+      'is_active can be 1/0 or true/false.',
+    ],
+    offences: [],
+    template_row: {
+      category: OFFENCE_CATEGORY.INFRINGEMENT,
+      code: 'INF-001',
+      title: 'Example offence title',
+      description: 'Optional offence description',
+      fine_amount: 250,
+      sort_order: 0,
+      is_active: 1,
+    },
+  };
+}
+
+function buildCsvTemplate() {
+  return 'category,code,title,description,fine_amount,sort_order,is_active\n';
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (char === ',') {
+      row.push(current);
+      current = '';
+      continue;
+    }
+    if (char === '\n') {
+      row.push(current);
+      rows.push(row);
+      row = [];
+      current = '';
+      continue;
+    }
+    if (char === '\r') {
+      continue;
+    }
+    current += char;
+  }
+
+  row.push(current);
+  if (row.length > 1 || String(row[0] || '').trim()) {
+    rows.push(row);
+  }
+  return rows;
+}
+
+function parseCsvOffences(text) {
+  const rows = parseCsvRows(text);
+  if (!rows.length) return [];
+
+  const headers = rows[0].map((h, idx) => {
+    const raw = String(h || '').trim().toLowerCase();
+    return idx === 0 ? raw.replace(/^\ufeff/, '') : raw;
+  });
+  const entries = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const raw = rows[i] || [];
+    const isBlank = raw.every(cell => !String(cell || '').trim());
+    if (isBlank) continue;
+
+    const row = {};
+    headers.forEach((header, idx) => {
+      if (!header) return;
+      row[header] = String(raw[idx] || '').trim();
+    });
+    entries.push(row);
+  }
+  return entries;
+}
+
 export default function AdminOffenceCatalog() {
   const { key: locationKey } = useLocation();
   const [offences, setOffences] = useState([]);
@@ -45,6 +156,8 @@ export default function AdminOffenceCatalog() {
   const [editForm, setEditForm] = useState({ id: null, ...EMPTY_FORM });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const jsonImportRef = useRef(null);
+  const csvImportRef = useRef(null);
 
   const grouped = useMemo(() => {
     const out = {};
@@ -142,6 +255,93 @@ export default function AdminOffenceCatalog() {
     }
   }
 
+  async function importOffences(rows, sourceLabel = 'file') {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      alert(`No offences found in ${sourceLabel}.`);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const result = await api.post('/api/admin/offence-catalog/import', { offences: rows });
+      await fetchOffences();
+      if (result.failed > 0) {
+        const firstErrors = (result.errors || [])
+          .slice(0, 8)
+          .map(e => `Row ${e.index}: ${e.error}`)
+          .join('\n');
+        alert(`Imported ${result.imported}/${result.total} offences.\n${result.failed} failed.\n\n${firstErrors}`);
+      } else {
+        alert(`Imported ${result.imported} offences successfully.`);
+      }
+    } catch (err) {
+      alert('Failed to import offences: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleJsonImportFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const rows = Array.isArray(parsed)
+        ? parsed
+        : (Array.isArray(parsed?.offences) ? parsed.offences : []);
+      await importOffences(rows, file.name);
+    } catch (err) {
+      alert('Failed to parse JSON file: ' + err.message);
+    }
+  }
+
+  async function handleCsvImportFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const rows = parseCsvOffences(text);
+      await importOffences(rows, file.name);
+    } catch (err) {
+      alert('Failed to parse CSV file: ' + err.message);
+    }
+  }
+
+  function downloadJsonTemplate() {
+    const template = buildJsonTemplate();
+    downloadFile('offence-catalog-template.json', JSON.stringify(template, null, 2), 'application/json');
+  }
+
+  function downloadCsvTemplate() {
+    downloadFile('offence-catalog-template.csv', buildCsvTemplate(), 'text/csv;charset=utf-8');
+  }
+
+  async function clearCatalog() {
+    if (offences.length === 0) {
+      alert('Catalog is already empty.');
+      return;
+    }
+
+    const ok = confirm(`Clear all ${offences.length} offences from the catalog? This cannot be undone.`);
+    if (!ok) return;
+
+    setSaving(true);
+    try {
+      const result = await api.delete('/api/admin/offence-catalog');
+      await fetchOffences();
+      alert(`Cleared ${Number(result.cleared || 0)} offences.`);
+    } catch (err) {
+      alert('Failed to clear offence catalog: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div>
       <AdminPageHeader
@@ -150,12 +350,66 @@ export default function AdminOffenceCatalog() {
       />
 
       <div className="flex items-center justify-between mb-6">
-        <button
-          onClick={() => setShowNew(true)}
-          className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          + New Offence
-        </button>
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setShowNew(true)}
+              className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              + New Offence
+            </button>
+            <button
+              onClick={downloadJsonTemplate}
+              className="px-3 py-2 bg-cad-surface border border-cad-border rounded-lg text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card transition-colors"
+            >
+              Download JSON Template
+            </button>
+            <button
+              onClick={downloadCsvTemplate}
+              className="px-3 py-2 bg-cad-surface border border-cad-border rounded-lg text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card transition-colors"
+            >
+              Download CSV Template
+            </button>
+            <button
+              disabled={saving}
+              onClick={() => jsonImportRef.current?.click()}
+              className="px-3 py-2 bg-cad-surface border border-cad-border rounded-lg text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card transition-colors disabled:opacity-50"
+            >
+              Import JSON
+            </button>
+            <button
+              disabled={saving}
+              onClick={() => csvImportRef.current?.click()}
+              className="px-3 py-2 bg-cad-surface border border-cad-border rounded-lg text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card transition-colors disabled:opacity-50"
+            >
+              Import CSV
+            </button>
+            <button
+              disabled={saving || offences.length === 0}
+              onClick={clearCatalog}
+              className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300 hover:bg-red-500/20 transition-colors disabled:opacity-50"
+            >
+              Clear Catalog
+            </button>
+          </div>
+          <p className="text-xs text-cad-muted mt-2">
+            Import columns: <span className="font-mono">category, code, title, description, fine_amount, sort_order, is_active</span>
+          </p>
+        </div>
+        <input
+          ref={jsonImportRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={handleJsonImportFile}
+        />
+        <input
+          ref={csvImportRef}
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={handleCsvImportFile}
+        />
       </div>
 
       {loading ? (
@@ -328,4 +582,3 @@ function OffenceFormFields({ form, setForm }) {
     </>
   );
 }
-

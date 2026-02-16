@@ -102,6 +102,88 @@ function buildCustomFieldValues({ row, charinfo, mappings }) {
   return customFields;
 }
 
+function normalizeJobName(value) {
+  return String(value || '').trim();
+}
+
+function normalizeJobGrade(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function parseJobContainer(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = parseMaybeJson(trimmed);
+  if (parsed && typeof parsed === 'object') return parsed;
+  return { name: trimmed };
+}
+
+function extractJobFromCharacterRow(row, charinfo, configuredJobColumn) {
+  const candidateContainers = [];
+  if (configuredJobColumn && row && Object.prototype.hasOwnProperty.call(row, configuredJobColumn)) {
+    candidateContainers.push(parseJobContainer(row[configuredJobColumn]));
+  }
+  if ((!configuredJobColumn || configuredJobColumn !== 'job') && row && Object.prototype.hasOwnProperty.call(row, 'job')) {
+    candidateContainers.push(parseJobContainer(row.job));
+  }
+  if (charinfo && typeof charinfo === 'object' && Object.prototype.hasOwnProperty.call(charinfo, 'job')) {
+    candidateContainers.push(parseJobContainer(charinfo.job));
+  }
+
+  let jobName = '';
+  let jobGrade = null;
+  for (const container of candidateContainers) {
+    if (!container || typeof container !== 'object') continue;
+
+    if (!jobName) {
+      const candidateName = (
+        container.name
+        || container.job
+        || container.id
+        || container.label
+      );
+      jobName = normalizeJobName(candidateName);
+    }
+
+    if (jobGrade === null) {
+      if (container.grade && typeof container.grade === 'object') {
+        jobGrade = normalizeJobGrade(
+          container.grade.level
+          ?? container.grade.grade
+          ?? container.grade.value
+          ?? container.grade.rank
+        );
+      } else if (container.grade !== undefined) {
+        jobGrade = normalizeJobGrade(container.grade);
+      } else if (container.grade_level !== undefined) {
+        jobGrade = normalizeJobGrade(container.grade_level);
+      } else if (container.rank !== undefined) {
+        jobGrade = normalizeJobGrade(container.rank);
+      }
+    }
+  }
+
+  if (!jobName && row && typeof row === 'object') {
+    if (row.job_name !== undefined) {
+      jobName = normalizeJobName(row.job_name);
+    }
+    if (jobGrade === null && row.job_grade !== undefined) {
+      jobGrade = normalizeJobGrade(row.job_grade);
+    }
+  }
+
+  if (!jobName) return null;
+  return {
+    name: jobName,
+    grade: jobGrade === null ? 0 : normalizeJobGrade(jobGrade),
+  };
+}
+
 function getQboxTableConfig() {
   return {
     playersTable: getSetting('qbox_players_table', 'players'),
@@ -109,6 +191,7 @@ function getQboxTableConfig() {
     citizenIdCol: getSetting('qbox_citizenid_col', 'citizenid'),
     charInfoCol: getSetting('qbox_charinfo_col', 'charinfo'),
     moneyCol: getSetting('qbox_money_col', 'money'),
+    jobCol: getSetting('qbox_job_col', 'job'),
   };
 }
 
@@ -200,7 +283,7 @@ async function inspectConfiguredSchema() {
       report.message = 'Schema check failed';
       return report;
     }
-    if (!IDENTIFIER_RE.test(cfg.citizenIdCol) || !IDENTIFIER_RE.test(cfg.charInfoCol) || !IDENTIFIER_RE.test(cfg.moneyCol)) {
+    if (!IDENTIFIER_RE.test(cfg.citizenIdCol) || !IDENTIFIER_RE.test(cfg.charInfoCol) || !IDENTIFIER_RE.test(cfg.moneyCol) || !IDENTIFIER_RE.test(cfg.jobCol)) {
       report.errors.push('Configured player column names contain invalid characters');
       report.message = 'Schema check failed';
       return report;
@@ -229,6 +312,9 @@ async function inspectConfiguredSchema() {
     }
     if (report.players.exists && !playersMap[cfg.moneyCol]) {
       report.players.warnings.push(`Money column "${cfg.moneyCol}" was not found in "${cfg.playersTable}"`);
+    }
+    if (report.players.exists && !playersMap[cfg.jobCol]) {
+      report.players.warnings.push(`Job column "${cfg.jobCol}" was not found in "${cfg.playersTable}"`);
     }
     if (playersMap[cfg.charInfoCol] && !playersMap[cfg.charInfoCol].isJson) {
       report.players.warnings.push(`"${cfg.charInfoCol}" is ${playersMap[cfg.charInfoCol].dataType}, not JSON. JSON parsing fallback will be used.`);
@@ -319,7 +405,12 @@ async function searchCharacters(term) {
 async function getCharacterById(citizenId) {
   try {
     const p = await getPool();
-    const { playersTable, citizenIdCol, charInfoCol } = getQboxTableConfig();
+    const {
+      playersTable,
+      citizenIdCol,
+      charInfoCol,
+      jobCol,
+    } = getQboxTableConfig();
     const tableNameSql = escapeIdentifier(playersTable, 'players table');
     const citizenIdColSql = escapeIdentifier(citizenIdCol, 'citizen ID column');
     const charInfoColSql = escapeIdentifier(charInfoCol, 'charinfo column');
@@ -334,6 +425,7 @@ async function getCharacterById(citizenId) {
     const row = rows[0];
     const info = parseMaybeJson(row[charInfoCol]);
     const customFields = buildCustomFieldValues({ row, charinfo: info, mappings: personMappings });
+    const extractedJob = extractJobFromCharacterRow(row, info, jobCol);
 
     return {
       citizenid: row[citizenIdCol],
@@ -343,6 +435,7 @@ async function getCharacterById(citizenId) {
       gender: info.gender !== undefined ? String(info.gender) : '',
       phone: info.phone || '',
       nationality: info.nationality || '',
+      job: extractedJob,
       custom_fields: customFields,
       raw: row,
     };
@@ -350,6 +443,18 @@ async function getCharacterById(citizenId) {
     console.error('QBox get character error:', err);
     throw new Error(`QBox character lookup error: ${err.message}`);
   }
+}
+
+async function getCharacterJobById(citizenId) {
+  const character = await getCharacterById(citizenId);
+  if (!character || !character.job || !character.job.name) {
+    return null;
+  }
+  return {
+    citizenid: String(character.citizenid || '').trim(),
+    name: normalizeJobName(character.job.name),
+    grade: normalizeJobGrade(character.job.grade),
+  };
 }
 
 async function searchVehicles(term) {
@@ -471,6 +576,7 @@ module.exports = {
   inspectConfiguredSchema,
   searchCharacters,
   getCharacterById,
+  getCharacterJobById,
   searchVehicles,
   getVehiclesByOwner,
   applyFineByCitizenId,

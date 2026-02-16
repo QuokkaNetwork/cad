@@ -10,12 +10,14 @@ import Home from './pages/Home';
 import Settings from './pages/Settings';
 import Dispatch from './pages/police/Dispatch';
 import Units from './pages/police/Units';
+import LiveMap from './pages/police/LiveMap';
 import Search from './pages/police/Search';
 import BOLOs from './pages/police/BOLOs';
 import Records from './pages/police/Records';
 import AdminUsers from './pages/admin/Users';
 import AdminDepartments from './pages/admin/Departments';
 import AdminRoleMappings from './pages/admin/RoleMappings';
+import AdminJobBindings from './pages/admin/JobBindings';
 import AdminAuditLog from './pages/admin/AuditLog';
 import AdminSystemSettings from './pages/admin/SystemSettings';
 import AdminHome from './pages/admin/Home';
@@ -44,6 +46,7 @@ export default function App() {
             {/* Police MDT */}
             <Route path="/dispatch" element={<RequireDepartment><Dispatch /></RequireDepartment>} />
             <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
+            <Route path="/map" element={<RequireDepartment><LiveMap /></RequireDepartment>} />
             <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
             <Route path="/records" element={<RequireDepartment><Records /></RequireDepartment>} />
@@ -54,6 +57,7 @@ export default function App() {
             <Route path="/admin/departments" element={<ProtectedRoute requireAdmin><AdminDepartments /></ProtectedRoute>} />
             <Route path="/admin/offences" element={<ProtectedRoute requireAdmin><AdminOffenceCatalog /></ProtectedRoute>} />
             <Route path="/admin/role-mappings" element={<ProtectedRoute requireAdmin><AdminRoleMappings /></ProtectedRoute>} />
+            <Route path="/admin/job-bindings" element={<ProtectedRoute requireAdmin><AdminJobBindings /></ProtectedRoute>} />
             <Route path="/admin/audit-log" element={<ProtectedRoute requireAdmin><AdminAuditLog /></ProtectedRoute>} />
             <Route path="/admin/settings" element={<ProtectedRoute requireAdmin><AdminSystemSettings /></ProtectedRoute>} />
           </Route>

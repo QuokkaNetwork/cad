@@ -460,6 +460,21 @@ local function getPlayerMoneyBalance(player, account)
   return toMoneyNumber(money[account])
 end
 
+local function getQbxMoneyBalance(sourceId, player, account)
+  if GetResourceState('qbx_core') == 'started' and sourceId and sourceId > 0 then
+    local ok, amount = pcall(function()
+      return exports.qbx_core:GetMoney(sourceId, account)
+    end)
+    if ok then
+      local normalized = toMoneyNumber(amount)
+      if normalized ~= nil then
+        return normalized
+      end
+    end
+  end
+  return getPlayerMoneyBalance(player, account)
+end
+
 local function hasExpectedDeduction(beforeBalance, afterBalance, amount)
   local before = toMoneyNumber(beforeBalance)
   local after = toMoneyNumber(afterBalance)
@@ -667,7 +682,7 @@ local function applyFine(job)
   local citizenId = trim(job.citizen_id or '')
   local amount = tonumber(job.amount) or 0
   local reason = trim(job.reason or '')
-  local account = trim(job.account or 'bank')
+  local account = trim(job.account or 'bank'):lower()
   if citizenId == '' then
     return false, 'Fine citizen_id is empty', false
   end
@@ -703,54 +718,144 @@ local function applyFine(job)
         return exports.qbx_core:GetPlayer(sourceId)
       end)
       if ok and xPlayer then
-        local beforeBalance = getPlayerMoneyBalance(xPlayer, account)
-        local removed = false
-        local success = false
-        local errMsg = ''
+        local fineReason = reason ~= '' and reason or 'CAD fine'
+        local beforeBalance = getQbxMoneyBalance(sourceId, xPlayer, account)
+        local attemptedAdapters = {}
+        local attemptErrors = {}
 
-        if xPlayer.Functions and type(xPlayer.Functions.RemoveMoney) == 'function' then
-          success, removed = pcall(function()
-            return xPlayer.Functions.RemoveMoney(account, amount, reason ~= '' and reason or 'CAD fine')
-          end)
-          errMsg = success and '' or tostring(removed)
-        elseif type(xPlayer.RemoveMoney) == 'function' then
-          success, removed = pcall(function()
-            return xPlayer:RemoveMoney(account, amount, reason ~= '' and reason or 'CAD fine')
-          end)
-          errMsg = success and '' or tostring(removed)
-        elseif type(exports.qbx_core.RemoveMoney) == 'function' then
-          success, removed = pcall(function()
-            return exports.qbx_core:RemoveMoney(sourceId, account, amount, reason ~= '' and reason or 'CAD fine')
-          end)
-          errMsg = success and '' or tostring(removed)
-        else
-          return false, 'qbx_core has no supported RemoveMoney adapter (player method/export)', false
-        end
-
-        if not success then
-          return false, ('qbx_core RemoveMoney failed: %s'):format(errMsg), false
-        end
-        if removed == false then
-          return false, 'qbx_core rejected fine removal', false
-        end
-        local afterBalance = getPlayerMoneyBalance(xPlayer, account)
-        if afterBalance == nil then
-          local refreshedOk, refreshed = pcall(function()
-            return exports.qbx_core:GetPlayer(sourceId)
-          end)
-          if refreshedOk and refreshed then
-            afterBalance = getPlayerMoneyBalance(refreshed, account)
+        local function recordAttempt(label, err)
+          attemptedAdapters[#attemptedAdapters + 1] = label
+          if err and err ~= '' then
+            attemptErrors[#attemptErrors + 1] = ('%s -> %s'):format(label, err)
           end
         end
-        local deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
-        if removed == nil and deducted ~= true then
-          return false, 'qbx_core RemoveMoney returned no status and deduction could not be verified', false
+
+        local function getAfterBalance()
+          local refreshed = xPlayer
+          local refreshedOk, refreshedPlayer = pcall(function()
+            return exports.qbx_core:GetPlayer(sourceId)
+          end)
+          if refreshedOk and refreshedPlayer then
+            refreshed = refreshedPlayer
+          end
+          return getQbxMoneyBalance(sourceId, refreshed, account)
         end
-        if removed == true and deducted == false then
-          return false, 'qbx_core reported success but balance did not decrease', false
+
+        local function tryAdapter(label, fn)
+          local callOk, result = pcall(fn)
+          if not callOk then
+            recordAttempt(label, ('error: %s'):format(tostring(result)))
+            return false
+          end
+
+          local afterBalance = getAfterBalance()
+          local deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+          if deducted == true then
+            recordAttempt(label)
+            return true
+          end
+
+          if result == false then
+            recordAttempt(label, 'returned false')
+            return false
+          end
+          if deducted == false then
+            recordAttempt(label, ('no deduction verified (result=%s)'):format(tostring(result)))
+            return false
+          end
+
+          -- Some framework adapters do not return a status; accept on no-error when balance cannot be verified.
+          recordAttempt(label)
+          return true
         end
-        notifyFineApplied(sourceId)
-        return true, '', false
+
+        local adapters = {
+          {
+            label = 'qbx export RemoveMoney(source, account, amount, reason)',
+            fn = function()
+              return exports.qbx_core:RemoveMoney(sourceId, account, amount, fineReason)
+            end,
+          },
+          {
+            label = 'qbx export RemoveMoney(source, account, amount)',
+            fn = function()
+              return exports.qbx_core:RemoveMoney(sourceId, account, amount)
+            end,
+          },
+        }
+
+        if citizenId ~= '' then
+          adapters[#adapters + 1] = {
+            label = 'qbx export RemoveMoney(citizenid, account, amount, reason)',
+            fn = function()
+              return exports.qbx_core:RemoveMoney(citizenId, account, amount, fineReason)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'qbx export RemoveMoney(citizenid, account, amount)',
+            fn = function()
+              return exports.qbx_core:RemoveMoney(citizenId, account, amount)
+            end,
+          }
+        end
+
+        if xPlayer.Functions and type(xPlayer.Functions.RemoveMoney) == 'function' then
+          adapters[#adapters + 1] = {
+            label = 'xPlayer.Functions.RemoveMoney(account, amount, reason)',
+            fn = function()
+              return xPlayer.Functions.RemoveMoney(account, amount, fineReason)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'xPlayer.Functions.RemoveMoney(account, amount)',
+            fn = function()
+              return xPlayer.Functions.RemoveMoney(account, amount)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'xPlayer.Functions.RemoveMoney(amount, account, reason)',
+            fn = function()
+              return xPlayer.Functions.RemoveMoney(amount, account, fineReason)
+            end,
+          }
+        end
+
+        if type(xPlayer.RemoveMoney) == 'function' then
+          adapters[#adapters + 1] = {
+            label = 'xPlayer:RemoveMoney(account, amount, reason)',
+            fn = function()
+              return xPlayer:RemoveMoney(account, amount, fineReason)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'xPlayer:RemoveMoney(account, amount)',
+            fn = function()
+              return xPlayer:RemoveMoney(account, amount)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'xPlayer.RemoveMoney(xPlayer, account, amount, reason)',
+            fn = function()
+              return xPlayer.RemoveMoney(xPlayer, account, amount, fineReason)
+            end,
+          }
+        end
+
+        for _, adapter in ipairs(adapters) do
+          if tryAdapter(adapter.label, adapter.fn) then
+            notifyFineApplied(sourceId)
+            return true, '', false
+          end
+        end
+
+        local err = 'qbx_core RemoveMoney failed'
+        if #attemptErrors > 0 then
+          err = err .. ': ' .. attemptErrors[#attemptErrors]
+        end
+        if #attemptedAdapters > 0 then
+          err = err .. (' (attempted: %s)'):format(table.concat(attemptedAdapters, ', '))
+        end
+        return false, err, false
       end
     end
 

@@ -15,8 +15,14 @@ const ADMIN_ITEMS = [
   },
   {
     to: '/admin/role-mappings',
-    title: 'Role And Job Sync',
-    description: 'Bind Discord roles to CAD access and in-game job/grade targets.',
+    title: 'Role Access Sync',
+    description: 'Bind Discord roles to department and sub-department access.',
+    color: 'bg-[#5865F2]',
+  },
+  {
+    to: '/admin/job-bindings',
+    title: 'Job Bindings',
+    description: 'Bind Discord roles to specific in-game jobs and ranks.',
     color: 'bg-[#5865F2]',
   },
   {

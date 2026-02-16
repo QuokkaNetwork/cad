@@ -6,6 +6,13 @@ import { api } from '../api/client';
 import GoOnDutyModal from './GoOnDutyModal';
 import { useEventSource } from '../hooks/useEventSource';
 
+const UNIT_STATUSES = [
+  { value: 'available', label: 'Available' },
+  { value: 'busy', label: 'Busy' },
+  { value: 'enroute', label: 'En Route' },
+  { value: 'on-scene', label: 'On Scene' },
+];
+
 export default function Header() {
   const { user, logout, refreshUser } = useAuth();
   const { activeDepartment } = useDepartment();
@@ -16,7 +23,8 @@ export default function Header() {
   const [showOnDutyModal, setShowOnDutyModal] = useState(false);
   const [offDutyLoading, setOffDutyLoading] = useState(false);
   const [onDutyLoading, setOnDutyLoading] = useState(false);
-  const onDepartmentPage = /^\/(dispatch|units|search|bolos|records)(\/|$)/.test(location.pathname);
+  const [statusLoading, setStatusLoading] = useState('');
+  const onDepartmentPage = /^\/(dispatch|units|map|search|bolos|records)(\/|$)/.test(location.pathname);
 
   const refreshMyUnit = useCallback(async () => {
     if (!user) {
@@ -123,8 +131,22 @@ export default function Header() {
     }
   }
 
+  async function updateStatus(status) {
+    if (!status || !myUnit) return;
+    setStatusLoading(status);
+    try {
+      await api.patch('/api/units/me', { status });
+      await refreshMyUnit();
+    } catch (err) {
+      alert('Failed to update status: ' + err.message);
+    } finally {
+      setStatusLoading('');
+    }
+  }
+
   const onActiveDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id === activeDepartment.id);
   const onOtherDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id !== activeDepartment.id);
+  const showHeaderStatusButtons = !!(activeDepartment && onDepartmentPage && onActiveDeptDuty);
 
   return (
     <header>
@@ -143,21 +165,45 @@ export default function Header() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-wrap justify-end">
           {activeDepartment && onDepartmentPage && (
             <>
               {onActiveDeptDuty ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
-                    On Duty: {myUnit.callsign}{myUnit.sub_department_short_name ? ` (${myUnit.sub_department_short_name})` : ''}
-                  </span>
-                  <button
-                    onClick={goOffDuty}
-                    disabled={offDutyLoading}
-                    className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors disabled:opacity-50"
-                  >
-                    {offDutyLoading ? '...' : 'Go Off Duty'}
-                  </button>
+                <div className="flex items-center gap-3 flex-wrap justify-end">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
+                      On Duty: {myUnit.callsign}{myUnit.sub_department_short_name ? ` (${myUnit.sub_department_short_name})` : ''}
+                    </span>
+                    <button
+                      onClick={goOffDuty}
+                      disabled={offDutyLoading}
+                      className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {offDutyLoading ? '...' : 'Go Off Duty'}
+                    </button>
+                  </div>
+                  {showHeaderStatusButtons && (
+                    <div className="flex items-center gap-1">
+                      {UNIT_STATUSES.map((status) => {
+                        const selected = myUnit.status === status.value;
+                        const disabled = selected || !!statusLoading;
+                        return (
+                          <button
+                            key={status.value}
+                            onClick={() => updateStatus(status.value)}
+                            disabled={disabled}
+                            className={`text-xs px-2 py-1 rounded transition-colors ${
+                              selected
+                                ? 'bg-cad-accent/20 text-cad-accent-light cursor-default'
+                                : 'bg-cad-surface text-cad-muted hover:text-cad-ink hover:bg-cad-card'
+                            } ${statusLoading && !selected ? 'opacity-60' : ''}`}
+                          >
+                            {statusLoading === status.value ? '...' : status.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button

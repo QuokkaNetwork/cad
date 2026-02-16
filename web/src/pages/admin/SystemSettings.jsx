@@ -333,6 +333,11 @@ export default function AdminSystemSettings() {
               <input type="text" value={settings.qbox_money_col || ''} onChange={e => updateSetting('qbox_money_col', e.target.value)}
                 className="w-full bg-cad-surface border border-cad-border rounded px-3 py-1.5 text-xs focus:outline-none focus:border-cad-accent" placeholder="money" />
             </div>
+            <div>
+              <label className="block text-xs text-cad-muted mb-1">Job Column</label>
+              <input type="text" value={settings.qbox_job_col || ''} onChange={e => updateSetting('qbox_job_col', e.target.value)}
+                className="w-full bg-cad-surface border border-cad-border rounded px-3 py-1.5 text-xs focus:outline-none focus:border-cad-accent" placeholder="job" />
+            </div>
           </div>
         </div>
 
@@ -520,6 +525,17 @@ export default function AdminSystemSettings() {
             </select>
           </div>
           <div>
+            <label className="block text-xs text-cad-muted mb-1">Game Job To Discord Role Sync</label>
+            <select
+              value={settings.fivem_bridge_job_sync_reverse_enabled || 'true'}
+              onChange={e => updateSetting('fivem_bridge_job_sync_reverse_enabled', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          </div>
+          <div>
             <label className="block text-xs text-cad-muted mb-1">Default Job (No CAD Mapping)</label>
             <input
               type="text"
@@ -559,6 +575,9 @@ export default function AdminSystemSettings() {
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
             />
           </div>
+          <p className="col-span-2 text-xs text-cad-muted">
+            Reverse sync requires a linked Discord account and a preferred citizen ID. Job role mappings must be configured in <span className="font-semibold">Admin > Job Bindings</span>.
+          </p>
         </div>
 
         <div className="flex items-center gap-2 mt-4">

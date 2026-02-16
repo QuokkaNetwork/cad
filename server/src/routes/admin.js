@@ -55,6 +55,15 @@ function normalizeOffenceCategory(value) {
   return 'infringement';
 }
 
+function parseOffenceIsActive(value) {
+  if (value === undefined || value === null || value === '') return 1;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  const text = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'active', 'on'].includes(text)) return 1;
+  if (['0', 'false', 'no', 'n', 'inactive', 'off'].includes(text)) return 0;
+  return 1;
+}
+
 function parseOrderedIds(value) {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(
@@ -506,6 +515,68 @@ router.post('/offence-catalog', (req, res) => {
   }
 });
 
+router.post('/offence-catalog/import', (req, res) => {
+  const rows = Array.isArray(req.body?.offences) ? req.body.offences : [];
+  if (!rows.length) {
+    return res.status(400).json({ error: 'offences array is required' });
+  }
+  if (rows.length > 5000) {
+    return res.status(400).json({ error: 'Too many offences in one import (max 5000)' });
+  }
+
+  const errors = [];
+  const createdIds = [];
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i] || {};
+    const rowNumber = i + 1;
+    try {
+      const normalizedTitle = String(row.title || '').trim();
+      if (!normalizedTitle) {
+        throw new Error('title is required');
+      }
+
+      const fineAmount = Number(row.fine_amount ?? 0);
+      if (!Number.isFinite(fineAmount) || fineAmount < 0) {
+        throw new Error('fine_amount must be a non-negative number');
+      }
+
+      const offence = OffenceCatalog.create({
+        category: normalizeOffenceCategory(row.category),
+        code: String(row.code || '').trim(),
+        title: normalizedTitle,
+        description: String(row.description || '').trim(),
+        fine_amount: fineAmount,
+        sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
+        is_active: parseOffenceIsActive(row.is_active),
+      });
+      createdIds.push(offence.id);
+    } catch (err) {
+      const message = String(err?.message || 'Import row failed');
+      if (message.includes('UNIQUE')) {
+        errors.push({ index: rowNumber, error: 'An offence with that category/code already exists' });
+      } else {
+        errors.push({ index: rowNumber, error: message });
+      }
+    }
+  }
+
+  audit(req.user.id, 'offence_catalog_imported', {
+    total: rows.length,
+    imported: createdIds.length,
+    failed: errors.length,
+  });
+
+  res.json({
+    success: errors.length === 0,
+    total: rows.length,
+    imported: createdIds.length,
+    failed: errors.length,
+    created_ids: createdIds,
+    errors,
+  });
+});
+
 router.patch('/offence-catalog/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'Invalid offence id' });
@@ -546,6 +617,12 @@ router.patch('/offence-catalog/:id', (req, res) => {
     }
     throw err;
   }
+});
+
+router.delete('/offence-catalog', (req, res) => {
+  const cleared = OffenceCatalog.clearAll();
+  audit(req.user.id, 'offence_catalog_cleared', { cleared });
+  res.json({ success: true, cleared });
 });
 
 router.delete('/offence-catalog/:id', (req, res) => {
