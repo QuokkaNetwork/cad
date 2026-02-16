@@ -205,12 +205,26 @@ local function registerEmergencySuggestion(target)
   })
 end
 
+local startNpwdEmergencyHandlerRegistration
+
+local function getNpwdResourceName()
+  local name = trim(GetConvar('cad_bridge_npwd_resource', 'npwd'))
+  if name == '' then return 'npwd' end
+  return name
+end
+
 AddEventHandler('onResourceStart', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
   CreateThread(function()
     Wait(500)
     registerEmergencySuggestion(-1)
   end)
+  startNpwdEmergencyHandlerRegistration()
+end)
+
+AddEventHandler('onResourceStart', function(resourceName)
+  if resourceName ~= getNpwdResourceName() then return end
+  startNpwdEmergencyHandlerRegistration()
 end)
 
 AddEventHandler('playerJoining', function()
@@ -368,6 +382,7 @@ local function submitEmergencyCall(src, report)
     message = details,
     priority = '1',
     job_code = '000',
+    source_type = 'command_000',
   }
   if type(report.requested_department_ids) == 'table' and #report.requested_department_ids > 0 then
     payload.requested_department_ids = report.requested_department_ids
@@ -405,6 +420,207 @@ local function submitEmergencyCall(src, report)
     end
     print('[cad_bridge] ' .. err)
     notifyPlayer(s, '000 call failed to send to CAD. Check server logs.')
+  end)
+end
+
+local npwdEmergencyHandlersRegistered = {}
+
+local function splitByComma(text)
+  local value = trim(text)
+  local entries = {}
+  local seen = {}
+  if value == '' then
+    return entries
+  end
+
+  for token in value:gmatch('([^,]+)') do
+    local item = trim(token)
+    if item ~= '' and not seen[item] then
+      seen[item] = true
+      entries[#entries + 1] = item
+    end
+  end
+  return entries
+end
+
+local function getNpwdEmergencyNumbers()
+  local configured = trim(GetConvar('cad_bridge_npwd_emergency_numbers', '000'))
+  local parsed = splitByComma(configured)
+  if #parsed == 0 then
+    return { '000' }
+  end
+  return parsed
+end
+
+local function sendNpwdMessage(senderNumber, targetNumber, message)
+  local sender = trim(senderNumber)
+  local target = trim(targetNumber)
+  local text = trim(message)
+  if sender == '' or target == '' or text == '' then
+    return
+  end
+  local npwdResource = getNpwdResourceName()
+  if GetResourceState(npwdResource) ~= 'started' then
+    return
+  end
+
+  local ok, err = pcall(function()
+    exports[npwdResource]:emitMessage({
+      senderNumber = sender,
+      targetNumber = target,
+      message = text,
+    })
+  end)
+  if not ok then
+    print(('[cad_bridge] NPWD message send failed: %s'):format(tostring(err)))
+  end
+end
+
+local function submitNpwdEmergencyCall(src, emergencyNumber, incomingCaller)
+  local s = tonumber(src)
+  if not s then return end
+
+  if isBridgeBackoffActive('calls') then
+    local waitSeconds = math.max(1, math.ceil(getEffectiveBackoffRemainingMs('calls') / 1000))
+    notifyPlayer(s, ('CAD bridge is rate-limited. Emergency call not sent yet, retry in %ss.'):format(waitSeconds))
+    return
+  end
+
+  local callerName = trim((incomingCaller and incomingCaller.name) or GetPlayerName(s) or ('Player ' .. tostring(s)))
+  local callerNumber = trim((incomingCaller and incomingCaller.number) or '')
+  local pos = PlayerPositions[s]
+  local messageParts = {
+    ('NPWD %s phone emergency call'):format(trim(emergencyNumber)),
+  }
+  if callerNumber ~= '' then
+    messageParts[#messageParts + 1] = ('Caller number: %s'):format(callerNumber)
+  end
+
+  local payload = {
+    source = s,
+    player_name = callerName ~= '' and callerName or ('Player ' .. tostring(s)),
+    identifiers = GetPlayerIdentifiers(s),
+    citizenid = getCitizenId(s),
+    title = ('000 Phone Call - %s'):format(callerName ~= '' and callerName or ('Player ' .. tostring(s))),
+    message = table.concat(messageParts, ' | '),
+    priority = '1',
+    job_code = '000',
+    source_type = 'phone_000',
+    enable_voice_session = true,
+    phone_number = callerNumber,
+  }
+
+  if pos then
+    payload.position = { x = pos.x, y = pos.y, z = pos.z }
+    payload.heading = pos.heading
+    payload.speed = pos.speed
+    payload.street = pos.street
+    payload.crossing = pos.crossing
+    payload.postal = pos.postal
+  end
+
+  request('POST', '/api/integration/fivem/calls', payload, function(status, body, responseHeaders)
+    if status >= 200 and status < 300 then
+      local callId = '?'
+      local ok, parsed = pcall(json.decode, body or '{}')
+      if ok and type(parsed) == 'table' and type(parsed.call) == 'table' and parsed.call.id then
+        callId = tostring(parsed.call.id)
+      end
+
+      local confirmation = ('Dispatch received your 000 call (CAD Call #%s). Stay on this line.'):format(callId)
+      sendNpwdMessage(emergencyNumber, callerNumber, confirmation)
+      notifyPlayer(s, confirmation)
+      print(('[cad_bridge] NPWD 000 call created by %s (#%s) as CAD call #%s')
+        :format(payload.player_name, tostring(s), callId))
+      return
+    end
+
+    if status == 429 then
+      setBridgeBackoff('calls', responseHeaders, 15000, 'npwd 000 call')
+    end
+
+    local err = ('Failed to create CAD phone emergency call (HTTP %s)'):format(tostring(status))
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if ok and type(parsed) == 'table' and parsed.error then
+      err = err .. ': ' .. tostring(parsed.error)
+    end
+    print('[cad_bridge] ' .. err)
+    sendNpwdMessage(emergencyNumber, callerNumber, 'Unable to reach CAD dispatch right now. Please try again.')
+    notifyPlayer(s, '000 call failed to send to CAD. Check server logs.')
+  end)
+end
+
+local function handleNpwdEmergencyCall(emergencyNumber, callRequest)
+  local requestObj = type(callRequest) == 'table' and callRequest or {}
+  local incomingCaller = type(requestObj.incomingCaller) == 'table' and requestObj.incomingCaller or {}
+  local src = tonumber(incomingCaller.source) or 0
+
+  -- Allow NPWD to continue its own default call flow so this hook is non-blocking.
+  if type(requestObj.reply) == 'function' then
+    pcall(function()
+      requestObj.reply('Connecting emergency dispatch...')
+    end)
+  end
+  if type(requestObj.next) == 'function' then
+    pcall(function()
+      requestObj.next()
+    end)
+  end
+
+  if src <= 0 then
+    return
+  end
+
+  submitNpwdEmergencyCall(src, emergencyNumber, incomingCaller)
+end
+
+local function registerOneNpwdEmergencyHandler(emergencyNumber)
+  local number = trim(emergencyNumber)
+  if number == '' then return false end
+  if npwdEmergencyHandlersRegistered[number] then return true end
+  local npwdResource = getNpwdResourceName()
+  if GetResourceState(npwdResource) ~= 'started' then return false end
+
+  local ok, err = pcall(function()
+    exports[npwdResource]:onCall(number, function(callRequest)
+      handleNpwdEmergencyCall(number, callRequest)
+    end)
+  end)
+
+  if not ok then
+    print(('[cad_bridge] Failed to register NPWD emergency handler for %s: %s')
+      :format(number, tostring(err)))
+    return false
+  end
+
+  npwdEmergencyHandlersRegistered[number] = true
+  print(('[cad_bridge] Registered NPWD emergency handler for number %s'):format(number))
+  return true
+end
+
+local function registerNpwdEmergencyHandlers()
+  local numbers = getNpwdEmergencyNumbers()
+  if #numbers == 0 then return true end
+
+  local allRegistered = true
+  for _, number in ipairs(numbers) do
+    if not registerOneNpwdEmergencyHandler(number) then
+      allRegistered = false
+    end
+  end
+  return allRegistered
+end
+
+startNpwdEmergencyHandlerRegistration = function()
+  local maxAttempts = 20
+  CreateThread(function()
+    for _ = 1, maxAttempts do
+      if registerNpwdEmergencyHandlers() then
+        return
+      end
+      Wait(1000)
+    end
+    print('[cad_bridge] NPWD emergency handlers not fully registered after retries')
   end)
 end
 
@@ -1309,3 +1525,187 @@ CreateThread(function()
     ::continue::
   end
 end)
+
+-- ============================================================================
+-- Voice Integration (pma-voice)
+-- ============================================================================
+
+local function isPmaVoiceAvailable()
+  return GetResourceState('pma-voice') == 'started'
+end
+
+local function setPlayerToRadioChannel(source, channelNumber)
+  if not isPmaVoiceAvailable() then
+    return false, 'pma-voice resource not available'
+  end
+
+  local success, err = pcall(function()
+    exports['pma-voice']:setPlayerRadio(source, channelNumber)
+  end)
+
+  if not success then
+    return false, 'Failed to set radio channel: ' .. tostring(err)
+  end
+
+  return true, nil
+end
+
+local function setPlayerToCallChannel(source, channelNumber)
+  if not isPmaVoiceAvailable() then
+    return false, 'pma-voice resource not available'
+  end
+
+  local success, err = pcall(function()
+    exports['pma-voice']:setPlayerCall(source, channelNumber)
+  end)
+
+  if not success then
+    return false, 'Failed to set call channel: ' .. tostring(err)
+  end
+
+  return true, nil
+end
+
+local function removePlayerFromRadio(source)
+  return setPlayerToRadioChannel(source, 0)
+end
+
+local function removePlayerFromCall(source)
+  return setPlayerToCallChannel(source, 0)
+end
+
+local function getPlayerRadioChannel(source)
+  if not isPmaVoiceAvailable() then
+    return nil
+  end
+
+  local player = Player(source)
+  if not player or not player.state then
+    return nil
+  end
+
+  return player.state.radioChannel
+end
+
+local function getPlayerCallChannel(source)
+  if not isPmaVoiceAvailable() then
+    return nil
+  end
+
+  local player = Player(source)
+  if not player or not player.state then
+    return nil
+  end
+
+  return player.state.callChannel
+end
+
+-- Track voice channel assignments for each player
+local PlayerVoiceChannels = {}
+
+local function updatePlayerVoiceChannel(source, channelType, channelNumber)
+  if not PlayerVoiceChannels[source] then
+    PlayerVoiceChannels[source] = {}
+  end
+  PlayerVoiceChannels[source][channelType] = channelNumber
+end
+
+local function clearPlayerVoiceChannels(source)
+  PlayerVoiceChannels[source] = nil
+end
+
+-- Handle player disconnect to clean up voice channels
+AddEventHandler('playerDropped', function(reason)
+  local source = source
+  removePlayerFromRadio(source)
+  removePlayerFromCall(source)
+  clearPlayerVoiceChannels(source)
+end)
+
+-- Poll CAD for voice events and sync with pma-voice
+local voicePollInFlight = false
+CreateThread(function()
+  while true do
+    Wait(math.max(1000, Config.VoicePollIntervalMs or 2000))
+    if not hasBridgeConfig() then
+      goto voiceContinue
+    end
+    if not isPmaVoiceAvailable() then
+      goto voiceContinue
+    end
+    if voicePollInFlight or isBridgeBackoffActive('voice_poll') then
+      goto voiceContinue
+    end
+
+    voicePollInFlight = true
+    request('GET', '/api/integration/fivem/voice-events?limit=50', nil, function(status, body, responseHeaders)
+      voicePollInFlight = false
+      if status == 429 then
+        setBridgeBackoff('voice_poll', responseHeaders, 5000, 'voice poll')
+        return
+      end
+      if status ~= 200 then
+        return
+      end
+
+      local ok, events = pcall(json.decode, body)
+      if not ok or type(events) ~= 'table' then
+        return
+      end
+
+      for _, event in ipairs(events) do
+        local eventType = tostring(event.event_type or '')
+        local sourceId = tonumber(event.game_id) or nil
+        local channelNumber = tonumber(event.channel_number) or 0
+        local eventId = tonumber(event.id) or nil
+
+        if sourceId and eventId then
+          local success = false
+          local errorMsg = nil
+
+          if eventType == 'join_radio' then
+            success, errorMsg = setPlayerToRadioChannel(sourceId, channelNumber)
+            if success then
+              updatePlayerVoiceChannel(sourceId, 'radio', channelNumber)
+            end
+          elseif eventType == 'leave_radio' then
+            success, errorMsg = removePlayerFromRadio(sourceId)
+            if success then
+              updatePlayerVoiceChannel(sourceId, 'radio', nil)
+            end
+          elseif eventType == 'join_call' then
+            success, errorMsg = setPlayerToCallChannel(sourceId, channelNumber)
+            if success then
+              updatePlayerVoiceChannel(sourceId, 'call', channelNumber)
+            end
+          elseif eventType == 'leave_call' then
+            success, errorMsg = removePlayerFromCall(sourceId)
+            if success then
+              updatePlayerVoiceChannel(sourceId, 'call', nil)
+            end
+          else
+            errorMsg = 'Unknown voice event type: ' .. eventType
+          end
+
+          if success then
+            request('POST', ('/api/integration/fivem/voice-events/%s/processed'):format(eventId), {}, function() end)
+          else
+            request('POST', ('/api/integration/fivem/voice-events/%s/failed'):format(eventId), {
+              error = errorMsg or 'Voice event processing failed',
+            }, function() end)
+          end
+        end
+      end
+    end)
+
+    ::voiceContinue::
+  end
+end)
+
+-- Export functions for use by other resources
+exports('setPlayerRadio', setPlayerToRadioChannel)
+exports('setPlayerCall', setPlayerToCallChannel)
+exports('removePlayerRadio', removePlayerFromRadio)
+exports('removePlayerCall', removePlayerFromCall)
+exports('getPlayerRadioChannel', getPlayerRadioChannel)
+exports('getPlayerCallChannel', getPlayerCallChannel)

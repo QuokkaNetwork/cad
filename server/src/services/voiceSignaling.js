@@ -1,19 +1,33 @@
 const { Server: WebSocketServer } = require('ws');
 const { verifyToken } = require('../auth/jwt');
-const { VoiceChannels, VoiceParticipants, Users, Units } = require('../db/sqlite');
+const {
+  VoiceChannels,
+  VoiceParticipants,
+  Users,
+  Units,
+  Departments,
+  UserDepartments,
+} = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
+
+function isWsOpen(ws) {
+  return Number(ws?.readyState) === 1;
+}
+
+function decodeBase64ToBuffer(value) {
+  const text = String(value || '').trim();
+  if (!text) return Buffer.alloc(0);
+  return Buffer.from(text, 'base64');
+}
 
 class VoiceSignalingServer {
   constructor(httpServer, voiceBridge) {
     this.voiceBridge = voiceBridge;
     this.connections = new Map(); // userId -> { ws, user }
 
-    this.wss = new WebSocketServer({
-      noServer: true, // We'll handle upgrade manually
-    });
+    this.wss = new WebSocketServer({ noServer: true });
 
-    // Handle HTTP upgrade for WebSocket
     httpServer.on('upgrade', (request, socket, head) => {
       if (request.url.startsWith('/voice-bridge')) {
         this.handleUpgrade(request, socket, head);
@@ -23,339 +37,227 @@ class VoiceSignalingServer {
     this.wss.on('connection', (ws, request, user) => {
       this.handleConnection(ws, request, user);
     });
-
-    console.log('[VoiceSignaling] Voice signaling server initialized');
   }
 
-  /**
-   * Handle WebSocket upgrade with authentication
-   */
   handleUpgrade(request, socket, head) {
     try {
-      // Parse query parameters from URL
       const url = new URL(request.url, 'ws://localhost');
       const token = url.searchParams.get('token');
-
       if (!token) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
       }
 
-      // Verify JWT token
-      let decoded;
+      let decoded = null;
       try {
         decoded = verifyToken(token);
-      } catch (err) {
-        console.error('[VoiceSignaling] Invalid token:', err.message);
+      } catch {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
       }
 
-      // Get user from database
       const user = Users.findById(decoded.userId);
       if (!user || user.is_banned) {
         socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
         socket.destroy();
         return;
       }
+      user.departments = user.is_admin ? Departments.list() : UserDepartments.getForUser(user.id);
 
-      // Complete the WebSocket handshake
       this.wss.handleUpgrade(request, socket, head, (ws) => {
         this.wss.emit('connection', ws, request, user);
       });
-    } catch (error) {
-      console.error('[VoiceSignaling] Upgrade error:', error);
+    } catch {
       socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
       socket.destroy();
     }
   }
 
-  /**
-   * Handle new WebSocket connection
-   */
-  handleConnection(ws, request, user) {
-    console.log(`[VoiceSignaling] Dispatcher ${user.id} (${user.steam_name}) connected`);
-
-    // Check if user already has a connection
+  handleConnection(ws, _request, user) {
     if (this.connections.has(user.id)) {
-      console.log(`[VoiceSignaling] Closing previous connection for dispatcher ${user.id}`);
       const oldConn = this.connections.get(user.id);
-      oldConn.ws.close(4000, 'New connection established');
+      try { oldConn.ws.close(4000, 'New connection established'); } catch {}
     }
-
-    // Store connection
     this.connections.set(user.id, { ws, user });
 
-    // Send initial status
-    ws.send(JSON.stringify({
-      type: 'connected',
-      dispatcherId: user.id,
-      dispatcherName: user.steam_name,
-    }));
+    if (isWsOpen(ws)) {
+      ws.send(JSON.stringify({
+        type: 'connected',
+        dispatcherId: user.id,
+        dispatcherName: user.steam_name,
+      }));
+    }
 
-    // Handle messages from dispatcher
     ws.on('message', async (data) => {
       try {
         const message = JSON.parse(data.toString());
         await this.handleMessage(user, message, ws);
       } catch (error) {
-        console.error(`[VoiceSignaling] Error handling message from dispatcher ${user.id}:`, error);
-        this.sendError(ws, error.message);
+        this.sendError(ws, error?.message || 'Invalid message');
       }
     });
 
-    // Handle disconnection
     ws.on('close', async () => {
-      console.log(`[VoiceSignaling] Dispatcher ${user.id} disconnected`);
       await this.handleDisconnection(user);
     });
 
-    ws.on('error', (error) => {
-      console.error(`[VoiceSignaling] WebSocket error for dispatcher ${user.id}:`, error);
+    ws.on('error', () => {
+      // Connection-specific errors are handled by close/disconnect cleanup.
     });
   }
 
-  /**
-   * Handle messages from dispatcher
-   */
   async handleMessage(user, message, ws) {
-    console.log(`[VoiceSignaling] Message from dispatcher ${user.id}: ${message.type}`);
-
-    switch (message.type) {
+    const type = String(message?.type || '').trim().toLowerCase();
+    switch (type) {
       case 'join-channel':
-        await this.handleJoinChannel(user, message.channelNumber, ws);
+        await this.handleJoinChannel(user, Number(message?.channelNumber || 0), ws);
         break;
-
       case 'leave-channel':
         await this.handleLeaveChannel(user, ws);
         break;
-
-      case 'webrtc-offer':
-        await this.handleWebRTCOffer(user, message.offer, ws);
+      case 'mic-audio':
+        this.handleMicAudio(user, message);
         break;
-
-      case 'webrtc-ice-candidate':
-        await this.handleICECandidate(user, message.candidate, ws);
-        break;
-
       case 'ping':
-        ws.send(JSON.stringify({ type: 'pong' }));
+        if (isWsOpen(ws)) ws.send(JSON.stringify({ type: 'pong' }));
         break;
-
       default:
-        console.warn(`[VoiceSignaling] Unknown message type: ${message.type}`);
-        this.sendError(ws, `Unknown message type: ${message.type}`);
+        this.sendError(ws, `Unknown message type: ${type || 'empty'}`);
+        break;
     }
   }
 
-  /**
-   * Handle dispatcher joining a voice channel
-   */
   async handleJoinChannel(user, channelNumber, ws) {
     try {
-      console.log(`[VoiceSignaling] Dispatcher ${user.id} joining channel ${channelNumber}`);
-
-      // Validate channel exists
-      const channel = VoiceChannels.findByChannelNumber(channelNumber);
-      if (!channel) {
-        throw new Error(`Channel ${channelNumber} not found`);
+      const parsedChannelNumber = Number(channelNumber || 0);
+      if (!Number.isInteger(parsedChannelNumber) || parsedChannelNumber <= 0) {
+        throw new Error('Invalid channel number');
       }
 
-      // Check permissions (only dispatch or admin can join any channel)
-      const isDispatch = user.departments.some(d =>
-        d.is_dispatch || user.is_admin
-      );
+      const channel = VoiceChannels.findByChannelNumber(parsedChannelNumber);
+      if (!channel || !channel.is_active) {
+        throw new Error(`Channel ${parsedChannelNumber} not found`);
+      }
 
+      const isDispatch = !!(user.is_admin || user.departments.some(d => d.is_dispatch));
       if (!isDispatch) {
         throw new Error('Only dispatchers can join voice channels');
       }
 
-      // Connect to Mumble
       await this.voiceBridge.connectDispatcherToMumble(user.id, user.steam_name);
+      await this.voiceBridge.joinChannel(user.id, parsedChannelNumber);
 
-      // Join the specific channel
-      await this.voiceBridge.joinChannel(user.id, channelNumber);
-
-      // Create WebRTC peer for audio
-      const peer = this.voiceBridge.createWebRTCPeer(user.id);
-
-      // Wait for WebRTC offer from peer
-      peer.on('signal', (signal) => {
-        console.log(`[VoiceSignaling] Sending WebRTC signal to dispatcher ${user.id}`);
+      this.voiceBridge.removeAudioListeners(user.id);
+      this.voiceBridge.addAudioListener(user.id, ({ pcm, sampleRate, channels, bitsPerSample }) => {
+        if (!isWsOpen(ws)) return;
         ws.send(JSON.stringify({
-          type: 'webrtc-signal',
-          signal,
+          type: 'mumble-audio',
+          sampleRate,
+          channels,
+          bitsPerSample,
+          data: Buffer.from(pcm).toString('base64'),
         }));
       });
 
-      // Add to participants in database
       const unit = Units.findByUserId(user.id);
-      VoiceParticipants.add({
-        channel_id: channel.id,
-        user_id: user.id,
-        unit_id: unit?.id || null,
-        citizen_id: '',
-        game_id: '',
-      });
+      const existingParticipant = VoiceParticipants.findByUserAndChannel(user.id, channel.id);
+      if (!existingParticipant) {
+        VoiceParticipants.add({
+          channel_id: channel.id,
+          user_id: user.id,
+          unit_id: unit?.id || null,
+          citizen_id: '',
+          game_id: '',
+        });
+      }
 
-      // Notify via event bus
-      bus.emit('voice:dispatcher_joined', {
+      bus.emit('voice:join', {
         channelId: channel.id,
-        channelNumber,
+        channelNumber: parsedChannelNumber,
         userId: user.id,
-        userName: user.steam_name,
+        unitId: unit?.id || null,
       });
 
-      // Audit log
       audit(user.id, 'voice_bridge_joined_channel', {
-        channelNumber,
+        channelNumber: parsedChannelNumber,
         channelName: channel.name,
       });
 
-      // Send success response
-      ws.send(JSON.stringify({
-        type: 'channel-joined',
-        channelNumber,
-        channelName: channel.name,
-      }));
-
-      console.log(`[VoiceSignaling] Dispatcher ${user.id} successfully joined channel ${channelNumber}`);
+      if (isWsOpen(ws)) {
+        ws.send(JSON.stringify({
+          type: 'channel-joined',
+          channelNumber: parsedChannelNumber,
+          channelName: channel.name,
+        }));
+      }
     } catch (error) {
-      console.error(`[VoiceSignaling] Error joining channel:`, error);
-      this.sendError(ws, error.message);
+      this.sendError(ws, error?.message || 'Failed to join channel');
     }
   }
 
-  /**
-   * Handle dispatcher leaving voice channel
-   */
   async handleLeaveChannel(user, ws) {
     try {
-      console.log(`[VoiceSignaling] Dispatcher ${user.id} leaving channel`);
-
-      // Get current channel
       const channelInfo = this.voiceBridge.activeChannels.get(user.id);
-
-      // Leave channel in voice bridge
       await this.voiceBridge.leaveChannel(user.id);
+      this.voiceBridge.removeAudioListeners(user.id);
 
-      // Remove from participants
-      if (channelInfo) {
-        const channel = VoiceChannels.findByChannelNumber(channelInfo.channelNumber);
+      if (channelInfo?.channelNumber) {
+        const channel = VoiceChannels.findByChannelNumber(Number(channelInfo.channelNumber));
         if (channel) {
           VoiceParticipants.removeByUser(user.id, channel.id);
-
-          // Notify via event bus
-          bus.emit('voice:dispatcher_left', {
+          bus.emit('voice:leave', {
             channelId: channel.id,
-            channelNumber: channelInfo.channelNumber,
+            channelNumber: Number(channelInfo.channelNumber),
             userId: user.id,
           });
-
           audit(user.id, 'voice_bridge_left_channel', {
-            channelNumber: channelInfo.channelNumber,
+            channelNumber: Number(channelInfo.channelNumber),
+            channelName: channel.name,
           });
         }
       }
 
-      ws.send(JSON.stringify({
-        type: 'channel-left',
-      }));
-
-      console.log(`[VoiceSignaling] Dispatcher ${user.id} successfully left channel`);
+      if (isWsOpen(ws)) ws.send(JSON.stringify({ type: 'channel-left' }));
     } catch (error) {
-      console.error(`[VoiceSignaling] Error leaving channel:`, error);
-      this.sendError(ws, error.message);
+      this.sendError(ws, error?.message || 'Failed to leave channel');
     }
   }
 
-  /**
-   * Handle WebRTC offer from dispatcher
-   */
-  async handleWebRTCOffer(user, offer, ws) {
-    try {
-      console.log(`[VoiceSignaling] Received WebRTC offer from dispatcher ${user.id}`);
-
-      const peer = this.voiceBridge.webrtcPeers.get(user.id);
-      if (!peer) {
-        throw new Error('No WebRTC peer found. Join a channel first.');
-      }
-
-      // Signal the offer to the peer
-      peer.signal(offer);
-
-      console.log(`[VoiceSignaling] WebRTC offer processed for dispatcher ${user.id}`);
-    } catch (error) {
-      console.error(`[VoiceSignaling] Error processing WebRTC offer:`, error);
-      this.sendError(ws, error.message);
-    }
+  handleMicAudio(user, message) {
+    const raw = decodeBase64ToBuffer(message?.data);
+    if (!raw.length) return;
+    this.voiceBridge.sendDispatcherAudio(user.id, raw);
   }
 
-  /**
-   * Handle ICE candidate from dispatcher
-   */
-  async handleICECandidate(user, candidate, ws) {
-    try {
-      const peer = this.voiceBridge.webrtcPeers.get(user.id);
-      if (!peer) {
-        console.warn(`[VoiceSignaling] No peer found for ICE candidate from dispatcher ${user.id}`);
-        return;
-      }
-
-      peer.signal({ candidate });
-      console.log(`[VoiceSignaling] ICE candidate processed for dispatcher ${user.id}`);
-    } catch (error) {
-      console.error(`[VoiceSignaling] Error processing ICE candidate:`, error);
-    }
-  }
-
-  /**
-   * Handle dispatcher disconnection
-   */
   async handleDisconnection(user) {
     try {
-      // Disconnect from voice bridge
       await this.voiceBridge.disconnectDispatcher(user.id);
-
-      // Remove from connections
-      this.connections.delete(user.id);
-
-      // Audit log
-      audit(user.id, 'voice_bridge_disconnected', {});
-
-      console.log(`[VoiceSignaling] Dispatcher ${user.id} fully disconnected`);
-    } catch (error) {
-      console.error(`[VoiceSignaling] Error handling disconnection:`, error);
+    } catch {
+      // Disconnect best-effort.
     }
+    this.connections.delete(user.id);
+    audit(user.id, 'voice_bridge_disconnected', {});
   }
 
-  /**
-   * Send error message to dispatcher
-   */
   sendError(ws, message) {
+    if (!isWsOpen(ws)) return;
     ws.send(JSON.stringify({
       type: 'error',
-      error: message,
+      error: String(message || 'Unknown error'),
     }));
   }
 
-  /**
-   * Broadcast message to all connected dispatchers
-   */
   broadcast(message) {
     const data = JSON.stringify(message);
-    for (const [userId, { ws }] of this.connections) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(data);
+    for (const entry of this.connections.values()) {
+      if (isWsOpen(entry.ws)) {
+        entry.ws.send(data);
       }
     }
   }
 
-  /**
-   * Get status of signaling server
-   */
   getStatus() {
     return {
       connectedDispatchers: this.connections.size,

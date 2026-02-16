@@ -8,6 +8,7 @@ const {
   FiveMPlayerLinks,
   FiveMFineJobs,
   FiveMJobSyncJobs,
+  VoiceCallSessions,
 } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
@@ -17,6 +18,8 @@ const router = express.Router();
 const liveLinkUserCache = new Map();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const pendingRouteJobs = new Map();
+const pendingVoiceEvents = new Map();
+let nextVoiceEventId = 1;
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
@@ -280,6 +283,59 @@ function normalizePriority(value) {
   return ['1', '2', '3', '4'].includes(priority) ? priority : '1';
 }
 
+function normalizeEmergencySourceType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'command';
+
+  const commandValues = new Set([
+    'command',
+    'command_000',
+    'slash',
+    'slash_command',
+    'chat_command',
+    '/000',
+    'ingame_command',
+    'in_game_command',
+  ]);
+  if (commandValues.has(normalized)) return 'command';
+
+  const phoneValues = new Set([
+    'phone',
+    'phone_000',
+    'phone-call',
+    'phone_call',
+    'phonecall',
+    'emergency_phone',
+    'phone_emergency',
+  ]);
+  if (phoneValues.has(normalized)) return 'phone';
+
+  return normalized;
+}
+
+function looksLikePhoneOrigin(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  if (payload.is_phone_call === true || payload.via_phone === true) return true;
+
+  const phoneHints = [
+    payload.phone_number,
+    payload.caller_phone,
+    payload.caller_number,
+    payload.from_number,
+  ];
+
+  return phoneHints.some((value) => String(value || '').trim().length > 0);
+}
+
+function shouldCreateVoiceSession(payload, sourceType) {
+  if (typeof payload?.enable_voice_session === 'boolean') {
+    return payload.enable_voice_session;
+  }
+  if (sourceType === 'phone') return true;
+  if (sourceType === 'command') return false;
+  return looksLikePhoneOrigin(payload);
+}
+
 function getDispatchVisibleDepartments() {
   return Departments.listDispatchVisible().filter(dept => dept.is_active && !dept.is_dispatch);
 }
@@ -508,6 +564,56 @@ function clearRouteJobsForCall(callId, keepClearJobs = true) {
   }
 }
 
+function queueVoiceEvent(eventType, options = {}) {
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  const gameId = String(options.game_id || '').trim();
+  const channelNumberRaw = Number(options.channel_number || 0);
+  const channelNumber = Number.isInteger(channelNumberRaw) && channelNumberRaw >= 0
+    ? channelNumberRaw
+    : 0;
+  if (!normalizedEventType || !gameId) return null;
+
+  const id = nextVoiceEventId++;
+  const now = Date.now();
+  const entry = {
+    id,
+    event_type: normalizedEventType,
+    game_id: gameId,
+    channel_number: channelNumber,
+    citizen_id: String(options.citizen_id || '').trim(),
+    created_at_ms: now,
+    attempts: 0,
+    last_error: '',
+  };
+  pendingVoiceEvents.set(id, entry);
+  return entry;
+}
+
+function listPendingVoiceEvents(limit = 50) {
+  const normalizedLimit = Math.min(100, Math.max(1, Number(limit || 50) || 50));
+  return Array.from(pendingVoiceEvents.values())
+    .sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
+    .slice(0, normalizedLimit);
+}
+
+function markVoiceEventProcessed(id) {
+  pendingVoiceEvents.delete(Number(id || 0));
+}
+
+function markVoiceEventFailed(id, errorText = '') {
+  const targetId = Number(id || 0);
+  const existing = pendingVoiceEvents.get(targetId);
+  if (!existing) return;
+
+  existing.attempts = Number(existing.attempts || 0) + 1;
+  existing.last_error = String(errorText || '').trim().slice(0, 500);
+  if (existing.attempts >= 5) {
+    pendingVoiceEvents.delete(targetId);
+    return;
+  }
+  pendingVoiceEvents.set(targetId, existing);
+}
+
 function shouldAutoSetUnitOnScene(unit, playerPayload, assignedCall) {
   if (!unit || String(unit.status || '').trim().toLowerCase() !== 'enroute') return false;
   if (!assignedCall || String(assignedCall.status || '').trim().toLowerCase() === 'closed') return false;
@@ -583,6 +689,46 @@ bus.on('unit:status_available', ({ unit, call }) => {
   } catch (err) {
     console.warn('[FiveMBridge] Could not queue clear route job on status available:', err?.message || err);
   }
+});
+
+bus.on('voice:join', ({ channelNumber, gameId, citizenId }) => {
+  queueVoiceEvent('join_radio', {
+    channel_number: Number(channelNumber || 0),
+    game_id: String(gameId || '').trim(),
+    citizen_id: String(citizenId || '').trim(),
+  });
+});
+
+bus.on('voice:leave', ({ channelNumber, gameId, citizenId }) => {
+  queueVoiceEvent('leave_radio', {
+    channel_number: Number(channelNumber || 0),
+    game_id: String(gameId || '').trim(),
+    citizen_id: String(citizenId || '').trim(),
+  });
+});
+
+bus.on('voice:call_accepted', ({ callChannelNumber, callerGameId, callerCitizenId }) => {
+  queueVoiceEvent('join_call', {
+    channel_number: Number(callChannelNumber || 0),
+    game_id: String(callerGameId || '').trim(),
+    citizen_id: String(callerCitizenId || '').trim(),
+  });
+});
+
+bus.on('voice:call_declined', ({ callChannelNumber, callerGameId, callerCitizenId }) => {
+  queueVoiceEvent('leave_call', {
+    channel_number: Number(callChannelNumber || 0),
+    game_id: String(callerGameId || '').trim(),
+    citizen_id: String(callerCitizenId || '').trim(),
+  });
+});
+
+bus.on('voice:call_ended', ({ callChannelNumber, callerGameId, callerCitizenId }) => {
+  queueVoiceEvent('leave_call', {
+    channel_number: Number(callChannelNumber || 0),
+    game_id: String(callerGameId || '').trim(),
+    citizen_id: String(callerCitizenId || '').trim(),
+  });
 });
 
 // Heartbeat from FiveM resource with online players + position.
@@ -750,6 +896,10 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   const ids = resolveLinkIdentifiers(payload.identifiers || []);
   const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Caller';
   const sourceId = String(payload.source ?? '').trim();
+  const sourceType = normalizeEmergencySourceType(
+    payload.source_type || payload.call_source || payload.origin || payload.entry_type
+  );
+  const voiceEnabledForCall = shouldCreateVoiceSession(payload, sourceType);
   const details = String(payload.message || payload.details || '').trim();
 
   let cadUser = resolveCadUserFromIdentifiers(ids);
@@ -781,7 +931,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   const positionZ = Number(payload?.position?.z);
   const title = String(payload.title || '').trim() || (details ? details.slice(0, 120) : `000 Call from ${playerName}`);
   const descriptionParts = [];
-  descriptionParts.push(`000 call from ${playerName}${sourceId ? ` (#${sourceId})` : ''}`);
+  descriptionParts.push(`${voiceEnabledForCall ? '000 phone call' : '000 call'} from ${playerName}${sourceId ? ` (#${sourceId})` : ''}`);
   if (requestedDepartmentIds.length > 0) {
     const requestedLabels = requestedDepartmentIds
       .map((id) => {
@@ -815,6 +965,24 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     position_y: Number.isFinite(positionY) ? positionY : null,
     position_z: Number.isFinite(positionZ) ? positionZ : null,
   });
+  const callerCitizenId = String(payload?.citizenid || '').trim();
+  const callerGameId = String(payload?.source ?? '').trim();
+  const callChannelNumber = 10000 + Number(call.id || 0);
+  let voiceSessionCreated = false;
+  if (voiceEnabledForCall && callChannelNumber > 0) {
+    try {
+      VoiceCallSessions.create({
+        call_id: call.id,
+        call_channel_number: callChannelNumber,
+        caller_citizen_id: callerCitizenId,
+        caller_game_id: callerGameId,
+        caller_name: playerName,
+      });
+      voiceSessionCreated = true;
+    } catch (err) {
+      console.warn('[FiveMBridge] Could not create voice call session:', err?.message || err);
+    }
+  }
 
   bus.emit('call:create', { departmentId, call });
   audit(cadUser?.id || null, 'fivem_000_call_created', {
@@ -822,10 +990,17 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     departmentId,
     playerName,
     sourceId,
+    sourceType,
+    voiceSessionCreated,
     matchedUserId: cadUser?.id || null,
   });
 
-  res.status(201).json({ ok: true, call });
+  res.status(201).json({
+    ok: true,
+    call,
+    source_type: sourceType,
+    voice_session_created: voiceSessionCreated,
+  });
 });
 
 // FiveM resource polls pending route jobs to set in-game waypoints for assigned calls.
@@ -859,6 +1034,27 @@ router.post('/route-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   const error = String(req.body?.error || 'Route delivery failed');
   pendingRouteJobs.delete(id);
   console.warn('[FiveMBridge] Route job failed:', id, error);
+  res.json({ ok: true });
+});
+
+// FiveM resource polls pending voice jobs and applies them via pma-voice exports.
+router.get('/voice-events', requireBridgeAuth, (req, res) => {
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  res.json(listPendingVoiceEvents(limit));
+});
+
+router.post('/voice-events/:id/processed', requireBridgeAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid voice event id' });
+  markVoiceEventProcessed(id);
+  res.json({ ok: true });
+});
+
+router.post('/voice-events/:id/failed', requireBridgeAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid voice event id' });
+  const error = String(req.body?.error || 'Voice delivery failed');
+  markVoiceEventFailed(id, error);
   res.json({ ok: true });
 });
 

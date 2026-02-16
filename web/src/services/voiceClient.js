@@ -1,72 +1,68 @@
-import SimplePeer from 'simple-peer';
+function decodeBase64ToInt16(data) {
+  const raw = atob(String(data || ''));
+  const length = raw.length;
+  if (!length || length % 2 !== 0) return null;
+  const bytes = new Uint8Array(length);
+  for (let i = 0; i < length; i += 1) {
+    bytes[i] = raw.charCodeAt(i);
+  }
+  return new Int16Array(bytes.buffer);
+}
 
-/**
- * Voice client for web dispatchers to connect to voice bridge
- */
+function int16ToBase64(samples) {
+  if (!samples || !samples.length) return '';
+  const bytes = new Uint8Array(samples.buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 class DispatcherVoiceClient {
   constructor() {
     this.ws = null;
-    this.peer = null;
     this.localStream = null;
-    this.remoteStream = null;
+    this.localMicSource = null;
+    this.localMicProcessor = null;
+    this.localMicSink = null;
+    this.audioContext = null;
+    this.playbackCursor = 0;
     this.currentChannel = null;
     this.isConnected = false;
     this.isPTTActive = false;
 
-    // Event callbacks
     this.onConnectionChange = null;
     this.onChannelChange = null;
     this.onError = null;
     this.onTalkingChange = null;
   }
 
-  /**
-   * Connect to voice bridge WebSocket server
-   * @param {string} authToken - JWT authentication token
-   * @returns {Promise<void>}
-   */
   async connect(authToken) {
-    if (this.isConnected) {
-      console.log('[VoiceClient] Already connected');
-      return;
-    }
-
+    if (this.isConnected) return;
     return new Promise((resolve, reject) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
       const url = `${protocol}//${host}/voice-bridge?token=${encodeURIComponent(authToken)}`;
 
-      console.log('[VoiceClient] Connecting to:', url);
-
       this.ws = new WebSocket(url);
 
       this.ws.onopen = () => {
-        console.log('[VoiceClient] WebSocket connected');
         this.isConnected = true;
-        if (this.onConnectionChange) {
-          this.onConnectionChange(true);
-        }
+        if (this.onConnectionChange) this.onConnectionChange(true);
         resolve();
       };
 
       this.ws.onerror = (error) => {
-        console.error('[VoiceClient] WebSocket error:', error);
         this.isConnected = false;
-        if (this.onConnectionChange) {
-          this.onConnectionChange(false);
-        }
-        if (this.onError) {
-          this.onError('WebSocket connection failed');
-        }
+        if (this.onConnectionChange) this.onConnectionChange(false);
+        if (this.onError) this.onError('WebSocket connection failed');
         reject(error);
       };
 
       this.ws.onclose = () => {
-        console.log('[VoiceClient] WebSocket closed');
         this.isConnected = false;
-        if (this.onConnectionChange) {
-          this.onConnectionChange(false);
-        }
+        if (this.onConnectionChange) this.onConnectionChange(false);
         this.cleanup();
       };
 
@@ -74,14 +70,13 @@ class DispatcherVoiceClient {
         try {
           const message = JSON.parse(event.data);
           this.handleMessage(message);
-        } catch (error) {
-          console.error('[VoiceClient] Error parsing message:', error);
+        } catch {
+          // Ignore malformed payloads from server.
         }
       };
 
-      // Connection timeout
       setTimeout(() => {
-        if (!this.isConnected) {
+        if (!this.isConnected && this.ws) {
           this.ws.close();
           reject(new Error('Connection timeout'));
         }
@@ -89,314 +84,198 @@ class DispatcherVoiceClient {
     });
   }
 
-  /**
-   * Join a voice channel
-   * @param {number} channelNumber - Channel number to join
-   * @returns {Promise<void>}
-   */
-  async joinChannel(channelNumber) {
-    if (!this.isConnected) {
-      throw new Error('Not connected to voice bridge');
-    }
-
-    if (this.currentChannel === channelNumber) {
-      console.log('[VoiceClient] Already in channel', channelNumber);
-      return;
-    }
-
-    console.log('[VoiceClient] Requesting microphone access...');
-
-    // Request microphone access
-    try {
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-        },
-        video: false,
+  async ensureAudioContext() {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: 48000,
       });
-
-      console.log('[VoiceClient] Microphone access granted');
-
-      // Mute by default (push-to-talk)
-      this.localStream.getAudioTracks().forEach(track => {
-        track.enabled = false;
-      });
-
-    } catch (error) {
-      console.error('[VoiceClient] Microphone access denied:', error);
-      if (this.onError) {
-        this.onError('Microphone access denied. Please allow microphone access in your browser settings.');
-      }
-      throw error;
     }
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+    }
+    return this.audioContext;
+  }
 
-    // Create WebRTC peer
-    console.log('[VoiceClient] Creating WebRTC peer...');
-    this.peer = new SimplePeer({
-      initiator: true, // Browser initiates the connection
-      stream: this.localStream,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-        ],
+  async ensureMicrophonePipeline() {
+    if (this.localMicProcessor) return;
+    await this.ensureAudioContext();
+
+    this.localStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000,
       },
-      trickle: true,
+      video: false,
     });
 
-    // Handle WebRTC signals
-    this.peer.on('signal', (signal) => {
-      console.log('[VoiceClient] Sending WebRTC signal to server');
-      this.send({
-        type: 'webrtc-offer',
-        offer: signal,
-      });
-    });
+    this.localMicSource = this.audioContext.createMediaStreamSource(this.localStream);
+    this.localMicProcessor = this.audioContext.createScriptProcessor(2048, 1, 1);
+    this.localMicSink = this.audioContext.createGain();
+    this.localMicSink.gain.value = 0;
 
-    // Handle incoming stream (from Mumble/in-game players)
-    this.peer.on('stream', (stream) => {
-      console.log('[VoiceClient] Received remote audio stream');
-      this.remoteStream = stream;
-      this.playRemoteAudio(stream);
-    });
-
-    // Handle connection status
-    this.peer.on('connect', () => {
-      console.log('[VoiceClient] WebRTC peer connected');
-    });
-
-    this.peer.on('error', (error) => {
-      console.error('[VoiceClient] WebRTC error:', error);
-      if (this.onError) {
-        this.onError(`WebRTC error: ${error.message}`);
+    this.localMicProcessor.onaudioprocess = (event) => {
+      if (!this.isPTTActive || !this.currentChannel) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i += 1) {
+        const sample = Math.max(-1, Math.min(1, input[i]));
+        pcm[i] = sample < 0 ? sample * 32768 : sample * 32767;
       }
-    });
+      this.send({
+        type: 'mic-audio',
+        data: int16ToBase64(pcm),
+      });
+    };
 
-    this.peer.on('close', () => {
-      console.log('[VoiceClient] WebRTC peer closed');
-    });
+    this.localMicSource.connect(this.localMicProcessor);
+    this.localMicProcessor.connect(this.localMicSink);
+    this.localMicSink.connect(this.audioContext.destination);
+  }
 
-    // Send join channel request
-    console.log('[VoiceClient] Joining channel', channelNumber);
+  async joinChannel(channelNumber) {
+    if (!this.isConnected) throw new Error('Not connected to voice bridge');
+    if (this.currentChannel === channelNumber) return;
+
+    await this.ensureAudioContext();
+    try {
+      await this.ensureMicrophonePipeline();
+    } catch {
+      if (this.onError) {
+        this.onError('Microphone access denied. Listening still works, but transmit is disabled.');
+      }
+    }
+
     this.send({
       type: 'join-channel',
       channelNumber,
     });
   }
 
-  /**
-   * Leave current voice channel
-   * @returns {Promise<void>}
-   */
   async leaveChannel() {
-    if (!this.currentChannel) {
-      return;
-    }
-
-    console.log('[VoiceClient] Leaving channel', this.currentChannel);
-
-    // Stop local audio
-    if (this.localStream) {
-      this.localStream.getTracks().forEach(track => {
-        track.stop();
-      });
-      this.localStream = null;
-    }
-
-    // Destroy WebRTC peer
-    if (this.peer) {
-      this.peer.destroy();
-      this.peer = null;
-    }
-
-    // Notify server
-    this.send({
-      type: 'leave-channel',
-    });
-
-    const prevChannel = this.currentChannel;
+    if (!this.currentChannel) return;
+    this.send({ type: 'leave-channel' });
+    const prev = this.currentChannel;
     this.currentChannel = null;
-
-    if (this.onChannelChange) {
-      this.onChannelChange(null, prevChannel);
-    }
+    this.isPTTActive = false;
+    if (this.onChannelChange) this.onChannelChange(null, prev);
+    if (this.onTalkingChange) this.onTalkingChange(false);
   }
 
-  /**
-   * Enable/disable push-to-talk
-   * @param {boolean} enabled - Whether PTT is active
-   */
   setPushToTalk(enabled) {
-    if (!this.localStream) {
-      console.warn('[VoiceClient] No local stream available');
-      return;
-    }
-
-    console.log('[VoiceClient] Push-to-talk:', enabled ? 'ON' : 'OFF');
-
-    this.localStream.getAudioTracks().forEach(track => {
-      track.enabled = enabled;
-    });
-
-    this.isPTTActive = enabled;
-
-    if (this.onTalkingChange) {
-      this.onTalkingChange(enabled);
-    }
+    this.isPTTActive = !!enabled && !!this.currentChannel;
+    if (this.onTalkingChange) this.onTalkingChange(this.isPTTActive);
   }
 
-  /**
-   * Play remote audio stream
-   * @param {MediaStream} stream
-   */
-  playRemoteAudio(stream) {
-    const audioElement = document.createElement('audio');
-    audioElement.srcObject = stream;
-    audioElement.autoplay = true;
-    audioElement.volume = 1.0;
+  async playPcmChunk(base64Data, sampleRate = 48000) {
+    const pcm = decodeBase64ToInt16(base64Data);
+    if (!pcm || pcm.length === 0) return;
 
-    audioElement.addEventListener('loadedmetadata', () => {
-      console.log('[VoiceClient] Remote audio ready to play');
-    });
+    await this.ensureAudioContext();
+    const float32 = new Float32Array(pcm.length);
+    for (let i = 0; i < pcm.length; i += 1) {
+      float32[i] = pcm[i] / 32768;
+    }
 
-    audioElement.addEventListener('error', (e) => {
-      console.error('[VoiceClient] Audio playback error:', e);
-    });
+    const buffer = this.audioContext.createBuffer(1, float32.length, Number(sampleRate) || 48000);
+    buffer.copyToChannel(float32, 0);
 
-    // Keep reference to prevent garbage collection
-    this._audioElement = audioElement;
+    const source = this.audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.audioContext.destination);
+
+    const now = this.audioContext.currentTime + 0.01;
+    const startAt = Math.max(now, this.playbackCursor || 0);
+    source.start(startAt);
+    this.playbackCursor = startAt + buffer.duration;
   }
 
-  /**
-   * Handle incoming WebSocket messages
-   * @param {object} message
-   */
   handleMessage(message) {
-    console.log('[VoiceClient] Received message:', message.type);
-
-    switch (message.type) {
+    const type = String(message?.type || '').trim().toLowerCase();
+    switch (type) {
       case 'connected':
-        console.log('[VoiceClient] Connected as dispatcher:', message.dispatcherName);
         break;
-
-      case 'channel-joined':
-        console.log('[VoiceClient] Joined channel:', message.channelNumber, message.channelName);
-        const prevChannel = this.currentChannel;
-        this.currentChannel = message.channelNumber;
-        if (this.onChannelChange) {
-          this.onChannelChange(message.channelNumber, prevChannel);
-        }
+      case 'channel-joined': {
+        const prev = this.currentChannel;
+        this.currentChannel = Number(message.channelNumber || 0) || null;
+        this.playbackCursor = 0;
+        if (this.onChannelChange) this.onChannelChange(this.currentChannel, prev);
         break;
-
-      case 'channel-left':
-        console.log('[VoiceClient] Left channel');
+      }
+      case 'channel-left': {
+        const prev = this.currentChannel;
         this.currentChannel = null;
-        if (this.onChannelChange) {
-          this.onChannelChange(null, this.currentChannel);
-        }
+        this.isPTTActive = false;
+        if (this.onChannelChange) this.onChannelChange(null, prev);
+        if (this.onTalkingChange) this.onTalkingChange(false);
         break;
-
-      case 'webrtc-signal':
-        console.log('[VoiceClient] Received WebRTC signal from server');
-        if (this.peer) {
-          this.peer.signal(message.signal);
-        }
+      }
+      case 'mumble-audio':
+        this.playPcmChunk(message.data, message.sampleRate).catch(() => {});
         break;
-
       case 'error':
-        console.error('[VoiceClient] Server error:', message.error);
-        if (this.onError) {
-          this.onError(message.error);
-        }
+        if (this.onError) this.onError(String(message.error || 'Voice error'));
         break;
-
       case 'pong':
-        // Keepalive response
-        break;
-
       default:
-        console.warn('[VoiceClient] Unknown message type:', message.type);
+        break;
     }
   }
 
-  /**
-   * Send message to server
-   * @param {object} message
-   */
   send(message) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.error('[VoiceClient] Cannot send message: WebSocket not open');
-      return;
-    }
-
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(message));
   }
 
-  /**
-   * Send keepalive ping
-   */
   ping() {
     this.send({ type: 'ping' });
   }
 
-  /**
-   * Disconnect from voice bridge
-   */
   disconnect() {
-    console.log('[VoiceClient] Disconnecting...');
-
     this.leaveChannel();
-
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-
     this.cleanup();
   }
 
-  /**
-   * Clean up resources
-   */
   cleanup() {
-    if (this.peer) {
-      this.peer.destroy();
-      this.peer = null;
+    if (this.localMicSource) {
+      try { this.localMicSource.disconnect(); } catch {}
+      this.localMicSource = null;
     }
-
+    if (this.localMicProcessor) {
+      try { this.localMicProcessor.disconnect(); } catch {}
+      this.localMicProcessor.onaudioprocess = null;
+      this.localMicProcessor = null;
+    }
+    if (this.localMicSink) {
+      try { this.localMicSink.disconnect(); } catch {}
+      this.localMicSink = null;
+    }
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;
     }
-
-    if (this._audioElement) {
-      this._audioElement.pause();
-      this._audioElement.srcObject = null;
-      this._audioElement = null;
+    if (this.audioContext) {
+      try { this.audioContext.close(); } catch {}
+      this.audioContext = null;
     }
-
-    this.remoteStream = null;
+    this.playbackCursor = 0;
     this.currentChannel = null;
     this.isPTTActive = false;
     this.isConnected = false;
   }
 
-  /**
-   * Get current status
-   * @returns {object}
-   */
   getStatus() {
     return {
       isConnected: this.isConnected,
       currentChannel: this.currentChannel,
       isPTTActive: this.isPTTActive,
       hasLocalStream: !!this.localStream,
-      hasRemoteStream: !!this.remoteStream,
-      hasPeer: !!this.peer,
     };
   }
 }

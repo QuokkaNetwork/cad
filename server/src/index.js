@@ -16,8 +16,6 @@ const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
 const { ensureLiveMapTilesDir } = require('./services/liveMapTiles');
-const { getVoiceBridge } = require('./services/voiceBridge');
-const VoiceSignalingServer = require('./services/voiceSignaling');
 
 // Initialize database
 console.log('Initializing database...');
@@ -149,12 +147,20 @@ let voiceBridge = null;
 let voiceSignaling = null;
 
 try {
+  const { getVoiceBridge } = require('./services/voiceBridge');
+  const VoiceSignalingServer = require('./services/voiceSignaling');
   voiceBridge = getVoiceBridge();
-  voiceSignaling = new VoiceSignalingServer(httpServer, voiceBridge);
-  console.log('[VoiceBridge] Voice bridge initialized successfully');
+  if (voiceBridge?.getStatus?.().available) {
+    voiceSignaling = new VoiceSignalingServer(httpServer, voiceBridge);
+    console.log('[VoiceBridge] Voice bridge initialized successfully');
+  } else {
+    const missing = voiceBridge?.getStatus?.().dependency_missing || 'unknown';
+    console.warn(`[VoiceBridge] Voice bridge not available: missing ${missing}`);
+    console.warn('[VoiceBridge] Install dependencies in server workspace: npm install mumble-node opusscript ws');
+  }
 } catch (error) {
   console.warn('[VoiceBridge] Voice bridge not available:', error.message);
-  console.warn('[VoiceBridge] Install dependencies: npm install ws wrtc node-opus mumble simple-peer');
+  console.warn('[VoiceBridge] Install dependencies in server workspace: npm install mumble-node opusscript ws');
   console.warn('[VoiceBridge] CAD will run without voice bridge support');
 }
 

@@ -1,288 +1,458 @@
-const Mumble = require('mumble');
-const SimplePeer = require('simple-peer');
-const wrtc = require('wrtc');
-const { PassThrough } = require('stream');
+let MumbleClientCtor = null;
+let OpusScript = null;
+
+try {
+  ({ MumbleClient: MumbleClientCtor } = require('mumble-node'));
+} catch {
+  MumbleClientCtor = null;
+}
+
+try {
+  OpusScript = require('opusscript');
+} catch {
+  OpusScript = null;
+}
+
+const OPUS_FRAME_SIZE = 960; // 20ms @ 48kHz mono
+const OPUS_FRAME_BYTES = OPUS_FRAME_SIZE * 2;
+
+function parseBool(value, fallback = false) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return !!fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return !!fallback;
+}
+
+function parseCsv(value) {
+  const text = String(value || '').trim();
+  if (!text) return [];
+  return text
+    .split(',')
+    .map(item => String(item || '').trim())
+    .filter(Boolean);
+}
+
+function toBuffer(payload) {
+  if (!payload) return Buffer.alloc(0);
+  if (Buffer.isBuffer(payload)) return payload;
+  if (payload instanceof ArrayBuffer) return Buffer.from(payload);
+  if (ArrayBuffer.isView(payload)) {
+    return Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength);
+  }
+  try {
+    return Buffer.from(payload);
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+function waitForReady(client, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    let timeoutId = null;
+
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      client.removeListener('ready', onReady);
+      client.removeListener('error', onError);
+      client.removeListener('rejected', onRejected);
+      client.removeListener('disconnected', onDisconnected);
+    };
+
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = (err) => {
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err || 'Unknown Mumble error')));
+    };
+
+    const onRejected = (type, reason) => {
+      cleanup();
+      const rejectType = type !== undefined ? ` (${type})` : '';
+      reject(new Error(`Mumble connection rejected${rejectType}: ${String(reason || 'no reason provided')}`));
+    };
+
+    const onDisconnected = (reason) => {
+      cleanup();
+      reject(new Error(`Mumble disconnected before ready: ${String(reason || 'unknown reason')}`));
+    };
+
+    client.once('ready', onReady);
+    client.once('error', onError);
+    client.once('rejected', onRejected);
+    client.once('disconnected', onDisconnected);
+
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for Mumble ready state'));
+    }, Math.max(1000, Number(timeoutMs) || 15000));
+  });
+}
 
 class VoiceBridgeServer {
   constructor() {
-    this.mumbleClients = new Map(); // dispatcherId -> mumble connection
-    this.webrtcPeers = new Map();   // dispatcherId -> webrtc peer
-    this.activeChannels = new Map(); // dispatcherId -> { channelNumber, channelObj }
-    this.audioStreams = new Map();   // dispatcherId -> audio stream
+    this.available = !!MumbleClientCtor && !!OpusScript;
+    this.mumbleClients = new Map();             // dispatcherId -> mumble-node client
+    this.activeChannels = new Map();            // dispatcherId -> { channelNumber, channelName }
+    this.audioListeners = new Map();            // dispatcherId -> Set(listener)
+    this.dispatcherEncoders = new Map();        // dispatcherId -> Opus encoder
+    this.dispatcherPcmBuffers = new Map();      // dispatcherId -> Buffer remainder
+    this.dispatcherDecoders = new Map();        // dispatcherId -> Map<sessionId, Opus decoder>
+    this.clientAudioHandlers = new Map();       // dispatcherId -> fn
+    this.clientDisconnectHandlers = new Map();  // dispatcherId -> fn
+    this.clientErrorHandlers = new Map();       // dispatcherId -> fn
+    this.missingDependencies = [
+      ...(MumbleClientCtor ? [] : ['mumble-node']),
+      ...(OpusScript ? [] : ['opusscript']),
+    ];
     this.config = {
       mumbleHost: process.env.MUMBLE_HOST || '127.0.0.1',
-      mumblePort: process.env.MUMBLE_PORT || 64738,
+      mumblePort: Number(process.env.MUMBLE_PORT || 64738) || 64738,
+      mumblePassword: String(process.env.MUMBLE_PASSWORD || '').trim(),
+      mumbleTokens: parseCsv(process.env.MUMBLE_TOKENS),
+      mumbleRejectUnauthorized: parseBool(process.env.MUMBLE_REJECT_UNAUTHORIZED, false),
+      mumbleDisableUdp: parseBool(process.env.MUMBLE_DISABLE_UDP, false),
+      dispatcherNamePrefix: String(process.env.MUMBLE_DISPATCHER_NAME_PREFIX || 'CAD_Dispatcher').trim() || 'CAD_Dispatcher',
       sampleRate: 48000,
-      frameSize: 960, // 20ms at 48kHz
+      channels: 1,
+      bitsPerSample: 16,
     };
   }
 
-  /**
-   * Connect a dispatcher to the Mumble server as a virtual client
-   */
-  async connectDispatcherToMumble(dispatcherId, userName = null) {
-    if (this.mumbleClients.has(dispatcherId)) {
-      console.log(`[VoiceBridge] Dispatcher ${dispatcherId} already connected to Mumble`);
-      return this.mumbleClients.get(dispatcherId);
+  assertAvailable() {
+    if (this.available) return;
+    throw new Error(`Voice bridge dependencies missing: ${this.missingDependencies.join(', ')}`);
+  }
+
+  buildDispatcherName(dispatcherId, preferredName = null) {
+    const byName = String(preferredName || '').trim();
+    if (byName) return byName.slice(0, 80);
+    return `${this.config.dispatcherNamePrefix}${dispatcherId}`;
+  }
+
+  buildClientOptions(dispatcherId, preferredName = null) {
+    const options = {
+      host: this.config.mumbleHost,
+      port: this.config.mumblePort,
+      username: this.buildDispatcherName(dispatcherId, preferredName),
+      rejectUnauthorized: this.config.mumbleRejectUnauthorized,
+      disableUdp: this.config.mumbleDisableUdp,
+    };
+    if (this.config.mumblePassword) {
+      options.password = this.config.mumblePassword;
+    }
+    if (this.config.mumbleTokens.length > 0) {
+      options.tokens = this.config.mumbleTokens;
+    }
+    return options;
+  }
+
+  createEncoder() {
+    return new OpusScript(this.config.sampleRate, this.config.channels, OpusScript.Application.VOIP);
+  }
+
+  createDecoder() {
+    return new OpusScript(this.config.sampleRate, this.config.channels, OpusScript.Application.VOIP);
+  }
+
+  decodeIncomingAudio(dispatcherId, sessionId, opusChunk) {
+    const rawChunk = toBuffer(opusChunk);
+    if (!rawChunk.length) return;
+
+    let decoderMap = this.dispatcherDecoders.get(dispatcherId);
+    if (!decoderMap) {
+      decoderMap = new Map();
+      this.dispatcherDecoders.set(dispatcherId, decoderMap);
+    }
+
+    const key = Number(sessionId || 0) || 0;
+    let decoder = decoderMap.get(key);
+    if (!decoder) {
+      decoder = this.createDecoder();
+      decoderMap.set(key, decoder);
     }
 
     try {
-      const username = userName || `VoiceBridge_Dispatcher${dispatcherId}`;
-      const url = `mumble://${this.config.mumbleHost}:${this.config.mumblePort}`;
-
-      console.log(`[VoiceBridge] Connecting ${username} to Mumble at ${url}...`);
-
-      const client = await new Promise((resolve, reject) => {
-        Mumble.connect(url, {
-          name: username,
-          rejectUnauthorized: false, // Allow self-signed certificates
-        }, (error, client) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(client);
-          }
-        });
-      });
-
-      console.log(`[VoiceBridge] ${username} connected to Mumble successfully`);
-
-      // Store client
-      this.mumbleClients.set(dispatcherId, client);
-
-      // Handle disconnection
-      client.on('disconnect', () => {
-        console.log(`[VoiceBridge] ${username} disconnected from Mumble`);
-        this.handleMumbleDisconnect(dispatcherId);
-      });
-
-      // Create audio input stream for this dispatcher
-      const audioStream = new PassThrough();
-      this.audioStreams.set(dispatcherId, audioStream);
-
-      // Pipe audio stream to Mumble
-      audioStream.on('data', (chunk) => {
-        try {
-          if (client && client.connection) {
-            client.connection.sendVoice(chunk);
-          }
-        } catch (err) {
-          console.error(`[VoiceBridge] Error sending voice for dispatcher ${dispatcherId}:`, err.message);
-        }
-      });
-
-      return client;
-    } catch (error) {
-      console.error(`[VoiceBridge] Failed to connect dispatcher ${dispatcherId} to Mumble:`, error);
-      throw error;
+      const decoded = decoder.decode(rawChunk, OPUS_FRAME_SIZE);
+      const pcm = toBuffer(decoded);
+      if (!pcm.length) return;
+      this.emitAudio(dispatcherId, pcm);
+    } catch {
+      // Corrupt or partial Opus packets should be ignored.
     }
   }
 
-  /**
-   * Move a dispatcher to a specific channel/radio frequency
-   */
+  async connectDispatcherToMumble(dispatcherId, userName = null) {
+    this.assertAvailable();
+
+    const existing = this.mumbleClients.get(dispatcherId);
+    if (existing?.isReady) {
+      return existing;
+    }
+    if (existing && !existing.isReady) {
+      try { existing.disconnect(); } catch {}
+      this.handleMumbleDisconnect(dispatcherId);
+    }
+
+    const client = new MumbleClientCtor(this.buildClientOptions(dispatcherId, userName));
+    const audioHandler = (sessionId, opusData) => {
+      this.decodeIncomingAudio(dispatcherId, sessionId, opusData);
+    };
+    const disconnectHandler = () => {
+      this.handleMumbleDisconnect(dispatcherId);
+    };
+    const errorHandler = (err) => {
+      console.warn('[VoiceBridge] Mumble client error:', err?.message || err);
+    };
+
+    client.on('audio', audioHandler);
+    client.on('disconnected', disconnectHandler);
+    client.on('error', errorHandler);
+
+    try {
+      await client.connect();
+      if (!client.isReady) {
+        await waitForReady(client, 15000);
+      }
+    } catch (error) {
+      try {
+        client.removeListener('audio', audioHandler);
+        client.removeListener('disconnected', disconnectHandler);
+        client.removeListener('error', errorHandler);
+      } catch {}
+      throw error;
+    }
+
+    this.mumbleClients.set(dispatcherId, client);
+    this.clientAudioHandlers.set(dispatcherId, audioHandler);
+    this.clientDisconnectHandlers.set(dispatcherId, disconnectHandler);
+    this.clientErrorHandlers.set(dispatcherId, errorHandler);
+    this.dispatcherEncoders.set(dispatcherId, this.createEncoder());
+    this.dispatcherPcmBuffers.set(dispatcherId, Buffer.alloc(0));
+    this.dispatcherDecoders.set(dispatcherId, new Map());
+    return client;
+  }
+
+  resolveTargetChannel(client, numericChannel) {
+    if (!client || !client.isReady) return null;
+
+    const allChannels = Array.from(client.channels.values());
+    if (!allChannels.length) return null;
+
+    if (numericChannel <= 0) {
+      return client.getRootChannel() || allChannels[0];
+    }
+
+    const exactById = client.getChannel(numericChannel);
+    if (exactById) return exactById;
+
+    const candidates = [
+      String(numericChannel),
+      `Channel_${numericChannel}`,
+      `Radio ${numericChannel}`,
+      `radio-${numericChannel}`,
+      `radio_${numericChannel}`,
+    ].map(name => name.toLowerCase());
+
+    for (const candidate of candidates) {
+      const hit = allChannels.find((channel) => String(channel?.name || '').trim().toLowerCase() === candidate);
+      if (hit) return hit;
+    }
+
+    return null;
+  }
+
   async joinChannel(dispatcherId, channelNumber) {
     const client = this.mumbleClients.get(dispatcherId);
-    if (!client) {
-      throw new Error('Dispatcher not connected to Mumble');
+    if (!client) throw new Error('Dispatcher not connected to voice backend');
+    if (!client.isReady) throw new Error('Voice backend is still initializing for this dispatcher');
+
+    const numericChannel = Number(channelNumber || 0);
+    let targetChannel = this.resolveTargetChannel(client, numericChannel);
+    if (!targetChannel && numericChannel > 0) {
+      targetChannel = this.resolveTargetChannel(client, 0);
+      if (targetChannel) {
+        console.warn(`[VoiceBridge] Mumble channel ${numericChannel} was not found, falling back to root channel`);
+      }
+    }
+    if (!targetChannel) {
+      throw new Error('No usable Mumble channel found');
     }
 
+    client.moveToChannel(Number(targetChannel.channelId || 0));
+    this.activeChannels.set(dispatcherId, {
+      channelNumber: Number.isInteger(numericChannel) && numericChannel > 0 ? numericChannel : null,
+      channelName: String(targetChannel.name || ''),
+    });
+  }
+
+  sendTerminatorFrame(dispatcherId) {
+    const client = this.mumbleClients.get(dispatcherId);
+    const encoder = this.dispatcherEncoders.get(dispatcherId);
+    if (!client || !client.isReady || !encoder) return;
+
     try {
-      // In FiveM with pma-voice, channels are numeric
-      // We need to find or create the channel
-      const channelName = `Channel_${channelNumber}`;
-
-      // Get root channel
-      let targetChannel = client.rootChannel;
-
-      // Try to find existing channel
-      const existingChannel = Object.values(client.channels).find(
-        ch => ch.name === channelName
-      );
-
-      if (existingChannel) {
-        targetChannel = existingChannel;
-      } else {
-        // FiveM manages channels automatically, so if it doesn't exist yet,
-        // we'll use root channel and rely on pma-voice to handle the channel setup
-        console.log(`[VoiceBridge] Channel ${channelName} not found, using root channel`);
+      const silencePcm = Buffer.alloc(OPUS_FRAME_BYTES);
+      const opus = encoder.encode(silencePcm, OPUS_FRAME_SIZE);
+      if (opus && opus.length) {
+        client.sendAudio(Buffer.from(opus), true, 0);
       }
-
-      // Move to channel
-      client.user.moveToChannel(targetChannel);
-
-      this.activeChannels.set(dispatcherId, {
-        channelNumber,
-        channelObj: targetChannel,
-      });
-
-      console.log(`[VoiceBridge] Dispatcher ${dispatcherId} moved to channel ${channelNumber}`);
-    } catch (error) {
-      console.error(`[VoiceBridge] Failed to join channel ${channelNumber}:`, error);
-      throw error;
+    } catch {
+      // Best effort to end transmission cleanly.
     }
   }
 
-  /**
-   * Remove a dispatcher from their current channel
-   */
   async leaveChannel(dispatcherId) {
     const client = this.mumbleClients.get(dispatcherId);
-    if (!client) {
-      return;
-    }
+    if (!client) return;
+
+    this.sendTerminatorFrame(dispatcherId);
+    this.dispatcherPcmBuffers.set(dispatcherId, Buffer.alloc(0));
 
     try {
-      // Move back to root channel
-      client.user.moveToChannel(client.rootChannel);
-      this.activeChannels.delete(dispatcherId);
-      console.log(`[VoiceBridge] Dispatcher ${dispatcherId} left channel`);
-    } catch (error) {
-      console.error(`[VoiceBridge] Error leaving channel for dispatcher ${dispatcherId}:`, error);
-    }
-  }
-
-  /**
-   * Create a WebRTC peer connection for browser audio
-   */
-  createWebRTCPeer(dispatcherId) {
-    if (this.webrtcPeers.has(dispatcherId)) {
-      console.log(`[VoiceBridge] WebRTC peer already exists for dispatcher ${dispatcherId}`);
-      return this.webrtcPeers.get(dispatcherId);
+      const root = client.getRootChannel();
+      if (root) {
+        client.moveToChannel(Number(root.channelId || 0));
+      }
+    } catch {
+      // Move-to-root is best effort.
     }
 
-    console.log(`[VoiceBridge] Creating WebRTC peer for dispatcher ${dispatcherId}`);
-
-    const peer = new SimplePeer({
-      initiator: false, // Server receives connection from browser
-      wrtc: wrtc,
-      trickle: true,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-        ],
-      },
-    });
-
-    // Handle incoming audio stream from browser
-    peer.on('stream', (stream) => {
-      console.log(`[VoiceBridge] Received audio stream from dispatcher ${dispatcherId}`);
-      this.handleBrowserAudioStream(dispatcherId, stream);
-    });
-
-    peer.on('error', (err) => {
-      console.error(`[VoiceBridge] WebRTC error for dispatcher ${dispatcherId}:`, err.message);
-    });
-
-    peer.on('close', () => {
-      console.log(`[VoiceBridge] WebRTC peer closed for dispatcher ${dispatcherId}`);
-      this.webrtcPeers.delete(dispatcherId);
-    });
-
-    this.webrtcPeers.set(dispatcherId, peer);
-    return peer;
-  }
-
-  /**
-   * Process audio from browser and send to Mumble
-   */
-  handleBrowserAudioStream(dispatcherId, stream) {
-    const audioStream = this.audioStreams.get(dispatcherId);
-    if (!audioStream) {
-      console.error(`[VoiceBridge] No audio stream found for dispatcher ${dispatcherId}`);
-      return;
-    }
-
-    console.log(`[VoiceBridge] Setting up audio pipeline for dispatcher ${dispatcherId}`);
-
-    // Get audio track from stream
-    const audioTracks = stream.getAudioTracks();
-    if (audioTracks.length === 0) {
-      console.error(`[VoiceBridge] No audio tracks in stream for dispatcher ${dispatcherId}`);
-      return;
-    }
-
-    const audioTrack = audioTracks[0];
-    console.log(`[VoiceBridge] Audio track settings:`, audioTrack.getSettings());
-
-    // Create a MediaStreamAudioSourceNode using Web Audio API
-    // Note: This is a simplified version. In production, you'd need proper audio processing
-    // to convert WebRTC audio to Opus-encoded packets for Mumble.
-
-    // For now, we'll handle the raw audio data
-    // In a full implementation, you would:
-    // 1. Use Web Audio API to process the stream
-    // 2. Encode to Opus using node-opus
-    // 3. Send Opus packets to Mumble
-
-    console.log(`[VoiceBridge] Audio pipeline ready for dispatcher ${dispatcherId}`);
-  }
-
-  /**
-   * Handle Mumble client disconnection
-   */
-  handleMumbleDisconnect(dispatcherId) {
-    this.mumbleClients.delete(dispatcherId);
     this.activeChannels.delete(dispatcherId);
-    this.audioStreams.delete(dispatcherId);
-    console.log(`[VoiceBridge] Cleaned up Mumble resources for dispatcher ${dispatcherId}`);
   }
 
-  /**
-   * Disconnect a dispatcher completely
-   */
-  async disconnectDispatcher(dispatcherId) {
-    console.log(`[VoiceBridge] Disconnecting dispatcher ${dispatcherId}`);
+  sendDispatcherAudio(dispatcherId, pcmChunk) {
+    const client = this.mumbleClients.get(dispatcherId);
+    const encoder = this.dispatcherEncoders.get(dispatcherId);
+    if (!client || !encoder || !client.isReady) return false;
 
-    // Close WebRTC peer
-    const peer = this.webrtcPeers.get(dispatcherId);
-    if (peer) {
-      peer.destroy();
-      this.webrtcPeers.delete(dispatcherId);
+    let chunk = toBuffer(pcmChunk);
+    if (!chunk.length) return false;
+    if (chunk.length % 2 !== 0) {
+      chunk = chunk.subarray(0, chunk.length - 1);
+      if (!chunk.length) return false;
     }
 
-    // Disconnect from Mumble
+    const previous = this.dispatcherPcmBuffers.get(dispatcherId) || Buffer.alloc(0);
+    let pending = previous.length ? Buffer.concat([previous, chunk]) : chunk;
+    let sentAny = false;
+
+    while (pending.length >= OPUS_FRAME_BYTES) {
+      const frame = pending.subarray(0, OPUS_FRAME_BYTES);
+      pending = pending.subarray(OPUS_FRAME_BYTES);
+
+      try {
+        const opus = encoder.encode(frame, OPUS_FRAME_SIZE);
+        if (!opus || !opus.length) continue;
+        client.sendAudio(Buffer.from(opus), false, 0);
+        sentAny = true;
+      } catch {
+        // Skip malformed frame, continue.
+      }
+    }
+
+    this.dispatcherPcmBuffers.set(dispatcherId, Buffer.from(pending));
+    return sentAny || pending.length > 0;
+  }
+
+  addAudioListener(dispatcherId, listener) {
+    if (typeof listener !== 'function') return;
+    let listeners = this.audioListeners.get(dispatcherId);
+    if (!listeners) {
+      listeners = new Set();
+      this.audioListeners.set(dispatcherId, listeners);
+    }
+    listeners.add(listener);
+  }
+
+  removeAudioListeners(dispatcherId) {
+    this.audioListeners.delete(dispatcherId);
+  }
+
+  emitAudio(dispatcherId, chunk) {
+    const listeners = this.audioListeners.get(dispatcherId);
+    if (!listeners || listeners.size === 0) return;
+
+    const payload = {
+      pcm: chunk,
+      sampleRate: this.config.sampleRate,
+      channels: this.config.channels,
+      bitsPerSample: this.config.bitsPerSample,
+    };
+    for (const listener of listeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Listener errors should not break the voice loop.
+      }
+    }
+  }
+
+  handleMumbleDisconnect(dispatcherId) {
     const client = this.mumbleClients.get(dispatcherId);
     if (client) {
-      try {
-        client.disconnect();
-      } catch (err) {
-        console.error(`[VoiceBridge] Error disconnecting Mumble client:`, err);
-      }
-      this.mumbleClients.delete(dispatcherId);
+      const audioHandler = this.clientAudioHandlers.get(dispatcherId);
+      const disconnectHandler = this.clientDisconnectHandlers.get(dispatcherId);
+      const errorHandler = this.clientErrorHandlers.get(dispatcherId);
+      if (audioHandler) client.removeListener('audio', audioHandler);
+      if (disconnectHandler) client.removeListener('disconnected', disconnectHandler);
+      if (errorHandler) client.removeListener('error', errorHandler);
     }
 
-    // Clean up streams
-    const audioStream = this.audioStreams.get(dispatcherId);
-    if (audioStream) {
-      audioStream.end();
-      this.audioStreams.delete(dispatcherId);
-    }
-
+    this.clientAudioHandlers.delete(dispatcherId);
+    this.clientDisconnectHandlers.delete(dispatcherId);
+    this.clientErrorHandlers.delete(dispatcherId);
+    this.mumbleClients.delete(dispatcherId);
+    this.dispatcherEncoders.delete(dispatcherId);
+    this.dispatcherPcmBuffers.delete(dispatcherId);
+    this.dispatcherDecoders.delete(dispatcherId);
     this.activeChannels.delete(dispatcherId);
-    console.log(`[VoiceBridge] Dispatcher ${dispatcherId} fully disconnected`);
+    this.audioListeners.delete(dispatcherId);
   }
 
-  /**
-   * Get status of all connected dispatchers
-   */
+  async disconnectDispatcher(dispatcherId) {
+    this.sendTerminatorFrame(dispatcherId);
+    this.removeAudioListeners(dispatcherId);
+    this.activeChannels.delete(dispatcherId);
+
+    const client = this.mumbleClients.get(dispatcherId);
+    if (client) {
+      const audioHandler = this.clientAudioHandlers.get(dispatcherId);
+      const disconnectHandler = this.clientDisconnectHandlers.get(dispatcherId);
+      const errorHandler = this.clientErrorHandlers.get(dispatcherId);
+      if (audioHandler) client.removeListener('audio', audioHandler);
+      if (disconnectHandler) client.removeListener('disconnected', disconnectHandler);
+      if (errorHandler) client.removeListener('error', errorHandler);
+      try { client.disconnect(); } catch {}
+    }
+
+    this.clientAudioHandlers.delete(dispatcherId);
+    this.clientDisconnectHandlers.delete(dispatcherId);
+    this.clientErrorHandlers.delete(dispatcherId);
+    this.mumbleClients.delete(dispatcherId);
+    this.dispatcherEncoders.delete(dispatcherId);
+    this.dispatcherPcmBuffers.delete(dispatcherId);
+    this.dispatcherDecoders.delete(dispatcherId);
+  }
+
   getStatus() {
     return {
+      available: this.available,
+      backend: this.available ? 'mumble-node' : null,
       connectedDispatchers: this.mumbleClients.size,
-      activeWebRTCPeers: this.webrtcPeers.size,
-      dispatchers: Array.from(this.mumbleClients.keys()).map(id => ({
+      dispatchers: Array.from(this.mumbleClients.keys()).map((id) => ({
         dispatcherId: id,
-        hasWebRTC: this.webrtcPeers.has(id),
-        channel: this.activeChannels.get(id)?.channelNumber || null,
+        channel: this.activeChannels.get(id)?.channelNumber ?? null,
       })),
+      dependency_missing: this.available ? null : this.missingDependencies.join(', '),
     };
   }
 }
 
-// Singleton instance
 let voiceBridgeInstance = null;
-
 function getVoiceBridge() {
   if (!voiceBridgeInstance) {
     voiceBridgeInstance = new VoiceBridgeServer();

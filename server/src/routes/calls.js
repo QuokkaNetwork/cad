@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Calls, Units, Departments } = require('../db/sqlite');
+const { Calls, Units, Departments, VoiceCallSessions } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -166,6 +166,7 @@ router.patch('/:id', requireAuth, (req, res) => {
   const updated = Calls.findById(call.id);
   const isClosingCall = normalizedStatus === 'closed' && !wasClosed;
   if (isClosingCall && Array.isArray(updated?.assigned_units)) {
+    VoiceCallSessions.endByCallId(call.id);
     for (const assignedUnit of updated.assigned_units) {
       const unitId = Number(assignedUnit?.id || 0);
       if (!unitId) continue;
