@@ -39,6 +39,10 @@ function getNavItemsForLayout(layoutType) {
   return LAW_NAV;
 }
 
+function isEmergency000CallEvent(payload) {
+  return String(payload?.call?.job_code || '').trim() === '000';
+}
+
 function SidebarLink({ to, label, icon }) {
   return (
     <NavLink
@@ -70,24 +74,48 @@ export default function Sidebar() {
   const [hasActiveCall, setHasActiveCall] = useState(false);
   const prevDispatcherOnlineRef = useRef(null);
   const callAssignAudioRef = useRef(null);
+  const emergencyCallAudioRef = useRef(null);
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
 
   useEffect(() => {
-    const audio = new Audio('/sounds/cad-added-call.mp3');
-    audio.preload = 'auto';
-    callAssignAudioRef.current = audio;
+    const callAssignAudio = new Audio('/sounds/cad-added-call.mp3');
+    callAssignAudio.preload = 'auto';
+    callAssignAudioRef.current = callAssignAudio;
+
+    const emergencyCallAudio = new Audio('/sounds/000call.mp3');
+    emergencyCallAudio.preload = 'auto';
+    emergencyCallAudioRef.current = emergencyCallAudio;
+
     return () => {
       if (callAssignAudioRef.current) {
         callAssignAudioRef.current.pause();
         callAssignAudioRef.current = null;
+      }
+      if (emergencyCallAudioRef.current) {
+        emergencyCallAudioRef.current.pause();
+        emergencyCallAudioRef.current = null;
       }
     };
   }, []);
 
   const playCallAssignSound = useCallback(() => {
     const audio = callAssignAudioRef.current;
+    if (!audio) return;
+    try {
+      audio.currentTime = 0;
+      const maybePromise = audio.play();
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch(() => {});
+      }
+    } catch {
+      // Ignore autoplay/user gesture restrictions.
+    }
+  }, []);
+
+  const playEmergencyCallSound = useCallback(() => {
+    const audio = emergencyCallAudioRef.current;
     if (!audio) return;
     try {
       audio.currentTime = 0;
@@ -163,6 +191,12 @@ export default function Sidebar() {
   }, [fetchDispatcherStatus, fetchOnDutyStatus, fetchActiveCallStatus]);
 
   useEventSource({
+    'call:create': (payload) => {
+      if (!isOnDuty) return;
+      if (isEmergency000CallEvent(payload)) {
+        playEmergencyCallSound();
+      }
+    },
     'unit:online': () => {
       fetchDispatcherStatus();
       fetchOnDutyStatus();

@@ -149,6 +149,10 @@ router.patch('/:id', requireAuth, (req, res) => {
   if (!hasDept && !isDispatcher) return res.status(403).json({ error: 'Department access denied' });
 
   const { title, priority, location, description, job_code, status, requested_department_ids } = req.body;
+  const normalizedStatus = status === undefined
+    ? undefined
+    : String(status || '').trim().toLowerCase();
+  const wasClosed = String(call?.status || '').trim().toLowerCase() === 'closed';
   const requestedDepartmentIds = resolveRequestedDepartmentIdsForUpdate(req.user, call, requested_department_ids);
   Calls.update(call.id, {
     title,
@@ -156,12 +160,30 @@ router.patch('/:id', requireAuth, (req, res) => {
     location,
     description,
     job_code,
-    status,
+    status: normalizedStatus,
     requested_department_ids: requestedDepartmentIds,
   });
   const updated = Calls.findById(call.id);
+  const isClosingCall = normalizedStatus === 'closed' && !wasClosed;
+  if (isClosingCall && Array.isArray(updated?.assigned_units)) {
+    for (const assignedUnit of updated.assigned_units) {
+      const unitId = Number(assignedUnit?.id || 0);
+      if (!unitId) continue;
 
-  const eventName = status === 'closed' ? 'call:close' : 'call:update';
+      const currentUnit = Units.findById(unitId);
+      if (!currentUnit) continue;
+      if (normalizeUnitStatus(currentUnit.status) === 'busy') continue;
+
+      Units.update(unitId, { status: 'busy' });
+      const refreshedUnit = Units.findById(unitId) || { ...currentUnit, status: 'busy' };
+      bus.emit('unit:update', {
+        departmentId: refreshedUnit.department_id,
+        unit: refreshedUnit,
+      });
+    }
+  }
+
+  const eventName = normalizedStatus === 'closed' ? 'call:close' : 'call:update';
   bus.emit(eventName, { departmentId: call.department_id, call: updated });
   res.json(updated);
 });
@@ -225,20 +247,14 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
   const unassignmentChanges = Calls.unassignUnit(call.id, parsedUnitId);
   const updated = Calls.findById(call.id);
   let refreshedUnit = unit;
-  let unitStatusResetToAvailable = false;
+  let unitStatusSetToBusy = false;
 
   if (unassignmentChanges > 0 && unit?.id) {
-    const hasAnyActiveCall = !!Calls.getAssignedCallForUnit(unit.id);
-    if (!hasAnyActiveCall && normalizeUnitStatus(unit.status) !== 'available') {
-      Units.update(unit.id, { status: 'available' });
+    if (normalizeUnitStatus(unit.status) !== 'busy') {
+      Units.update(unit.id, { status: 'busy' });
       refreshedUnit = Units.findById(unit.id) || unit;
-      unitStatusResetToAvailable = true;
+      unitStatusSetToBusy = true;
       bus.emit('unit:update', { departmentId: refreshedUnit.department_id, unit: refreshedUnit });
-      bus.emit('unit:status_available', {
-        departmentId: refreshedUnit.department_id,
-        unit: refreshedUnit,
-        call: null,
-      });
     }
   }
   const unitForEvent = refreshedUnit || detachedUnitSnapshot;
@@ -251,7 +267,7 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
     unit_id: parsedUnitId,
     removed: unassignmentChanges > 0,
     auto_closed: autoClosed,
-    unit_status_reset_available: unitStatusResetToAvailable,
+    unit_status_set_busy: unitStatusSetToBusy,
   });
   audit(req.user.id, 'call_unit_unassigned', {
     callId: call.id,
@@ -259,7 +275,7 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
     callsign: unitForEvent?.callsign || '',
     assignment_removed: unassignmentChanges > 0,
     auto_closed: autoClosed,
-    unit_status_reset_available: unitStatusResetToAvailable,
+    unit_status_set_busy: unitStatusSetToBusy,
   });
   res.json(updated);
 });

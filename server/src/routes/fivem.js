@@ -543,7 +543,28 @@ bus.on('call:unassign', ({ call, unit, unit_id, removed }) => {
 });
 
 bus.on('call:close', ({ call }) => {
-  clearRouteJobsForCall(call?.id, true);
+  const callId = Number(call?.id || 0);
+  const resolvedCall = (callId && Array.isArray(call?.assigned_units))
+    ? call
+    : (callId ? (Calls.findById(callId) || call) : call);
+  const assignedUnits = Array.isArray(resolvedCall?.assigned_units)
+    ? resolvedCall.assigned_units
+    : [];
+
+  for (const assignedUnit of assignedUnits) {
+    const assignedUnitId = Number(assignedUnit?.id || 0);
+    if (!assignedUnitId) continue;
+
+    const resolvedUnit = Units.findById(assignedUnitId) || assignedUnit;
+    clearRouteJobsForAssignment(callId, assignedUnitId);
+    try {
+      queueRouteClearJob(resolvedCall, resolvedUnit, assignedUnitId);
+    } catch (err) {
+      console.warn('[FiveMBridge] Could not queue clear route job on call close:', err?.message || err);
+    }
+  }
+
+  clearRouteJobsForCall(callId, true);
 });
 
 bus.on('unit:offline', ({ unit }) => {

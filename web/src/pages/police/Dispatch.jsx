@@ -693,30 +693,54 @@ export default function Dispatch() {
       <Modal open={!!selectedCall} onClose={() => setSelectedCall(null)} title={`Call #${selectedCall?.id}`} wide>
         {selectedCall && (
           <div className="space-y-4">
-            <div className="flex items-center gap-2 flex-wrap">
-              <StatusBadge status={selectedCall.status} />
-              {isDispatch && selectedCall.department_short_name && (
-                <span
-                  className="text-xs px-2 py-0.5 rounded font-semibold"
-                  style={{
-                    backgroundColor: `${selectedCall.department_color || '#64748b'}22`,
-                    color: selectedCall.department_color || '#cbd5e1',
-                    border: `1px solid ${selectedCall.department_color || '#64748b'}44`,
-                  }}
-                >
-                  {selectedCall.department_short_name}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                {isDispatch && selectedCall.department_short_name && (
+                  <span
+                    className="text-xs px-2 py-0.5 rounded font-semibold"
+                    style={{
+                      backgroundColor: `${selectedCall.department_color || '#64748b'}22`,
+                      color: selectedCall.department_color || '#cbd5e1',
+                      border: `1px solid ${selectedCall.department_color || '#64748b'}44`,
+                    }}
+                  >
+                    {selectedCall.department_short_name}
+                  </span>
+                )}
+                <span className="text-xs text-cad-muted font-mono">
+                  {selectedCall.job_code || 'No job code'}
+                </span>
+              </div>
+              {isDispatch && selectedCall.status !== 'closed' && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-cad-muted">Priority:</label>
+                  <select
+                    value={selectedCall.priority}
+                    onChange={e => updateCall(selectedCall.id, { priority: e.target.value })}
+                    className="bg-cad-card border border-cad-border rounded px-2 py-1 text-xs focus:outline-none focus:border-cad-accent"
+                  >
+                    <option value="1">P1 - Urgent</option>
+                    <option value="2">P2 - High</option>
+                    <option value="3">P3 - Normal</option>
+                    <option value="4">P4 - Low</option>
+                  </select>
+                </div>
+              )}
+              {!isDispatch && (
+                <span className="text-xs text-cad-muted">
+                  Priority {selectedCall.priority}
                 </span>
               )}
-              <span className="text-xs text-cad-muted">
-                Priority {selectedCall.priority} | {selectedCall.job_code || 'No job code'}
-              </span>
             </div>
 
             {!isEmergency000Call(selectedCall) && (
               <div>
                 <h3 className="font-medium text-lg break-words">{selectedCall.title}</h3>
                 {selectedCall.location && (
-                  <p className="text-sm text-cad-muted mt-1 break-words">Location: {selectedCall.location}</p>
+                  <p className="text-sm text-cad-muted mt-1 break-words">
+                    Location: {selectedCall.location}
+                    {selectedCall.postal && <span className="font-semibold text-cad-ink"> ({selectedCall.postal})</span>}
+                  </p>
                 )}
                 {selectedCall.description && (
                   <p className="text-sm mt-2 break-words whitespace-pre-wrap">{selectedCall.description}</p>

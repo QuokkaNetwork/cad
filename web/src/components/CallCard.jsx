@@ -14,13 +14,21 @@ const PRIORITY_COLORS = {
   '4': 'bg-gray-500/20 text-gray-400 border-gray-500/30',
 };
 
+const PRIORITY_CARD_COLORS = {
+  '1': 'border-red-500/40 bg-red-500/5',
+  '2': 'border-amber-500/40 bg-amber-500/5',
+  '3': 'border-blue-500/40 bg-blue-500/5',
+  '4': 'border-gray-500/40 bg-gray-500/5',
+};
+
 export default function CallCard({ call, onClick, onAssign, onClose, units = [], showDepartment = false }) {
   const priorityStyle = PRIORITY_COLORS[call.priority] || PRIORITY_COLORS['3'];
+  const priorityCardStyle = PRIORITY_CARD_COLORS[call.priority] || PRIORITY_CARD_COLORS['3'];
   const isEmergency000 = String(call?.job_code || '').trim() === '000';
 
   return (
     <div
-      className={`bg-cad-card border border-cad-border rounded-lg overflow-hidden cursor-pointer hover:border-cad-accent/40 transition-colors priority-stripe-${call.priority}`}
+      className={`border rounded-lg overflow-hidden cursor-pointer hover:border-cad-accent/40 transition-colors priority-stripe-${call.priority} ${priorityCardStyle}`}
       onClick={onClick}
     >
       <div className="p-3">
@@ -63,6 +71,7 @@ export default function CallCard({ call, onClick, onAssign, onClose, units = [],
         {call.location && (
           <p className="text-xs text-cad-muted mb-1">
             <span className="text-cad-muted/60">Location:</span> {call.location}
+            {call.postal && <span className="text-cad-muted/60"> ({call.postal})</span>}
           </p>
         )}
 
