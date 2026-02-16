@@ -334,10 +334,40 @@ local function normalizeDepartmentIdList(value)
 end
 
 local emergencyUiOpen = false
+local emergencyUiReady = false
+local emergencyUiAwaitingOpenAck = false
+local emergencyUiOpenedAtMs = 0
+
+local function notifyEmergencyUiIssue(message)
+  local text = tostring(message or 'Unable to open the 000 UI right now.')
+
+  if GetResourceState('ox_lib') == 'started' then
+    TriggerEvent('ox_lib:notify', {
+      title = 'CAD Dispatch',
+      description = text,
+      type = 'warning',
+    })
+    return
+  end
+
+  if GetResourceState('chat') == 'started' then
+    TriggerEvent('chat:addMessage', {
+      color = { 255, 170, 0 },
+      args = { 'CAD', text },
+    })
+  end
+end
 
 local function setEmergencyUiVisible(isVisible, payload)
   local visible = isVisible == true
   emergencyUiOpen = visible
+  if visible then
+    emergencyUiAwaitingOpenAck = true
+    emergencyUiOpenedAtMs = tonumber(GetGameTimer() or 0) or 0
+  else
+    emergencyUiAwaitingOpenAck = false
+    emergencyUiOpenedAtMs = 0
+  end
   SetNuiFocus(visible, visible)
   SendNUIMessage({
     action = visible and 'cadBridge000:open' or 'cadBridge000:close',
@@ -372,12 +402,36 @@ local function closeEmergencyPopup()
 end
 
 local function openEmergencyPopup(departments)
+  if not emergencyUiReady then
+    local attempts = 0
+    while not emergencyUiReady and attempts < 20 do
+      attempts = attempts + 1
+      Wait(50)
+    end
+  end
+
+  if not emergencyUiReady then
+    notifyEmergencyUiIssue('000 UI did not load. Try again, or restart cad_bridge.')
+    return
+  end
+
   setEmergencyUiVisible(true, {
     departments = sanitizeEmergencyDepartments(departments),
     max_title_length = 80,
     max_details_length = 600,
   })
 end
+
+RegisterNUICallback('cadBridge000Ready', function(_data, cb)
+  emergencyUiReady = true
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridge000Opened', function(_data, cb)
+  emergencyUiAwaitingOpenAck = false
+  emergencyUiOpenedAtMs = 0
+  if cb then cb({ ok = true }) end
+end)
 
 RegisterNUICallback('cadBridge000Submit', function(data, cb)
   local title = trim(data and data.title or '')
@@ -448,6 +502,28 @@ AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
   if emergencyUiOpen then
     SetNuiFocus(false, false)
+  end
+end)
+
+CreateThread(function()
+  while true do
+    if emergencyUiOpen then
+      Wait(0)
+
+      if IsControlJustPressed(0, 200) or IsControlJustPressed(0, 202) or IsControlJustPressed(0, 177) then
+        closeEmergencyPopup()
+      end
+
+      if emergencyUiAwaitingOpenAck and emergencyUiOpenedAtMs > 0 then
+        local nowMs = tonumber(GetGameTimer() or 0) or 0
+        if (nowMs - emergencyUiOpenedAtMs) > 2500 then
+          closeEmergencyPopup()
+          notifyEmergencyUiIssue('000 UI failed to initialize. Focus was released.')
+        end
+      end
+    else
+      Wait(250)
+    end
   end
 end)
 
