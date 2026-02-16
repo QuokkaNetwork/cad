@@ -8,6 +8,8 @@ import UnitCard from '../../components/UnitCard';
 import Modal from '../../components/Modal';
 import StatusBadge from '../../components/StatusBadge';
 
+const UNIT_STATUSES = ['available', 'busy', 'enroute', 'on-scene'];
+
 function isEmergency000Call(call) {
   return String(call?.job_code || '').trim() === '000';
 }
@@ -19,6 +21,16 @@ function parseSqliteUtc(value) {
   const withZone = normalized.endsWith('Z') ? normalized : `${normalized}Z`;
   const ts = Date.parse(withZone);
   return Number.isFinite(ts) ? ts : 0;
+}
+
+function normalizeUnitStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function formatUnitStatusLabel(value) {
+  if (value === 'on-scene') return 'On Scene';
+  if (value === 'enroute') return 'En Route';
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 export default function Dispatch() {
@@ -138,6 +150,15 @@ export default function Dispatch() {
     }
   }
 
+  async function updateUnitStatus(unitId, status) {
+    try {
+      await api.patch(`/api/units/${unitId}/status`, { status });
+      fetchData();
+    } catch (err) {
+      alert('Failed to update unit status: ' + err.message);
+    }
+  }
+
   const activeCalls = useMemo(() => (
     calls
       .filter(c => c.status !== 'closed')
@@ -171,6 +192,13 @@ export default function Dispatch() {
       setSelectedCall(refreshed);
     }
   }, [calls, selectedCall?.id]);
+
+  const attachableUnitsForSelectedCall = useMemo(() => {
+    if (!selectedCall) return [];
+    return units
+      .filter(u => !selectedCall.assigned_units?.find(au => au.id === u.id))
+      .filter(u => normalizeUnitStatus(u.status) === 'available');
+  }, [selectedCall, units]);
 
   return (
     <div className="h-full flex flex-col">
@@ -243,7 +271,20 @@ export default function Dispatch() {
                   </div>
                   <div className="space-y-1">
                     {group.units.map(unit => (
-                      <UnitCard key={unit.id} unit={unit} compact />
+                      <div key={unit.id} className="bg-cad-surface rounded border border-cad-border/60 px-2 py-1.5">
+                        <UnitCard unit={unit} compact />
+                        <div className="mt-1.5">
+                          <select
+                            value={normalizeUnitStatus(unit.status)}
+                            onChange={e => updateUnitStatus(unit.id, e.target.value)}
+                            className="w-full bg-cad-card border border-cad-border rounded px-2 py-1 text-[11px] text-cad-muted focus:outline-none focus:border-cad-accent"
+                          >
+                            {UNIT_STATUSES.map(status => (
+                              <option key={status} value={status}>{formatUnitStatusLabel(status)}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -450,7 +491,19 @@ export default function Dispatch() {
                           </span>
                         )}
                         <span className="text-sm text-cad-muted">{u.user_name}</span>
-                        <StatusBadge status={u.status} />
+                        {isDispatch ? (
+                          <select
+                            value={normalizeUnitStatus(u.status)}
+                            onChange={e => updateUnitStatus(u.id, e.target.value)}
+                            className="bg-cad-card border border-cad-border rounded px-2 py-1 text-[11px] text-cad-muted focus:outline-none focus:border-cad-accent"
+                          >
+                            {UNIT_STATUSES.map(status => (
+                              <option key={status} value={status}>{formatUnitStatusLabel(status)}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <StatusBadge status={u.status} />
+                        )}
                       </div>
                       <button
                         onClick={() => unassignUnit(selectedCall.id, u.id)}
@@ -470,10 +523,11 @@ export default function Dispatch() {
             {units.length > 0 && selectedCall.status !== 'closed' && (
               <div>
                 <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Assign Unit</h4>
-                <div className="flex flex-wrap gap-1">
-                  {units
-                    .filter(u => !selectedCall.assigned_units?.find(au => au.id === u.id))
-                    .map(u => (
+                {attachableUnitsForSelectedCall.length === 0 ? (
+                  <p className="text-sm text-cad-muted">No available units to attach.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {attachableUnitsForSelectedCall.map(u => (
                       <button
                         key={u.id}
                         onClick={() => assignUnit(selectedCall.id, u.id)}
@@ -491,7 +545,8 @@ export default function Dispatch() {
                         {u.callsign}
                       </button>
                     ))}
-                </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

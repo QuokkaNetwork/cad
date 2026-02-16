@@ -1,19 +1,25 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const { requireAuth } = require('../auth/middleware');
 const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Settings, Calls } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const liveMapStore = require('../services/liveMapStore');
+const {
+  LIVE_MAP_TILE_NAMES,
+  LIVE_MAP_TILE_URL_TEMPLATE,
+  LIVE_MAP_TILE_SIZE,
+  LIVE_MAP_TILE_ROWS,
+  LIVE_MAP_TILE_COLUMNS,
+  LIVE_MAP_MIN_ZOOM,
+  LIVE_MAP_MAX_ZOOM,
+  LIVE_MAP_MIN_NATIVE_ZOOM,
+  LIVE_MAP_MAX_NATIVE_ZOOM,
+  listMissingLiveMapTiles,
+  hasCompleteLiveMapTiles,
+} = require('../services/liveMapTiles');
 
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
-const REPO_MAP_DIR_CANDIDATES = [
-  path.resolve(__dirname, '../../../web/public/maps'),
-  path.resolve(__dirname, '../../../web/dist/maps'),
-];
-const REPO_MAP_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const DEFAULT_MAP_SCALE = 1;
 const DEFAULT_MAP_OFFSET = 0;
 
@@ -32,32 +38,6 @@ function parseSqliteUtc(value) {
   return Date.parse(normalized);
 }
 
-function normalizeMapAssetUrl(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  return text.startsWith('/') ? text : `/${text}`;
-}
-
-function findRepoMapAssetUrl() {
-  for (const dir of REPO_MAP_DIR_CANDIDATES) {
-    if (!fs.existsSync(dir)) continue;
-
-    const files = fs.readdirSync(dir)
-      .filter((name) => {
-        const ext = path.extname(name).toLowerCase();
-        return REPO_MAP_IMAGE_EXTENSIONS.has(ext);
-      })
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-
-    if (!files.length) continue;
-
-    // Do not use the legacy hard-coded FullMap asset as an implicit fallback.
-    const preferred = files.find(name => name.toLowerCase() !== 'fullmap.png') || '';
-    if (preferred) return `/maps/${encodeURIComponent(preferred)}`;
-  }
-  return '';
-}
-
 function findDispatchDepartments() {
   return Departments.list().filter(d => d.is_dispatch);
 }
@@ -67,6 +47,32 @@ function isUserInDispatchDepartment(user) {
   if (!dispatchDepts.length) return false;
   const dispatchIds = dispatchDepts.map(d => d.id);
   return user.departments.some(d => dispatchIds.includes(d.id));
+}
+
+function normalizeUnitStatus(status) {
+  return String(status || '').trim().toLowerCase();
+}
+
+function getEditableUnitStatuses() {
+  return new Set(['available', 'busy', 'enroute', 'on-scene']);
+}
+
+function canDispatchManageUnit(user, unit) {
+  if (!user || !unit) return false;
+  if (user.is_admin) return true;
+  if (Number(user.id) === Number(unit.user_id)) return true;
+  if (!isUserInDispatchDepartment(user)) return false;
+
+  const actingUnit = Units.findByUserId(user.id);
+  if (!actingUnit) return false;
+  const actingDept = Departments.findById(Number(actingUnit.department_id));
+  if (!actingDept?.is_dispatch) return false;
+
+  const allowedDeptIds = new Set(Departments.listDispatchVisible().map(d => Number(d.id)));
+  for (const dispatchDept of findDispatchDepartments()) {
+    allowedDeptIds.add(Number(dispatchDept.id));
+  }
+  return allowedDeptIds.has(Number(unit.department_id));
 }
 
 function chooseActiveLinkForUser(user) {
@@ -220,25 +226,34 @@ router.get('/map', requireAuth, (req, res) => {
 });
 
 router.get('/map-config', requireAuth, (_req, res) => {
-  const configuredRepoMap = normalizeMapAssetUrl(Settings.get('live_map_repo_asset_url'));
-  const resolvedRepoMap = configuredRepoMap || findRepoMapAssetUrl();
   const directUrl = String(Settings.get('live_map_url') || '').trim();
   const socketUrl = String(Settings.get('live_map_socket_url') || '').trim();
   const mapScaleX = parseMapNumber(Settings.get('live_map_scale_x'), DEFAULT_MAP_SCALE);
   const mapScaleY = parseMapNumber(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
   const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
   const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
-  const mapImageUrl = resolvedRepoMap;
+  const missingTiles = listMissingLiveMapTiles();
+  const mapAvailable = hasCompleteLiveMapTiles();
   res.json({
     live_map_url: directUrl,
-    map_image_url: mapImageUrl,
-    map_available: !!mapImageUrl,
-    map_source: mapImageUrl ? 'server_resource' : 'none',
+    map_image_url: '',
+    map_available: mapAvailable,
+    map_source: mapAvailable ? 'server_resource_tiles' : 'none',
     live_map_socket_url: socketUrl,
     map_scale_x: mapScaleX,
     map_scale_y: mapScaleY,
     map_offset_x: mapOffsetX,
     map_offset_y: mapOffsetY,
+    tile_url_template: LIVE_MAP_TILE_URL_TEMPLATE,
+    tile_names: LIVE_MAP_TILE_NAMES,
+    tile_size: LIVE_MAP_TILE_SIZE,
+    tile_rows: LIVE_MAP_TILE_ROWS,
+    tile_columns: LIVE_MAP_TILE_COLUMNS,
+    min_zoom: LIVE_MAP_MIN_ZOOM,
+    max_zoom: LIVE_MAP_MAX_ZOOM,
+    min_native_zoom: LIVE_MAP_MIN_NATIVE_ZOOM,
+    max_native_zoom: LIVE_MAP_MAX_NATIVE_ZOOM,
+    missing_tiles: missingTiles,
   });
 });
 
@@ -372,6 +387,33 @@ router.patch('/me', requireAuth, (req, res) => {
   const updated = Units.findById(unit.id);
 
   bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
+  res.json(updated);
+});
+
+// Dispatch/Admin update unit status.
+router.patch('/:id/status', requireAuth, (req, res) => {
+  const unitId = parseInt(req.params.id, 10);
+  if (!unitId) return res.status(400).json({ error: 'Invalid unit id' });
+
+  const unit = Units.findById(unitId);
+  if (!unit) return res.status(404).json({ error: 'Unit not found' });
+  if (!canDispatchManageUnit(req.user, unit)) {
+    return res.status(403).json({ error: 'Only dispatch or admins can update this unit status' });
+  }
+
+  const normalizedStatus = normalizeUnitStatus(req.body?.status);
+  if (!getEditableUnitStatuses().has(normalizedStatus)) {
+    return res.status(400).json({ error: 'Invalid status value' });
+  }
+
+  Units.update(unit.id, { status: normalizedStatus });
+  const updated = Units.findById(unit.id);
+  bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
+  audit(req.user.id, 'unit_status_updated_by_dispatch', {
+    target_unit_id: unit.id,
+    callsign: unit.callsign,
+    status: normalizedStatus,
+  });
   res.json(updated);
 });
 

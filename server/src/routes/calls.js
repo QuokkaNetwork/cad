@@ -24,6 +24,10 @@ function canManageCall(user, callDepartmentId) {
   return getDispatchVisibleDeptIds().includes(callDepartmentId);
 }
 
+function normalizeUnitStatus(status) {
+  return String(status || '').trim().toLowerCase();
+}
+
 // List calls for a department (or all dispatch-visible departments)
 router.get('/', requireAuth, (req, res) => {
   const { department_id, include_closed, dispatch } = req.query;
@@ -114,6 +118,12 @@ router.post('/:id/assign', requireAuth, (req, res) => {
 
   const unit = Units.findById(parseInt(unit_id, 10));
   if (!unit) return res.status(404).json({ error: 'Unit not found' });
+  const alreadyAssigned = Array.isArray(call?.assigned_units)
+    && call.assigned_units.some(assigned => Number(assigned.id) === Number(unit.id));
+  const unitStatus = normalizeUnitStatus(unit.status);
+  if (!alreadyAssigned && unitStatus !== 'available') {
+    return res.status(400).json({ error: 'Only available units can be attached to a call' });
+  }
 
   const assignmentChanges = Calls.assignUnit(call.id, unit.id);
   Calls.update(call.id, {

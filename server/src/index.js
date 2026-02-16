@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('fs');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -13,6 +14,7 @@ const { startBot } = require('./discord/bot');
 const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
+const { ensureLiveMapTilesDir } = require('./services/liveMapTiles');
 
 // Initialize database
 console.log('Initializing database...');
@@ -103,6 +105,9 @@ app.get('/api/announcements', requireAuth, (req, res) => {
 // Serve uploaded assets
 const uploadsPath = path.join(__dirname, '../data/uploads');
 app.use('/uploads', express.static(uploadsPath));
+const liveMapTilesPath = ensureLiveMapTilesDir();
+fs.mkdirSync(liveMapTilesPath, { recursive: true });
+app.use('/tiles', express.static(liveMapTilesPath));
 
 // Serve static frontend in production
 const distPath = path.join(__dirname, '../../web/dist');
@@ -119,12 +124,13 @@ app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   if (err?.name === 'MulterError') {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      const maxMb = err.field === 'map' ? 40 : 2;
+      const field = String(err.field || '').trim();
+      const maxMb = field === 'map' || field === 'tiles' ? 40 : 2;
       return res.status(400).json({ error: `Image too large (max ${maxMb}MB)` });
     }
     return res.status(400).json({ error: err.message || 'Upload error' });
   }
-  if (err?.message === 'Only image files are allowed') {
+  if (err?.message === 'Only image files are allowed' || err?.message === 'Only image tile files are allowed') {
     return res.status(400).json({ error: err.message });
   }
   res.status(500).json({ error: 'Internal server error' });

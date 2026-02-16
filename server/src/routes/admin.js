@@ -5,6 +5,13 @@ const multer = require('multer');
 const sharp = require('sharp');
 const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
+  LIVE_MAP_TILE_NAMES,
+  ensureLiveMapTilesDir,
+  normalizeTileBaseName,
+  getLiveMapTilePath,
+  listMissingLiveMapTiles,
+} = require('../services/liveMapTiles');
+const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
   Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs, FiveMJobSyncJobs, SubDepartments, OffenceCatalog,
   FieldMappingCategories, FieldMappings,
@@ -25,6 +32,7 @@ const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const OFFENCE_CATEGORIES = new Set(['infringement', 'summary', 'indictment']);
 const FIELD_MAPPING_ENTITY_TYPES = new Set(['person', 'vehicle']);
 const IDENTIFIER_RE = /^[A-Za-z0-9_]+$/;
+const LIVE_MAP_TILE_NAMES_SET = new Set(LIVE_MAP_TILE_NAMES);
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -108,8 +116,7 @@ function normalizeIdentifier(value, label) {
 
 const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
 fs.mkdirSync(uploadRoot, { recursive: true });
-const mapUploadRoot = path.resolve(__dirname, '../../data/uploads/map-images');
-fs.mkdirSync(mapUploadRoot, { recursive: true });
+ensureLiveMapTilesDir();
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -121,13 +128,16 @@ const upload = multer({
   },
 });
 
-const mapUpload = multer({
+const mapTilesUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 40 * 1024 * 1024 },
+  limits: {
+    fileSize: 40 * 1024 * 1024,
+    files: LIVE_MAP_TILE_NAMES.length,
+  },
   fileFilter: (_req, file, cb) => {
     const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
     if (allowed.has(file.mimetype)) return cb(null, true);
-    cb(new Error('Only image files are allowed'));
+    cb(new Error('Only image tile files are allowed'));
   },
 });
 
@@ -152,35 +162,79 @@ router.post('/departments/upload-icon', upload.single('icon'), async (req, res, 
   }
 });
 
-router.post('/live-map/upload', mapUpload.single('map'), async (req, res, next) => {
-  if (!req.file) return res.status(400).json({ error: 'map file is required' });
-  if (req.file.mimetype !== 'image/png') {
-    return res.status(400).json({ error: 'Only PNG images are allowed' });
+router.post('/live-map/tiles', mapTilesUpload.array('tiles', LIVE_MAP_TILE_NAMES.length), async (req, res, next) => {
+  const files = Array.isArray(req.files) ? req.files : [];
+  if (files.length === 0) {
+    return res.status(400).json({ error: 'tiles files are required' });
   }
 
   try {
-    const previous = String(Settings.get('live_map_image_url') || '').trim();
-    const fileName = `map-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.png`;
-    const outputPath = path.join(mapUploadRoot, fileName);
+    const filesByName = new Map();
+    const invalidNames = [];
+    const duplicateNames = [];
 
-    fs.writeFileSync(outputPath, req.file.buffer);
-    const imageUrl = `/uploads/map-images/${fileName}`;
-    Settings.set('live_map_image_url', imageUrl);
-
-    if (previous.startsWith('/uploads/map-images/')) {
-      const previousBase = path.basename(previous);
-      const previousPath = path.join(mapUploadRoot, previousBase);
-      if (previousPath !== outputPath && fs.existsSync(previousPath)) {
-        fs.unlinkSync(previousPath);
+    for (const file of files) {
+      const baseName = normalizeTileBaseName(file?.originalname || '').toLowerCase();
+      if (!LIVE_MAP_TILE_NAMES_SET.has(baseName)) {
+        invalidNames.push(String(file?.originalname || '').trim());
+        continue;
       }
+      if (filesByName.has(baseName)) {
+        duplicateNames.push(baseName);
+        continue;
+      }
+      filesByName.set(baseName, file);
     }
 
-    audit(req.user.id, 'live_map_uploaded', {
-      image_url: imageUrl,
-      size_bytes: req.file.size || 0,
+    if (invalidNames.length > 0) {
+      return res.status(400).json({
+        error: 'Invalid tile file names',
+        details: {
+          invalid_names: invalidNames,
+          expected_names: LIVE_MAP_TILE_NAMES,
+        },
+      });
+    }
+
+    if (duplicateNames.length > 0) {
+      return res.status(400).json({
+        error: 'Duplicate tile file names',
+        details: { duplicates: duplicateNames },
+      });
+    }
+
+    const missing = LIVE_MAP_TILE_NAMES.filter((name) => !filesByName.has(name));
+    if (missing.length > 0) {
+      return res.status(400).json({
+        error: 'Missing required map tile files',
+        details: { missing, expected_names: LIVE_MAP_TILE_NAMES },
+      });
+    }
+
+    for (const tileName of LIVE_MAP_TILE_NAMES) {
+      const file = filesByName.get(tileName);
+      if (!file) continue;
+      await sharp(file.buffer)
+        .rotate()
+        .webp({ quality: 80 })
+        .toFile(getLiveMapTilePath(tileName));
+    }
+
+    const missingAfterUpload = listMissingLiveMapTiles();
+    audit(req.user.id, 'live_map_tiles_uploaded', {
+      tile_count: LIVE_MAP_TILE_NAMES.length,
+      tile_names: LIVE_MAP_TILE_NAMES,
+      missing_after_upload: missingAfterUpload,
+      total_size_bytes: files.reduce((acc, file) => acc + Number(file?.size || 0), 0),
     });
 
-    res.json({ image_url: imageUrl });
+    res.json({
+      success: true,
+      uploaded: LIVE_MAP_TILE_NAMES.length,
+      tile_names: LIVE_MAP_TILE_NAMES,
+      missing: missingAfterUpload,
+      map_available: missingAfterUpload.length === 0,
+    });
   } catch (err) {
     next(err);
   }

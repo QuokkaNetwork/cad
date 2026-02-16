@@ -8,6 +8,10 @@ import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 
+function normalizeUnitStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 export default function Units() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -29,6 +33,8 @@ export default function Units() {
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
   const isDispatchDepartment = !!activeDepartment?.is_dispatch;
   const canSelfDispatch = !!(myUnit && !dispatchStatus.dispatcher_online && !dispatchStatus.is_dispatch_department);
+  const isMyUnitAvailable = normalizeUnitStatus(myUnit?.status) === 'available';
+  const canSelfAssign = canSelfDispatch && isMyUnitAvailable;
   const hideSharedPanels = !!(dispatchStatus.dispatcher_online && !dispatchStatus.is_dispatch_department);
 
   const fetchData = useCallback(async () => {
@@ -84,6 +90,10 @@ export default function Units() {
 
   async function assignMyUnit(callId) {
     if (!myUnit) return;
+    if (!isMyUnitAvailable) {
+      alert('Your unit must be set to Available before attaching to a call.');
+      return;
+    }
     try {
       await api.post(`/api/calls/${callId}/assign`, { unit_id: myUnit.id });
       fetchData();
@@ -208,6 +218,11 @@ export default function Units() {
               )}
               {myUnit && calls.length > 0 && (
                 <div className="space-y-2">
+                  {!isMyUnitAvailable && (
+                    <p className="text-xs text-amber-300">
+                      Your unit is currently {myUnit.status || 'unavailable'}. Set status to Available to attach to calls.
+                    </p>
+                  )}
                   {calls.map(call => {
                     const assigned = !!call.assigned_units?.find(u => u.id === myUnit.id);
                     return (
@@ -237,7 +252,7 @@ export default function Units() {
                             ) : (
                               <button
                                 onClick={() => assignMyUnit(call.id)}
-                                disabled={!canSelfDispatch}
+                                disabled={!canSelfAssign}
                                 className="px-2 py-1 text-xs bg-cad-accent/20 text-cad-accent-light border border-cad-accent/30 rounded hover:bg-cad-accent/30 transition-colors disabled:opacity-50"
                               >
                                 Self Assign
@@ -312,7 +327,7 @@ export default function Units() {
               {myUnit && selectedCall.status !== 'closed' && !selectedCall.assigned_units?.some(u => u.id === myUnit.id) && (
                 <button
                   onClick={() => assignMyUnit(selectedCall.id)}
-                  disabled={!canSelfDispatch}
+                  disabled={!canSelfAssign}
                   className="px-3 py-1.5 text-xs bg-cad-accent/20 text-cad-accent-light border border-cad-accent/30 rounded hover:bg-cad-accent/30 transition-colors disabled:opacity-50"
                 >
                   Self Assign

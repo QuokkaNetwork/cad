@@ -64,6 +64,7 @@ export default function Sidebar() {
   const { activeDepartment } = useDepartment();
   const [dispatcherOnline, setDispatcherOnline] = useState(false);
   const [isDispatchDepartment, setIsDispatchDepartment] = useState(false);
+  const [isOnDuty, setIsOnDuty] = useState(false);
   const prevDispatcherOnlineRef = useRef(null);
 
   const deptId = activeDepartment?.id;
@@ -97,13 +98,32 @@ export default function Sidebar() {
     }
   }, [deptId]);
 
+  const fetchOnDutyStatus = useCallback(async () => {
+    try {
+      await api.get('/api/units/me');
+      setIsOnDuty(true);
+    } catch {
+      setIsOnDuty(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchDispatcherStatus();
-  }, [fetchDispatcherStatus]);
+    fetchOnDutyStatus();
+  }, [fetchDispatcherStatus, fetchOnDutyStatus]);
 
   useEventSource({
-    'unit:online': () => fetchDispatcherStatus(),
-    'unit:offline': () => fetchDispatcherStatus(),
+    'unit:online': () => {
+      fetchDispatcherStatus();
+      fetchOnDutyStatus();
+    },
+    'unit:offline': () => {
+      fetchDispatcherStatus();
+      fetchOnDutyStatus();
+    },
+    'unit:update': () => {
+      fetchOnDutyStatus();
+    },
   });
 
   const hideUnitsTab = !!(activeDepartment && !isDispatchDepartment && dispatcherOnline);
@@ -115,6 +135,8 @@ export default function Sidebar() {
       : item))
     : baseNavItems;
   const navItems = departmentNavItems.filter((item) => {
+    const isDispatchTab = item.to === '/units' || item.to === '/dispatch';
+    if (!isOnDuty && isDispatchTab) return false;
     if (hideUnitsTab && item.to === '/units') return false;
     if (hideRecordsTab && item.to === '/records') return false;
     return true;

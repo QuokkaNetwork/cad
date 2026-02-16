@@ -1,7 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
+
+const LIVE_MAP_TILE_NAMES = [
+  'minimap_sea_0_0',
+  'minimap_sea_0_1',
+  'minimap_sea_1_0',
+  'minimap_sea_1_1',
+  'minimap_sea_2_0',
+  'minimap_sea_2_1',
+];
 
 function formatErr(err) {
   if (!err) return 'Unknown error';
@@ -19,6 +28,7 @@ function hasCitizenId(link) {
 
 export default function AdminSystemSettings() {
   const { key: locationKey } = useLocation();
+  const tileInputRef = useRef(null);
   const [settings, setSettings] = useState({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -38,6 +48,9 @@ export default function AdminSystemSettings() {
   const [loadingFineJobs, setLoadingFineJobs] = useState(false);
   const [jobSyncJobs, setJobSyncJobs] = useState([]);
   const [loadingJobSyncJobs, setLoadingJobSyncJobs] = useState(false);
+  const [mapTileFiles, setMapTileFiles] = useState(null);
+  const [uploadingMapTiles, setUploadingMapTiles] = useState(false);
+  const [mapTileUploadResult, setMapTileUploadResult] = useState(null);
 
   async function fetchSettings() {
     try {
@@ -172,6 +185,79 @@ export default function AdminSystemSettings() {
 
   function updateSetting(key, value) {
     setSettings(prev => ({ ...prev, [key]: value }));
+  }
+
+  function parseTileBaseName(fileName) {
+    const text = String(fileName || '').trim();
+    if (!text) return '';
+    const dot = text.lastIndexOf('.');
+    if (dot <= 0) return text.toLowerCase();
+    return text.slice(0, dot).toLowerCase();
+  }
+
+  async function uploadLiveMapTiles() {
+    const files = Array.isArray(mapTileFiles) ? mapTileFiles : Array.from(mapTileFiles || []);
+    if (files.length === 0) {
+      setMapTileUploadResult({ success: false, message: 'Select all 6 tile files before uploading.' });
+      return;
+    }
+
+    const expectedSet = new Set(LIVE_MAP_TILE_NAMES);
+    const byName = new Map();
+    const invalid = [];
+    const duplicate = [];
+
+    for (const file of files) {
+      const baseName = parseTileBaseName(file?.name);
+      if (!expectedSet.has(baseName)) {
+        invalid.push(String(file?.name || '').trim());
+        continue;
+      }
+      if (byName.has(baseName)) {
+        duplicate.push(baseName);
+        continue;
+      }
+      byName.set(baseName, file);
+    }
+
+    const missing = LIVE_MAP_TILE_NAMES.filter((name) => !byName.has(name));
+    if (invalid.length > 0 || duplicate.length > 0 || missing.length > 0) {
+      const messages = [];
+      if (missing.length > 0) messages.push(`Missing: ${missing.join(', ')}`);
+      if (invalid.length > 0) messages.push(`Invalid names: ${invalid.join(', ')}`);
+      if (duplicate.length > 0) messages.push(`Duplicates: ${duplicate.join(', ')}`);
+      setMapTileUploadResult({
+        success: false,
+        message: messages.join('\n'),
+      });
+      return;
+    }
+
+    const formData = new FormData();
+    for (const tileName of LIVE_MAP_TILE_NAMES) {
+      const tileFile = byName.get(tileName);
+      if (!tileFile) continue;
+      formData.append('tiles', tileFile, tileName);
+    }
+
+    setUploadingMapTiles(true);
+    setMapTileUploadResult(null);
+    try {
+      const result = await api.post('/api/admin/live-map/tiles', formData);
+      setMapTileUploadResult({
+        success: true,
+        message: `Uploaded ${Number(result?.uploaded || LIVE_MAP_TILE_NAMES.length)} live map tiles.`,
+      });
+      setMapTileFiles(null);
+      if (tileInputRef.current) tileInputRef.current.value = '';
+    } catch (err) {
+      setMapTileUploadResult({
+        success: false,
+        message: formatErr(err),
+      });
+    } finally {
+      setUploadingMapTiles(false);
+    }
   }
 
   async function saveSettings() {
@@ -473,19 +559,33 @@ export default function AdminSystemSettings() {
             </p>
           </div>
           <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Server Map Resource URL</label>
+            <label className="block text-xs text-cad-muted mb-1">Live Map Tiles (Snaily Format)</label>
             <input
-              type="text"
-              value={settings.live_map_repo_asset_url || ''}
-              onChange={e => updateSetting('live_map_repo_asset_url', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="/maps/YourMap.png"
+              ref={tileInputRef}
+              type="file"
+              multiple
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              onChange={e => setMapTileFiles(e.target.files)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-xs text-cad-muted file:mr-3 file:rounded file:border file:border-cad-border file:bg-cad-card file:px-2 file:py-1 file:text-xs file:text-cad-ink"
             />
-          </div>
-          <div className="col-span-2 -mt-1">
-            <p className="text-xs text-cad-muted">
-              Leave this blank to auto-detect the first non-legacy map file in <span className="font-mono">web/public/maps</span>.
+            <p className="text-xs text-cad-muted mt-1">
+              Required file names: <span className="font-mono">{LIVE_MAP_TILE_NAMES.join(', ')}</span>
             </p>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={uploadLiveMapTiles}
+                disabled={uploadingMapTiles}
+                className="px-3 py-1.5 text-xs bg-cad-accent hover:bg-cad-accent-light text-white rounded border border-cad-accent/40 transition-colors disabled:opacity-50"
+              >
+                {uploadingMapTiles ? 'Uploading Tiles...' : 'Upload Map Tiles'}
+              </button>
+              {mapTileUploadResult && (
+                <span className={`text-xs whitespace-pre-wrap ${mapTileUploadResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {mapTileUploadResult.message}
+                </span>
+              )}
+            </div>
           </div>
           <div>
             <label className="block text-xs text-cad-muted mb-1">Enable Bridge</label>
