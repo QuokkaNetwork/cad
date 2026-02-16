@@ -316,20 +316,60 @@ function upsertOffenceSelection(selection, offenceId, quantity) {
   return next;
 }
 
+function tokenizeOffenceCode(code) {
+  const text = String(code || '').trim().toUpperCase();
+  if (!text) return [];
+  const matches = text.match(/[A-Z]+|\d+/g);
+  if (!matches) return [];
+  return matches.map((part) => {
+    if (/^\d+$/.test(part)) {
+      return { type: 'number', value: Number(part) };
+    }
+    return { type: 'text', value: part };
+  });
+}
+
+function compareOffenceCodes(aCode, bCode) {
+  const aParts = tokenizeOffenceCode(aCode);
+  const bParts = tokenizeOffenceCode(bCode);
+
+  if (aParts.length === 0 && bParts.length === 0) return 0;
+  if (aParts.length === 0) return 1;
+  if (bParts.length === 0) return -1;
+
+  const limit = Math.max(aParts.length, bParts.length);
+  for (let i = 0; i < limit; i += 1) {
+    const a = aParts[i];
+    const b = bParts[i];
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+
+    if (a.type === b.type) {
+      if (a.value < b.value) return -1;
+      if (a.value > b.value) return 1;
+      continue;
+    }
+
+    if (a.type === 'text') return -1;
+    return 1;
+  }
+
+  return 0;
+}
+
 function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState('');
 
   const sortedCatalog = useMemo(() => {
     return [...catalog].sort((a, b) => {
+      const codeDiff = compareOffenceCodes(a?.code, b?.code);
+      if (codeDiff !== 0) return codeDiff;
+
       const sortDiff = Number(a?.sort_order || 0) - Number(b?.sort_order || 0);
       if (sortDiff !== 0) return sortDiff;
-      const codeA = String(a?.code || '').trim();
-      const codeB = String(b?.code || '').trim();
-      if (codeA || codeB) {
-        const codeDiff = codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
-        if (codeDiff !== 0) return codeDiff;
-      }
+
       return String(a?.title || '').localeCompare(String(b?.title || ''), undefined, { sensitivity: 'base' });
     });
   }, [catalog]);
@@ -390,51 +430,53 @@ function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine
             {filteredCatalog.length === 0 ? (
               <p className="text-xs text-cad-muted">No offences match your search.</p>
             ) : (
-              <div className="space-y-2 max-h-72 overflow-auto pr-1">
-                {filteredCatalog.map(offence => {
-                  const id = String(offence.id);
-                  const selectedQty = Number(selection[id] || 0);
-                  const checked = selectedQty > 0;
-                  return (
-                    <div key={offence.id} className="bg-cad-card border border-cad-border rounded p-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <label className="flex items-center gap-2 min-w-0">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={e => setSelection(prev => (
-                              e.target.checked
-                                ? upsertOffenceSelection(prev, offence.id, selectedQty || 1)
-                                : upsertOffenceSelection(prev, offence.id, 0)
-                            ))}
-                            className="rounded"
-                          />
-                          <span className="min-w-0">
-                            <span className="text-sm font-medium">
-                              {offence.code ? `${offence.code} - ` : ''}{offence.title}
-                            </span>
-                            {offence.description && (
-                              <span className="block text-xs text-cad-muted truncate">{offence.description}</span>
-                            )}
-                          </span>
-                        </label>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-amber-300">${Number(offence.fine_amount || 0).toLocaleString()}</span>
-                          {checked && (
+              <div className="max-h-[40vh] overflow-y-auto pr-1 overscroll-contain">
+                <div className="space-y-2">
+                  {filteredCatalog.map(offence => {
+                    const id = String(offence.id);
+                    const selectedQty = Number(selection[id] || 0);
+                    const checked = selectedQty > 0;
+                    return (
+                      <div key={offence.id} className="bg-cad-card border border-cad-border rounded p-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="flex items-center gap-2 min-w-0">
                             <input
-                              type="number"
-                              min="1"
-                              max="20"
-                              value={selectedQty}
-                              onChange={e => setSelection(prev => upsertOffenceSelection(prev, offence.id, Number(e.target.value) || 1))}
-                              className="w-16 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs focus:outline-none focus:border-cad-accent"
+                              type="checkbox"
+                              checked={checked}
+                              onChange={e => setSelection(prev => (
+                                e.target.checked
+                                  ? upsertOffenceSelection(prev, offence.id, selectedQty || 1)
+                                  : upsertOffenceSelection(prev, offence.id, 0)
+                              ))}
+                              className="rounded"
                             />
-                          )}
+                            <span className="min-w-0">
+                              <span className="text-sm font-medium">
+                                {offence.code ? `${offence.code} - ` : ''}{offence.title}
+                              </span>
+                              {offence.description && (
+                                <span className="block text-xs text-cad-muted truncate">{offence.description}</span>
+                              )}
+                            </span>
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-amber-300">${Number(offence.fine_amount || 0).toLocaleString()}</span>
+                            {checked && (
+                              <input
+                                type="number"
+                                min="1"
+                                max="20"
+                                value={selectedQty}
+                                onChange={e => setSelection(prev => upsertOffenceSelection(prev, offence.id, Number(e.target.value) || 1))}
+                                className="w-16 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs focus:outline-none focus:border-cad-accent"
+                              />
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>

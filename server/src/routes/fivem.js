@@ -280,6 +280,31 @@ function normalizePriority(value) {
   return ['1', '2', '3', '4'].includes(priority) ? priority : '1';
 }
 
+function getDispatchVisibleDepartments() {
+  return Departments.listDispatchVisible().filter(dept => dept.is_active && !dept.is_dispatch);
+}
+
+function normalizeRequestedDepartmentIds(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(
+    value
+      .map(item => Number(item))
+      .filter(item => Number.isInteger(item) && item > 0)
+  ));
+}
+
+function resolveRequestedDepartmentIds(value, fallbackDepartmentId) {
+  const visibleIds = new Set(getDispatchVisibleDepartments().map(dept => Number(dept.id)));
+  const normalized = normalizeRequestedDepartmentIds(value).filter(id => visibleIds.has(id));
+  if (normalized.length > 0) return normalized;
+
+  const fallbackId = Number(fallbackDepartmentId);
+  if (visibleIds.has(fallbackId)) return [fallbackId];
+
+  const firstVisibleId = Array.from(visibleIds)[0] || 0;
+  return firstVisibleId ? [firstVisibleId] : [];
+}
+
 function chooseCallDepartmentId(cadUser, requestedDepartmentId) {
   if (cadUser) {
     const onDutyUnit = Units.findByUserId(cadUser.id);
@@ -673,6 +698,17 @@ router.post('/offline', requireBridgeAuth, (req, res) => {
   res.json({ ok: true, auto_off_duty: autoOffDuty });
 });
 
+// List dispatch-visible non-dispatch departments for in-game /000 UI department selection.
+router.get('/departments', requireBridgeAuth, (_req, res) => {
+  const departments = getDispatchVisibleDepartments().map((dept) => ({
+    id: Number(dept.id),
+    name: String(dept.name || ''),
+    short_name: String(dept.short_name || ''),
+    color: String(dept.color || ''),
+  }));
+  res.json(departments);
+});
+
 // Create CAD calls from in-game bridge events (e.g. /000 command).
 router.post('/calls', requireBridgeAuth, (req, res) => {
   const payload = req.body || {};
@@ -700,6 +736,8 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   if (!departmentId) {
     return res.status(400).json({ error: 'No active department available to create call' });
   }
+  const requestedDepartmentIds = resolveRequestedDepartmentIds(payload.requested_department_ids, departmentId);
+  const departmentsById = new Map(getDispatchVisibleDepartments().map(dept => [Number(dept.id), dept]));
 
   const location = formatCallLocation(payload);
   const postal = String(payload?.postal || extractPostalFromLocation(location) || '').trim();
@@ -709,6 +747,20 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   const title = String(payload.title || '').trim() || (details ? details.slice(0, 120) : `000 Call from ${playerName}`);
   const descriptionParts = [];
   descriptionParts.push(`000 call from ${playerName}${sourceId ? ` (#${sourceId})` : ''}`);
+  if (requestedDepartmentIds.length > 0) {
+    const requestedLabels = requestedDepartmentIds
+      .map((id) => {
+        const dept = departmentsById.get(Number(id));
+        if (!dept) return `#${id}`;
+        return dept.short_name
+          ? `${dept.name} (${dept.short_name})`
+          : dept.name;
+      })
+      .filter(Boolean);
+    if (requestedLabels.length > 0) {
+      descriptionParts.push(`Requested departments: ${requestedLabels.join(', ')}`);
+    }
+  }
   if (details) descriptionParts.push(details);
   if (ids.linkKey) descriptionParts.push(`Link: ${ids.linkKey}`);
   const description = descriptionParts.join(' | ');
@@ -721,6 +773,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     description,
     job_code: '000',
     status: 'active',
+    requested_department_ids: requestedDepartmentIds,
     created_by: cadUser?.id || null,
     postal,
     position_x: Number.isFinite(positionX) ? positionX : null,

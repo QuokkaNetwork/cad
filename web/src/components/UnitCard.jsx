@@ -9,7 +9,7 @@ export default function UnitCard({ unit, onStatusChange, compact = false, showDe
     return (
       <div className="px-2 py-1.5 bg-cad-surface rounded">
         <div className="flex items-center gap-2 text-sm">
-          <span className="font-mono font-medium text-cad-accent-light">{unit.callsign}</span>
+          <span className="font-mono font-medium" style={{ color: unit.department_color || '#7dd3fc' }}>{unit.callsign}</span>
           {showDepartment && unit.department_short_name && (
             <span
               className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
@@ -51,7 +51,7 @@ export default function UnitCard({ unit, onStatusChange, compact = false, showDe
           {unit.user_avatar && (
             <img src={unit.user_avatar} alt="" className="w-6 h-6 rounded-full" />
           )}
-          <span className="font-mono font-bold text-cad-accent-light">{unit.callsign}</span>
+          <span className="font-mono font-bold" style={{ color: unit.department_color || '#7dd3fc' }}>{unit.callsign}</span>
           {unit.sub_department_short_name && (
             <span
               className="text-[10px] px-1.5 py-0.5 rounded font-semibold"

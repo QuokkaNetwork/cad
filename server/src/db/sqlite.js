@@ -461,19 +461,67 @@ const Units = {
   },
 };
 
+function normalizeRequestedDepartmentIds(value) {
+  let source = [];
+  if (Array.isArray(value)) {
+    source = value;
+  } else if (typeof value === 'string') {
+    const text = String(value || '').trim();
+    if (text) {
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) source = parsed;
+      } catch {
+        source = [];
+      }
+    }
+  }
+
+  return Array.from(new Set(
+    source
+      .map(item => Number(item))
+      .filter(item => Number.isInteger(item) && item > 0)
+  ));
+}
+
+function getFallbackRequestedDepartmentIds(departmentId) {
+  const parsed = Number(departmentId);
+  if (!Number.isInteger(parsed) || parsed <= 0) return [];
+  return [parsed];
+}
+
+function normalizeRequestedDepartmentIdsWithFallback(value, fallbackDepartmentId) {
+  const normalized = normalizeRequestedDepartmentIds(value);
+  if (normalized.length > 0) return normalized;
+  return getFallbackRequestedDepartmentIds(fallbackDepartmentId);
+}
+
+function hydrateRequestedDepartments(call) {
+  if (!call || typeof call !== 'object') return call;
+  call.requested_department_ids = normalizeRequestedDepartmentIdsWithFallback(
+    call.requested_department_ids_json,
+    call.department_id
+  );
+  return call;
+}
+
 // --- Calls ---
 const Calls = {
   findById(id) {
     const call = db.prepare('SELECT * FROM calls WHERE id = ?').get(id);
     if (call) {
       call.assigned_units = db.prepare(`
-        SELECT u.*, us.steam_name as user_name, sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color
+        SELECT u.*, us.steam_name as user_name,
+               sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color,
+               d.short_name as department_short_name, d.color as department_color
         FROM call_units cu
         JOIN units u ON u.id = cu.unit_id
         JOIN users us ON us.id = u.user_id
+        JOIN departments d ON d.id = u.department_id
         LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
         WHERE cu.call_id = ?
       `).all(id);
+      hydrateRequestedDepartments(call);
     }
     return call;
   },
@@ -490,16 +538,20 @@ const Calls = {
     `).all(departmentId);
 
     const getUnits = db.prepare(`
-      SELECT u.id, u.callsign, u.status, us.steam_name as user_name, sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color
+      SELECT u.id, u.callsign, u.status, us.steam_name as user_name,
+             sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color,
+             d.short_name as department_short_name, d.color as department_color
       FROM call_units cu
       JOIN units u ON u.id = cu.unit_id
       JOIN users us ON us.id = u.user_id
+      JOIN departments d ON d.id = u.department_id
       LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
       WHERE cu.call_id = ?
     `);
 
     for (const call of calls) {
       call.assigned_units = getUnits.all(call.id);
+      hydrateRequestedDepartments(call);
     }
     return calls;
   },
@@ -533,6 +585,7 @@ const Calls = {
 
     for (const call of calls) {
       call.assigned_units = getUnits.all(call.id);
+      hydrateRequestedDepartments(call);
     }
     return calls;
   },
@@ -549,11 +602,16 @@ const Calls = {
     position_x,
     position_y,
     position_z,
+    requested_department_ids,
   }) {
+    const normalizedRequestedDepartmentIds = normalizeRequestedDepartmentIdsWithFallback(
+      requested_department_ids,
+      department_id
+    );
     const info = db.prepare(
       `INSERT INTO calls (
-        department_id, title, priority, location, description, job_code, status, created_by, postal, position_x, position_y, position_z
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        department_id, title, priority, location, description, job_code, status, created_by, postal, position_x, position_y, position_z, requested_department_ids_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       department_id,
       title,
@@ -566,25 +624,38 @@ const Calls = {
       String(postal || '').trim(),
       Number.isFinite(Number(position_x)) ? Number(position_x) : null,
       Number.isFinite(Number(position_y)) ? Number(position_y) : null,
-      Number.isFinite(Number(position_z)) ? Number(position_z) : null
+      Number.isFinite(Number(position_z)) ? Number(position_z) : null,
+      JSON.stringify(normalizedRequestedDepartmentIds)
     );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['title', 'priority', 'location', 'description', 'job_code', 'status', 'postal', 'position_x', 'position_y', 'position_z', 'was_ever_assigned'];
+    const allowed = ['title', 'priority', 'location', 'description', 'job_code', 'status', 'postal', 'position_x', 'position_y', 'position_z', 'was_ever_assigned', 'requested_department_ids_json'];
+    const existing = this.findById(id) || null;
+    const normalizedFields = { ...(fields || {}) };
+    if (normalizedFields.requested_department_ids !== undefined && normalizedFields.requested_department_ids_json === undefined) {
+      normalizedFields.requested_department_ids_json = normalizedFields.requested_department_ids;
+    }
+
     const updates = [];
     const values = [];
     for (const key of allowed) {
-      if (fields[key] !== undefined) {
+      if (normalizedFields[key] !== undefined) {
         updates.push(`${key} = ?`);
         if (key === 'postal') {
-          values.push(String(fields[key] || '').trim());
+          values.push(String(normalizedFields[key] || '').trim());
         } else if (key === 'position_x' || key === 'position_y' || key === 'position_z') {
-          values.push(Number.isFinite(Number(fields[key])) ? Number(fields[key]) : null);
+          values.push(Number.isFinite(Number(normalizedFields[key])) ? Number(normalizedFields[key]) : null);
         } else if (key === 'was_ever_assigned') {
-          values.push(fields[key] ? 1 : 0);
+          values.push(normalizedFields[key] ? 1 : 0);
+        } else if (key === 'requested_department_ids_json') {
+          const normalizedRequestedDepartmentIds = normalizeRequestedDepartmentIdsWithFallback(
+            normalizedFields[key],
+            existing?.department_id
+          );
+          values.push(JSON.stringify(normalizedRequestedDepartmentIds));
         } else {
-          values.push(fields[key]);
+          values.push(normalizedFields[key]);
         }
       }
     }
@@ -602,13 +673,14 @@ const Calls = {
     return Number(info?.changes || 0);
   },
   getAssignedCallForUnit(unitId) {
-    return db.prepare(`
+    const call = db.prepare(`
       SELECT c.* FROM calls c
       JOIN call_units cu ON cu.call_id = c.id
       WHERE cu.unit_id = ? AND c.status != 'closed'
       ORDER BY c.created_at DESC
       LIMIT 1
     `).get(unitId);
+    return hydrateRequestedDepartments(call);
   },
 };
 

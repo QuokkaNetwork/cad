@@ -20,7 +20,7 @@ export default function Header() {
   const [open, setOpen] = useState(false);
   const [myUnit, setMyUnit] = useState(null);
   const [statusLoading, setStatusLoading] = useState('');
-  const onDepartmentPage = /^\/(department|dispatch|units|map|search|bolos|records|call-details)(\/|$)/.test(location.pathname);
+  const onDepartmentPage = /^\/(department|dispatch|units|map|search|bolos|warrants|records|call-details)(\/|$)/.test(location.pathname);
 
   const refreshAuth = useCallback(async () => {
     if (!user) return;

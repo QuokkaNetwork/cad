@@ -28,6 +28,55 @@ function normalizeUnitStatus(status) {
   return String(status || '').trim().toLowerCase();
 }
 
+function normalizeRequestedDepartmentIds(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(
+    value
+      .map(item => Number(item))
+      .filter(item => Number.isInteger(item) && item > 0)
+  ));
+}
+
+function getFallbackRequestedDepartmentIds(departmentId) {
+  const parsedDepartmentId = Number(departmentId);
+  const department = Departments.findById(parsedDepartmentId);
+  if (department && !department.is_dispatch) return [parsedDepartmentId];
+
+  const visibleIds = getDispatchVisibleDeptIds();
+  if (visibleIds.includes(parsedDepartmentId)) return [parsedDepartmentId];
+  return visibleIds.length > 0 ? [Number(visibleIds[0])] : [];
+}
+
+function resolveRequestedDepartmentIdsForCreate(user, departmentId, rawRequestedDepartmentIds) {
+  const visibleIds = new Set(getDispatchVisibleDeptIds());
+  const isDispatchPrivileged = !!(user?.is_admin || isUserInDispatchDepartment(user));
+  const normalized = normalizeRequestedDepartmentIds(rawRequestedDepartmentIds).filter(id => visibleIds.has(id));
+
+  if (!isDispatchPrivileged) {
+    return getFallbackRequestedDepartmentIds(departmentId);
+  }
+  return normalized.length > 0 ? normalized : getFallbackRequestedDepartmentIds(departmentId);
+}
+
+function resolveRequestedDepartmentIdsForUpdate(user, call, rawRequestedDepartmentIds) {
+  if (rawRequestedDepartmentIds === undefined) return undefined;
+
+  const visibleIds = new Set(getDispatchVisibleDeptIds());
+  const isDispatchPrivileged = !!(user?.is_admin || isUserInDispatchDepartment(user));
+  const normalized = normalizeRequestedDepartmentIds(rawRequestedDepartmentIds).filter(id => visibleIds.has(id));
+
+  if (!isDispatchPrivileged) {
+    const existing = normalizeRequestedDepartmentIds(call?.requested_department_ids);
+    if (existing.length > 0) return existing;
+    return getFallbackRequestedDepartmentIds(call?.department_id);
+  }
+
+  if (normalized.length > 0) return normalized;
+  const existing = normalizeRequestedDepartmentIds(call?.requested_department_ids);
+  if (existing.length > 0) return existing;
+  return getFallbackRequestedDepartmentIds(call?.department_id);
+}
+
 // List calls for a department (or all dispatch-visible departments)
 router.get('/', requireAuth, (req, res) => {
   const { department_id, include_closed, dispatch } = req.query;
@@ -52,7 +101,7 @@ router.get('/', requireAuth, (req, res) => {
 
 // Create a call
 router.post('/', requireAuth, (req, res) => {
-  const { department_id, title, priority, location, description, job_code } = req.body;
+  const { department_id, title, priority, location, description, job_code, requested_department_ids } = req.body;
   if (!department_id || !title) {
     return res.status(400).json({ error: 'department_id and title are required' });
   }
@@ -71,6 +120,7 @@ router.post('/', requireAuth, (req, res) => {
       return res.status(403).json({ error: 'Target department is not visible to dispatch' });
     }
   }
+  const requestedDepartmentIds = resolveRequestedDepartmentIdsForCreate(req.user, deptId, requested_department_ids);
 
   const call = Calls.create({
     department_id: deptId,
@@ -80,6 +130,7 @@ router.post('/', requireAuth, (req, res) => {
     description: description || '',
     job_code: job_code || '',
     status: 'active',
+    requested_department_ids: requestedDepartmentIds,
     created_by: req.user.id,
   });
 
@@ -97,8 +148,17 @@ router.patch('/:id', requireAuth, (req, res) => {
   const isDispatcher = isUserInDispatchDepartment(req.user);
   if (!hasDept && !isDispatcher) return res.status(403).json({ error: 'Department access denied' });
 
-  const { title, priority, location, description, job_code, status } = req.body;
-  Calls.update(call.id, { title, priority, location, description, job_code, status });
+  const { title, priority, location, description, job_code, status, requested_department_ids } = req.body;
+  const requestedDepartmentIds = resolveRequestedDepartmentIdsForUpdate(req.user, call, requested_department_ids);
+  Calls.update(call.id, {
+    title,
+    priority,
+    location,
+    description,
+    job_code,
+    status,
+    requested_department_ids: requestedDepartmentIds,
+  });
   const updated = Calls.findById(call.id);
 
   const eventName = status === 'closed' ? 'call:close' : 'call:update';

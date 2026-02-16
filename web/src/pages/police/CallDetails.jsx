@@ -121,7 +121,7 @@ export default function CallDetails() {
             {activeCall.assigned_units.map(unit => (
               <div key={unit.id} className="bg-cad-surface border border-cad-border rounded px-3 py-2 flex items-center justify-between">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-mono text-cad-accent-light">{unit.callsign}</span>
+                  <span className="font-mono" style={{ color: unit.department_color || '#7dd3fc' }}>{unit.callsign}</span>
                   <span className="text-sm text-cad-muted truncate">{unit.user_name}</span>
                 </div>
                 <StatusBadge status={unit.status} />

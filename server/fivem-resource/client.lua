@@ -322,24 +322,92 @@ local function promptOnscreenKeyboard(title, defaultText, maxLength)
   end
 end
 
-local function openEmergencyPopup()
+local function normalizeDepartmentIdList(value)
+  local normalized = {}
+  local seen = {}
+
+  if type(value) ~= 'table' then
+    return normalized
+  end
+
+  for key, raw in pairs(value) do
+    local candidate = raw
+    if type(key) ~= 'number' and (raw == true or raw == false or raw == nil) then
+      candidate = key
+    end
+
+    local numeric = tonumber(candidate)
+    if numeric and numeric > 0 then
+      local id = math.floor(numeric)
+      if not seen[id] then
+        seen[id] = true
+        normalized[#normalized + 1] = id
+      end
+    end
+  end
+
+  return normalized
+end
+
+local function openEmergencyPopup(departments)
+  local departmentOptions = {}
+  if type(departments) == 'table' then
+    for _, dept in ipairs(departments) do
+      local id = tonumber(dept.id)
+      if id and id > 0 then
+        local name = trim(dept.name or ('Department #' .. tostring(id)))
+        local shortName = trim(dept.short_name or '')
+        local label = shortName ~= '' and ('%s (%s)'):format(name, shortName) or name
+        departmentOptions[#departmentOptions + 1] = {
+          value = tostring(math.floor(id)),
+          label = label,
+        }
+      end
+    end
+  end
+
   if GetResourceState('ox_lib') == 'started' and lib and type(lib.inputDialog) == 'function' then
     local ok, input = pcall(function()
-      return lib.inputDialog('000 Emergency Call', {
+      local dialogFields = {
         { type = 'input', label = 'Title', description = 'What is happening?', required = true, max = 80 },
         { type = 'textarea', label = 'Details', description = 'Extra details for dispatch', required = false, max = 600 },
-      })
+      }
+      if #departmentOptions > 0 then
+        dialogFields[#dialogFields + 1] = {
+          type = 'multi-select',
+          label = 'Required Departments',
+          description = 'Select all departments needed for this 000 call',
+          required = false,
+          options = departmentOptions,
+        }
+      end
+      return lib.inputDialog('000 Emergency Call', dialogFields)
     end)
-    if not ok or not input then return end
+    if ok and input then
+      local title = trim(input[1] or '')
+      local details = trim(input[2] or '')
+      local requestedDepartmentIds = #departmentOptions > 0
+        and normalizeDepartmentIdList(input[3] or {})
+        or {}
+      if title == '' then return end
+      TriggerServerEvent('cad_bridge:submit000', {
+        title = title,
+        details = details,
+        requested_department_ids = requestedDepartmentIds,
+      })
+      return
+    end
+  end
 
-    local title = trim(input[1] or '')
-    local details = trim(input[2] or '')
-    if title == '' then return end
-    TriggerServerEvent('cad_bridge:submit000', {
-      title = title,
-      details = details,
+  if #departmentOptions > 0 and GetResourceState('chat') == 'started' then
+    local labels = {}
+    for _, option in ipairs(departmentOptions) do
+      labels[#labels + 1] = ('%s:%s'):format(option.value, option.label)
+    end
+    TriggerEvent('chat:addMessage', {
+      color = { 0, 170, 255 },
+      args = { 'CAD', 'Department IDs: ' .. table.concat(labels, ' | ') },
     })
-    return
   end
 
   local title = promptOnscreenKeyboard('000 Title', '', 80)
@@ -348,9 +416,22 @@ local function openEmergencyPopup()
   local details = promptOnscreenKeyboard('000 Details', '', 600)
   if details == nil then return end
 
+  local requestedDepartmentIds = {}
+  if #departmentOptions > 0 then
+    local rawDepartments = promptOnscreenKeyboard('Department IDs (comma separated)', '', 120)
+    if rawDepartments == nil then return end
+
+    local parsed = {}
+    for token in tostring(rawDepartments):gmatch('[^,%s]+') do
+      parsed[#parsed + 1] = token
+    end
+    requestedDepartmentIds = normalizeDepartmentIdList(parsed)
+  end
+
   TriggerServerEvent('cad_bridge:submit000', {
     title = title,
     details = details,
+    requested_department_ids = requestedDepartmentIds,
   })
 end
 
@@ -383,8 +464,8 @@ RegisterNetEvent('cad_bridge:notifyFine', function(payload)
   notifyFine(payload)
 end)
 
-RegisterNetEvent('cad_bridge:prompt000', function()
-  openEmergencyPopup()
+RegisterNetEvent('cad_bridge:prompt000', function(departments)
+  openEmergencyPopup(departments)
 end)
 
 CreateThread(function()

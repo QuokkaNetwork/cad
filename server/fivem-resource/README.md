@@ -62,6 +62,7 @@ Command adapter execution now waits for the target character to be online.
 
 ## `/000` command
 - Players can use `/000` with no args to open an in-game popup (title + details).
+- Popup also supports selecting one or more required operational departments (dispatch excluded).
 - Players can still use `/000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>` in chat.
 - Use `/000 help` to show usage in chat.
 - The bridge sends a high-priority CAD call with current street/postal location (when available).

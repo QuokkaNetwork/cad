@@ -237,8 +237,36 @@ local function splitByPipe(text)
   return parts
 end
 
+local function normalizeDepartmentIdList(value)
+  local normalized = {}
+  local seen = {}
+
+  if type(value) ~= 'table' then
+    return normalized
+  end
+
+  for key, raw in pairs(value) do
+    local candidate = raw
+    if type(key) ~= 'number' and (raw == true or raw == false or raw == nil) then
+      candidate = key
+    end
+
+    local numeric = tonumber(candidate)
+    if numeric and numeric > 0 then
+      local id = math.floor(numeric)
+      if not seen[id] then
+        seen[id] = true
+        normalized[#normalized + 1] = id
+      end
+    end
+  end
+
+  return normalized
+end
+
 local function sendEmergencyUsage(src)
   notifyPlayer(src, 'Use /000 with no text to open an in-game popup form.')
+  notifyPlayer(src, 'Popup form supports selecting required departments (dispatch departments are excluded).')
   notifyPlayer(src, 'Template: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>')
   notifyPlayer(src, 'Example: /000 Armed Robbery | 24/7 in Sandy | 2 masked males | Black Sultan | shots fired')
 end
@@ -286,6 +314,9 @@ local function parseEmergencyPopupReport(payload)
 
   local emergencyType = trim(payload.title or payload.emergency_type or '')
   local details = trim(payload.details or payload.message or '')
+  local requestedDepartmentIds = normalizeDepartmentIdList(
+    payload.requested_department_ids or payload.requested_departments or payload.department_ids or {}
+  )
 
   if emergencyType == '' then
     return nil, 'Emergency title is required.'
@@ -304,6 +335,7 @@ local function parseEmergencyPopupReport(payload)
     suspects = '',
     vehicle = '',
     hazards = '',
+    requested_department_ids = requestedDepartmentIds,
   }
 end
 
@@ -337,6 +369,9 @@ local function submitEmergencyCall(src, report)
     priority = '1',
     job_code = '000',
   }
+  if type(report.requested_department_ids) == 'table' and #report.requested_department_ids > 0 then
+    payload.requested_department_ids = report.requested_department_ids
+  end
 
   if pos then
     payload.position = { x = pos.x, y = pos.y, z = pos.z }
@@ -394,7 +429,25 @@ RegisterCommand('000', function(src, args)
 
   local rawInput = trim(table.concat(args or {}, ' '))
   if rawInput == '' then
-    TriggerClientEvent('cad_bridge:prompt000', src)
+    request('GET', '/api/integration/fivem/departments', nil, function(status, body)
+      local departments = {}
+      if status >= 200 and status < 300 then
+        local ok, parsed = pcall(json.decode, body or '[]')
+        if ok and type(parsed) == 'table' then
+          for _, dept in ipairs(parsed) do
+            local id = tonumber(dept.id)
+            if id and id > 0 then
+              departments[#departments + 1] = {
+                id = math.floor(id),
+                name = tostring(dept.name or ''),
+                short_name = tostring(dept.short_name or ''),
+              }
+            end
+          end
+        end
+      end
+      TriggerClientEvent('cad_bridge:prompt000', src, departments)
+    end)
     return
   end
   if rawInput:lower() == 'help' then

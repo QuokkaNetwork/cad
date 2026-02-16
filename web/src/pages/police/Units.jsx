@@ -342,7 +342,7 @@ export default function Units() {
                   {selectedCall.assigned_units.map(u => (
                     <div key={u.id} className="flex items-center justify-between bg-cad-surface rounded px-3 py-2">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-cad-accent-light">{u.callsign}</span>
+                        <span className="font-mono" style={{ color: u.department_color || '#7dd3fc' }}>{u.callsign}</span>
                         <span className="text-sm text-cad-muted">{u.user_name}</span>
                         <StatusBadge status={u.status} />
                       </div>

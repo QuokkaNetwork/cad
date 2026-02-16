@@ -75,7 +75,11 @@ export default function CallCard({ call, onClick, onAssign, onClose, units = [],
         {call.assigned_units && call.assigned_units.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
             {call.assigned_units.map(u => (
-              <span key={u.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-cad-surface rounded text-xs font-mono text-cad-accent-light">
+              <span
+                key={u.id}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-cad-surface rounded text-xs font-mono"
+                style={{ color: u.department_color || '#7dd3fc' }}
+              >
                 {u.callsign}
               </span>
             ))}

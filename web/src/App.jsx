@@ -14,6 +14,7 @@ import DepartmentHome from './pages/police/DepartmentHome';
 import LiveMap from './pages/police/LiveMap';
 import Search from './pages/police/Search';
 import BOLOs from './pages/police/BOLOs';
+import Warrants from './pages/police/Warrants';
 import CallDetails from './pages/police/CallDetails';
 import AdminUsers from './pages/admin/Users';
 import AdminDepartments from './pages/admin/Departments';
@@ -52,6 +53,7 @@ export default function App() {
             <Route path="/map" element={<RequireDepartment><LiveMap /></RequireDepartment>} />
             <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
+            <Route path="/warrants" element={<RequireDepartment><Warrants /></RequireDepartment>} />
             <Route path="/call-details" element={<RequireDepartment><CallDetails /></RequireDepartment>} />
 
             {/* Admin */}

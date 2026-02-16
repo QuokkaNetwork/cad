@@ -60,6 +60,57 @@ function formatDistance(distanceMeters) {
   return `${(distanceMeters / 1000).toFixed(2)} km`;
 }
 
+function normalizeDepartmentIds(value) {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(
+      value
+        .map(item => Number(item))
+        .filter(item => Number.isInteger(item) && item > 0)
+    ));
+  }
+
+  if (typeof value === 'string') {
+    const text = String(value || '').trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) return [];
+      return Array.from(new Set(
+        parsed
+          .map(item => Number(item))
+          .filter(item => Number.isInteger(item) && item > 0)
+      ));
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function getUnitCallsignColor(unit) {
+  return String(unit?.department_color || '#7dd3fc');
+}
+
+function parseEmergencyCallDescription(description) {
+  const parts = String(description || '')
+    .split('|')
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  const callerLine = parts.find(part => /^000 call from /i.test(part)) || '';
+  const departmentLine = parts.find(part => /^Requested departments:/i.test(part)) || '';
+  const linkLine = parts.find(part => /^Link:/i.test(part)) || '';
+  const details = parts.filter(part => part !== callerLine && part !== departmentLine && part !== linkLine);
+
+  return {
+    callerLine,
+    departmentLine,
+    linkLine,
+    details,
+  };
+}
+
 export default function Dispatch() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -69,7 +120,15 @@ export default function Dispatch() {
   const [visibleDepartments, setVisibleDepartments] = useState([]);
   const [showNewCall, setShowNewCall] = useState(false);
   const [selectedCall, setSelectedCall] = useState(null);
-  const [form, setForm] = useState({ title: '', priority: '3', location: '', description: '', job_code: '', department_id: '' });
+  const [form, setForm] = useState({
+    title: '',
+    priority: '3',
+    location: '',
+    description: '',
+    job_code: '',
+    department_id: '',
+    requested_department_ids: [],
+  });
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
@@ -156,15 +215,64 @@ export default function Dispatch() {
     return Object.values(grouped);
   }, [units, isDispatch]);
 
+  const selectableDepartments = useMemo(
+    () => (Array.isArray(visibleDepartments) ? visibleDepartments : []).filter(dept => !dept?.is_dispatch),
+    [visibleDepartments]
+  );
+
+  const departmentsById = useMemo(() => {
+    const map = new Map();
+    for (const dept of selectableDepartments) {
+      const id = Number(dept?.id);
+      if (!Number.isInteger(id) || id <= 0) continue;
+      map.set(id, {
+        id,
+        name: String(dept?.name || ''),
+        short_name: String(dept?.short_name || ''),
+        color: String(dept?.color || '#64748b'),
+      });
+    }
+
+    for (const unit of units) {
+      const id = Number(unit?.department_id);
+      if (!Number.isInteger(id) || id <= 0 || map.has(id)) continue;
+      map.set(id, {
+        id,
+        name: String(unit?.department_name || ''),
+        short_name: String(unit?.department_short_name || ''),
+        color: String(unit?.department_color || '#64748b'),
+      });
+    }
+
+    return map;
+  }, [selectableDepartments, units]);
+
   async function createCall(e) {
     e.preventDefault();
     try {
       const targetDeptId = isDispatch && form.department_id
         ? parseInt(form.department_id, 10)
         : deptId;
-      await api.post('/api/calls', { ...form, department_id: targetDeptId });
+      const requestedDeptIds = normalizeDepartmentIds(form.requested_department_ids);
+      const payloadRequestedIds = requestedDeptIds.length > 0
+        ? requestedDeptIds
+        : (Number.isInteger(Number(targetDeptId)) ? [Number(targetDeptId)] : []);
+
+      await api.post('/api/calls', {
+        ...form,
+        department_id: targetDeptId,
+        requested_department_ids: payloadRequestedIds,
+      });
       setShowNewCall(false);
-      setForm({ title: '', priority: '3', location: '', description: '', job_code: '', department_id: '' });
+      setForm({
+        title: '',
+        priority: '3',
+        location: '',
+        description: '',
+        job_code: '',
+        department_id: '',
+        requested_department_ids: [],
+      });
       fetchData();
     } catch (err) {
       alert('Failed to create call: ' + err.message);
@@ -181,6 +289,13 @@ export default function Dispatch() {
     } catch (err) {
       alert('Failed to update call: ' + err.message);
     }
+  }
+
+  async function updateSelectedCallRequestedDepartments(nextRequestedDepartmentIds) {
+    if (!selectedCall?.id) return;
+    await updateCall(selectedCall.id, {
+      requested_department_ids: normalizeDepartmentIds(nextRequestedDepartmentIds),
+    });
   }
 
   async function assignUnit(callId, unitId) {
@@ -246,6 +361,19 @@ export default function Dispatch() {
 
   const callPositionForSelectedCall = useMemo(() => getCallPosition(selectedCall), [selectedCall]);
 
+  const requestedDepartmentIdsForSelectedCall = useMemo(() => {
+    if (!selectedCall) return [];
+    const normalized = normalizeDepartmentIds(selectedCall.requested_department_ids);
+    if (normalized.length > 0) return normalized;
+    const fallbackId = Number(selectedCall.department_id);
+    return Number.isInteger(fallbackId) && fallbackId > 0 ? [fallbackId] : [];
+  }, [selectedCall]);
+
+  const emergencySummary = useMemo(
+    () => parseEmergencyCallDescription(selectedCall?.description),
+    [selectedCall?.description]
+  );
+
   const attachableUnitsForSelectedCall = useMemo(() => {
     if (!selectedCall) return [];
     const available = units
@@ -276,17 +404,42 @@ export default function Dispatch() {
       });
     });
 
-    const hasDistanceRecommendation = ranked.length > 0 && Number.isFinite(ranked[0].distanceMeters);
-    return ranked.map((entry, index) => ({
-      ...entry,
-      isRecommended: hasDistanceRecommendation && index === 0,
-    }));
-  }, [selectedCall, units, unitPositionsById, callPositionForSelectedCall]);
+    const requestedDepartmentSet = new Set(requestedDepartmentIdsForSelectedCall.map(id => Number(id)));
+    const recommendedUnitIdByDepartment = new Map();
+    for (const requestedDepartmentId of requestedDepartmentSet) {
+      const candidates = ranked.filter(entry => Number(entry.unit.department_id) === Number(requestedDepartmentId));
+      if (candidates.length === 0) continue;
 
-  const recommendedAssignableUnit = useMemo(
-    () => attachableUnitsForSelectedCall.find(entry => entry.isRecommended) || null,
-    [attachableUnitsForSelectedCall]
-  );
+      const closestWithDistance = candidates.find(entry => Number.isFinite(entry.distanceMeters)) || null;
+      const selected = closestWithDistance || candidates[0];
+      if (selected?.unit?.id) {
+        recommendedUnitIdByDepartment.set(Number(requestedDepartmentId), Number(selected.unit.id));
+      }
+    }
+
+    return ranked.map((entry) => ({
+      ...entry,
+      isDepartmentRecommendation: recommendedUnitIdByDepartment.get(Number(entry.unit.department_id)) === Number(entry.unit.id),
+    }));
+  }, [selectedCall, units, unitPositionsById, callPositionForSelectedCall, requestedDepartmentIdsForSelectedCall]);
+
+  const departmentRecommendations = useMemo(() => {
+    const requestedIds = requestedDepartmentIdsForSelectedCall;
+    return requestedIds.map((departmentId) => {
+      const deptMeta = departmentsById.get(Number(departmentId));
+      const recommendedEntry = attachableUnitsForSelectedCall.find(entry => (
+        entry.isDepartmentRecommendation && Number(entry.unit.department_id) === Number(departmentId)
+      )) || null;
+
+      return {
+        department_id: Number(departmentId),
+        department_name: deptMeta?.name || `Department #${departmentId}`,
+        department_short_name: deptMeta?.short_name || '',
+        department_color: deptMeta?.color || '#64748b',
+        recommended_entry: recommendedEntry,
+      };
+    });
+  }, [requestedDepartmentIdsForSelectedCall, departmentsById, attachableUnitsForSelectedCall]);
 
   return (
     <div className="h-full flex flex-col">
@@ -409,14 +562,57 @@ export default function Dispatch() {
               <select
                 required
                 value={form.department_id}
-                onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}
+                onChange={e => setForm((current) => {
+                  const nextDeptId = String(e.target.value || '');
+                  const normalizedRequested = normalizeDepartmentIds(current.requested_department_ids);
+                  const nextRequested = normalizedRequested.length > 0
+                    ? normalizedRequested
+                    : (nextDeptId ? [Number(nextDeptId)] : []);
+                  return {
+                    ...current,
+                    department_id: nextDeptId,
+                    requested_department_ids: nextRequested,
+                  };
+                })}
                 className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
               >
                 <option value="">Select department...</option>
-                {visibleDepartments.map(d => (
+                {selectableDepartments.map(d => (
                   <option key={d.id} value={d.id}>{d.name} ({d.short_name})</option>
                 ))}
               </select>
+            </div>
+          )}
+          {isDispatch && selectableDepartments.length > 0 && (
+            <div>
+              <label className="block text-sm text-cad-muted mb-2">Departments Required</label>
+              <div className="flex flex-wrap gap-2">
+                {selectableDepartments.map((department) => {
+                  const selected = normalizeDepartmentIds(form.requested_department_ids).includes(Number(department.id));
+                  return (
+                    <button
+                      key={department.id}
+                      type="button"
+                      onClick={() => setForm((current) => {
+                        const currentIds = normalizeDepartmentIds(current.requested_department_ids);
+                        const targetId = Number(department.id);
+                        const nextIds = currentIds.includes(targetId)
+                          ? currentIds.filter(id => id !== targetId)
+                          : [...currentIds, targetId];
+                        return { ...current, requested_department_ids: nextIds };
+                      })}
+                      className={`px-2.5 py-1 rounded border text-xs transition-colors ${
+                        selected
+                          ? 'bg-cad-accent/20 text-cad-accent-light border-cad-accent/40'
+                          : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
+                      }`}
+                    >
+                      {department.short_name ? `${department.short_name} - ` : ''}{department.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-cad-muted mt-2">Select one or more operational departments. Dispatch is excluded.</p>
             </div>
           )}
           <div>
@@ -526,6 +722,86 @@ export default function Dispatch() {
               )}
             </div>
 
+            {isEmergency000Call(selectedCall) && (
+              <div className="rounded-xl border border-red-500/35 bg-gradient-to-r from-red-500/12 via-rose-500/8 to-transparent p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-xs uppercase tracking-wider text-red-300 font-semibold">000 Emergency Call</p>
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-red-500/20 text-red-200 border border-red-500/35">
+                    Immediate Attention
+                  </span>
+                </div>
+                {emergencySummary.callerLine && (
+                  <p className="text-sm text-red-100 mt-2">{emergencySummary.callerLine}</p>
+                )}
+                {emergencySummary.departmentLine && (
+                  <p className="text-xs text-red-200/85 mt-1">{emergencySummary.departmentLine}</p>
+                )}
+                {emergencySummary.details.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {emergencySummary.details.map((line, idx) => (
+                      <p key={`${selectedCall.id}-000-${idx}`} className="text-sm text-red-100/90">{line}</p>
+                    ))}
+                  </div>
+                )}
+                {emergencySummary.linkLine && (
+                  <p className="text-[11px] text-red-200/80 mt-2 break-all">{emergencySummary.linkLine}</p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Departments Required</h4>
+              {isDispatch && selectableDepartments.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    {selectableDepartments.map((department) => {
+                      const selected = requestedDepartmentIdsForSelectedCall.includes(Number(department.id));
+                      return (
+                        <button
+                          key={`${selectedCall.id}-req-dept-${department.id}`}
+                          type="button"
+                          onClick={() => {
+                            const currentIds = requestedDepartmentIdsForSelectedCall;
+                            const targetId = Number(department.id);
+                            const nextIds = currentIds.includes(targetId)
+                              ? currentIds.filter(id => id !== targetId)
+                              : [...currentIds, targetId];
+                            updateSelectedCallRequestedDepartments(nextIds);
+                          }}
+                          className={`px-2.5 py-1 rounded border text-xs transition-colors ${
+                            selected
+                              ? 'bg-cad-accent/20 text-cad-accent-light border-cad-accent/40'
+                              : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
+                          }`}
+                        >
+                          {department.short_name ? `${department.short_name} - ` : ''}{department.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-cad-muted">Select one or more required operational departments. Dispatch is excluded.</p>
+                </div>
+              ) : requestedDepartmentIdsForSelectedCall.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {requestedDepartmentIdsForSelectedCall.map((departmentId) => {
+                    const deptMeta = departmentsById.get(Number(departmentId));
+                    return (
+                      <span
+                        key={`${selectedCall.id}-requested-${departmentId}`}
+                        className="px-2 py-0.5 rounded border border-cad-border text-xs text-cad-muted bg-cad-surface"
+                      >
+                        {deptMeta?.short_name
+                          ? `${deptMeta.short_name} - ${deptMeta.name}`
+                          : (deptMeta?.name || `Department #${departmentId}`)}
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-cad-muted">No department requirements set.</p>
+              )}
+            </div>
+
             {/* Status actions */}
             {selectedCall.status !== 'closed' && (
               <div className="flex gap-2">
@@ -546,7 +822,7 @@ export default function Dispatch() {
                   {selectedCall.assigned_units.map(u => (
                     <div key={u.id} className="flex items-center justify-between bg-cad-surface rounded px-3 py-2">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-cad-accent-light">{u.callsign}</span>
+                        <span className="font-mono" style={{ color: getUnitCallsignColor(u) }}>{u.callsign}</span>
                         {isDispatch && u.department_short_name && (
                           <span
                             className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
@@ -603,13 +879,33 @@ export default function Dispatch() {
             {units.length > 0 && selectedCall.status !== 'closed' && (
               <div>
                 <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Assign Unit</h4>
-                {recommendedAssignableUnit ? (
-                  <div className="mb-3 px-3 py-2 rounded border border-emerald-500/35 bg-emerald-500/10">
-                    <p className="text-[11px] uppercase tracking-wider text-emerald-300 font-semibold">Closest Recommended Unit</p>
-                    <p className="text-sm mt-1">
-                      <span className="font-mono text-cad-accent-light">{recommendedAssignableUnit.unit.callsign}</span>
-                      <span className="text-cad-muted"> - {formatDistance(recommendedAssignableUnit.distanceMeters)}</span>
-                    </p>
+                {departmentRecommendations.length > 0 ? (
+                  <div className="mb-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {departmentRecommendations.map((recommendation) => (
+                      <div
+                        key={`${selectedCall.id}-recommend-${recommendation.department_id}`}
+                        className="px-3 py-2 rounded border border-emerald-500/35 bg-emerald-500/10"
+                      >
+                        <p className="text-[11px] uppercase tracking-wider text-emerald-300 font-semibold">
+                          Closest Recommended - {recommendation.department_short_name || recommendation.department_name}
+                        </p>
+                        {recommendation.recommended_entry ? (
+                          <p className="text-sm mt-1">
+                            <span
+                              className="font-mono"
+                              style={{ color: getUnitCallsignColor(recommendation.recommended_entry.unit) }}
+                            >
+                              {recommendation.recommended_entry.unit.callsign}
+                            </span>
+                            <span className="text-cad-muted">
+                              {' '} - {formatDistance(recommendation.recommended_entry.distanceMeters) || 'Distance unavailable'}
+                            </span>
+                          </p>
+                        ) : (
+                          <p className="text-xs text-cad-muted mt-1">No available unit in this department.</p>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <p className="text-xs text-cad-muted mb-3">
@@ -625,7 +921,7 @@ export default function Dispatch() {
                         key={entry.unit.id}
                         onClick={() => assignUnit(selectedCall.id, entry.unit.id)}
                         className={`text-left px-3 py-2 rounded border transition-colors ${
-                          entry.isRecommended
+                          entry.isDepartmentRecommendation
                             ? 'bg-emerald-500/10 border-emerald-500/35 hover:bg-emerald-500/15'
                             : 'bg-cad-surface border-cad-border hover:bg-cad-card'
                         }`}
@@ -635,7 +931,10 @@ export default function Dispatch() {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="text-sm font-mono text-cad-accent-light truncate">
+                            <p
+                              className="text-sm font-mono truncate"
+                              style={{ color: getUnitCallsignColor(entry.unit) }}
+                            >
                               {isDispatch && entry.unit.department_short_name
                                 ? `${entry.unit.department_short_name} ${entry.unit.callsign}`
                                 : entry.unit.callsign}
@@ -644,9 +943,9 @@ export default function Dispatch() {
                               {entry.unit.user_name || 'Unknown unit'}
                             </p>
                           </div>
-                          {entry.isRecommended && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 font-semibold uppercase tracking-wide">
-                              Recommended
+                          {entry.isDepartmentRecommendation && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 font-semibold uppercase tracking-wide whitespace-nowrap">
+                              Dept Recommended
                             </span>
                           )}
                         </div>
