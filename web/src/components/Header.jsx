@@ -1,12 +1,13 @@
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import GoOnDutyModal from './GoOnDutyModal';
+import { useEventSource } from '../hooks/useEventSource';
 
 export default function Header() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const { activeDepartment } = useDepartment();
   const navigate = useNavigate();
   const location = useLocation();
@@ -17,19 +18,70 @@ export default function Header() {
   const [onDutyLoading, setOnDutyLoading] = useState(false);
   const onDepartmentPage = /^\/(dispatch|units|search|bolos|records)(\/|$)/.test(location.pathname);
 
-  async function refreshMyUnit() {
+  const refreshMyUnit = useCallback(async () => {
+    if (!user) {
+      setMyUnit(null);
+      return;
+    }
+
     try {
       const unit = await api.get('/api/units/me');
       setMyUnit(unit);
-    } catch {
+    } catch (err) {
+      if (err?.status === 401) {
+        await refreshUser();
+      }
       setMyUnit(null);
     }
-  }
+  }, [user, refreshUser]);
 
   useEffect(() => {
-    if (!user) return;
     refreshMyUnit();
-  }, [user, activeDepartment?.id]);
+  }, [refreshMyUnit, activeDepartment?.id]);
+
+  const handleLiveUnitEvent = useCallback((payload) => {
+    if (!user?.id) return;
+    const eventUserId = payload?.unit?.user_id;
+    if (!eventUserId || Number(eventUserId) === Number(user.id)) {
+      refreshMyUnit();
+    }
+  }, [user?.id, refreshMyUnit]);
+
+  useEventSource({
+    'unit:online': handleLiveUnitEvent,
+    'unit:offline': handleLiveUnitEvent,
+    'unit:update': handleLiveUnitEvent,
+    'sync:department': async () => {
+      await refreshUser();
+      await refreshMyUnit();
+    },
+  });
+
+  useEffect(() => {
+    if (!user) return undefined;
+
+    const pollId = setInterval(() => {
+      refreshMyUnit();
+    }, 15000);
+
+    const onFocus = () => {
+      refreshUser();
+      refreshMyUnit();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        onFocus();
+      }
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearInterval(pollId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [user, refreshMyUnit, refreshUser]);
 
   useEffect(() => {
     if (!onDepartmentPage && showOnDutyModal) {
@@ -80,7 +132,7 @@ export default function Header() {
       <div className="bg-cad-surface border-b border-cad-border px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-bold text-cad-gold tracking-wide">
-            Emergency Services CAD
+            Quokka Networks Emergency Services CAD
           </h1>
           {activeDepartment && (
             <span

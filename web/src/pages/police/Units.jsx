@@ -12,8 +12,6 @@ export default function Units() {
   const { key: locationKey } = useLocation();
   const [units, setUnits] = useState([]);
   const [myUnit, setMyUnit] = useState(null);
-  const [location, setLocation] = useState('');
-  const [note, setNote] = useState('');
   const [calls, setCalls] = useState([]);
   const [dispatchStatus, setDispatchStatus] = useState({
     dispatch_department: null,
@@ -41,10 +39,6 @@ export default function Units() {
       setUnits(isDispatchDepartment ? (unitsData.units || []) : unitsData);
       setMyUnit(myData);
       setDispatchStatus(dispatcherData);
-      if (myData) {
-        setLocation(myData.location || '');
-        setNote(myData.note || '');
-      }
 
       if (dispatcherData.dispatcher_online || dispatcherData.is_dispatch_department) {
         setCalls([]);
@@ -90,15 +84,6 @@ export default function Units() {
     }
   }
 
-  async function updateDetails() {
-    try {
-      await api.patch('/api/units/me', { location, note });
-      fetchData();
-    } catch (err) {
-      alert('Failed to update: ' + err.message);
-    }
-  }
-
   async function assignMyUnit(callId) {
     if (!myUnit) return;
     try {
@@ -139,31 +124,6 @@ export default function Units() {
           </div>
 
           <UnitCard unit={myUnit} onStatusChange={updateStatus} />
-
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <div>
-              <label className="block text-xs text-cad-muted mb-1">Location</label>
-              <input
-                type="text"
-                value={location}
-                onChange={e => setLocation(e.target.value)}
-                onBlur={updateDetails}
-                className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-                placeholder="Current location"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-cad-muted mb-1">Note</label>
-              <input
-                type="text"
-                value={note}
-                onChange={e => setNote(e.target.value)}
-                onBlur={updateDetails}
-                className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-                placeholder="Status note"
-              />
-            </div>
-          </div>
         </div>
       ) : (
         <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">

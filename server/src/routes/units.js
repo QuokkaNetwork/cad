@@ -154,17 +154,31 @@ router.post('/me', requireAuth, (req, res) => {
   res.status(201).json(unit);
 });
 
-// Update own unit (status, location, note)
+// Update own unit (status/callsign only; location is driven by bridge heartbeat)
 router.patch('/me', requireAuth, (req, res) => {
   const unit = Units.findByUserId(req.user.id);
   if (!unit) return res.status(404).json({ error: 'Not on duty' });
 
-  const { status, location, note, callsign } = req.body;
+  const { status, callsign } = req.body;
   const updates = {};
-  if (status !== undefined) updates.status = status;
-  if (location !== undefined) updates.location = location;
-  if (note !== undefined) updates.note = note;
-  if (callsign !== undefined) updates.callsign = callsign;
+  if (status !== undefined) {
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    const allowed = new Set(['available', 'busy', 'enroute', 'on-scene']);
+    if (!allowed.has(normalizedStatus)) {
+      return res.status(400).json({ error: 'Invalid status value' });
+    }
+    updates.status = normalizedStatus;
+  }
+  if (callsign !== undefined) {
+    const normalizedCallsign = String(callsign || '').trim();
+    if (!normalizedCallsign) {
+      return res.status(400).json({ error: 'Callsign cannot be empty' });
+    }
+    updates.callsign = normalizedCallsign;
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No editable unit fields supplied' });
+  }
 
   Units.update(unit.id, updates);
   const updated = Units.findById(unit.id);

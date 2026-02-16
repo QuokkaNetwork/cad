@@ -39,10 +39,21 @@ export function AuthProvider({ children }) {
     try {
       const data = await api.get('/api/auth/me');
       setUser(data);
-    } catch {
-      // ignore
+    } catch (err) {
+      if (err?.status === 401) {
+        clearToken();
+        setUser(null);
+      }
     }
   }, []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const id = setInterval(() => {
+      refreshUser();
+    }, 60000);
+    return () => clearInterval(id);
+  }, [user, refreshUser]);
 
   const value = {
     user,

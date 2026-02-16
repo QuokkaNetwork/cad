@@ -15,8 +15,8 @@ const ADMIN_ITEMS = [
   },
   {
     to: '/admin/role-mappings',
-    title: 'Role Mappings',
-    description: 'Map Discord roles to CAD departments.',
+    title: 'Role And Job Sync',
+    description: 'Bind Discord roles to CAD access and in-game job/grade targets.',
     color: 'bg-[#5865F2]',
   },
   {

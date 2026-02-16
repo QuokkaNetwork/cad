@@ -539,6 +539,26 @@ export default function AdminSystemSettings() {
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
             />
           </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Role Removed Job</label>
+            <input
+              type="text"
+              value={settings.fivem_bridge_job_sync_removed_job || 'unemployed'}
+              onChange={e => updateSetting('fivem_bridge_job_sync_removed_job', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="unemployed"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Role Removed Grade</label>
+            <input
+              type="number"
+              min="0"
+              value={settings.fivem_bridge_job_sync_removed_grade || '0'}
+              onChange={e => updateSetting('fivem_bridge_job_sync_removed_grade', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            />
+          </div>
         </div>
 
         <div className="flex items-center gap-2 mt-4">

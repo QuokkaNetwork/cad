@@ -17,6 +17,13 @@ function getDispatchVisibleDeptIds() {
   return Departments.listDispatchVisible().map(d => d.id);
 }
 
+function canManageCall(user, callDepartmentId) {
+  if (user?.is_admin) return true;
+  if (Array.isArray(user?.departments) && user.departments.some(d => d.id === callDepartmentId)) return true;
+  if (!isUserInDispatchDepartment(user)) return false;
+  return getDispatchVisibleDeptIds().includes(callDepartmentId);
+}
+
 // List calls for a department (or all dispatch-visible departments)
 router.get('/', requireAuth, (req, res) => {
   const { department_id, include_closed, dispatch } = req.query;
@@ -98,6 +105,9 @@ router.patch('/:id', requireAuth, (req, res) => {
 router.post('/:id/assign', requireAuth, (req, res) => {
   const call = Calls.findById(parseInt(req.params.id, 10));
   if (!call) return res.status(404).json({ error: 'Call not found' });
+  if (!canManageCall(req.user, call.department_id)) {
+    return res.status(403).json({ error: 'Department access denied' });
+  }
 
   const { unit_id } = req.body;
   if (!unit_id) return res.status(400).json({ error: 'unit_id is required' });
@@ -106,9 +116,17 @@ router.post('/:id/assign', requireAuth, (req, res) => {
   if (!unit) return res.status(404).json({ error: 'Unit not found' });
 
   Calls.assignUnit(call.id, unit.id);
+  Units.update(unit.id, { status: 'enroute' });
+  const refreshedUnit = Units.findById(unit.id);
   const updated = Calls.findById(call.id);
 
-  bus.emit('call:assign', { departmentId: call.department_id, call: updated, unit });
+  bus.emit('unit:update', { departmentId: unit.department_id, unit: refreshedUnit });
+  bus.emit('call:assign', { departmentId: call.department_id, call: updated, unit: refreshedUnit });
+  audit(req.user.id, 'call_unit_assigned', {
+    callId: call.id,
+    unitId: unit.id,
+    callsign: refreshedUnit?.callsign || unit.callsign,
+  });
   res.json(updated);
 });
 
@@ -116,14 +134,29 @@ router.post('/:id/assign', requireAuth, (req, res) => {
 router.post('/:id/unassign', requireAuth, (req, res) => {
   const call = Calls.findById(parseInt(req.params.id, 10));
   if (!call) return res.status(404).json({ error: 'Call not found' });
+  if (!canManageCall(req.user, call.department_id)) {
+    return res.status(403).json({ error: 'Department access denied' });
+  }
 
   const { unit_id } = req.body;
   if (!unit_id) return res.status(400).json({ error: 'unit_id is required' });
 
-  Calls.unassignUnit(call.id, parseInt(unit_id, 10));
+  const parsedUnitId = parseInt(unit_id, 10);
+  const unit = Units.findById(parsedUnitId);
+  Calls.unassignUnit(call.id, parsedUnitId);
   const updated = Calls.findById(call.id);
 
-  bus.emit('call:unassign', { departmentId: call.department_id, call: updated });
+  bus.emit('call:unassign', {
+    departmentId: call.department_id,
+    call: updated,
+    unit,
+    unit_id: parsedUnitId,
+  });
+  audit(req.user.id, 'call_unit_unassigned', {
+    callId: call.id,
+    unitId: parsedUnitId,
+    callsign: unit?.callsign || '',
+  });
   res.json(updated);
 });
 

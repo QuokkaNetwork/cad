@@ -594,6 +594,71 @@ CreateThread(function()
   end
 end)
 
+local function applyRouteJob(job)
+  local citizenId = trim(job.citizen_id or '')
+  local sourceId = resolveFineSource(job, citizenId)
+  if not sourceId then
+    return false, 'Target character is not currently online', true
+  end
+
+  local payload = {
+    id = tostring(job.id or ''),
+    call_id = tonumber(job.call_id) or 0,
+    call_title = tostring(job.call_title or ''),
+    location = tostring(job.location or ''),
+    postal = tostring(job.postal or ''),
+  }
+
+  local x = tonumber(job.position_x)
+  local y = tonumber(job.position_y)
+  local z = tonumber(job.position_z)
+  if x and y then
+    payload.position = {
+      x = x,
+      y = y,
+      z = z or 0.0,
+    }
+  end
+
+  TriggerClientEvent('cad_bridge:setCallRoute', sourceId, payload)
+  return true, '', false
+end
+
+CreateThread(function()
+  while true do
+    Wait(math.max(2000, Config.RoutePollIntervalMs))
+    if not hasBridgeConfig() then
+      goto continue
+    end
+
+    request('GET', '/api/integration/fivem/route-jobs?limit=25', nil, function(status, body)
+      if status ~= 200 then
+        return
+      end
+
+      local ok, jobs = pcall(json.decode, body)
+      if not ok or type(jobs) ~= 'table' then
+        return
+      end
+
+      for _, job in ipairs(jobs) do
+        local success, err, transient = applyRouteJob(job)
+        if success then
+          request('POST', ('/api/integration/fivem/route-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+        elseif transient then
+          -- Keep pending and retry when the target character is online.
+        else
+          request('POST', ('/api/integration/fivem/route-jobs/%s/failed'):format(tostring(job.id)), {
+            error = err or 'Route delivery failed',
+          }, function() end)
+        end
+      end
+    end)
+
+    ::continue::
+  end
+end)
+
 local function applyFine(job)
   if Config.FineAdapter == 'none' then
     return false, 'Fine adapter disabled (Config.FineAdapter=none)', false
@@ -653,8 +718,13 @@ local function applyFine(job)
             return xPlayer:RemoveMoney(account, amount, reason ~= '' and reason or 'CAD fine')
           end)
           errMsg = success and '' or tostring(removed)
+        elseif type(exports.qbx_core.RemoveMoney) == 'function' then
+          success, removed = pcall(function()
+            return exports.qbx_core:RemoveMoney(sourceId, account, amount, reason ~= '' and reason or 'CAD fine')
+          end)
+          errMsg = success and '' or tostring(removed)
         else
-          return false, 'qbx_core player object has no RemoveMoney method', false
+          return false, 'qbx_core has no supported RemoveMoney adapter (player method/export)', false
         end
 
         if not success then

@@ -9,6 +9,7 @@ Config.SharedToken = GetConvar('cad_bridge_token', '')
 Config.HeartbeatIntervalMs = tonumber(GetConvar('cad_bridge_heartbeat_ms', '5000')) or 5000
 Config.FinePollIntervalMs = tonumber(GetConvar('cad_bridge_fine_poll_ms', '7000')) or 7000
 Config.JobSyncPollIntervalMs = tonumber(GetConvar('cad_bridge_job_sync_poll_ms', '5000')) or 5000
+Config.RoutePollIntervalMs = tonumber(GetConvar('cad_bridge_route_poll_ms', '4000')) or 4000
 
 -- If true, publish all online players.
 -- If false, only players with steam/discord/license identifiers are published.

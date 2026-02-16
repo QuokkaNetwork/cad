@@ -45,6 +45,13 @@ function getDefaultJobTarget() {
   return normalizedJob(configuredName, configuredGrade, 'fallback', null);
 }
 
+function getRoleRemovedJobTarget() {
+  const configuredName = String(Settings.get('fivem_bridge_job_sync_removed_job') || 'unemployed').trim();
+  if (!configuredName) return null;
+  const configuredGrade = normalizeGrade(Settings.get('fivem_bridge_job_sync_removed_grade') || 0);
+  return normalizedJob(configuredName, configuredGrade, 'none', null);
+}
+
 function isJobSyncEnabled() {
   return toBool(Settings.get('fivem_bridge_job_sync_enabled'), true);
 }
@@ -57,7 +64,13 @@ function choosePreferredTarget(candidates = []) {
   })[0];
 }
 
-function computeDesiredJobTarget(departments, subDepartments) {
+function computeDesiredJobTarget(departments, subDepartments, roleJobs = []) {
+  const roleCandidates = (Array.isArray(roleJobs) ? roleJobs : [])
+    .map(role => normalizedJob(role.job_name, role.job_grade, role.source_type, role.source_id))
+    .filter(Boolean);
+  const bestRole = choosePreferredTarget(roleCandidates);
+  if (bestRole) return bestRole;
+
   const subCandidates = (Array.isArray(subDepartments) ? subDepartments : [])
     .map(sd => normalizedJob(sd.fivem_job_name, sd.fivem_job_grade, 'sub_department', sd.id))
     .filter(Boolean);
@@ -89,6 +102,7 @@ function isSameJobTarget(left, right) {
 function getMappedTargets(memberRoleIds, mappings) {
   const departmentIds = new Set();
   const subDepartmentIds = new Set();
+  const roleJobs = [];
   for (const mapping of mappings) {
     if (!memberRoleIds.has(mapping.discord_role_id)) continue;
     if (mapping.target_type === 'department' && mapping.target_id) {
@@ -101,23 +115,48 @@ function getMappedTargets(memberRoleIds, mappings) {
         departmentIds.add(sub.department_id);
       }
     }
+    if (mapping.target_type === 'job') {
+      const mapped = normalizedJob(mapping.job_name, mapping.job_grade, 'fallback', mapping.id);
+      if (mapped) roleJobs.push(mapped);
+    }
   }
   return {
     departmentIds: [...departmentIds],
     subDepartmentIds: [...subDepartmentIds],
+    roleJobs,
   };
 }
 
-function queueJobSyncIfNeeded(user, oldDepts, oldSubDepts, newDepts, newSubDepts) {
+function queueJobSyncIfNeeded(user, oldDepts, oldSubDepts, newDepts, newSubDepts, newRoleJobs = [], options = {}) {
   if (!isJobSyncEnabled()) return null;
 
+  const allowRoleRemovalFallback = options.allowRoleRemovalFallback !== false;
   const beforeTarget = computeDesiredJobTarget(oldDepts, oldSubDepts);
-  const afterTarget = computeDesiredJobTarget(newDepts, newSubDepts);
-  if (!afterTarget) return null;
-  const preferredCitizenId = String(user.preferred_citizen_id || '').trim();
-
+  let afterTarget = computeDesiredJobTarget(newDepts, newSubDepts, newRoleJobs);
   const latestJob = FiveMJobSyncJobs.findLatestByUserId(user.id);
-  if (isSameJobTarget(beforeTarget, afterTarget) && latestJob) {
+  if (!afterTarget) {
+    const latestTargetName = String(latestJob?.job_name || '').trim();
+    if (!allowRoleRemovalFallback) {
+      if (!latestTargetName) return null;
+      afterTarget = normalizedJob(
+        latestJob.job_name,
+        latestJob.job_grade,
+        latestJob.source_type,
+        latestJob.source_id
+      );
+    } else {
+      const hadPriorTarget = !!beforeTarget || !!latestTargetName;
+      if (!hadPriorTarget) return null;
+      afterTarget = getRoleRemovedJobTarget();
+    }
+    if (!afterTarget) return null;
+  }
+
+  const preferredCitizenId = String(user.preferred_citizen_id || '').trim();
+  if (!latestJob && isSameJobTarget(beforeTarget, afterTarget)) {
+    return null;
+  }
+  if (latestJob) {
     const latestTarget = normalizedJob(
       latestJob.job_name,
       latestJob.job_grade,
@@ -153,7 +192,7 @@ function queueJobSyncIfNeeded(user, oldDepts, oldSubDepts, newDepts, newSubDepts
 function syncLinkedUserAccess(user, member, mappings) {
   const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
   const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
-  const { departmentIds, subDepartmentIds } = getMappedTargets(memberRoleIds, mappings);
+  const { departmentIds, subDepartmentIds, roleJobs } = getMappedTargets(memberRoleIds, mappings);
 
   const oldDepts = UserDepartments.getForUser(user.id);
   const oldSubDepts = UserSubDepartments.getForUser(user.id);
@@ -199,7 +238,9 @@ function syncLinkedUserAccess(user, member, mappings) {
     });
   }
 
-  const queuedJob = queueJobSyncIfNeeded(user, oldDepts, oldSubDepts, newDepts, newSubDepts);
+  const queuedJob = queueJobSyncIfNeeded(user, oldDepts, oldSubDepts, newDepts, newSubDepts, roleJobs, {
+    allowRoleRemovalFallback: true,
+  });
 
   return {
     is_admin: newIsAdmin,
@@ -347,7 +388,9 @@ function queueJobSyncForUserId(userId) {
 
   const depts = user.is_admin ? Departments.list() : UserDepartments.getForUser(user.id);
   const subDepts = user.is_admin ? SubDepartments.list() : UserSubDepartments.getForUser(user.id);
-  return queueJobSyncIfNeeded(user, depts, subDepts, depts, subDepts);
+  return queueJobSyncIfNeeded(user, depts, subDepts, depts, subDepts, [], {
+    allowRoleRemovalFallback: false,
+  });
 }
 
 module.exports = { startBot, syncUserRoles, syncAllMembers, getGuildRoles, getClient, queueJobSyncForUserId };

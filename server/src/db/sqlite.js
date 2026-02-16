@@ -339,11 +339,36 @@ const DiscordRoleMappings = {
   findByRoleId(roleId) {
     return db.prepare('SELECT * FROM discord_role_links WHERE discord_role_id = ?').all(roleId);
   },
-  create({ discord_role_id, discord_role_name, target_type, target_id }) {
+  create({ discord_role_id, discord_role_name, target_type, target_id, job_name, job_grade }) {
+    const normalizedTargetId = Number.isFinite(Number(target_id)) ? Math.max(0, Math.trunc(Number(target_id))) : 0;
+    const normalizedJobName = String(job_name || '').trim();
+    const normalizedJobGradeRaw = Number(job_grade);
+    const normalizedJobGrade = Number.isFinite(normalizedJobGradeRaw)
+      ? Math.max(0, Math.trunc(normalizedJobGradeRaw))
+      : 0;
+
     const info = db.prepare(
-      'INSERT INTO discord_role_links (discord_role_id, discord_role_name, target_type, target_id) VALUES (?, ?, ?, ?)'
-    ).run(discord_role_id, discord_role_name || '', target_type, target_id);
-    return { id: info.lastInsertRowid, discord_role_id, discord_role_name: discord_role_name || '', target_type, target_id };
+      `INSERT INTO discord_role_links (
+        discord_role_id, discord_role_name, target_type, target_id, job_name, job_grade
+      ) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      discord_role_id,
+      discord_role_name || '',
+      target_type,
+      normalizedTargetId,
+      normalizedJobName,
+      normalizedJobGrade
+    );
+
+    return {
+      id: info.lastInsertRowid,
+      discord_role_id,
+      discord_role_name: discord_role_name || '',
+      target_type,
+      target_id: normalizedTargetId,
+      job_name: normalizedJobName,
+      job_grade: normalizedJobGrade,
+    };
   },
   delete(id) {
     db.prepare('DELETE FROM discord_role_links WHERE id = ?').run(id);

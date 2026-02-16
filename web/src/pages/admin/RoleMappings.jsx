@@ -3,6 +3,17 @@ import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
 
+function renderTarget(mapping) {
+  if (mapping.target_type === 'job') {
+    const jobName = String(mapping.job_name || '').trim() || 'Unspecified';
+    return `Job ${jobName} / Grade ${Number(mapping.job_grade || 0)}`;
+  }
+  if (mapping.target_type === 'sub_department') {
+    return `${mapping.sub_department_name} (${mapping.sub_department_short_name}) -> ${mapping.parent_department_name} (${mapping.parent_department_short_name})`;
+  }
+  return `${mapping.department_name} (${mapping.department_short_name})`;
+}
+
 export default function AdminRoleMappings() {
   const { key: locationKey } = useLocation();
   const [mappings, setMappings] = useState([]);
@@ -12,6 +23,8 @@ export default function AdminRoleMappings() {
   const [selectedRole, setSelectedRole] = useState('');
   const [targetType, setTargetType] = useState('department');
   const [selectedTarget, setSelectedTarget] = useState('');
+  const [jobName, setJobName] = useState('');
+  const [jobGrade, setJobGrade] = useState('0');
   const [syncing, setSyncing] = useState(false);
 
   async function fetchData() {
@@ -51,18 +64,37 @@ export default function AdminRoleMappings() {
     }));
   }, [targetType, departments, subDepartments]);
 
+  const canAddMapping = useMemo(() => {
+    if (!selectedRole) return false;
+    if (targetType === 'job') {
+      return String(jobName || '').trim().length > 0 && Number(jobGrade) >= 0;
+    }
+    return !!selectedTarget;
+  }, [selectedRole, targetType, selectedTarget, jobName, jobGrade]);
+
   async function addMapping() {
-    if (!selectedRole || !selectedTarget) return;
+    if (!canAddMapping) return;
     const role = discordRoles.find(r => r.id === selectedRole);
     try {
-      await api.post('/api/admin/role-mappings', {
+      const payload = {
         discord_role_id: selectedRole,
         discord_role_name: role?.name || '',
         target_type: targetType,
-        target_id: selectedTarget,
+      };
+      if (targetType === 'job') {
+        payload.job_name = String(jobName || '').trim();
+        payload.job_grade = Math.max(0, Number(jobGrade || 0));
+      } else {
+        payload.target_id = selectedTarget;
+      }
+
+      await api.post('/api/admin/role-mappings', {
+        ...payload,
       });
       setSelectedRole('');
       setSelectedTarget('');
+      setJobName('');
+      setJobGrade('0');
       fetchData();
     } catch (err) {
       alert('Failed to create mapping: ' + err.message);
@@ -94,8 +126,8 @@ export default function AdminRoleMappings() {
   return (
     <div>
       <AdminPageHeader
-        title="Discord Role Mappings"
-        subtitle="Map Discord roles to departments or sub-departments and sync member access."
+        title="Role And Job Sync"
+        subtitle="Map Discord roles to CAD access and direct in-game job/grade sync targets."
       />
       <div className="flex items-center justify-between mb-6">
         <button
@@ -117,6 +149,7 @@ export default function AdminRoleMappings() {
               <tr className="border-b border-cad-border text-left text-xs text-cad-muted uppercase tracking-wider">
                 <th className="px-4 py-2">Discord Role</th>
                 <th className="px-4 py-2">Role ID</th>
+                <th className="px-4 py-2">Type</th>
                 <th className="px-4 py-2">Target</th>
                 <th className="px-4 py-2"></th>
               </tr>
@@ -126,10 +159,9 @@ export default function AdminRoleMappings() {
                 <tr key={m.id} className="border-b border-cad-border/50">
                   <td className="px-4 py-2 font-medium">{m.discord_role_name || '-'}</td>
                   <td className="px-4 py-2 font-mono text-xs text-cad-muted">{m.discord_role_id}</td>
+                  <td className="px-4 py-2 text-xs uppercase text-cad-muted">{m.target_type}</td>
                   <td className="px-4 py-2">
-                    {m.target_type === 'sub_department'
-                      ? `${m.sub_department_name} (${m.sub_department_short_name}) -> ${m.parent_department_name} (${m.parent_department_short_name})`
-                      : `${m.department_name} (${m.department_short_name})`}
+                    {renderTarget(m)}
                   </td>
                   <td className="px-4 py-2">
                     <button
@@ -168,38 +200,70 @@ export default function AdminRoleMappings() {
             <label className="block text-xs text-cad-muted mb-1">Target Type</label>
             <select
               value={targetType}
-              onChange={e => { setTargetType(e.target.value); setSelectedTarget(''); }}
+              onChange={e => {
+                setTargetType(e.target.value);
+                setSelectedTarget('');
+              }}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
             >
               <option value="department">Department</option>
               <option value="sub_department">Sub-Department</option>
+              <option value="job">Job Sync</option>
             </select>
           </div>
-          <div className="md:col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">
-              {targetType === 'sub_department' ? 'Sub-Department' : 'Department'}
-            </label>
-            <select
-              value={selectedTarget}
-              onChange={e => setSelectedTarget(e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-            >
-              <option value="">Select...</option>
-              {targetOptions.map(option => (
-                <option key={option.id} value={option.id}>{option.label}</option>
-              ))}
-            </select>
-          </div>
+          {targetType === 'job' ? (
+            <>
+              <div>
+                <label className="block text-xs text-cad-muted mb-1">Job Name</label>
+                <input
+                  type="text"
+                  value={jobName}
+                  onChange={e => setJobName(e.target.value)}
+                  className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                  placeholder="police"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-cad-muted mb-1">Job Grade</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={jobGrade}
+                  onChange={e => setJobGrade(e.target.value)}
+                  className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                />
+              </div>
+            </>
+          ) : (
+            <div className="md:col-span-2">
+              <label className="block text-xs text-cad-muted mb-1">
+                {targetType === 'sub_department' ? 'Sub-Department' : 'Department'}
+              </label>
+              <select
+                value={selectedTarget}
+                onChange={e => setSelectedTarget(e.target.value)}
+                className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              >
+                <option value="">Select...</option>
+                {targetOptions.map(option => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className="mt-3">
           <button
             onClick={addMapping}
-            disabled={!selectedRole || !selectedTarget}
+            disabled={!canAddMapping}
             className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
           >
             Add
           </button>
         </div>
+        <p className="text-xs text-cad-muted mt-2">
+          When a mapped job role is removed, CAD queues a role-removal job sync target (default: <span className="font-mono">unemployed</span> grade <span className="font-mono">0</span>).
+        </p>
         {discordRoles.length === 0 && (
           <p className="text-xs text-cad-muted mt-2">Discord bot may not be connected. Roles will appear when the bot is online.</p>
         )}

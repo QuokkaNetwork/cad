@@ -15,6 +15,7 @@ const { audit } = require('../utils/audit');
 const router = express.Router();
 const liveLinkUserCache = new Map();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
+const pendingRouteJobs = new Map();
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
@@ -323,6 +324,133 @@ function findActiveLinkByCitizenId(citizenId) {
   return null;
 }
 
+function normalizePostalToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function extractPostalFromLocation(location) {
+  const text = String(location || '').trim();
+  if (!text) return '';
+
+  const trailingParen = text.match(/\(([^)]+)\)\s*$/);
+  if (trailingParen?.[1]) return trailingParen[1].trim();
+
+  const directPostal = text.match(/^\s*([a-zA-Z]?\d{3,6}[a-zA-Z]?)\s*$/);
+  if (directPostal?.[1]) return directPostal[1].trim();
+
+  const lastPostal = text.match(/([a-zA-Z]?\d{3,6}[a-zA-Z]?)(?!.*[a-zA-Z]?\d{3,6}[a-zA-Z]?)/);
+  if (lastPostal?.[1]) return lastPostal[1].trim();
+  return '';
+}
+
+function resolveCallPostal(call) {
+  const explicit = String(call?.postal || '').trim();
+  if (explicit) return explicit;
+  return extractPostalFromLocation(call?.location || '');
+}
+
+function getRouteJobId(unitId, callId) {
+  return `${Number(unitId || 0)}:${Number(callId || 0)}`;
+}
+
+function queueRouteJobForAssignment(call, unit) {
+  const callId = Number(call?.id || 0);
+  const unitId = Number(unit?.id || 0);
+  if (!callId || !unitId) return;
+
+  const user = Users.findById(unit.user_id);
+  if (!user) return;
+
+  const activeLink = chooseActiveLinkForUser(user);
+  const citizenId = String(activeLink?.citizen_id || user.preferred_citizen_id || '').trim();
+  if (!citizenId) return;
+
+  const postal = String(resolveCallPostal(call) || '').trim();
+  const positionX = Number(call?.position_x);
+  const positionY = Number(call?.position_y);
+  const positionZ = Number(call?.position_z);
+  const hasPosition = Number.isFinite(positionX) && Number.isFinite(positionY);
+  if (!postal && !hasPosition) return;
+
+  const routeJobId = getRouteJobId(unitId, callId);
+  pendingRouteJobs.set(routeJobId, {
+    id: routeJobId,
+    unit_id: unitId,
+    call_id: callId,
+    call_title: String(call?.title || ''),
+    citizen_id: citizenId,
+    location: String(call?.location || ''),
+    postal,
+    position_x: hasPosition ? positionX : null,
+    position_y: hasPosition ? positionY : null,
+    position_z: Number.isFinite(positionZ) ? positionZ : null,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  });
+}
+
+function clearRouteJobsForUnit(unitId) {
+  const target = Number(unitId || 0);
+  if (!target) return;
+  for (const [key, job] of pendingRouteJobs.entries()) {
+    if (Number(job.unit_id || 0) === target) {
+      pendingRouteJobs.delete(key);
+    }
+  }
+}
+
+function clearRouteJobsForCall(callId) {
+  const target = Number(callId || 0);
+  if (!target) return;
+  for (const [key, job] of pendingRouteJobs.entries()) {
+    if (Number(job.call_id || 0) === target) {
+      pendingRouteJobs.delete(key);
+    }
+  }
+}
+
+function clearRouteJobForAssignment(callId, unitId) {
+  const key = getRouteJobId(unitId, callId);
+  if (pendingRouteJobs.has(key)) {
+    pendingRouteJobs.delete(key);
+  }
+}
+
+function shouldAutoSetUnitOnScene(unit, playerPayload, assignedCall) {
+  if (!unit || String(unit.status || '').trim().toLowerCase() !== 'enroute') return false;
+  if (!assignedCall || String(assignedCall.status || '').trim().toLowerCase() === 'closed') return false;
+
+  const targetPostal = normalizePostalToken(resolveCallPostal(assignedCall));
+  if (!targetPostal) return false;
+  const currentPostal = normalizePostalToken(playerPayload?.postal || '');
+  if (!currentPostal) return false;
+
+  return targetPostal === currentPostal;
+}
+
+bus.on('call:assign', ({ call, unit }) => {
+  try {
+    queueRouteJobForAssignment(call, unit);
+  } catch (err) {
+    console.warn('[FiveMBridge] Could not queue route job on call assign:', err?.message || err);
+  }
+});
+
+bus.on('call:unassign', ({ call, unit, unit_id }) => {
+  clearRouteJobForAssignment(call?.id, unit?.id || unit_id);
+});
+
+bus.on('call:close', ({ call }) => {
+  clearRouteJobsForCall(call?.id);
+});
+
+bus.on('unit:offline', ({ unit }) => {
+  clearRouteJobsForUnit(unit?.id);
+});
+
 // Heartbeat from FiveM resource with online players + position.
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];
@@ -385,6 +513,10 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     // Clear legacy auto-generated in-game note text so cards only show operator notes.
     if (isAutoInGameNote(unit.note)) {
       updates.note = '';
+    }
+    const activeCall = Calls.getAssignedCallForUnit(unit.id);
+    if (shouldAutoSetUnitOnScene(unit, player, activeCall)) {
+      updates.status = 'on-scene';
     }
     Units.update(unit.id, updates);
     const updated = Units.findById(unit.id);
@@ -481,6 +613,40 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   });
 
   res.status(201).json({ ok: true, call });
+});
+
+// FiveM resource polls pending route jobs to set in-game waypoints for assigned calls.
+router.get('/route-jobs', requireBridgeAuth, (req, res) => {
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+  const jobs = [];
+  for (const job of pendingRouteJobs.values()) {
+    if (jobs.length >= limit) break;
+    const activeLink = findActiveLinkByCitizenId(job.citizen_id);
+    if (!activeLink) continue;
+    jobs.push({
+      ...job,
+      game_id: String(activeLink.game_id || ''),
+      steam_id: String(activeLink.steam_id || ''),
+      player_name: String(activeLink.player_name || ''),
+    });
+  }
+  res.json(jobs);
+});
+
+router.post('/route-jobs/:id/sent', requireBridgeAuth, (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ error: 'Invalid route job id' });
+  pendingRouteJobs.delete(id);
+  res.json({ ok: true });
+});
+
+router.post('/route-jobs/:id/failed', requireBridgeAuth, (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ error: 'Invalid route job id' });
+  const error = String(req.body?.error || 'Route delivery failed');
+  pendingRouteJobs.delete(id);
+  console.warn('[FiveMBridge] Route job failed:', id, error);
+  res.json({ ok: true });
 });
 
 // FiveM resource polls pending fine jobs and applies them through QBox-side logic.

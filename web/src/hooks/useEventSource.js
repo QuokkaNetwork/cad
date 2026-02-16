@@ -2,10 +2,14 @@ import { useEffect, useRef, useCallback } from 'react';
 
 export function useEventSource(eventHandlers) {
   const esRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const closedRef = useRef(false);
   const handlersRef = useRef(eventHandlers);
   handlersRef.current = eventHandlers;
 
   const connect = useCallback(() => {
+    if (closedRef.current) return;
+
     if (esRef.current) {
       esRef.current.close();
     }
@@ -19,8 +23,12 @@ export function useEventSource(eventHandlers) {
 
     es.onerror = () => {
       es.close();
+      if (closedRef.current) return;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
       // Reconnect after 5 seconds
-      setTimeout(connect, 5000);
+      reconnectTimerRef.current = setTimeout(connect, 5000);
     };
 
     // Register handlers for each event type
@@ -46,10 +54,17 @@ export function useEventSource(eventHandlers) {
   }, []);
 
   useEffect(() => {
+    closedRef.current = false;
     connect();
     return () => {
+      closedRef.current = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       if (esRef.current) {
         esRef.current.close();
+        esRef.current = null;
       }
     };
   }, [connect]);

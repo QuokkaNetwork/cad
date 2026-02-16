@@ -337,22 +337,51 @@ router.get('/role-mappings', (req, res) => {
 });
 
 router.post('/role-mappings', (req, res) => {
-  const { discord_role_id, discord_role_name, target_type, target_id, department_id } = req.body;
+  const {
+    discord_role_id,
+    discord_role_name,
+    target_type,
+    target_id,
+    department_id,
+    job_name,
+    job_grade,
+  } = req.body;
 
   // Backward compatibility: treat department_id as department target.
   const resolvedType = target_type || (department_id ? 'department' : '');
-  const resolvedTargetId = parseInt(target_id || department_id, 10);
-  if (!discord_role_id || !resolvedType || !resolvedTargetId) {
-    return res.status(400).json({ error: 'discord_role_id, target_type and target_id are required' });
+  if (!discord_role_id || !resolvedType) {
+    return res.status(400).json({ error: 'discord_role_id and target_type are required' });
   }
-  if (!['department', 'sub_department'].includes(resolvedType)) {
-    return res.status(400).json({ error: 'target_type must be department or sub_department' });
+  if (!['department', 'sub_department', 'job'].includes(resolvedType)) {
+    return res.status(400).json({ error: 'target_type must be department, sub_department, or job' });
+  }
+
+  let resolvedTargetId = 0;
+  let resolvedJobName = '';
+  let resolvedJobGrade = 0;
+
+  if (resolvedType === 'department' || resolvedType === 'sub_department') {
+    resolvedTargetId = parseInt(target_id || department_id, 10);
+    if (!resolvedTargetId) {
+      return res.status(400).json({ error: 'target_id is required for department/sub_department mappings' });
+    }
   }
   if (resolvedType === 'department' && !Departments.findById(resolvedTargetId)) {
     return res.status(400).json({ error: 'Department target not found' });
   }
   if (resolvedType === 'sub_department' && !SubDepartments.findById(resolvedTargetId)) {
     return res.status(400).json({ error: 'Sub-department target not found' });
+  }
+  if (resolvedType === 'job') {
+    resolvedJobName = String(job_name || '').trim();
+    if (!resolvedJobName) {
+      return res.status(400).json({ error: 'job_name is required for job mappings' });
+    }
+    const parsedGrade = Number(job_grade || 0);
+    if (!Number.isFinite(parsedGrade) || parsedGrade < 0) {
+      return res.status(400).json({ error: 'job_grade must be a non-negative number' });
+    }
+    resolvedJobGrade = Math.max(0, Math.trunc(parsedGrade));
   }
 
   try {
@@ -361,6 +390,8 @@ router.post('/role-mappings', (req, res) => {
       discord_role_name: discord_role_name || '',
       target_type: resolvedType,
       target_id: resolvedTargetId,
+      job_name: resolvedJobName,
+      job_grade: resolvedJobGrade,
     });
     audit(req.user.id, 'role_mapping_created', { mapping });
     res.status(201).json(mapping);
