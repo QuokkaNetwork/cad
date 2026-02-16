@@ -18,6 +18,14 @@ function parseMapNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function parseMapBoolean(value, fallback) {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (!text) return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'off'].includes(text)) return false;
+  return fallback;
+}
+
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
   if (!text) return NaN;
@@ -188,6 +196,7 @@ router.get('/map', requireAuth, (req, res) => {
 });
 
 router.get('/map-config', requireAuth, (_req, res) => {
+  const forceRepoMapAsset = parseMapBoolean(Settings.get('live_map_use_repo_asset'), true);
   const configured = String(Settings.get('live_map_image_url') || '').trim();
   const directUrl = String(Settings.get('live_map_url') || '').trim();
   const socketUrl = String(Settings.get('live_map_socket_url') || '').trim();
@@ -197,7 +206,7 @@ router.get('/map-config', requireAuth, (_req, res) => {
   const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
   res.json({
     live_map_url: directUrl,
-    map_image_url: configured || DEFAULT_LIVE_MAP_IMAGE_URL,
+    map_image_url: forceRepoMapAsset ? DEFAULT_LIVE_MAP_IMAGE_URL : (configured || DEFAULT_LIVE_MAP_IMAGE_URL),
     live_map_socket_url: socketUrl,
     map_scale_x: mapScaleX,
     map_scale_y: mapScaleY,

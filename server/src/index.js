@@ -32,13 +32,22 @@ app.use(express.json());
 app.use(cookieParser());
 
 // Rate limiting
-const limiter = rateLimit({
+const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
+  // FiveM bridge endpoints are high-frequency by design.
+  skip: (req) => req.path.startsWith('/integration/fivem/'),
 });
-app.use('/api/', limiter);
+const fivemBridgeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10000,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', apiLimiter);
+app.use('/api/integration/fivem', fivemBridgeLimiter);
 
 // Passport (Steam)
 app.use(passport.initialize());

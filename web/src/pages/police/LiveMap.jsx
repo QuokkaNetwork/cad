@@ -7,7 +7,7 @@ const MAP_WIDTH = 2048;
 const MAP_HEIGHT = 3072;
 const MAP_POLL_INTERVAL_MS = 1500;
 const MAP_ACTIVE_MAX_AGE_MS = 30_000;
-const MAP_MIN_WIDTH = MAP_WIDTH * 0.2;
+const MAP_MIN_WIDTH = MAP_WIDTH * 0.02;
 const MAP_MAX_WIDTH = MAP_WIDTH * 3.5;
 
 const SNAILY_GAME_BOUNDS = {
@@ -18,12 +18,19 @@ const SNAILY_GAME_BOUNDS = {
 };
 
 function createInitialViewBox() {
+  const width = MAP_WIDTH * 0.5;
+  const height = width * (MAP_HEIGHT / MAP_WIDTH);
   return {
-    x: 0,
-    y: 0,
-    width: 1024,
-    height: 2048,
+    x: (MAP_WIDTH - width) / 2,
+    y: (MAP_HEIGHT - height) / 2,
+    width,
+    height,
   };
+}
+
+function parseMapNumber(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
 }
 
 function normalizeMapPlayer(entry) {
@@ -62,7 +69,7 @@ function normalizePlayers(payload) {
   return players;
 }
 
-function convertToMapPoint(rawX, rawY) {
+function convertToMapPoint(rawX, rawY, calibration) {
   const x = Number(rawX);
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
@@ -71,9 +78,10 @@ function convertToMapPoint(rawX, rawY) {
   const yRange = SNAILY_GAME_BOUNDS.y2 - SNAILY_GAME_BOUNDS.y1;
   if (!xRange || !yRange) return null;
 
-  // Match SnailyCAD's calibration constants against a static map surface.
-  const px = ((x - SNAILY_GAME_BOUNDS.x1) * 1024) / xRange;
-  const py = ((y - SNAILY_GAME_BOUNDS.y1) * 2048) / yRange;
+  const basePx = ((x - SNAILY_GAME_BOUNDS.x1) * MAP_WIDTH) / xRange;
+  const basePy = ((y - SNAILY_GAME_BOUNDS.y1) * MAP_HEIGHT) / yRange;
+  const px = (basePx * calibration.scaleX) + calibration.offsetX;
+  const py = (basePy * calibration.scaleY) + calibration.offsetY;
   if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
 
   return { x: px, y: py };
@@ -97,6 +105,10 @@ export default function LiveMap() {
   const { key: locationKey } = useLocation();
   const [viewBox, setViewBox] = useState(createInitialViewBox);
   const [mapImageUrl, setMapImageUrl] = useState(DEFAULT_MAP_IMAGE_URL);
+  const [mapScaleX, setMapScaleX] = useState(1);
+  const [mapScaleY, setMapScaleY] = useState(1);
+  const [mapOffsetX, setMapOffsetX] = useState(0);
+  const [mapOffsetY, setMapOffsetY] = useState(0);
   const [players, setPlayers] = useState([]);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -111,8 +123,16 @@ export default function LiveMap() {
       const cfg = await api.get('/api/units/map-config');
       const url = String(cfg?.map_image_url || '').trim();
       setMapImageUrl(url || DEFAULT_MAP_IMAGE_URL);
+      setMapScaleX(parseMapNumber(cfg?.map_scale_x, 1));
+      setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
+      setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
+      setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
     } catch {
       setMapImageUrl(DEFAULT_MAP_IMAGE_URL);
+      setMapScaleX(1);
+      setMapScaleY(1);
+      setMapOffsetX(0);
+      setMapOffsetY(0);
     }
   }, []);
 
@@ -150,14 +170,21 @@ export default function LiveMap() {
   }, [fetchMapConfig]);
 
   const markers = useMemo(() => {
+    const calibration = {
+      scaleX: mapScaleX,
+      scaleY: mapScaleY,
+      offsetX: mapOffsetX,
+      offsetY: mapOffsetY,
+    };
+
     return players
       .map((player) => {
-        const point = convertToMapPoint(player.pos.x, player.pos.y);
+        const point = convertToMapPoint(player.pos.x, player.pos.y, calibration);
         if (!point) return null;
         return { player, point };
       })
       .filter(Boolean);
-  }, [players]);
+  }, [mapOffsetX, mapOffsetY, mapScaleX, mapScaleY, players]);
 
   const selectedMarker = useMemo(() => {
     const byId = markers.find(marker => marker.player.identifier === selectedPlayerId);
@@ -171,8 +198,12 @@ export default function LiveMap() {
     }
   }, [markers, selectedPlayerId]);
 
+  const clampWidth = useCallback((value) => {
+    return Math.min(MAP_MAX_WIDTH, Math.max(MAP_MIN_WIDTH, value));
+  }, []);
+
   const clampViewBox = useCallback((next) => {
-    const width = Math.min(MAP_MAX_WIDTH, Math.max(MAP_MIN_WIDTH, next.width));
+    const width = clampWidth(next.width);
     const height = width * (MAP_HEIGHT / MAP_WIDTH);
     const maxX = Math.max(0, MAP_WIDTH - width);
     const maxY = Math.max(0, MAP_HEIGHT - height);
@@ -182,40 +213,51 @@ export default function LiveMap() {
       width,
       height,
     };
-  }, []);
+  }, [clampWidth]);
 
-  const screenToMap = useCallback((clientX, clientY, currentViewBox = viewBox) => {
+  const screenToMap = useCallback((clientX, clientY) => {
     const svg = svgRef.current;
     if (!svg) return null;
-    const rect = svg.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    const px = (clientX - rect.left) / rect.width;
-    const py = (clientY - rect.top) / rect.height;
-    return {
-      x: currentViewBox.x + (px * currentViewBox.width),
-      y: currentViewBox.y + (py * currentViewBox.height),
-    };
-  }, [viewBox]);
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+
+    try {
+      const screenPoint = svg.createSVGPoint();
+      screenPoint.x = clientX;
+      screenPoint.y = clientY;
+      const mapPoint = screenPoint.matrixTransform(ctm.inverse());
+      return {
+        x: mapPoint.x,
+        y: mapPoint.y,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
 
   const zoomAt = useCallback((factor, clientX, clientY) => {
     setViewBox((current) => {
-      const pivot = screenToMap(clientX, clientY, current);
+      const pivot = screenToMap(clientX, clientY);
       if (!pivot) return current;
-      const width = current.width * factor;
-      const height = current.height * factor;
+
+      const width = clampWidth(current.width * factor);
+      const ratio = width / current.width;
+      if (!Number.isFinite(ratio) || Math.abs(ratio - 1) < 0.000001) return current;
+
+      const height = width * (MAP_HEIGHT / MAP_WIDTH);
       const next = {
-        x: pivot.x - ((pivot.x - current.x) * (width / current.width)),
-        y: pivot.y - ((pivot.y - current.y) * (height / current.height)),
+        x: pivot.x - ((pivot.x - current.x) * ratio),
+        y: pivot.y - ((pivot.y - current.y) * ratio),
         width,
         height,
       };
       return clampViewBox(next);
     });
-  }, [clampViewBox, screenToMap]);
+  }, [clampViewBox, clampWidth, screenToMap]);
 
   const handleWheel = useCallback((event) => {
     event.preventDefault();
-    const factor = event.deltaY < 0 ? 0.88 : 1.14;
+    const factor = event.deltaY < 0 ? 0.9 : 1.1;
     zoomAt(factor, event.clientX, event.clientY);
   }, [zoomAt]);
 
@@ -269,7 +311,7 @@ export default function LiveMap() {
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
           <p className="text-sm text-cad-muted">
-            Snaily-style fixed mapping from resource heartbeat data (no manual calibration).
+            CAD bridge heartbeat mapped onto the repo map resource with live calibration support.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -406,6 +448,9 @@ export default function LiveMap() {
             <p>Max age window: {Math.round(MAP_ACTIVE_MAX_AGE_MS / 1000)}s</p>
             <p>
               Mapping profile: X1 {SNAILY_GAME_BOUNDS.x1}, Y1 {SNAILY_GAME_BOUNDS.y1}, X2 {SNAILY_GAME_BOUNDS.x2}, Y2 {SNAILY_GAME_BOUNDS.y2}
+            </p>
+            <p>
+              Calibration: ScaleX {mapScaleX}, ScaleY {mapScaleY}, OffsetX {mapOffsetX}, OffsetY {mapOffsetY}
             </p>
             {error && <p className="text-red-400 whitespace-pre-wrap">{error}</p>}
           </div>
