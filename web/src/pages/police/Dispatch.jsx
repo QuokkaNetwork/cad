@@ -8,36 +8,6 @@ import UnitCard from '../../components/UnitCard';
 import Modal from '../../components/Modal';
 import StatusBadge from '../../components/StatusBadge';
 
-function normalizePostalToken(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-}
-
-function extractPostalToken(text) {
-  const raw = String(text || '').trim();
-  if (!raw) return '';
-
-  const trailing = raw.match(/\(([^)]+)\)\s*$/);
-  if (trailing?.[1]) return trailing[1].trim();
-
-  const direct = raw.match(/^\s*([a-zA-Z]?\d{3,6}[a-zA-Z]?)\s*$/);
-  if (direct?.[1]) return direct[1].trim();
-
-  const last = raw.match(/([a-zA-Z]?\d{3,6}[a-zA-Z]?)(?!.*[a-zA-Z]?\d{3,6}[a-zA-Z]?)/);
-  if (last?.[1]) return last[1].trim();
-  return '';
-}
-
-function getCallPostal(call) {
-  return extractPostalToken(call?.postal || call?.location || '');
-}
-
-function getUnitPostal(unit) {
-  return extractPostalToken(unit?.location || '');
-}
-
 function isEmergency000Call(call) {
   return String(call?.job_code || '').trim() === '000';
 }
@@ -51,37 +21,6 @@ function parseSqliteUtc(value) {
   return Number.isFinite(ts) ? ts : 0;
 }
 
-function chooseClosestUnitByPostal(call, candidates = []) {
-  const targetPostalRaw = getCallPostal(call);
-  const targetPostal = normalizePostalToken(targetPostalRaw);
-  if (!targetPostal || !Array.isArray(candidates) || candidates.length === 0) return null;
-
-  const targetNum = Number(targetPostal);
-  let best = null;
-  let bestScore = Number.POSITIVE_INFINITY;
-
-  for (const unit of candidates) {
-    const unitPostal = normalizePostalToken(getUnitPostal(unit));
-    if (!unitPostal) continue;
-
-    let score = Number.POSITIVE_INFINITY;
-    const unitNum = Number(unitPostal);
-    if (Number.isFinite(targetNum) && Number.isFinite(unitNum)) {
-      score = Math.abs(unitNum - targetNum);
-    } else if (unitPostal === targetPostal) {
-      score = 0;
-    } else {
-      score = Number.POSITIVE_INFINITY;
-    }
-
-    if (score < bestScore) {
-      bestScore = score;
-      best = unit;
-    }
-  }
-  return best;
-}
-
 export default function Dispatch() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -90,7 +29,6 @@ export default function Dispatch() {
   const [visibleDepartments, setVisibleDepartments] = useState([]);
   const [showNewCall, setShowNewCall] = useState(false);
   const [selectedCall, setSelectedCall] = useState(null);
-  const [dispatchCallId, setDispatchCallId] = useState('');
   const [form, setForm] = useState({ title: '', priority: '3', location: '', description: '', job_code: '', department_id: '' });
 
   const deptId = activeDepartment?.id;
@@ -222,42 +160,6 @@ export default function Dispatch() {
     [activeCalls]
   );
 
-  const dispatchSelectedCall = useMemo(() => {
-    if (!isDispatch) return null;
-    const fallback = incomingEmergencyCalls[0] || activeCalls[0] || null;
-    const selectedId = Number(dispatchCallId || 0);
-    if (!selectedId) return fallback;
-    return activeCalls.find(c => c.id === selectedId) || fallback;
-  }, [isDispatch, dispatchCallId, activeCalls, incomingEmergencyCalls]);
-
-  useEffect(() => {
-    if (!isDispatch) return;
-    if (activeCalls.length === 0) {
-      if (dispatchCallId) setDispatchCallId('');
-      return;
-    }
-    const fallback = incomingEmergencyCalls[0] || activeCalls[0] || null;
-    if (!fallback) return;
-    const selectedId = Number(dispatchCallId || 0);
-    const stillExists = selectedId && activeCalls.some(c => c.id === selectedId);
-    if (!stillExists) {
-      setDispatchCallId(String(fallback.id));
-    }
-  }, [isDispatch, activeCalls, dispatchCallId, incomingEmergencyCalls]);
-
-  const dispatchAssignableUnits = useMemo(() => {
-    if (!dispatchSelectedCall) return [];
-    const assignedIds = new Set((dispatchSelectedCall.assigned_units || []).map(u => u.id));
-    const unassigned = units.filter(u => !assignedIds.has(u.id));
-    const sameDepartment = unassigned.filter(u => u.department_id === dispatchSelectedCall.department_id);
-    return sameDepartment.length > 0 ? sameDepartment : unassigned;
-  }, [dispatchSelectedCall, units]);
-
-  const suggestedDispatchUnit = useMemo(
-    () => chooseClosestUnitByPostal(dispatchSelectedCall, dispatchAssignableUnits),
-    [dispatchSelectedCall, dispatchAssignableUnits]
-  );
-
   useEffect(() => {
     if (!selectedCall?.id) return;
     const refreshed = calls.find(c => c.id === selectedCall.id);
@@ -308,13 +210,7 @@ export default function Dispatch() {
             <CallCard
               key={call.id}
               call={call}
-              onClick={() => {
-                if (isDispatch) {
-                  setDispatchCallId(String(call.id));
-                } else {
-                  setSelectedCall(call);
-                }
-              }}
+              onClick={() => setSelectedCall(call)}
               showDepartment={isDispatch}
             />
           ))}
@@ -322,159 +218,6 @@ export default function Dispatch() {
 
         {/* Units panel */}
         <div className="w-80 flex-shrink-0 overflow-y-auto">
-          {isDispatch && (
-            <div className="bg-cad-card border border-cad-border rounded-lg p-3 mb-4">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Dispatch Panel</h3>
-                {dispatchSelectedCall && (
-                  <button
-                    onClick={() => setSelectedCall(dispatchSelectedCall)}
-                    className="px-2 py-1 text-[11px] bg-cad-surface border border-cad-border rounded text-cad-muted hover:text-cad-ink"
-                  >
-                    Open Details
-                  </button>
-                )}
-              </div>
-
-              {activeCalls.length === 0 ? (
-                <p className="text-xs text-cad-muted">No active calls to dispatch.</p>
-              ) : (
-                <>
-                  {incomingEmergencyCalls.length > 0 && (
-                    <div className="mb-3">
-                      <p className="text-[11px] text-red-300 uppercase tracking-wider mb-1">Incoming 000 Calls</p>
-                      <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
-                        {incomingEmergencyCalls.slice(0, 6).map(call => {
-                          const selected = dispatchSelectedCall?.id === call.id;
-                          return (
-                            <button
-                              key={call.id}
-                              onClick={() => setDispatchCallId(String(call.id))}
-                              className={`w-full text-left px-2 py-1 rounded border text-xs transition-colors ${
-                                selected
-                                  ? 'bg-red-500/20 text-red-200 border-red-500/40'
-                                  : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
-                              }`}
-                            >
-                              #{call.id} {call.title}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  <label className="block text-xs text-cad-muted mb-1">Selected Call</label>
-                  <select
-                    value={dispatchSelectedCall ? String(dispatchSelectedCall.id) : ''}
-                    onChange={e => setDispatchCallId(e.target.value)}
-                    className="w-full bg-cad-surface border border-cad-border rounded px-2 py-1.5 text-xs focus:outline-none focus:border-cad-accent"
-                  >
-                    {activeCalls.map(call => (
-                      <option key={call.id} value={call.id}>
-                        #{call.id} P{call.priority} {call.title}
-                      </option>
-                    ))}
-                  </select>
-
-                  {dispatchSelectedCall && (
-                    <div className="mt-3 space-y-3">
-                      <div className="text-xs text-cad-muted">
-                        <p className="text-cad-ink font-medium">#{dispatchSelectedCall.id} {dispatchSelectedCall.title}</p>
-                        <p className="truncate">Location: {dispatchSelectedCall.location || 'No location'}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <StatusBadge status={dispatchSelectedCall.status} />
-                          {getCallPostal(dispatchSelectedCall) && (
-                            <span className="font-mono text-[11px] text-cad-ink">Postal {getCallPostal(dispatchSelectedCall)}</span>
-                          )}
-                        </div>
-                        {suggestedDispatchUnit ? (
-                          <div className="mt-1 space-y-1">
-                            <p>
-                              Suggested nearest unit:{' '}
-                              <span className="text-cad-accent-light font-mono">
-                                {suggestedDispatchUnit.callsign}
-                              </span>{' '}
-                              ({getUnitPostal(suggestedDispatchUnit) || 'no postal'})
-                            </p>
-                            {dispatchSelectedCall.status !== 'closed' && (
-                              <button
-                                type="button"
-                                onClick={() => assignUnit(dispatchSelectedCall.id, suggestedDispatchUnit.id)}
-                                className="text-[11px] px-2 py-1 rounded bg-cad-accent/20 text-cad-accent-light border border-cad-accent/40 hover:bg-cad-accent/30"
-                              >
-                                Attach Suggested Unit
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="mt-1">No postal-based recommendation available.</p>
-                        )}
-                        <p className="mt-1">
-                          Assigning a unit marks them <span className="text-cad-ink">En Route</span> and pushes a
-                          route waypoint in-game when postal data is available.
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-[11px] text-cad-muted uppercase tracking-wider mb-1">Attached Units</p>
-                        {dispatchSelectedCall.assigned_units?.length > 0 ? (
-                          <div className="space-y-1">
-                            {dispatchSelectedCall.assigned_units.map(u => (
-                              <div key={u.id} className="flex items-center justify-between bg-cad-surface rounded px-2 py-1">
-                                <div className="min-w-0">
-                                  <p className="text-xs font-mono text-cad-accent-light truncate">{u.callsign}</p>
-                                  <p className="text-[11px] text-cad-muted truncate">{u.user_name}</p>
-                                </div>
-                                <button
-                                  onClick={() => unassignUnit(dispatchSelectedCall.id, u.id)}
-                                  className="text-[11px] text-red-300 hover:text-red-200"
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-xs text-cad-muted">No units attached.</p>
-                        )}
-                      </div>
-
-                      {dispatchSelectedCall.status !== 'closed' && (
-                        <div>
-                          <p className="text-[11px] text-cad-muted uppercase tracking-wider mb-1">Attach Unit</p>
-                          {dispatchAssignableUnits.length === 0 ? (
-                            <p className="text-xs text-cad-muted">No available units to attach.</p>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
-                              {dispatchAssignableUnits.map(u => {
-                                const recommended = suggestedDispatchUnit && suggestedDispatchUnit.id === u.id;
-                                return (
-                                  <button
-                                    key={u.id}
-                                    onClick={() => assignUnit(dispatchSelectedCall.id, u.id)}
-                                    className={`text-[11px] px-2 py-1 rounded border font-mono transition-colors ${
-                                      recommended
-                                        ? 'bg-cad-accent/20 text-cad-accent-light border-cad-accent/40'
-                                        : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
-                                    }`}
-                                    title={`${u.callsign}${u.department_short_name ? ` | ${u.department_short_name}` : ''}${getUnitPostal(u) ? ` | Postal ${getUnitPostal(u)}` : ''}`}
-                                  >
-                                    {u.callsign}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
           {isDispatch && unitsByDept ? (
             /* Dispatch mode: group by department */
             <div className="space-y-4">

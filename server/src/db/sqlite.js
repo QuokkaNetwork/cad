@@ -535,20 +535,52 @@ const Calls = {
     }
     return calls;
   },
-  create({ department_id, title, priority, location, description, job_code, created_by }) {
+  create({
+    department_id,
+    title,
+    priority,
+    location,
+    description,
+    job_code,
+    created_by,
+    postal,
+    position_x,
+    position_y,
+    position_z,
+  }) {
     const info = db.prepare(
-      'INSERT INTO calls (department_id, title, priority, location, description, job_code, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(department_id, title, priority || '3', location || '', description || '', job_code || '', created_by);
+      `INSERT INTO calls (
+        department_id, title, priority, location, description, job_code, created_by, postal, position_x, position_y, position_z
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      department_id,
+      title,
+      priority || '3',
+      location || '',
+      description || '',
+      job_code || '',
+      created_by,
+      String(postal || '').trim(),
+      Number.isFinite(Number(position_x)) ? Number(position_x) : null,
+      Number.isFinite(Number(position_y)) ? Number(position_y) : null,
+      Number.isFinite(Number(position_z)) ? Number(position_z) : null
+    );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['title', 'priority', 'location', 'description', 'job_code', 'status'];
+    const allowed = ['title', 'priority', 'location', 'description', 'job_code', 'status', 'postal', 'position_x', 'position_y', 'position_z'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
       if (fields[key] !== undefined) {
         updates.push(`${key} = ?`);
-        values.push(fields[key]);
+        if (key === 'postal') {
+          values.push(String(fields[key] || '').trim());
+        } else if (key === 'position_x' || key === 'position_y' || key === 'position_z') {
+          values.push(Number.isFinite(Number(fields[key])) ? Number(fields[key]) : null);
+        } else {
+          values.push(fields[key]);
+        }
       }
     }
     if (updates.length === 0) return;

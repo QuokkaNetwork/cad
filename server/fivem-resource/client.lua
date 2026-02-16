@@ -202,15 +202,23 @@ local function getPostalCoords(postal)
   local lookups = {
     { primaryResource, 'getCoordsFromPostal' },
     { primaryResource, 'getCoordFromPostal' },
+    { primaryResource, 'getCoordinateFromPostal' },
+    { primaryResource, 'getCoordinatesFromPostal' },
     { primaryResource, 'getPostalCoords' },
     { primaryResource, 'GetCoordsFromPostal' },
     { primaryResource, 'GetCoordFromPostal' },
+    { primaryResource, 'GetCoordinateFromPostal' },
+    { primaryResource, 'GetCoordinatesFromPostal' },
     { primaryResource, 'GetPostalCoords' },
     { 'nearest-postal', 'getCoordsFromPostal' },
     { 'nearest-postal', 'getCoordFromPostal' },
+    { 'nearest-postal', 'getCoordinateFromPostal' },
+    { 'nearest-postal', 'getCoordinatesFromPostal' },
     { 'nearest-postal', 'getPostalCoords' },
     { 'nearest-postal', 'GetCoordsFromPostal' },
     { 'nearest-postal', 'GetCoordFromPostal' },
+    { 'nearest-postal', 'GetCoordinateFromPostal' },
+    { 'nearest-postal', 'GetCoordinatesFromPostal' },
     { 'nearest-postal', 'GetPostalCoords' },
   }
 

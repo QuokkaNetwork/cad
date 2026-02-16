@@ -615,6 +615,10 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   }
 
   const location = formatCallLocation(payload);
+  const postal = String(payload?.postal || extractPostalFromLocation(location) || '').trim();
+  const positionX = Number(payload?.position?.x);
+  const positionY = Number(payload?.position?.y);
+  const positionZ = Number(payload?.position?.z);
   const title = String(payload.title || '').trim() || (details ? details.slice(0, 120) : `000 Call from ${playerName}`);
   const descriptionParts = [];
   descriptionParts.push(`000 call from ${playerName}${sourceId ? ` (#${sourceId})` : ''}`);
@@ -630,6 +634,10 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     description,
     job_code: '000',
     created_by: cadUser?.id || null,
+    postal,
+    position_x: Number.isFinite(positionX) ? positionX : null,
+    position_y: Number.isFinite(positionY) ? positionY : null,
+    position_z: Number.isFinite(positionZ) ? positionZ : null,
   });
 
   bus.emit('call:create', { departmentId, call });
