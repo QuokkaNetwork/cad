@@ -41,7 +41,8 @@ export default function Voice() {
       setActiveCalls(activeCallsData);
     } catch (err) {
       console.error('Failed to load voice data:', err);
-      setError(`Failed to load voice data: ${err.message || 'Unknown error'}`);
+      const errorMsg = err?.message || String(err) || 'Unknown error';
+      setError(`Failed to load voice data: ${errorMsg}`);
       setTimeout(() => setError(null), 5000);
     } finally {
       setLoading(false);
@@ -134,7 +135,8 @@ export default function Voice() {
       await voiceClient.joinChannel(channelNumber);
       fetchData();
     } catch (err) {
-      setError(err.message || 'Failed to join channel');
+      const errorMsg = err?.message || String(err) || 'Failed to join channel';
+      setError(errorMsg);
       setTimeout(() => setError(null), 5000);
     }
   }
@@ -146,7 +148,8 @@ export default function Voice() {
       await voiceClient.leaveChannel();
       fetchData();
     } catch (err) {
-      setError(err.message || 'Failed to leave channel');
+      const errorMsg = err?.message || String(err) || 'Failed to leave channel';
+      setError(errorMsg);
       setTimeout(() => setError(null), 5000);
     }
   }
@@ -156,13 +159,14 @@ export default function Voice() {
     try {
       const result = await api.post(`/api/voice/calls/${callId}/accept`);
       // Join call channel automatically
-      if (result.call_channel_number) {
+      if (result?.call_channel_number) {
         await voiceClient.joinChannel(result.call_channel_number);
       }
       setSelectedCall(null);
       fetchData();
     } catch (err) {
-      setError(err.message || 'Failed to accept call');
+      const errorMsg = err?.message || String(err) || 'Failed to accept call';
+      setError(errorMsg);
       setTimeout(() => setError(null), 5000);
     }
   }
@@ -174,7 +178,8 @@ export default function Voice() {
       setSelectedCall(null);
       fetchData();
     } catch (err) {
-      setError(err.message || 'Failed to decline call');
+      const errorMsg = err?.message || String(err) || 'Failed to decline call';
+      setError(errorMsg);
       setTimeout(() => setError(null), 5000);
     }
   }
@@ -186,7 +191,8 @@ export default function Voice() {
       await voiceClient.leaveChannel();
       fetchData();
     } catch (err) {
-      setError(err.message || 'Failed to end call');
+      const errorMsg = err?.message || String(err) || 'Failed to end call';
+      setError(errorMsg);
       setTimeout(() => setError(null), 5000);
     }
   }
