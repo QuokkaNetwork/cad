@@ -372,7 +372,7 @@ export default function Search() {
                                     <div className="text-cad-muted">
                                       {fields.map(field => (
                                         <span key={field.id} className="mr-3">
-                                          {field.label}: {formatMappedValue(field.value)}
+                                          {field.label}: {String(field.display_value || formatMappedValue(field.value))}
                                         </span>
                                       ))}
                                     </div>
@@ -465,7 +465,7 @@ export default function Search() {
                           {fields.map(field => (
                             <div key={field.id}>
                               <span className="text-cad-muted">{field.label}:</span>
-                              <span className="ml-2">{formatMappedValue(field.value)}</span>
+                              <span className="ml-2">{String(field.display_value || formatMappedValue(field.value))}</span>
                             </div>
                           ))}
                         </div>

@@ -138,6 +138,59 @@ function valueToDisplay(value) {
   return String(value);
 }
 
+function normalizeFriendlyValuesMap(value) {
+  if (!value) return { map: {}, json: '' };
+
+  let parsed = null;
+  if (typeof value === 'string') {
+    const text = String(value || '').trim();
+    if (!text) return { map: {}, json: '' };
+    parsed = parseMaybeJson(text);
+  } else if (typeof value === 'object' && !Array.isArray(value)) {
+    parsed = value;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { map: {}, json: '' };
+  }
+
+  const normalized = {};
+  for (const [rawKey, rawLabel] of Object.entries(parsed)) {
+    const key = String(rawKey || '').trim();
+    if (!key) continue;
+    normalized[key] = rawLabel === null || rawLabel === undefined
+      ? ''
+      : String(rawLabel);
+  }
+
+  if (Object.keys(normalized).length === 0) {
+    return { map: {}, json: '' };
+  }
+
+  return { map: normalized, json: JSON.stringify(normalized) };
+}
+
+function applyFriendlyValueMap(value, friendlyValuesMap) {
+  if (!friendlyValuesMap || typeof friendlyValuesMap !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map(item => applyFriendlyValueMap(item, friendlyValuesMap));
+  }
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'object') return value;
+
+  const directKey = typeof value === 'string' ? value.trim() : String(value);
+  if (Object.prototype.hasOwnProperty.call(friendlyValuesMap, directKey)) {
+    return friendlyValuesMap[directKey];
+  }
+
+  const lowerKey = directKey.toLowerCase();
+  if (lowerKey !== directKey && Object.prototype.hasOwnProperty.call(friendlyValuesMap, lowerKey)) {
+    return friendlyValuesMap[lowerKey];
+  }
+
+  return value;
+}
+
 function normalizeFieldKey(value, fallbackLabel = '') {
   let key = String(value || '').trim().toLowerCase();
   if (!key && fallbackLabel) {
@@ -202,6 +255,7 @@ function normalizeDatabaseFieldMappings(entityType = 'person') {
     const fieldKey = normalizeFieldKey(row.field_key, label);
     const fieldType = normalizeFieldType(row.field_type);
     const previewWidth = normalizePreviewWidth(row.preview_width);
+    const friendlyValues = normalizeFriendlyValuesMap(row.friendly_values_json);
 
     if (!label || !tableName || !columnName || !joinColumn) continue;
     if (!IDENTIFIER_RE.test(tableName) || !IDENTIFIER_RE.test(columnName) || !IDENTIFIER_RE.test(joinColumn)) continue;
@@ -221,6 +275,8 @@ function normalizeDatabaseFieldMappings(entityType = 'person') {
       field_key: fieldKey,
       field_type: fieldType,
       preview_width: previewWidth,
+      friendly_values_map: friendlyValues.map,
+      friendly_values_json: friendlyValues.json,
       sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
       entity_type: normalizedType,
     });
@@ -361,7 +417,8 @@ async function resolveMappedFieldData({
     }
 
     const values = collectMappingValues(sourceRows, mapping);
-    const fieldValue = values.length === 0 ? null : (values.length === 1 ? values[0] : values);
+    const rawFieldValue = values.length === 0 ? null : (values.length === 1 ? values[0] : values);
+    const fieldValue = applyFriendlyValueMap(rawFieldValue, mapping.friendly_values_map);
     const displayValue = valueToDisplay(fieldValue);
 
     const category = categoryMap.get(mapping.category_id);
@@ -371,6 +428,7 @@ async function resolveMappedFieldData({
         key: mapping.field_key,
         label: mapping.label,
         value: fieldValue,
+        raw_value: rawFieldValue,
         display_value: displayValue,
         is_empty: !isMeaningfulValue(fieldValue),
         field_key: mapping.field_key,
@@ -384,6 +442,7 @@ async function resolveMappedFieldData({
         json_key: mapping.json_key,
         sort_order: mapping.sort_order,
         is_search_column: mapping.is_search_column,
+        friendly_values_json: mapping.friendly_values_json,
       });
     }
 

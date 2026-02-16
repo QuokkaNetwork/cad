@@ -1295,14 +1295,15 @@ const FieldMappings = {
     field_key = '',
     field_type = 'text',
     preview_width = 1,
+    friendly_values_json = '',
   }) {
     const info = db.prepare(`
       INSERT INTO field_mappings
         (
           category_id, label, table_name, column_name, is_json, json_key,
-          character_join_column, sort_order, is_search_column, field_key, field_type, preview_width
+          character_join_column, sort_order, is_search_column, field_key, field_type, preview_width, friendly_values_json
         )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       category_id,
       label,
@@ -1315,7 +1316,8 @@ const FieldMappings = {
       is_search_column ? 1 : 0,
       field_key,
       field_type,
-      preview_width
+      preview_width,
+      String(friendly_values_json || '').trim()
     );
     return this.findById(info.lastInsertRowid);
   },
@@ -1333,6 +1335,7 @@ const FieldMappings = {
       'field_key',
       'field_type',
       'preview_width',
+      'friendly_values_json',
     ];
     const updates = [];
     const values = [];

@@ -1,0 +1,331 @@
+:root {
+  --bg-1: rgba(6, 10, 19, 0.85);
+  --bg-2: rgba(8, 23, 44, 0.9);
+  --panel: rgba(8, 19, 36, 0.94);
+  --panel-border: rgba(64, 105, 166, 0.45);
+  --ink: #e5eefc;
+  --muted: #8ea6c8;
+  --accent: #2dd4bf;
+  --accent-strong: #14b8a6;
+  --danger: #ff6b6b;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(1200px 700px at 20% 0%, rgba(20, 184, 166, 0.1), transparent 65%),
+    radial-gradient(900px 600px at 80% 100%, rgba(59, 130, 246, 0.12), transparent 65%),
+    linear-gradient(160deg, var(--bg-1), var(--bg-2));
+  backdrop-filter: blur(3px);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.panel {
+  width: min(880px, 95vw);
+  max-height: 92vh;
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  background:
+    linear-gradient(180deg, rgba(16, 37, 66, 0.45), rgba(8, 19, 36, 0.92)),
+    var(--panel);
+  box-shadow:
+    0 22px 50px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(45, 212, 191, 0.08) inset;
+  padding: 1.1rem 1.15rem 1rem;
+  animation: panel-enter 180ms ease-out;
+}
+
+@keyframes panel-enter {
+  from {
+    transform: translateY(8px) scale(0.985);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffce88;
+  padding: 0.26rem 0.52rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 206, 136, 0.45);
+  background: rgba(241, 167, 42, 0.12);
+}
+
+.icon-btn {
+  appearance: none;
+  border: 1px solid rgba(142, 166, 200, 0.35);
+  background: rgba(10, 20, 37, 0.85);
+  color: var(--muted);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.55rem;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.icon-btn:hover {
+  color: var(--ink);
+  border-color: rgba(45, 212, 191, 0.55);
+  background: rgba(14, 30, 51, 0.95);
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.15rem, 1.6vw, 1.45rem);
+  font-weight: 700;
+}
+
+.subtitle {
+  margin: 0.35rem 0 0.95rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.field {
+  background: rgba(8, 21, 39, 0.6);
+  border: 1px solid rgba(72, 98, 138, 0.45);
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #c8d9f3;
+}
+
+.required {
+  color: var(--danger);
+}
+
+input[type="text"],
+textarea {
+  width: 100%;
+  border: 1px solid rgba(99, 131, 179, 0.4);
+  background: rgba(5, 14, 29, 0.8);
+  color: var(--ink);
+  border-radius: 9px;
+  padding: 0.62rem 0.65rem;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+  border-color: rgba(45, 212, 191, 0.75);
+  box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.22);
+  background: rgba(6, 17, 34, 0.92);
+}
+
+textarea {
+  min-height: 112px;
+  max-height: 280px;
+  resize: vertical;
+  line-height: 1.35;
+}
+
+.meta-row {
+  margin-top: 0.35rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1rem;
+}
+
+.counter {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.error {
+  color: #ff9f9f;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.dept-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.dept-hint {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.empty-state {
+  color: var(--muted);
+  font-size: 0.8rem;
+  border: 1px dashed rgba(142, 166, 200, 0.35);
+  border-radius: 10px;
+  padding: 0.6rem 0.65rem;
+}
+
+.dept-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.45rem;
+  max-height: 200px;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.dept-btn {
+  appearance: none;
+  width: 100%;
+  border: 1px solid rgba(78, 108, 149, 0.5);
+  background: rgba(9, 22, 41, 0.88);
+  color: #d4e2f8;
+  border-radius: 9px;
+  padding: 0.52rem 0.6rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.dept-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(45, 212, 191, 0.48);
+  background: rgba(10, 27, 49, 0.95);
+}
+
+.dept-btn.active {
+  border-color: rgba(45, 212, 191, 0.8);
+  background: linear-gradient(135deg, rgba(8, 44, 58, 0.9), rgba(12, 28, 48, 0.95));
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.2) inset;
+}
+
+.dept-title {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dept-subtitle {
+  display: block;
+  margin-top: 0.14rem;
+  font-size: 0.73rem;
+  color: #9cb2d3;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: 0.15rem;
+}
+
+.btn {
+  appearance: none;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  min-width: 138px;
+  padding: 0.62rem 0.95rem;
+  font-size: 0.87rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 120ms ease, transform 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+  filter: none;
+}
+
+.btn-primary {
+  color: #082233;
+  border-color: rgba(45, 212, 191, 0.7);
+  background: linear-gradient(135deg, var(--accent), #67e8f9);
+}
+
+.btn-ghost {
+  color: #cbd8ec;
+  border-color: rgba(113, 142, 183, 0.6);
+  background: rgba(9, 22, 41, 0.82);
+}
+
+@media (max-width: 760px) {
+  .overlay {
+    padding: 0.8rem;
+  }
+
+  .panel {
+    width: 100%;
+    border-radius: 14px;
+    max-height: 95vh;
+  }
+
+  .actions {
+    flex-direction: column-reverse;
+  }
+
+  .btn {
+    width: 100%;
+  }
+}

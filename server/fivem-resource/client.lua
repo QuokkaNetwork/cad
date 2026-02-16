@@ -306,22 +306,6 @@ local function notifyFine(payload)
   end
 end
 
-local function promptOnscreenKeyboard(title, defaultText, maxLength)
-  AddTextEntry('CAD_BRIDGE_000_PROMPT', tostring(title or 'CAD Input'))
-  DisplayOnscreenKeyboard(1, 'CAD_BRIDGE_000_PROMPT', '', tostring(defaultText or ''), '', '', '', tonumber(maxLength) or 128)
-
-  while true do
-    local update = UpdateOnscreenKeyboard()
-    if update == 0 then
-      Wait(0)
-    elseif update == 1 then
-      return trim(GetOnscreenKeyboardResult() or '')
-    else
-      return nil
-    end
-  end
-end
-
 local function normalizeDepartmentIdList(value)
   local normalized = {}
   local seen = {}
@@ -349,91 +333,83 @@ local function normalizeDepartmentIdList(value)
   return normalized
 end
 
-local function openEmergencyPopup(departments)
-  local departmentOptions = {}
-  if type(departments) == 'table' then
-    for _, dept in ipairs(departments) do
-      local id = tonumber(dept.id)
-      if id and id > 0 then
-        local name = trim(dept.name or ('Department #' .. tostring(id)))
-        local shortName = trim(dept.short_name or '')
-        local label = shortName ~= '' and ('%s (%s)'):format(name, shortName) or name
-        departmentOptions[#departmentOptions + 1] = {
-          value = tostring(math.floor(id)),
-          label = label,
-        }
-      end
-    end
+local emergencyUiOpen = false
+
+local function setEmergencyUiVisible(isVisible, payload)
+  local visible = isVisible == true
+  emergencyUiOpen = visible
+  SetNuiFocus(visible, visible)
+  SendNUIMessage({
+    action = visible and 'cadBridge000:open' or 'cadBridge000:close',
+    payload = payload or {},
+  })
+end
+
+local function sanitizeEmergencyDepartments(departments)
+  local out = {}
+  if type(departments) ~= 'table' then
+    return out
   end
 
-  if GetResourceState('ox_lib') == 'started' and lib and type(lib.inputDialog) == 'function' then
-    local ok, input = pcall(function()
-      local dialogFields = {
-        { type = 'input', label = 'Title', description = 'What is happening?', required = true, max = 80 },
-        { type = 'textarea', label = 'Details', description = 'Extra details for dispatch', required = false, max = 600 },
+  for _, dept in ipairs(departments) do
+    local id = tonumber(dept.id)
+    if id and id > 0 then
+      out[#out + 1] = {
+        id = math.floor(id),
+        name = trim(dept.name or ('Department #' .. tostring(id))),
+        short_name = trim(dept.short_name or ''),
+        color = trim(dept.color or ''),
       }
-      if #departmentOptions > 0 then
-        dialogFields[#dialogFields + 1] = {
-          type = 'multi-select',
-          label = 'Required Departments',
-          description = 'Select all departments needed for this 000 call',
-          required = false,
-          options = departmentOptions,
-        }
-      end
-      return lib.inputDialog('000 Emergency Call', dialogFields)
-    end)
-    if ok and input then
-      local title = trim(input[1] or '')
-      local details = trim(input[2] or '')
-      local requestedDepartmentIds = #departmentOptions > 0
-        and normalizeDepartmentIdList(input[3] or {})
-        or {}
-      if title == '' then return end
-      TriggerServerEvent('cad_bridge:submit000', {
-        title = title,
-        details = details,
-        requested_department_ids = requestedDepartmentIds,
-      })
-      return
     end
   end
 
-  if #departmentOptions > 0 and GetResourceState('chat') == 'started' then
-    local labels = {}
-    for _, option in ipairs(departmentOptions) do
-      labels[#labels + 1] = ('%s:%s'):format(option.value, option.label)
-    end
-    TriggerEvent('chat:addMessage', {
-      color = { 0, 170, 255 },
-      args = { 'CAD', 'Department IDs: ' .. table.concat(labels, ' | ') },
-    })
+  return out
+end
+
+local function closeEmergencyPopup()
+  if not emergencyUiOpen then return end
+  setEmergencyUiVisible(false, {})
+end
+
+local function openEmergencyPopup(departments)
+  setEmergencyUiVisible(true, {
+    departments = sanitizeEmergencyDepartments(departments),
+    max_title_length = 80,
+    max_details_length = 600,
+  })
+end
+
+RegisterNUICallback('cadBridge000Submit', function(data, cb)
+  local title = trim(data and data.title or '')
+  local details = trim(data and data.details or '')
+  local requestedDepartmentIds = normalizeDepartmentIdList(data and data.requested_department_ids or {})
+
+  if title == '' then
+    if cb then cb({ ok = false, error = 'title_required' }) end
+    return
   end
 
-  local title = promptOnscreenKeyboard('000 Title', '', 80)
-  if not title or title == '' then return end
-
-  local details = promptOnscreenKeyboard('000 Details', '', 600)
-  if details == nil then return end
-
-  local requestedDepartmentIds = {}
-  if #departmentOptions > 0 then
-    local rawDepartments = promptOnscreenKeyboard('Department IDs (comma separated)', '', 120)
-    if rawDepartments == nil then return end
-
-    local parsed = {}
-    for token in tostring(rawDepartments):gmatch('[^,%s]+') do
-      parsed[#parsed + 1] = token
-    end
-    requestedDepartmentIds = normalizeDepartmentIdList(parsed)
+  if #title > 80 then
+    title = title:sub(1, 80)
+  end
+  if #details > 600 then
+    details = details:sub(1, 600)
   end
 
+  closeEmergencyPopup()
   TriggerServerEvent('cad_bridge:submit000', {
     title = title,
     details = details,
     requested_department_ids = requestedDepartmentIds,
   })
-end
+
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridge000Cancel', function(_data, cb)
+  closeEmergencyPopup()
+  if cb then cb({ ok = true }) end
+end)
 
 RegisterNetEvent('cad_bridge:setCallRoute', function(route)
   if type(route) ~= 'table' then return end
@@ -466,6 +442,13 @@ end)
 
 RegisterNetEvent('cad_bridge:prompt000', function(departments)
   openEmergencyPopup(departments)
+end)
+
+AddEventHandler('onResourceStop', function(resourceName)
+  if resourceName ~= GetCurrentResourceName() then return end
+  if emergencyUiOpen then
+    SetNuiFocus(false, false)
+  end
 end)
 
 CreateThread(function()

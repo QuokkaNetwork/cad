@@ -29,6 +29,7 @@ const NEW_MAPPING_TEMPLATE = {
   character_join_column: '',
   is_json: false,
   json_key: '',
+  friendly_values_json: '',
   is_search_column: false,
   sort_order: '0',
 };
@@ -80,6 +81,31 @@ function parsePreviewWidth(value) {
   return Math.max(1, Math.min(4, Math.trunc(parsed)));
 }
 
+function normalizeFriendlyValuesJsonInput(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Friendly Value Map must be valid JSON: ${err.message}`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Friendly Value Map must be a JSON object');
+  }
+
+  const normalized = {};
+  for (const [rawKey, rawLabel] of Object.entries(parsed)) {
+    const key = String(rawKey || '').trim();
+    if (!key) continue;
+    normalized[key] = rawLabel === null || rawLabel === undefined ? '' : String(rawLabel);
+  }
+
+  return Object.keys(normalized).length > 0 ? JSON.stringify(normalized) : '';
+}
+
 function createDraft(mapping) {
   return {
     id: mapping.id,
@@ -93,6 +119,7 @@ function createDraft(mapping) {
     character_join_column: String(mapping.character_join_column || ''),
     is_json: parseFlag(mapping.is_json),
     json_key: String(mapping.json_key || ''),
+    friendly_values_json: String(mapping.friendly_values_json || ''),
     is_search_column: parseFlag(mapping.is_search_column),
     sort_order: String(Number(mapping.sort_order || 0)),
   };
@@ -398,6 +425,7 @@ export default function AdminFieldMappings() {
         alert('Field key could not be generated.');
         return;
       }
+      const friendlyValuesJson = normalizeFriendlyValuesJsonInput(newMapping.friendly_values_json);
       await api.post('/api/admin/field-mappings', {
         category_id: selectedCategory.id,
         label,
@@ -409,6 +437,7 @@ export default function AdminFieldMappings() {
         character_join_column: String(newMapping.character_join_column || '').trim(),
         is_json: !!newMapping.is_json,
         json_key: String(newMapping.json_key || '').trim(),
+        friendly_values_json: friendlyValuesJson,
         is_search_column: !!newMapping.is_search_column,
         sort_order: Number(newMapping.sort_order || 0),
       });
@@ -445,6 +474,13 @@ export default function AdminFieldMappings() {
       alert('Field key cannot be empty.');
       return;
     }
+    let friendlyValuesJson = '';
+    try {
+      friendlyValuesJson = normalizeFriendlyValuesJsonInput(draft.friendly_values_json);
+    } catch (err) {
+      alert(String(err?.message || err || 'Friendly Value Map is invalid.'));
+      return;
+    }
 
     setSavingById((prev) => ({ ...prev, [mappingId]: true }));
     try {
@@ -459,6 +495,7 @@ export default function AdminFieldMappings() {
         character_join_column: String(draft.character_join_column || '').trim(),
         is_json: !!draft.is_json,
         json_key: String(draft.json_key || '').trim(),
+        friendly_values_json: friendlyValuesJson,
         is_search_column: !!draft.is_search_column,
         sort_order: Number(draft.sort_order || 0),
       });
@@ -1005,6 +1042,19 @@ export default function AdminFieldMappings() {
                   className="bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
                   placeholder="Sort order"
                 />
+                <div className="md:col-span-2">
+                  <label className="block text-xs text-cad-muted mb-1">Friendly Value Map (JSON, Optional)</label>
+                  <textarea
+                    value={newMapping.friendly_values_json}
+                    onChange={(e) => setNewMapping((prev) => ({ ...prev, friendly_values_json: e.target.value }))}
+                    rows={3}
+                    className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-xs font-mono focus:outline-none focus:border-cad-accent"
+                    placeholder={'{"0":"Female","1":"Male"}'}
+                  />
+                  <p className="text-[11px] text-cad-muted mt-1">
+                    Maps raw DB values to friendly labels in character/vehicle search cards.
+                  </p>
+                </div>
                 <div className="flex items-center gap-4 text-xs text-cad-muted">
                   <label className="inline-flex items-center gap-2">
                     <input
@@ -1100,6 +1150,16 @@ export default function AdminFieldMappings() {
                             onChange={(e) => updateDraft(mapping.id, 'sort_order', e.target.value)}
                             className="bg-cad-card border border-cad-border rounded px-2 py-1.5 text-xs focus:outline-none focus:border-cad-accent"
                             placeholder="Sort"
+                          />
+                        </div>
+                        <div className="mt-2">
+                          <label className="block text-[11px] text-cad-muted mb-1">Friendly Value Map (JSON)</label>
+                          <textarea
+                            value={draft.friendly_values_json}
+                            onChange={(e) => updateDraft(mapping.id, 'friendly_values_json', e.target.value)}
+                            rows={2}
+                            className="w-full bg-cad-card border border-cad-border rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-cad-accent"
+                            placeholder={'{"0":"Female","1":"Male"}'}
                           />
                         </div>
                         <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-cad-muted">

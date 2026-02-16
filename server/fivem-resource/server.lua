@@ -441,6 +441,7 @@ RegisterCommand('000', function(src, args)
                 id = math.floor(id),
                 name = tostring(dept.name or ''),
                 short_name = tostring(dept.short_name or ''),
+                color = tostring(dept.color or ''),
               }
             end
           end

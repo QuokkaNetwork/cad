@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CAD Bridge 000</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="overlay" class="overlay hidden" aria-hidden="true">
+      <section class="panel" role="dialog" aria-modal="true" aria-labelledby="emergency-title">
+        <header class="panel-header">
+          <div class="eyebrow">000 Emergency Intake</div>
+          <button id="closeBtn" class="icon-btn" type="button" aria-label="Close">x</button>
+        </header>
+
+        <h1 id="emergency-title">Request Immediate Dispatch</h1>
+        <p class="subtitle">
+          This sends directly to CAD. Your current location and postal are attached automatically.
+        </p>
+
+        <form id="emergencyForm" class="form" novalidate>
+          <div class="field">
+            <label for="titleInput">Title <span class="required">*</span></label>
+            <input
+              id="titleInput"
+              type="text"
+              maxlength="80"
+              placeholder="e.g. Armed robbery with shots fired"
+              autocomplete="off"
+              required
+            />
+            <div class="meta-row">
+              <span id="titleError" class="error hidden">Title is required.</span>
+              <span id="titleCounter" class="counter">0 / 80</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="detailsInput">Details</label>
+            <textarea
+              id="detailsInput"
+              maxlength="600"
+              placeholder="Suspects, vehicle, injuries, direction of travel, any immediate hazards..."
+            ></textarea>
+            <div class="meta-row">
+              <span></span>
+              <span id="detailsCounter" class="counter">0 / 600</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="dept-header">
+              <label>Departments Required</label>
+              <span class="dept-hint">Optional, select all that apply</span>
+            </div>
+            <div id="departmentsEmpty" class="empty-state">
+              No department options were provided by CAD.
+            </div>
+            <div id="departmentsList" class="dept-grid hidden"></div>
+          </div>
+
+          <footer class="actions">
+            <button id="cancelBtn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="submitBtn" class="btn btn-primary" type="submit">Send 000 Call</button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

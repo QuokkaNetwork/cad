@@ -138,6 +138,41 @@ function parsePreviewWidth(value, fallback = 1) {
   return Math.max(1, Math.min(4, Math.trunc(parsed)));
 }
 
+function normalizeFriendlyValuesMap(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return '';
+
+  let parsed = null;
+  if (typeof value === 'string') {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      throw new Error(`friendly_values_json must be valid JSON: ${err.message}`);
+    }
+  } else if (typeof value === 'object') {
+    parsed = value;
+  } else {
+    throw new Error('friendly_values_json must be a JSON object');
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('friendly_values_json must be a JSON object');
+  }
+
+  const normalized = {};
+  for (const [rawKey, rawLabel] of Object.entries(parsed)) {
+    const key = String(rawKey || '').trim();
+    if (!key) continue;
+    normalized[key] = rawLabel === null || rawLabel === undefined
+      ? ''
+      : String(rawLabel);
+  }
+
+  return Object.keys(normalized).length > 0 ? JSON.stringify(normalized) : '';
+}
+
 function normalizeIdentifier(value, label) {
   const normalized = String(value || '').trim();
   if (!normalized) return '';
@@ -942,11 +977,17 @@ router.post('/field-mappings', (req, res) => {
   const jsonKey = String(req.body?.json_key || '').trim();
   const sortOrder = parseSortOrder(req.body?.sort_order, 0);
   const isSearchColumn = parseFlagInt(req.body?.is_search_column, 0);
+  let friendlyValuesJson = '';
   let fieldKey = '';
   let fieldType = 'text';
   try {
     fieldKey = normalizeFieldKey(req.body?.field_key, label);
     fieldType = normalizeFieldType(req.body?.field_type, 'text');
+    friendlyValuesJson = normalizeFriendlyValuesMap(
+      req.body?.friendly_values_json !== undefined
+        ? req.body.friendly_values_json
+        : req.body?.friendly_values_map
+    ) || '';
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
@@ -965,6 +1006,7 @@ router.post('/field-mappings', (req, res) => {
     field_key: fieldKey,
     field_type: fieldType,
     preview_width: previewWidth,
+    friendly_values_json: friendlyValuesJson,
   });
 
   audit(req.user.id, 'field_mapping_created', {
@@ -1019,6 +1061,13 @@ router.patch('/field-mappings/:id', (req, res) => {
     }
     if (req.body?.field_type !== undefined) {
       updates.field_type = normalizeFieldType(req.body.field_type, String(existing.field_type || 'text').trim().toLowerCase() || 'text');
+    }
+    if (req.body?.friendly_values_json !== undefined || req.body?.friendly_values_map !== undefined) {
+      updates.friendly_values_json = normalizeFriendlyValuesMap(
+        req.body?.friendly_values_json !== undefined
+          ? req.body.friendly_values_json
+          : req.body?.friendly_values_map
+      );
     }
   } catch (err) {
     return res.status(400).json({ error: err.message });
