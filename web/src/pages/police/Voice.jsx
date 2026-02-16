@@ -43,13 +43,20 @@ export default function Voice() {
       console.error('Failed to load voice data:', err);
       const errorMsg = err?.message || String(err) || 'Unknown error';
       setError(`Failed to load voice data: ${errorMsg}`);
-      setTimeout(() => setError(null), 5000);
     } finally {
       setLoading(false);
     }
   }, [deptId, isDispatch]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Auto-dismiss errors after 5 seconds
+  useEffect(() => {
+    if (error) {
+      const timeoutId = setTimeout(() => setError(null), 5000);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [error]);
 
   // Real-time updates
   useEventSource({
@@ -79,7 +86,6 @@ export default function Voice() {
 
     voiceClient.onError = (errorMsg) => {
       setError(errorMsg);
-      setTimeout(() => setError(null), 5000);
     };
 
     voiceClient.onTalkingChange = (talking) => {
@@ -137,7 +143,6 @@ export default function Voice() {
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to join channel';
       setError(errorMsg);
-      setTimeout(() => setError(null), 5000);
     }
   }
 
@@ -150,7 +155,6 @@ export default function Voice() {
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to leave channel';
       setError(errorMsg);
-      setTimeout(() => setError(null), 5000);
     }
   }
 
@@ -167,7 +171,6 @@ export default function Voice() {
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to accept call';
       setError(errorMsg);
-      setTimeout(() => setError(null), 5000);
     }
   }
 
@@ -180,7 +183,6 @@ export default function Voice() {
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to decline call';
       setError(errorMsg);
-      setTimeout(() => setError(null), 5000);
     }
   }
 
@@ -193,7 +195,6 @@ export default function Voice() {
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to end call';
       setError(errorMsg);
-      setTimeout(() => setError(null), 5000);
     }
   }
 
