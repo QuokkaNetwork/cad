@@ -1,18 +1,23 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
-import { useAuth } from '../../context/AuthContext';
-import { api } from '../../api/client';
+import { api, getToken } from '../../api/client';
 import DispatcherVoiceClient from '../../services/voiceClient';
 import Modal from '../../components/Modal';
 
 export default function Voice() {
   const { activeDepartment } = useDepartment();
-  const { getToken } = useAuth();
   const [channels, setChannels] = useState([]);
   const [pendingCalls, setPendingCalls] = useState([]);
   const [activeCalls, setActiveCalls] = useState([]);
-  const [voiceClient] = useState(() => new DispatcherVoiceClient());
+  const voiceClient = useMemo(() => {
+    try {
+      return new DispatcherVoiceClient();
+    } catch (err) {
+      console.error('Failed to create DispatcherVoiceClient:', err);
+      return null;
+    }
+  }, []);
   const [isConnected, setIsConnected] = useState(false);
   const [currentChannel, setCurrentChannel] = useState(null);
   const [isPTTActive, setIsPTTActive] = useState(false);
@@ -22,6 +27,17 @@ export default function Voice() {
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
+
+  // Early return if voiceClient failed to initialize
+  if (!voiceClient) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center text-red-400">
+          <p>Failed to initialize voice client. Please refresh the page.</p>
+        </div>
+      </div>
+    );
+  }
 
   // Fetch channels and calls
   const fetchData = useCallback(async () => {
@@ -69,59 +85,86 @@ export default function Voice() {
 
   // Initialize voice client
   useEffect(() => {
-    if (!isDispatch) return;
+    if (!isDispatch || !voiceClient) return;
 
-    // Set up voice client callbacks
-    voiceClient.onConnectionChange = (connected) => {
-      setIsConnected(connected);
-      if (!connected) {
-        setCurrentChannel(null);
-        setIsPTTActive(false);
+    try {
+      // Set up voice client callbacks
+      voiceClient.onConnectionChange = (connected) => {
+        setIsConnected(connected);
+        if (!connected) {
+          setCurrentChannel(null);
+          setIsPTTActive(false);
+        }
+      };
+
+      voiceClient.onChannelChange = (channelNumber) => {
+        setCurrentChannel(channelNumber);
+      };
+
+      voiceClient.onError = (errorMsg) => {
+        setError(errorMsg);
+      };
+
+      voiceClient.onTalkingChange = (talking) => {
+        setIsPTTActive(talking);
+      };
+
+      // Auto-connect on mount - note: getToken() returns null in cookie-based auth
+      const token = getToken();
+      if (token) {
+        voiceClient.connect(token).catch(err => {
+          console.error('Failed to connect to voice bridge:', err);
+          setError('Failed to connect to voice server. Voice features are unavailable.');
+        });
+      } else {
+        // Cookie-based auth - try connecting with empty token
+        voiceClient.connect('').catch(err => {
+          console.error('Failed to connect to voice bridge:', err);
+          setError('Failed to connect to voice server. Voice features are unavailable.');
+        });
       }
-    };
 
-    voiceClient.onChannelChange = (channelNumber) => {
-      setCurrentChannel(channelNumber);
-    };
-
-    voiceClient.onError = (errorMsg) => {
-      setError(errorMsg);
-    };
-
-    voiceClient.onTalkingChange = (talking) => {
-      setIsPTTActive(talking);
-    };
-
-    // Auto-connect on mount
-    const token = getToken();
-    if (token) {
-      voiceClient.connect(token).catch(err => {
-        console.error('Failed to connect to voice bridge:', err);
-        setError('Failed to connect to voice server. Voice features are unavailable.');
-      });
+      return () => {
+        try {
+          voiceClient.disconnect();
+        } catch (err) {
+          console.error('Error disconnecting voice client:', err);
+        }
+      };
+    } catch (err) {
+      console.error('Error initializing voice client:', err);
+      setError('Failed to initialize voice client.');
     }
-
-    return () => {
-      voiceClient.disconnect();
-    };
-  }, [isDispatch, getToken, voiceClient]);
+  }, [isDispatch, voiceClient]);
 
   // PTT keyboard shortcut
   useEffect(() => {
-    if (!currentChannel) return;
+    if (!currentChannel || !voiceClient) return;
 
     const handleKeyDown = (e) => {
       // Space bar for PTT
       if (e.code === 'Space' && !e.repeat && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
         e.preventDefault();
-        voiceClient.setPushToTalk(true);
+        try {
+          if (typeof voiceClient.setPushToTalk === 'function') {
+            voiceClient.setPushToTalk(true);
+          }
+        } catch (err) {
+          console.error('Error setting PTT:', err);
+        }
       }
     };
 
     const handleKeyUp = (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
-        voiceClient.setPushToTalk(false);
+        try {
+          if (typeof voiceClient.setPushToTalk === 'function') {
+            voiceClient.setPushToTalk(false);
+          }
+        } catch (err) {
+          console.error('Error releasing PTT:', err);
+        }
       }
     };
 
@@ -136,9 +179,15 @@ export default function Voice() {
 
   // Join channel
   async function joinChannel(channelId, channelNumber) {
+    if (!voiceClient) {
+      setError('Voice client not initialized');
+      return;
+    }
     try {
       await api.post(`/api/voice/channels/${channelId}/join`);
-      await voiceClient.joinChannel(channelNumber);
+      if (typeof voiceClient.joinChannel === 'function') {
+        await voiceClient.joinChannel(channelNumber);
+      }
       fetchData();
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to join channel';
@@ -148,9 +197,15 @@ export default function Voice() {
 
   // Leave channel
   async function leaveChannel(channelId) {
+    if (!voiceClient) {
+      setError('Voice client not initialized');
+      return;
+    }
     try {
       await api.post(`/api/voice/channels/${channelId}/leave`);
-      await voiceClient.leaveChannel();
+      if (typeof voiceClient.leaveChannel === 'function') {
+        await voiceClient.leaveChannel();
+      }
       fetchData();
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to leave channel';
@@ -160,10 +215,14 @@ export default function Voice() {
 
   // Accept call
   async function acceptCall(callId) {
+    if (!voiceClient) {
+      setError('Voice client not initialized');
+      return;
+    }
     try {
       const result = await api.post(`/api/voice/calls/${callId}/accept`);
       // Join call channel automatically
-      if (result?.call_channel_number) {
+      if (result?.call_channel_number && typeof voiceClient.joinChannel === 'function') {
         await voiceClient.joinChannel(result.call_channel_number);
       }
       setSelectedCall(null);
@@ -188,9 +247,15 @@ export default function Voice() {
 
   // End active call
   async function endCall(callId) {
+    if (!voiceClient) {
+      setError('Voice client not initialized');
+      return;
+    }
     try {
       await api.post(`/api/voice/calls/${callId}/end`);
-      await voiceClient.leaveChannel();
+      if (typeof voiceClient.leaveChannel === 'function') {
+        await voiceClient.leaveChannel();
+      }
       fetchData();
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to end call';
