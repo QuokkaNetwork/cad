@@ -444,11 +444,13 @@ function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine
   );
 }
 
-export default function Records() {
+export default function Records({ embeddedPerson = null, embeddedDepartmentId = null, hideHeader = false }) {
   const { activeDepartment } = useDepartment();
   const layoutType = getDepartmentLayoutType(activeDepartment);
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
+  const isEmbedded = !!embeddedPerson;
+  const effectiveDepartmentId = embeddedDepartmentId || activeDepartment?.id;
 
   const pageCopy = isLaw
     ? {
@@ -482,7 +484,9 @@ export default function Records() {
 
   const [personQuery, setPersonQuery] = useState('');
   const [personMatches, setPersonMatches] = useState([]);
-  const [selectedPerson, setSelectedPerson] = useState(null);
+  const [selectedPerson, setSelectedPerson] = useState(() => (embeddedPerson ? {
+    ...embeddedPerson,
+  } : null));
   const [records, setRecords] = useState([]);
   const [searching, setSearching] = useState(false);
   const [lookingUpPersons, setLookingUpPersons] = useState(false);
@@ -545,6 +549,47 @@ export default function Records() {
     fetchOffenceCatalog();
     return () => { cancelled = true; };
   }, [isLaw]);
+
+  useEffect(() => {
+    if (!isEmbedded) return;
+
+    const nextPerson = embeddedPerson && String(embeddedPerson.citizenid || '').trim()
+      ? {
+        ...embeddedPerson,
+      }
+      : null;
+
+    setSelectedPerson(nextPerson);
+    setPersonMatches([]);
+    setPersonQuery('');
+    setShowNew(false);
+    setShowEdit(false);
+    setEditingRecord(null);
+    setNewOffenceSelection({});
+    setEditOffenceSelection({});
+    setNewMedicalForm(EMPTY_MEDICAL_FORM);
+    setNewFireForm(EMPTY_FIRE_FORM);
+    setEditMedicalForm(EMPTY_MEDICAL_FORM);
+    setEditFireForm(EMPTY_FIRE_FORM);
+    setEditForm(mapRecordToEditForm(null));
+
+    if (!nextPerson) {
+      setRecords([]);
+      setNewForm(EMPTY_NEW_FORM);
+      return;
+    }
+
+    setNewForm({
+      ...EMPTY_NEW_FORM,
+      person_name: `${nextPerson.firstname || ''} ${nextPerson.lastname || ''}`.trim(),
+    });
+    refreshSelectedPersonRecords(nextPerson.citizenid);
+  }, [
+    isEmbedded,
+    embeddedPerson?.citizenid,
+    embeddedPerson?.firstname,
+    embeddedPerson?.lastname,
+  ]);
 
   async function refreshSelectedPersonRecords(citizenId) {
     if (!citizenId) {
@@ -634,7 +679,7 @@ export default function Records() {
 
       await api.post('/api/records', {
         citizen_id: selectedPerson.citizenid,
-        department_id: activeDepartment?.id,
+        department_id: effectiveDepartmentId,
         ...payload,
       });
       setShowNew(false);
@@ -762,72 +807,93 @@ export default function Records() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold">{pageCopy.title}</h2>
+      <div className={`flex items-center justify-between ${hideHeader ? 'mb-3' : 'mb-6'}`}>
+        {hideHeader ? (
+          <h3 className="text-lg font-semibold">{pageCopy.title}</h3>
+        ) : (
+          <h2 className="text-xl font-bold">{pageCopy.title}</h2>
+        )}
         <button
           onClick={() => setShowNew(true)}
           disabled={!selectedPerson}
           className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
         >
-          + {pageCopy.newButton}
+          + {hideHeader ? 'New' : pageCopy.newButton}
         </button>
       </div>
 
-      <div className="bg-cad-card border border-cad-border rounded-2xl p-4 mb-6">
-        <form onSubmit={searchPeople} className="flex flex-col md:flex-row gap-3">
-          <input
-            type="text"
-            value={personQuery}
-            onChange={e => setPersonQuery(e.target.value)}
-            placeholder={pageCopy.searchPlaceholder}
-            className="flex-1 bg-cad-surface border border-cad-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-          />
-          <button
-            type="submit"
-            disabled={lookingUpPersons || personQuery.trim().length < 2}
-            className="px-6 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            {lookingUpPersons ? 'Searching...' : 'Find Person'}
-          </button>
-        </form>
-
-        {personMatches.length > 0 && (
-          <div className="mt-3 border border-cad-border rounded-lg overflow-hidden">
-            {personMatches.slice(0, 8).map((p, idx) => (
-              <button
-                key={`${p.citizenid}-${idx}`}
-                onClick={() => selectPerson(p)}
-                className="w-full text-left px-3 py-2 bg-cad-surface hover:bg-cad-card transition-colors border-b border-cad-border/60 last:border-b-0"
-              >
-                <span className="font-medium">{p.firstname} {p.lastname}</span>
-                <span className="text-xs text-cad-muted ml-2">{p.birthdate || 'Unknown DOB'}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {selectedPerson && (
-          <div className="mt-3 flex items-center justify-between gap-2 text-sm text-cad-muted">
-            <div>
-              Selected: <span className="text-cad-ink font-medium">{selectedPerson.firstname} {selectedPerson.lastname}</span>
-            </div>
+      {!isEmbedded && (
+        <div className="bg-cad-card border border-cad-border rounded-2xl p-4 mb-6">
+          <form onSubmit={searchPeople} className="flex flex-col md:flex-row gap-3">
+            <input
+              type="text"
+              value={personQuery}
+              onChange={e => setPersonQuery(e.target.value)}
+              placeholder={pageCopy.searchPlaceholder}
+              className="flex-1 bg-cad-surface border border-cad-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            />
             <button
-              type="button"
-              onClick={() => {
-                setSelectedPerson(null);
-                setRecords([]);
-                setShowEdit(false);
-                setEditingRecord(null);
-                setNewOffenceSelection({});
-                setEditOffenceSelection({});
-              }}
-              className="px-2 py-1 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+              type="submit"
+              disabled={lookingUpPersons || personQuery.trim().length < 2}
+              className="px-6 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
             >
-              Clear
+              {lookingUpPersons ? 'Searching...' : 'Find Person'}
             </button>
-          </div>
-        )}
-      </div>
+          </form>
+
+          {personMatches.length > 0 && (
+            <div className="mt-3 border border-cad-border rounded-lg overflow-hidden">
+              {personMatches.slice(0, 8).map((p, idx) => (
+                <button
+                  key={`${p.citizenid}-${idx}`}
+                  onClick={() => selectPerson(p)}
+                  className="w-full text-left px-3 py-2 bg-cad-surface hover:bg-cad-card transition-colors border-b border-cad-border/60 last:border-b-0"
+                >
+                  <span className="font-medium">{p.firstname} {p.lastname}</span>
+                  <span className="text-xs text-cad-muted ml-2">{p.birthdate || 'Unknown DOB'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {selectedPerson && (
+            <div className="mt-3 flex items-center justify-between gap-2 text-sm text-cad-muted">
+              <div>
+                Selected: <span className="text-cad-ink font-medium">{selectedPerson.firstname} {selectedPerson.lastname}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPerson(null);
+                  setRecords([]);
+                  setShowEdit(false);
+                  setEditingRecord(null);
+                  setNewOffenceSelection({});
+                  setEditOffenceSelection({});
+                }}
+                className="px-2 py-1 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isEmbedded && selectedPerson && (
+        <div className="mb-3 text-sm text-cad-muted">
+          Managing records for{' '}
+          <span className="text-cad-ink font-medium">
+            {selectedPerson.firstname} {selectedPerson.lastname}
+          </span>
+        </div>
+      )}
+
+      {isEmbedded && !selectedPerson && (
+        <p className="text-sm text-cad-muted py-3">
+          Search and select a person to manage their records.
+        </p>
+      )}
 
       {records.length > 0 && (
         <div className="space-y-3">

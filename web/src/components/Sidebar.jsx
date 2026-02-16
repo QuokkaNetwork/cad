@@ -11,7 +11,6 @@ const LAW_NAV = [
   { to: '/units', label: 'Dispatch', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
   { to: '/map', label: 'Live Map', icon: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 01.553-.894L9 2m0 18l6-3m-6 3V2m6 15l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 2' },
   { to: '/search', label: 'Search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
-  { to: '/records', label: 'Records', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
 ];
 
 const EMS_NAV = [
@@ -19,7 +18,6 @@ const EMS_NAV = [
   { to: '/units', label: 'Dispatch', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
   { to: '/map', label: 'Live Map', icon: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 01.553-.894L9 2m0 18l6-3m-6 3V2m6 15l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 2' },
   { to: '/search', label: 'Patient Lookup', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
-  { to: '/records', label: 'Patient Care', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
 ];
 
 const FIRE_NAV = [
@@ -27,7 +25,6 @@ const FIRE_NAV = [
   { to: '/units', label: 'Dispatch', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
   { to: '/map', label: 'Live Map', icon: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 01.553-.894L9 2m0 18l6-3m-6 3V2m6 15l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 2' },
   { to: '/search', label: 'Lookup', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
-  { to: '/records', label: 'Incident Reports', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
 ];
 
 function getNavItemsForLayout(layoutType) {
@@ -126,7 +123,6 @@ export default function Sidebar() {
   });
 
   const hideUnitsTab = !!(activeDepartment && !isDispatchDepartment && dispatcherOnline);
-  const hideRecordsTab = !!activeDepartment?.is_dispatch;
   const baseNavItems = getNavItemsForLayout(layoutType);
   const departmentNavItems = activeDepartment?.is_dispatch
     ? baseNavItems.map(item => (item.to === '/units'
@@ -137,7 +133,6 @@ export default function Sidebar() {
     const isDispatchTab = item.to === '/units' || item.to === '/dispatch';
     if (!isOnDuty && isDispatchTab) return false;
     if (hideUnitsTab && item.to === '/units') return false;
-    if (hideRecordsTab && item.to === '/records') return false;
     return true;
   });
 

@@ -22,6 +22,8 @@ const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_MAP_SCALE = 1;
 const DEFAULT_MAP_OFFSET = 0;
+const DEFAULT_MAP_CALIBRATION_INCREMENT = 0.1;
+const DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE = true;
 const DEFAULT_MAP_GAME_BOUNDS = Object.freeze({
   x1: -4230,
   y1: 8420,
@@ -34,6 +36,20 @@ function parseMapNumber(value, fallback) {
   if (!text) return fallback;
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function parseMapCalibrationIncrement(value, fallback = DEFAULT_MAP_CALIBRATION_INCREMENT) {
+  const parsed = parseMapNumber(value, fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(0.001, Math.min(100, parsed));
+}
+
+function parseMapBoolean(value, fallback) {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (!text) return fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(text)) return false;
+  return fallback;
 }
 
 function parseSqliteUtc(value) {
@@ -309,6 +325,14 @@ router.get('/map-config', requireAuth, (_req, res) => {
   const mapScaleY = parseMapNumber(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
   const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
   const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
+  const mapCalibrationIncrement = parseMapCalibrationIncrement(
+    Settings.get('live_map_calibration_increment'),
+    DEFAULT_MAP_CALIBRATION_INCREMENT
+  );
+  const adminCalibrationVisible = parseMapBoolean(
+    Settings.get('live_map_admin_calibration_visible'),
+    DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE
+  );
   const mapGameX1 = parseMapNumber(Settings.get('live_map_game_x1'), DEFAULT_MAP_GAME_BOUNDS.x1);
   const mapGameY1 = parseMapNumber(Settings.get('live_map_game_y1'), DEFAULT_MAP_GAME_BOUNDS.y1);
   const mapGameX2 = parseMapNumber(Settings.get('live_map_game_x2'), DEFAULT_MAP_GAME_BOUNDS.x2);
@@ -325,6 +349,8 @@ router.get('/map-config', requireAuth, (_req, res) => {
     map_scale_y: mapScaleY,
     map_offset_x: mapOffsetX,
     map_offset_y: mapOffsetY,
+    map_calibration_increment: mapCalibrationIncrement,
+    admin_calibration_visible: adminCalibrationVisible,
     map_game_x1: mapGameX1,
     map_game_y1: mapGameY1,
     map_game_x2: mapGameX2,

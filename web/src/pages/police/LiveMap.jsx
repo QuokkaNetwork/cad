@@ -16,6 +16,7 @@ const DEFAULT_TILE_URL_TEMPLATE = '/tiles/minimap_sea_{y}_{x}.webp';
 const DEFAULT_MIN_ZOOM = -2;
 const DEFAULT_MAX_ZOOM = 4;
 const DEFAULT_NATIVE_ZOOM = 0;
+const DEFAULT_CALIBRATION_INCREMENT = 0.1;
 const DEFAULT_GAME_BOUNDS = Object.freeze({
   x1: -4230,
   y1: 8420,
@@ -30,6 +31,20 @@ function parseMapNumber(value, fallback) {
 
 function roundCalibrationValue(value) {
   return Math.round(Number(value) * 1000) / 1000;
+}
+
+function parseCalibrationIncrement(value, fallback = DEFAULT_CALIBRATION_INCREMENT) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.max(0.001, Math.min(100, num));
+}
+
+function getIncrementPrecision(step) {
+  const text = String(step);
+  const dotIndex = text.indexOf('.');
+  if (dotIndex < 0) return 0;
+  const decimals = text.slice(dotIndex + 1).replace(/0+$/, '');
+  return Math.min(4, decimals.length || 1);
 }
 
 function normalizeMapPlayer(entry) {
@@ -165,6 +180,8 @@ export default function LiveMap() {
   const [mapScaleY, setMapScaleY] = useState(1);
   const [mapOffsetX, setMapOffsetX] = useState(0);
   const [mapOffsetY, setMapOffsetY] = useState(0);
+  const [calibrationStep, setCalibrationStep] = useState(DEFAULT_CALIBRATION_INCREMENT);
+  const [adminCalibrationVisible, setAdminCalibrationVisible] = useState(true);
   const [gameBounds, setGameBounds] = useState(DEFAULT_GAME_BOUNDS);
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -206,7 +223,9 @@ export default function LiveMap() {
         setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
         setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
         setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
+        setCalibrationStep(parseCalibrationIncrement(cfg?.map_calibration_increment, DEFAULT_CALIBRATION_INCREMENT));
       }
+      setAdminCalibrationVisible(cfg?.admin_calibration_visible !== false);
 
       const cfgBounds = cfg?.map_game_bounds || {};
       const nextGameBounds = {
@@ -255,8 +274,15 @@ export default function LiveMap() {
   }, [fetchMapConfig, fetchPlayers]);
 
   const nudgeCalibration = useCallback((deltaX, deltaY) => {
-    setMapOffsetX((prev) => roundCalibrationValue(prev + deltaX));
-    setMapOffsetY((prev) => roundCalibrationValue(prev + deltaY));
+    const step = parseCalibrationIncrement(calibrationStep, DEFAULT_CALIBRATION_INCREMENT);
+    setMapOffsetX((prev) => roundCalibrationValue(prev + (deltaX * step)));
+    setMapOffsetY((prev) => roundCalibrationValue(prev + (deltaY * step)));
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, [calibrationStep]);
+
+  const updateCalibrationStep = useCallback((value) => {
+    setCalibrationStep(parseCalibrationIncrement(value, DEFAULT_CALIBRATION_INCREMENT));
     setCalibrationDirty(true);
     setCalibrationNotice('');
   }, []);
@@ -277,6 +303,7 @@ export default function LiveMap() {
         settings: {
           live_map_offset_x: String(mapOffsetX),
           live_map_offset_y: String(mapOffsetY),
+          live_map_calibration_increment: String(parseCalibrationIncrement(calibrationStep, DEFAULT_CALIBRATION_INCREMENT)),
         },
       });
       setCalibrationDirty(false);
@@ -287,7 +314,7 @@ export default function LiveMap() {
     } finally {
       setCalibrationSaving(false);
     }
-  }, [isAdmin, calibrationSaving, mapOffsetX, mapOffsetY, fetchMapConfig]);
+  }, [isAdmin, calibrationSaving, mapOffsetX, mapOffsetY, calibrationStep, fetchMapConfig]);
 
   useEffect(() => {
     setLoading(true);
@@ -324,6 +351,7 @@ export default function LiveMap() {
 
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;
   const error = mapConfigError || playerError;
+  const calibrationPrecision = Math.max(1, getIncrementPrecision(calibrationStep));
 
   return (
     <div className="space-y-4">
@@ -347,10 +375,21 @@ export default function LiveMap() {
         </div>
       </div>
 
-      {isAdmin && (
+      {isAdmin && adminCalibrationVisible && (
         <div className="bg-cad-card border border-cad-border rounded-lg px-3 py-2">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-cad-muted">Calibration</span>
+            <label className="inline-flex items-center gap-1 text-cad-muted">
+              Step
+              <input
+                type="number"
+                min="0.001"
+                step="0.1"
+                value={calibrationStep}
+                onChange={(e) => updateCalibrationStep(e.target.value)}
+                className="w-20 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs text-cad-ink focus:outline-none focus:border-cad-accent"
+              />
+            </label>
             <button
               type="button"
               onClick={() => nudgeCalibration(0, -1)}
@@ -395,7 +434,7 @@ export default function LiveMap() {
               {calibrationSaving ? 'Saving...' : 'Save'}
             </button>
             <span className="font-mono text-cad-muted">
-              offsetX {mapOffsetX.toFixed(1)} | offsetY {mapOffsetY.toFixed(1)}
+              offsetX {mapOffsetX.toFixed(calibrationPrecision)} | offsetY {mapOffsetY.toFixed(calibrationPrecision)}
             </span>
             {calibrationDirty && (
               <span className="text-amber-300">Unsaved changes</span>
