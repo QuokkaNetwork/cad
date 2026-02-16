@@ -66,7 +66,7 @@ export default function DepartmentHome() {
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
   const layoutType = getDepartmentLayoutType(activeDepartment);
-  const isPoliceDepartment = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT && !isDispatch;
+  const isPoliceDepartment = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
   const slogan = String(activeDepartment?.slogan || '').trim() || getDefaultSlogan(activeDepartment, layoutType);
   const onActiveDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id === activeDepartment.id);
   const onOtherDeptDuty = !!(myUnit && activeDepartment && myUnit.department_id !== activeDepartment.id);
