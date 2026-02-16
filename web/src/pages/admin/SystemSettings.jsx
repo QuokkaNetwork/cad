@@ -38,9 +38,6 @@ export default function AdminSystemSettings() {
   const [loadingFineJobs, setLoadingFineJobs] = useState(false);
   const [jobSyncJobs, setJobSyncJobs] = useState([]);
   const [loadingJobSyncJobs, setLoadingJobSyncJobs] = useState(false);
-  const [mapUploadFile, setMapUploadFile] = useState(null);
-  const [mapUploading, setMapUploading] = useState(false);
-  const [mapUploadResult, setMapUploadResult] = useState(null);
 
   async function fetchSettings() {
     try {
@@ -267,31 +264,6 @@ export default function AdminSystemSettings() {
     }
   }
 
-  async function uploadLiveMapPng() {
-    if (!mapUploadFile) {
-      setMapUploadResult({ success: false, message: 'Choose a PNG file first.' });
-      return;
-    }
-
-    setMapUploading(true);
-    setMapUploadResult(null);
-    try {
-      const form = new FormData();
-      form.append('map', mapUploadFile);
-      const result = await api.post('/api/admin/live-map/upload', form);
-      const imageUrl = String(result?.image_url || '').trim();
-      if (imageUrl) {
-        updateSetting('live_map_image_url', imageUrl);
-      }
-      setMapUploadResult({ success: true, message: 'Live map image uploaded successfully.' });
-      setMapUploadFile(null);
-    } catch (err) {
-      setMapUploadResult({ success: false, message: formatErr(err) });
-    } finally {
-      setMapUploading(false);
-    }
-  }
-
   const selectedFineTargetEntry = fineTargets.find(link => link.steam_id === selectedFineTarget) || null;
   const selectedFineTargetHasCitizenId = hasCitizenId(selectedFineTargetEntry);
 
@@ -488,96 +460,22 @@ export default function AdminSystemSettings() {
             </p>
           </div>
           <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Live Map Image URL</label>
+            <label className="block text-xs text-cad-muted mb-1">LiveMap Direct URL</label>
             <input
               type="text"
-              value={settings.live_map_image_url || '/maps/FullMap.png'}
-              onChange={e => updateSetting('live_map_image_url', e.target.value)}
+              value={settings.live_map_url || ''}
+              onChange={e => updateSetting('live_map_url', e.target.value)}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="/maps/FullMap.png"
+              placeholder="http://127.0.0.1:30121"
             />
             <p className="text-xs text-cad-muted mt-1">
-              Default hardcoded map is <span className="font-mono">/maps/FullMap.png</span>. Uploading a PNG below updates this setting automatically.
+              CAD Live Map now embeds <span className="font-mono">live_map-3.2.1</span> directly to avoid manual calibration. Leave blank to auto-derive from the socket URL.
             </p>
-          </div>
-          <div>
-            <label className="block text-xs text-cad-muted mb-1">Live Map Scale X</label>
-            <input
-              type="number"
-              step="any"
-              value={settings.live_map_scale_x || '1'}
-              onChange={e => updateSetting('live_map_scale_x', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="1"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-cad-muted mb-1">Live Map Scale Y</label>
-            <input
-              type="number"
-              step="any"
-              value={settings.live_map_scale_y || '1'}
-              onChange={e => updateSetting('live_map_scale_y', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="1"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-cad-muted mb-1">Live Map Offset X</label>
-            <input
-              type="number"
-              step="any"
-              value={settings.live_map_offset_x || '0'}
-              onChange={e => updateSetting('live_map_offset_x', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="0"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-cad-muted mb-1">Live Map Offset Y</label>
-            <input
-              type="number"
-              step="any"
-              value={settings.live_map_offset_y || '0'}
-              onChange={e => updateSetting('live_map_offset_y', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="0"
-            />
           </div>
           <div className="col-span-2 -mt-1">
             <p className="text-xs text-cad-muted">
-              Marker transform uses: <span className="font-mono">X = (gameX * scaleX) + offsetX</span>,
-              <span className="font-mono"> Y = ((-gameY) * scaleY) + offsetY</span>.
+              Legacy custom map image/calibration settings are no longer required for the default Live Map page.
             </p>
-          </div>
-          <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Upload Live Map PNG</label>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="file"
-                accept=".png,image/png"
-                onChange={e => {
-                  const file = e.target.files?.[0] || null;
-                  setMapUploadFile(file);
-                  setMapUploadResult(null);
-                }}
-                className="text-xs text-cad-muted file:mr-2 file:px-2 file:py-1 file:rounded file:border file:border-cad-border file:bg-cad-surface file:text-cad-muted hover:file:text-cad-ink"
-              />
-              <button
-                type="button"
-                onClick={uploadLiveMapPng}
-                disabled={!mapUploadFile || mapUploading}
-                className="px-3 py-1.5 text-sm bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
-              >
-                {mapUploading ? 'Uploading...' : 'Upload PNG'}
-              </button>
-              {mapUploadFile && <span className="text-xs text-cad-muted">{mapUploadFile.name}</span>}
-            </div>
-            {mapUploadResult && (
-              <p className={`text-xs mt-2 whitespace-pre-wrap ${mapUploadResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
-                {mapUploadResult.message}
-              </p>
-            )}
           </div>
           <div>
             <label className="block text-xs text-cad-muted mb-1">Enable Bridge</label>

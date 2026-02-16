@@ -188,12 +188,14 @@ router.get('/map', requireAuth, (req, res) => {
 
 router.get('/map-config', requireAuth, (_req, res) => {
   const configured = String(Settings.get('live_map_image_url') || '').trim();
+  const directUrl = String(Settings.get('live_map_url') || '').trim();
   const socketUrl = String(Settings.get('live_map_socket_url') || '').trim();
   const mapScaleX = parseMapNumber(Settings.get('live_map_scale_x'), DEFAULT_MAP_SCALE);
   const mapScaleY = parseMapNumber(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
   const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
   const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
   res.json({
+    live_map_url: directUrl,
     map_image_url: configured || DEFAULT_LIVE_MAP_IMAGE_URL,
     live_map_socket_url: socketUrl,
     map_scale_x: mapScaleX,
