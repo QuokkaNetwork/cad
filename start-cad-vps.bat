@@ -170,29 +170,31 @@ if errorlevel 1 (
   echo [CAD] WARNING: Could not fetch updates ^(network issue?^). Continuing with current version...
   goto :skip_update
 )
-for /f %%I in ('git rev-parse "origin/%AUTO_UPDATE_BRANCH%" 2^>nul') do set "REMOTE_HEAD=%%I"
+for /f %%I in ('git rev-parse origin/%AUTO_UPDATE_BRANCH% 2^>nul') do set "REMOTE_HEAD=%%I"
 
 if not defined REMOTE_HEAD (
   echo [CAD] WARNING: Could not determine remote HEAD. Skipping update.
   goto :skip_update
 )
 
+echo [CAD] Local: !LOCAL_HEAD! Remote: !REMOTE_HEAD!
+
 if not defined LOCAL_HEAD (
   echo [CAD] No local commit detected. Syncing to origin/%AUTO_UPDATE_BRANCH%...
-  git reset --hard "origin/%AUTO_UPDATE_BRANCH%"
+  git reset --hard origin/%AUTO_UPDATE_BRANCH%
   if errorlevel 1 goto :fail
   git clean -fd -e .env -e server/data/
   if errorlevel 1 goto :fail
   set "UPDATED=1"
 ) else if /I not "!LOCAL_HEAD!"=="!REMOTE_HEAD!" (
-  echo [CAD] Update found on origin/%AUTO_UPDATE_BRANCH%. Local: !LOCAL_HEAD:~0,8! Remote: !REMOTE_HEAD:~0,8!
-  git reset --hard "origin/%AUTO_UPDATE_BRANCH%"
+  echo [CAD] Update found. Applying...
+  git reset --hard origin/%AUTO_UPDATE_BRANCH%
   if errorlevel 1 goto :fail
   git clean -fd -e .env -e server/data/
   if errorlevel 1 goto :fail
   set "UPDATED=1"
 ) else (
-  echo [CAD] Already up to date ^(!LOCAL_HEAD:~0,8!^).
+  echo [CAD] Already up to date.
 )
 
 :skip_update
