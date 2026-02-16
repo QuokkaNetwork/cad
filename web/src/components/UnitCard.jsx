@@ -2,6 +2,8 @@ import StatusBadge from './StatusBadge';
 
 export default function UnitCard({ unit, onStatusChange, compact = false, showDepartment = false }) {
   const statuses = ['available', 'busy', 'enroute', 'on-scene'];
+  const unitNote = String(unit.note || '').trim();
+  const showNote = !!unitNote && !/^in-game\s*#\d+\b/i.test(unitNote);
 
   if (compact) {
     return (
@@ -71,8 +73,8 @@ export default function UnitCard({ unit, onStatusChange, compact = false, showDe
           <span className="text-cad-muted/60">Location:</span> {unit.location}
         </p>
       )}
-      {unit.note && (
-        <p className="text-xs text-cad-muted mt-1 italic">{unit.note}</p>
+      {showNote && (
+        <p className="text-xs text-cad-muted mt-1 italic">{unitNote}</p>
       )}
       {onStatusChange && (
         <div className="flex gap-1 mt-2 flex-wrap">

@@ -131,6 +131,10 @@ function normalizeIdentityToken(value) {
     .replace(/[^a-z0-9]/g, '');
 }
 
+function isAutoInGameNote(value) {
+  return /^in-game\s*#\d+\b/i.test(String(value || '').trim());
+}
+
 function buildOnDutyNameIndex(units = []) {
   const index = new Map();
   for (const unit of units) {
@@ -267,7 +271,7 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     seenLinks.add(ids.linkKey);
 
     const position = player.position || {};
-    const link = FiveMPlayerLinks.upsert({
+    FiveMPlayerLinks.upsert({
       steam_id: ids.linkKey,
       game_id: String(player.source ?? ''),
       citizen_id: String(player.citizenid || ''),
@@ -280,14 +284,12 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     });
 
     let cadUser = resolveCadUserFromIdentifiers(ids);
-    let idSource = ids.source || '';
     if (!cadUser) {
       const cachedUserId = liveLinkUserCache.get(ids.linkKey);
       if (cachedUserId) {
         const cached = Users.findById(cachedUserId);
         if (cached) {
           cadUser = cached;
-          idSource = 'cached';
         }
       }
     }
@@ -295,7 +297,6 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       const byName = resolveCadUserByName(player.name, onDutyNameIndex);
       if (byName) {
         cadUser = byName;
-        idSource = 'name';
       }
     }
     if (!cadUser) {
@@ -311,11 +312,14 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     if (!unit) continue;
 
     mappedUnits += 1;
-    const sourceLabel = idSource || 'unknown';
-    Units.update(unit.id, {
+    const updates = {
       location: formatUnitLocation(player),
-      note: `In-game #${link.game_id} ${link.player_name || ''} (${sourceLabel})`.trim(),
-    });
+    };
+    // Clear legacy auto-generated in-game note text so cards only show operator notes.
+    if (isAutoInGameNote(unit.note)) {
+      updates.note = '';
+    }
+    Units.update(unit.id, updates);
     const updated = Units.findById(unit.id);
     bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
   }
