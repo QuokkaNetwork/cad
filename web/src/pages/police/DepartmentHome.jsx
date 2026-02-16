@@ -60,6 +60,13 @@ export default function DepartmentHome() {
     title: '',
     description: '',
   });
+  const [showWarrantModal, setShowWarrantModal] = useState(false);
+  const [savingWarrant, setSavingWarrant] = useState(false);
+  const [warrantForm, setWarrantForm] = useState({
+    citizen_id: '',
+    title: '',
+    description: '',
+  });
   const refreshTimerRef = useRef(null);
   const requestInFlightRef = useRef(false);
 
@@ -95,15 +102,20 @@ export default function DepartmentHome() {
       const bolosRequest = isPoliceDepartment
         ? api.get(`/api/bolos?department_id=${deptId}`)
         : Promise.resolve([]);
+      const warrantsRequest = isPoliceDepartment
+        ? api.get(`/api/warrants?department_id=${deptId}`)
+        : Promise.resolve([]);
 
-      const [callsPayload, unitsPayload, bolosPayload] = await Promise.all([
+      const [callsPayload, unitsPayload, bolosPayload, warrantsPayload] = await Promise.all([
         callsRequest,
         unitsRequest,
         bolosRequest,
+        warrantsRequest,
       ]);
       const calls = normalizeCallsPayload(callsPayload);
       const units = normalizeUnitsPayload(unitsPayload);
       const bolos = normalizeBolosPayload(bolosPayload);
+      const warrants = Array.isArray(warrantsPayload) ? warrantsPayload : [];
 
       const activeCalls = calls.filter(call => String(call?.status || '').toLowerCase() !== 'closed');
       const urgentCalls = activeCalls.filter((call) => {
@@ -114,9 +126,6 @@ export default function DepartmentHome() {
       const assignedUnits = activeCalls.reduce((total, call) => (
         total + (Array.isArray(call?.assigned_units) ? call.assigned_units.length : 0)
       ), 0);
-      const activeWarrants = bolos.filter(
-        bolo => String(bolo?.type || '').toLowerCase() === 'person'
-      ).length;
 
       setStats({
         active_calls: activeCalls.length,
@@ -125,7 +134,7 @@ export default function DepartmentHome() {
         available_units: availableUnits.length,
         assigned_units: assignedUnits,
         active_bolos: bolos.length,
-        active_warrants: activeWarrants,
+        active_warrants: warrants.length,
       });
       setLastUpdated(new Date());
     } catch (err) {
@@ -182,6 +191,9 @@ export default function DepartmentHome() {
     'bolo:create': scheduleRefresh,
     'bolo:resolve': scheduleRefresh,
     'bolo:cancel': scheduleRefresh,
+    'warrant:create': scheduleRefresh,
+    'warrant:serve': scheduleRefresh,
+    'warrant:cancel': scheduleRefresh,
     'sync:department': handleUnitEvent,
   });
 
@@ -247,6 +259,33 @@ export default function DepartmentHome() {
     }
   }
 
+  async function createWarrant(e) {
+    e.preventDefault();
+    if (!deptId) return;
+
+    const citizenId = String(warrantForm.citizen_id || '').trim();
+    const title = String(warrantForm.title || '').trim();
+    if (!citizenId || !title) return;
+
+    setSavingWarrant(true);
+    try {
+      await api.post('/api/warrants', {
+        department_id: deptId,
+        citizen_id: citizenId,
+        title,
+        description: String(warrantForm.description || '').trim(),
+        details: {},
+      });
+      setShowWarrantModal(false);
+      setWarrantForm({ citizen_id: '', title: '', description: '' });
+      scheduleRefresh();
+    } catch (err) {
+      alert('Failed to create warrant: ' + err.message);
+    } finally {
+      setSavingWarrant(false);
+    }
+  }
+
   const clockDateLabel = useMemo(() => now.toLocaleDateString(undefined, {
     weekday: 'long',
     month: 'long',
@@ -270,41 +309,24 @@ export default function DepartmentHome() {
   return (
     <div className="space-y-5">
       <section className="bg-cad-card border border-cad-border rounded-2xl p-6">
-        <div className="flex flex-col lg:flex-row gap-6 lg:items-start lg:justify-between">
-          <div className="flex items-start gap-4 min-w-0">
+        <div className="flex flex-col lg:flex-row gap-6 lg:items-center lg:justify-between">
+          <div className="flex items-center gap-6 min-w-0 flex-1">
             {activeDepartment?.icon ? (
               <img
                 src={activeDepartment.icon}
                 alt=""
-                className="w-16 h-16 rounded-2xl object-contain p-1.5 border border-cad-border bg-cad-surface flex-shrink-0"
+                className="w-24 h-24 rounded-2xl object-contain p-2 border border-cad-border bg-cad-surface flex-shrink-0"
               />
             ) : (
-              <div className="w-16 h-16 rounded-2xl border border-cad-border bg-cad-surface flex items-center justify-center text-sm text-cad-muted flex-shrink-0">
+              <div className="w-24 h-24 rounded-2xl border border-cad-border bg-cad-surface flex items-center justify-center text-lg text-cad-muted flex-shrink-0">
                 {activeDepartment?.short_name?.slice(0, 3) || 'DEP'}
               </div>
             )}
-            <div className="min-w-0">
-              <h2 className="text-2xl font-bold text-cad-ink truncate">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-4xl font-bold text-cad-ink truncate">
                 {activeDepartment?.name || 'Department'}
               </h2>
-              <p className="text-sm text-cad-muted mt-1">{slogan}</p>
-              <div className="flex items-center gap-2 mt-3">
-                <span
-                  className="text-xs px-2 py-1 rounded font-mono"
-                  style={{
-                    backgroundColor: `${activeDepartment?.color || '#0052C2'}2a`,
-                    color: activeDepartment?.color || '#0052C2',
-                    border: `1px solid ${(activeDepartment?.color || '#0052C2')}55`,
-                  }}
-                >
-                  {activeDepartment?.short_name || 'Department'}
-                </span>
-                {lastUpdated && (
-                  <span className="text-xs text-cad-muted">
-                    Updated {lastUpdated.toLocaleTimeString()}
-                  </span>
-                )}
-              </div>
+              <p className="text-lg text-cad-muted mt-2">{slogan}</p>
             </div>
           </div>
 
@@ -361,7 +383,20 @@ export default function DepartmentHome() {
           <div className="bg-cad-card border border-cad-border rounded-xl p-4">
             <p className="text-xs text-cad-muted uppercase tracking-wider">Active Warrants</p>
             <p className="text-3xl font-semibold text-amber-300 mt-2">{loading ? '...' : stats.active_warrants}</p>
-            <p className="text-xs text-cad-muted mt-2">Derived from active person BOLO entries.</p>
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={() => setShowWarrantModal(true)}
+                className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium transition-colors"
+              >
+                + New Warrant
+              </button>
+              <button
+                onClick={() => navigate('/warrants')}
+                className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-amber-500/50 text-cad-ink text-xs transition-colors"
+              >
+                View Warrants
+              </button>
+            </div>
           </div>
 
           <div className="bg-cad-card border border-cad-border rounded-xl p-4">
@@ -445,6 +480,61 @@ export default function DepartmentHome() {
             <button
               type="button"
               onClick={() => setShowBoloModal(false)}
+              className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal open={showWarrantModal} onClose={() => setShowWarrantModal(false)} title="Create Warrant">
+        <form onSubmit={createWarrant} className="space-y-3">
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Citizen ID *</label>
+            <input
+              type="text"
+              required
+              value={warrantForm.citizen_id}
+              onChange={(e) => setWarrantForm(f => ({ ...f, citizen_id: e.target.value }))}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="e.g. ABC12345"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Title *</label>
+            <input
+              type="text"
+              required
+              value={warrantForm.title}
+              onChange={(e) => setWarrantForm(f => ({ ...f, title: e.target.value }))}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="e.g. Warrant for arrest - Armed robbery"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Description</label>
+            <textarea
+              value={warrantForm.description}
+              onChange={(e) => setWarrantForm(f => ({ ...f, description: e.target.value }))}
+              className="w-full h-24 bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+              placeholder="Additional details..."
+            />
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button
+              disabled={savingWarrant}
+              type="submit"
+              className="flex-1 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {savingWarrant ? 'Saving...' : 'Create Warrant'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowWarrantModal(false)}
               className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
             >
               Cancel

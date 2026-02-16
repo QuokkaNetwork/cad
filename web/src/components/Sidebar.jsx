@@ -27,6 +27,12 @@ const FIRE_NAV = [
   { to: '/search', label: 'Lookup', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
 ];
 
+const CALL_DETAILS_NAV_ITEM = {
+  to: '/call-details',
+  label: 'Call Details',
+  icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z',
+};
+
 function getNavItemsForLayout(layoutType) {
   if (layoutType === DEPARTMENT_LAYOUT.PARAMEDICS) return EMS_NAV;
   if (layoutType === DEPARTMENT_LAYOUT.FIRE) return FIRE_NAV;
@@ -61,6 +67,7 @@ export default function Sidebar() {
   const [dispatcherOnline, setDispatcherOnline] = useState(false);
   const [isDispatchDepartment, setIsDispatchDepartment] = useState(false);
   const [isOnDuty, setIsOnDuty] = useState(false);
+  const [hasActiveCall, setHasActiveCall] = useState(false);
   const prevDispatcherOnlineRef = useRef(null);
 
   const deptId = activeDepartment?.id;
@@ -100,25 +107,53 @@ export default function Sidebar() {
       setIsOnDuty(true);
     } catch {
       setIsOnDuty(false);
+      setHasActiveCall(false);
     }
   }, []);
+
+  const fetchActiveCallStatus = useCallback(async () => {
+    if (!deptId) {
+      setHasActiveCall(false);
+      return;
+    }
+
+    try {
+      const activeCall = await api.get('/api/units/me/active-call');
+      setHasActiveCall(!!activeCall?.id);
+    } catch {
+      setHasActiveCall(false);
+    }
+  }, [deptId]);
 
   useEffect(() => {
     fetchDispatcherStatus();
     fetchOnDutyStatus();
-  }, [fetchDispatcherStatus, fetchOnDutyStatus]);
+    fetchActiveCallStatus();
+  }, [fetchDispatcherStatus, fetchOnDutyStatus, fetchActiveCallStatus]);
 
   useEventSource({
     'unit:online': () => {
       fetchDispatcherStatus();
       fetchOnDutyStatus();
+      fetchActiveCallStatus();
     },
     'unit:offline': () => {
       fetchDispatcherStatus();
       fetchOnDutyStatus();
+      fetchActiveCallStatus();
     },
     'unit:update': () => {
       fetchOnDutyStatus();
+      fetchActiveCallStatus();
+    },
+    'call:assign': () => {
+      fetchActiveCallStatus();
+    },
+    'call:unassign': () => {
+      fetchActiveCallStatus();
+    },
+    'call:close': () => {
+      fetchActiveCallStatus();
     },
   });
 
@@ -136,6 +171,10 @@ export default function Sidebar() {
     return true;
   });
 
+  const navWithCallDetails = hasActiveCall
+    ? [...navItems, CALL_DETAILS_NAV_ITEM]
+    : navItems;
+
   return (
     <aside className="w-56 bg-cad-surface border-r border-cad-border flex flex-col h-full">
       {/* Main navigation */}
@@ -145,7 +184,7 @@ export default function Sidebar() {
             <div className="text-xs text-cad-muted uppercase tracking-wider mb-2 px-3">
               {activeDepartment.short_name}
             </div>
-            {navItems.map(item => (
+            {navWithCallDetails.map(item => (
               <SidebarLink key={item.to} {...item} />
             ))}
           </>

@@ -201,8 +201,7 @@ end
 local function registerEmergencySuggestion(target)
   if GetResourceState('chat') ~= 'started' then return end
   TriggerClientEvent('chat:addSuggestion', target, '/000', 'Send emergency call to CAD', {
-    { name = 'type', help = 'Emergency type (e.g. Armed Robbery, Shots Fired, Stabbing)' },
-    { name = 'details', help = 'Format: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>' },
+    { name = 'message', help = 'Leave blank to open popup. Optional chat format: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>' },
   })
 end
 
@@ -239,6 +238,7 @@ local function splitByPipe(text)
 end
 
 local function sendEmergencyUsage(src)
+  notifyPlayer(src, 'Use /000 with no text to open an in-game popup form.')
   notifyPlayer(src, 'Template: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>')
   notifyPlayer(src, 'Example: /000 Armed Robbery | 24/7 in Sandy | 2 masked males | Black Sultan | shots fired')
 end
@@ -277,6 +277,34 @@ local function parseEmergencyReport(rawInput)
     return nil, 'Emergency type is required.'
   end
   return report
+end
+
+local function parseEmergencyPopupReport(payload)
+  if type(payload) ~= 'table' then
+    return nil, 'Invalid emergency form payload.'
+  end
+
+  local emergencyType = trim(payload.title or payload.emergency_type or '')
+  local details = trim(payload.details or payload.message or '')
+
+  if emergencyType == '' then
+    return nil, 'Emergency title is required.'
+  end
+
+  if #emergencyType > 80 then
+    emergencyType = emergencyType:sub(1, 80)
+  end
+  if #details > 600 then
+    details = details:sub(1, 600)
+  end
+
+  return {
+    emergency_type = emergencyType,
+    details = details,
+    suspects = '',
+    vehicle = '',
+    hazards = '',
+  }
 end
 
 local function buildEmergencyMessage(report)
@@ -345,6 +373,19 @@ local function submitEmergencyCall(src, report)
   end)
 end
 
+RegisterNetEvent('cad_bridge:submit000', function(payload)
+  local src = source
+  if not src or src == 0 then return end
+
+  local report, err = parseEmergencyPopupReport(payload)
+  if not report then
+    notifyPlayer(src, err or 'Invalid emergency form details.')
+    return
+  end
+
+  submitEmergencyCall(src, report)
+end)
+
 RegisterCommand('000', function(src, args)
   if not src or src == 0 then
     print('[cad_bridge] /000 command is in-game only')
@@ -352,7 +393,11 @@ RegisterCommand('000', function(src, args)
   end
 
   local rawInput = trim(table.concat(args or {}, ' '))
-  if rawInput == '' or rawInput:lower() == 'help' then
+  if rawInput == '' then
+    TriggerClientEvent('cad_bridge:prompt000', src)
+    return
+  end
+  if rawInput:lower() == 'help' then
     sendEmergencyUsage(src)
     return
   end

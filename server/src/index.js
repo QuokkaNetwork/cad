@@ -89,6 +89,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/units', require('./routes/units'));
 app.use('/api/calls', require('./routes/calls'));
 app.use('/api/bolos', require('./routes/bolos'));
+app.use('/api/warrants', require('./routes/warrants'));
 app.use('/api/search', require('./routes/search'));
 app.use('/api/records', require('./routes/records'));
 app.use('/api/events', require('./routes/events'));

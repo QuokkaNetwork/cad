@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { CriminalRecords } = require('../db/sqlite');
+const { CriminalRecords, Warrants, Bolos } = require('../db/sqlite');
 const qbox = require('../db/qbox');
 
 const router = express.Router();
@@ -13,7 +13,25 @@ router.get('/persons', requireAuth, async (req, res) => {
   }
   try {
     const results = await qbox.searchCharacters(q.trim());
-    res.json(results);
+
+    // Add warrant and BOLO flags to each result
+    const enrichedResults = results.map(person => {
+      const warrants = Warrants.findByCitizenId(person.citizenid, 'active');
+      const personBolos = Bolos.listByDepartment(req.user.departments[0]?.id || 0, 'active')
+        .filter(bolo => bolo.type === 'person' &&
+          (bolo.title.toLowerCase().includes(`${person.firstname} ${person.lastname}`.toLowerCase()) ||
+           String(bolo.details_json || '').includes(person.citizenid)));
+
+      return {
+        ...person,
+        has_warrant: warrants.length > 0,
+        has_bolo: personBolos.length > 0,
+        warrant_count: warrants.length,
+        bolo_count: personBolos.length,
+      };
+    });
+
+    res.json(enrichedResults);
   } catch (err) {
     res.status(500).json({ error: 'Search failed', message: err.message });
   }
@@ -24,7 +42,25 @@ router.get('/persons/:citizenid', requireAuth, async (req, res) => {
   try {
     const person = await qbox.getCharacterById(req.params.citizenid);
     if (!person) return res.status(404).json({ error: 'Person not found' });
-    res.json(person);
+
+    // Add warrant and BOLO flags
+    const warrants = Warrants.findByCitizenId(person.citizenid, 'active');
+    const personBolos = Bolos.listByDepartment(req.user.departments[0]?.id || 0, 'active')
+      .filter(bolo => bolo.type === 'person' &&
+        (bolo.title.toLowerCase().includes(`${person.firstname} ${person.lastname}`.toLowerCase()) ||
+         String(bolo.details_json || '').includes(person.citizenid)));
+
+    const enrichedPerson = {
+      ...person,
+      has_warrant: warrants.length > 0,
+      has_bolo: personBolos.length > 0,
+      warrant_count: warrants.length,
+      bolo_count: personBolos.length,
+      warrants,
+      bolos: personBolos,
+    };
+
+    res.json(enrichedPerson);
   } catch (err) {
     res.status(500).json({ error: 'Lookup failed', message: err.message });
   }

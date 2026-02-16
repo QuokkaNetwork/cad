@@ -33,11 +33,39 @@ function formatUnitStatusLabel(value) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function parseCoordinate(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function getCallPosition(call) {
+  const x = parseCoordinate(call?.position_x);
+  const y = parseCoordinate(call?.position_y);
+  const z = parseCoordinate(call?.position_z);
+  if (x === null || y === null) return null;
+  return { x, y, z: z === null ? 0 : z };
+}
+
+function getDistanceMeters(a, b) {
+  if (!a || !b) return null;
+  const dx = Number(a.x) - Number(b.x);
+  const dy = Number(a.y) - Number(b.y);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+  return Math.sqrt((dx * dx) + (dy * dy));
+}
+
+function formatDistance(distanceMeters) {
+  if (!Number.isFinite(distanceMeters)) return null;
+  if (distanceMeters < 1000) return `${Math.round(distanceMeters)} m`;
+  return `${(distanceMeters / 1000).toFixed(2)} km`;
+}
+
 export default function Dispatch() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
   const [calls, setCalls] = useState([]);
   const [units, setUnits] = useState([]);
+  const [unitPositionsById, setUnitPositionsById] = useState({});
   const [visibleDepartments, setVisibleDepartments] = useState([]);
   const [showNewCall, setShowNewCall] = useState(false);
   const [selectedCall, setSelectedCall] = useState(null);
@@ -50,24 +78,47 @@ export default function Dispatch() {
     if (!deptId) return;
     try {
       if (isDispatch) {
-        const [callsData, dispatchData] = await Promise.all([
+        const [callsData, dispatchData, unitMapData] = await Promise.all([
           api.get(`/api/calls?department_id=${deptId}&dispatch=true`),
           api.get('/api/units/dispatchable'),
+          api.get(`/api/units/map?department_id=${deptId}&dispatch=true`).catch(() => []),
         ]);
         setCalls(callsData);
         setUnits(dispatchData.units || []);
         setVisibleDepartments(dispatchData.departments || []);
+        const mapPositions = {};
+        for (const unit of (Array.isArray(unitMapData) ? unitMapData : [])) {
+          const unitId = Number(unit?.id);
+          const x = parseCoordinate(unit?.position_x);
+          const y = parseCoordinate(unit?.position_y);
+          const z = parseCoordinate(unit?.position_z);
+          if (!Number.isInteger(unitId) || x === null || y === null) continue;
+          mapPositions[unitId] = { x, y, z: z === null ? 0 : z };
+        }
+        setUnitPositionsById(mapPositions);
       } else {
-        const [callsData, unitsData] = await Promise.all([
+        const [callsData, unitsData, unitMapData] = await Promise.all([
           api.get(`/api/calls?department_id=${deptId}`),
           api.get(`/api/units?department_id=${deptId}`),
+          api.get(`/api/units/map?department_id=${deptId}`).catch(() => []),
         ]);
         setCalls(callsData);
         setUnits(unitsData);
         setVisibleDepartments([]);
+        const mapPositions = {};
+        for (const unit of (Array.isArray(unitMapData) ? unitMapData : [])) {
+          const unitId = Number(unit?.id);
+          const x = parseCoordinate(unit?.position_x);
+          const y = parseCoordinate(unit?.position_y);
+          const z = parseCoordinate(unit?.position_z);
+          if (!Number.isInteger(unitId) || x === null || y === null) continue;
+          mapPositions[unitId] = { x, y, z: z === null ? 0 : z };
+        }
+        setUnitPositionsById(mapPositions);
       }
     } catch (err) {
       console.error('Failed to load dispatch data:', err);
+      setUnitPositionsById({});
     }
   }, [deptId, isDispatch]);
 
@@ -193,12 +244,49 @@ export default function Dispatch() {
     }
   }, [calls, selectedCall?.id]);
 
+  const callPositionForSelectedCall = useMemo(() => getCallPosition(selectedCall), [selectedCall]);
+
   const attachableUnitsForSelectedCall = useMemo(() => {
     if (!selectedCall) return [];
-    return units
+    const available = units
       .filter(u => !selectedCall.assigned_units?.find(au => au.id === u.id))
       .filter(u => normalizeUnitStatus(u.status) === 'available');
-  }, [selectedCall, units]);
+
+    const ranked = available.map((unit) => {
+      const position = unitPositionsById[unit.id] || null;
+      const distanceMeters = getDistanceMeters(callPositionForSelectedCall, position);
+      return {
+        unit,
+        distanceMeters: Number.isFinite(distanceMeters) ? distanceMeters : null,
+      };
+    });
+
+    ranked.sort((a, b) => {
+      const aHasDistance = Number.isFinite(a.distanceMeters);
+      const bHasDistance = Number.isFinite(b.distanceMeters);
+      if (aHasDistance && bHasDistance) {
+        if (a.distanceMeters !== b.distanceMeters) return a.distanceMeters - b.distanceMeters;
+      } else if (aHasDistance !== bHasDistance) {
+        return aHasDistance ? -1 : 1;
+      }
+
+      return String(a.unit.callsign || '').localeCompare(String(b.unit.callsign || ''), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
+    });
+
+    const hasDistanceRecommendation = ranked.length > 0 && Number.isFinite(ranked[0].distanceMeters);
+    return ranked.map((entry, index) => ({
+      ...entry,
+      isRecommended: hasDistanceRecommendation && index === 0,
+    }));
+  }, [selectedCall, units, unitPositionsById, callPositionForSelectedCall]);
+
+  const recommendedAssignableUnit = useMemo(
+    () => attachableUnitsForSelectedCall.find(entry => entry.isRecommended) || null,
+    [attachableUnitsForSelectedCall]
+  );
 
   return (
     <div className="h-full flex flex-col">
@@ -439,24 +527,16 @@ export default function Dispatch() {
             </div>
 
             {/* Status actions */}
-            <div className="flex gap-2">
-              {selectedCall.status !== 'active' && (
-                <button
-                  onClick={() => updateCall(selectedCall.id, { status: 'active' })}
-                  className="px-3 py-1.5 text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded hover:bg-amber-500/20 transition-colors"
-                >
-                  Mark Active
-                </button>
-              )}
-              {selectedCall.status !== 'closed' && (
+            {selectedCall.status !== 'closed' && (
+              <div className="flex gap-2">
                 <button
                   onClick={() => updateCall(selectedCall.id, { status: 'closed' })}
                   className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
                 >
                   Close Call
                 </button>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Assigned units */}
             <div>
@@ -523,26 +603,56 @@ export default function Dispatch() {
             {units.length > 0 && selectedCall.status !== 'closed' && (
               <div>
                 <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Assign Unit</h4>
+                {recommendedAssignableUnit ? (
+                  <div className="mb-3 px-3 py-2 rounded border border-emerald-500/35 bg-emerald-500/10">
+                    <p className="text-[11px] uppercase tracking-wider text-emerald-300 font-semibold">Closest Recommended Unit</p>
+                    <p className="text-sm mt-1">
+                      <span className="font-mono text-cad-accent-light">{recommendedAssignableUnit.unit.callsign}</span>
+                      <span className="text-cad-muted"> - {formatDistance(recommendedAssignableUnit.distanceMeters)}</span>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-cad-muted mb-3">
+                    Closest-unit recommendation is unavailable until CAD has GPS location for this call and units.
+                  </p>
+                )}
                 {attachableUnitsForSelectedCall.length === 0 ? (
                   <p className="text-sm text-cad-muted">No available units to attach.</p>
                 ) : (
-                  <div className="flex flex-wrap gap-1">
-                    {attachableUnitsForSelectedCall.map(u => (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {attachableUnitsForSelectedCall.map(entry => (
                       <button
-                        key={u.id}
-                        onClick={() => assignUnit(selectedCall.id, u.id)}
-                        className="text-xs px-2 py-1 bg-cad-surface text-cad-muted hover:text-cad-ink hover:bg-cad-card rounded transition-colors font-mono"
-                        title={isDispatch ? `${u.department_short_name || ''} - ${u.callsign}` : u.callsign}
+                        key={entry.unit.id}
+                        onClick={() => assignUnit(selectedCall.id, entry.unit.id)}
+                        className={`text-left px-3 py-2 rounded border transition-colors ${
+                          entry.isRecommended
+                            ? 'bg-emerald-500/10 border-emerald-500/35 hover:bg-emerald-500/15'
+                            : 'bg-cad-surface border-cad-border hover:bg-cad-card'
+                        }`}
+                        title={isDispatch
+                          ? `${entry.unit.department_short_name || ''} - ${entry.unit.callsign}`
+                          : entry.unit.callsign}
                       >
-                        {isDispatch && u.department_short_name && (
-                          <span
-                            className="inline-block mr-1 text-[10px] px-1 py-0 rounded"
-                            style={{ color: u.department_color || '#cbd5e1' }}
-                          >
-                            {u.department_short_name}
-                          </span>
-                        )}
-                        {u.callsign}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-mono text-cad-accent-light truncate">
+                              {isDispatch && entry.unit.department_short_name
+                                ? `${entry.unit.department_short_name} ${entry.unit.callsign}`
+                                : entry.unit.callsign}
+                            </p>
+                            <p className="text-[11px] text-cad-muted truncate">
+                              {entry.unit.user_name || 'Unknown unit'}
+                            </p>
+                          </div>
+                          {entry.isRecommended && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 font-semibold uppercase tracking-wide">
+                              Recommended
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-cad-muted mt-1">
+                          {entry.distanceMeters === null ? 'Distance unavailable' : `Distance: ${formatDistance(entry.distanceMeters)}`}
+                        </p>
                       </button>
                     ))}
                   </div>

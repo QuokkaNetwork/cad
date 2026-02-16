@@ -543,6 +543,7 @@ const Calls = {
     location,
     description,
     job_code,
+    status,
     created_by,
     postal,
     position_x,
@@ -551,8 +552,8 @@ const Calls = {
   }) {
     const info = db.prepare(
       `INSERT INTO calls (
-        department_id, title, priority, location, description, job_code, created_by, postal, position_x, position_y, position_z
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        department_id, title, priority, location, description, job_code, status, created_by, postal, position_x, position_y, position_z
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       department_id,
       title,
@@ -560,6 +561,7 @@ const Calls = {
       location || '',
       description || '',
       job_code || '',
+      status || 'active',
       created_by,
       String(postal || '').trim(),
       Number.isFinite(Number(position_x)) ? Number(position_x) : null,
@@ -637,6 +639,45 @@ const Bolos = {
   },
   updateStatus(id, status) {
     db.prepare('UPDATE bolos SET status = ? WHERE id = ?').run(status, id);
+  },
+};
+
+// --- Warrants ---
+const Warrants = {
+  listByDepartment(departmentId, status = 'active') {
+    return db.prepare(`
+      SELECT w.*, us.steam_name as creator_name
+      FROM warrants w
+      LEFT JOIN users us ON us.id = w.created_by
+      WHERE w.department_id = ? AND w.status = ?
+      ORDER BY w.created_at DESC
+    `).all(departmentId, status);
+  },
+  findById(id) {
+    return db.prepare(`
+      SELECT w.*, us.steam_name as creator_name
+      FROM warrants w
+      LEFT JOIN users us ON us.id = w.created_by
+      WHERE w.id = ?
+    `).get(id);
+  },
+  findByCitizenId(citizenId, status = 'active') {
+    return db.prepare(`
+      SELECT w.*, us.steam_name as creator_name
+      FROM warrants w
+      LEFT JOIN users us ON us.id = w.created_by
+      WHERE w.citizen_id = ? AND w.status = ?
+      ORDER BY w.created_at DESC
+    `).all(citizenId, status);
+  },
+  create({ department_id, citizen_id, title, description, details_json, created_by }) {
+    const info = db.prepare(
+      'INSERT INTO warrants (department_id, citizen_id, title, description, details_json, created_by) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(department_id, citizen_id, title, description || '', details_json || '{}', created_by);
+    return this.findById(info.lastInsertRowid);
+  },
+  updateStatus(id, status) {
+    db.prepare('UPDATE warrants SET status = ? WHERE id = ?').run(status, id);
   },
 };
 
@@ -1257,6 +1298,7 @@ module.exports = {
   Units,
   Calls,
   Bolos,
+  Warrants,
   OffenceCatalog,
   CriminalRecords,
   FiveMPlayerLinks,

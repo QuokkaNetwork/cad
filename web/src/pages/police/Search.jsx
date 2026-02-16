@@ -82,6 +82,12 @@ function LookupFieldValue({ field }) {
   return <span>{value}</span>;
 }
 
+function parsePreviewWidth(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(4, Math.trunc(parsed)));
+}
+
 function LookupFieldsSection({ title, fields }) {
   const normalized = normalizeLookupFields(fields);
   if (normalized.length === 0) return null;
@@ -89,18 +95,31 @@ function LookupFieldsSection({ title, fields }) {
   return (
     <div>
       <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">{title}</h4>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        {normalized.map((field, idx) => (
-          <div
-            key={`${field?.key || field?.label || 'lookup'}-${idx}`}
-            className="bg-cad-surface border border-cad-border rounded px-3 py-2"
-          >
-            <p className="text-xs text-cad-muted mb-0.5">{field.label || 'Field'}</p>
-            <div className="text-sm break-words">
-              <LookupFieldValue field={field} />
+      <div className="grid grid-cols-4 gap-2">
+        {normalized.map((field, idx) => {
+          const width = parsePreviewWidth(field.preview_width || 1);
+          const type = String(field?.field_type || 'text').toLowerCase();
+          return (
+            <div
+              key={`${field?.key || field?.label || 'lookup'}-${idx}`}
+              style={{ gridColumn: `span ${width} / span ${width}` }}
+              className="bg-cad-surface border border-cad-border rounded px-3 py-2 min-h-[70px]"
+            >
+              <p className="text-[10px] uppercase tracking-wider text-cad-muted mb-0.5">
+                {field.label || 'Field'}
+              </p>
+              {type === 'image' ? (
+                <div className="mt-1 h-20 rounded border border-cad-border/70 bg-cad-card flex items-center justify-center">
+                  <LookupFieldValue field={field} />
+                </div>
+              ) : (
+                <div className="text-sm break-words mt-1">
+                  <LookupFieldValue field={field} />
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -311,38 +330,8 @@ export default function Search() {
       >
         {selectedPerson && (
           <div className="space-y-4">
-            <div>
-              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                Character Information
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div className="bg-cad-surface border border-cad-border rounded px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">DOB</p>
-                  <p className="text-sm mt-1">{selectedPerson.birthdate || '-'}</p>
-                </div>
-                <div className="bg-cad-surface border border-cad-border rounded px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Phone</p>
-                  <p className="text-sm mt-1">{selectedPerson.phone || '-'}</p>
-                </div>
-                <div className="bg-cad-surface border border-cad-border rounded px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Gender</p>
-                  <p className="text-sm mt-1">
-                    {selectedPerson.gender === '0'
-                      ? 'Male'
-                      : selectedPerson.gender === '1'
-                        ? 'Female'
-                        : (selectedPerson.gender || '-')}
-                  </p>
-                </div>
-                <div className="bg-cad-surface border border-cad-border rounded px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Nationality</p>
-                  <p className="text-sm mt-1">{selectedPerson.nationality || '-'}</p>
-                </div>
-              </div>
-            </div>
-
             <LookupFieldsSection
-              title="Additional Information"
+              title="Character Information"
               fields={selectedPerson.lookup_fields}
             />
 
@@ -425,31 +414,8 @@ export default function Search() {
       >
         {selectedVehicle && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <span className="text-cad-muted">Plate:</span>
-                <span className="ml-2 font-mono font-semibold text-cad-accent-light">{selectedVehicle.plate || '-'}</span>
-              </div>
-              <div>
-                <span className="text-cad-muted">Model:</span>
-                <span className="ml-2">{selectedVehicle.vehicle || '-'}</span>
-              </div>
-              <div>
-                <span className="text-cad-muted">Garage:</span>
-                <span className="ml-2">{selectedVehicle.garage || '-'}</span>
-              </div>
-              <div>
-                <span className="text-cad-muted">State:</span>
-                <span className="ml-2">{selectedVehicle.state || '-'}</span>
-              </div>
-              <div>
-                <span className="text-cad-muted">Owner Citizen ID:</span>
-                <span className="ml-2">{selectedVehicle.owner || '-'}</span>
-              </div>
-            </div>
-
             <LookupFieldsSection
-              title="Additional Information"
+              title="Vehicle Information"
               fields={selectedVehicle.lookup_fields}
             />
 

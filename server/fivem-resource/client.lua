@@ -1,3 +1,8 @@
+local function trim(s)
+  if not s then return '' end
+  return (tostring(s):gsub('^%s+', ''):gsub('%s+$', ''))
+end
+
 local function normalizePostal(value)
   if value == nil then return '' end
   local t = type(value)
@@ -301,6 +306,54 @@ local function notifyFine(payload)
   end
 end
 
+local function promptOnscreenKeyboard(title, defaultText, maxLength)
+  AddTextEntry('CAD_BRIDGE_000_PROMPT', tostring(title or 'CAD Input'))
+  DisplayOnscreenKeyboard(1, 'CAD_BRIDGE_000_PROMPT', '', tostring(defaultText or ''), '', '', '', tonumber(maxLength) or 128)
+
+  while true do
+    local update = UpdateOnscreenKeyboard()
+    if update == 0 then
+      Wait(0)
+    elseif update == 1 then
+      return trim(GetOnscreenKeyboardResult() or '')
+    else
+      return nil
+    end
+  end
+end
+
+local function openEmergencyPopup()
+  if GetResourceState('ox_lib') == 'started' and lib and type(lib.inputDialog) == 'function' then
+    local ok, input = pcall(function()
+      return lib.inputDialog('000 Emergency Call', {
+        { type = 'input', label = 'Title', description = 'What is happening?', required = true, max = 80 },
+        { type = 'textarea', label = 'Details', description = 'Extra details for dispatch', required = false, max = 600 },
+      })
+    end)
+    if not ok or not input then return end
+
+    local title = trim(input[1] or '')
+    local details = trim(input[2] or '')
+    if title == '' then return end
+    TriggerServerEvent('cad_bridge:submit000', {
+      title = title,
+      details = details,
+    })
+    return
+  end
+
+  local title = promptOnscreenKeyboard('000 Title', '', 80)
+  if not title or title == '' then return end
+
+  local details = promptOnscreenKeyboard('000 Details', '', 600)
+  if details == nil then return end
+
+  TriggerServerEvent('cad_bridge:submit000', {
+    title = title,
+    details = details,
+  })
+end
+
 RegisterNetEvent('cad_bridge:setCallRoute', function(route)
   if type(route) ~= 'table' then return end
   local action = tostring(route.action or ''):lower()
@@ -328,6 +381,10 @@ end)
 
 RegisterNetEvent('cad_bridge:notifyFine', function(payload)
   notifyFine(payload)
+end)
+
+RegisterNetEvent('cad_bridge:prompt000', function()
+  openEmergencyPopup()
 end)
 
 CreateThread(function()

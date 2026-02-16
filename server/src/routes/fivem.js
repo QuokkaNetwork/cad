@@ -720,6 +720,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     location,
     description,
     job_code: '000',
+    status: 'active',
     created_by: cadUser?.id || null,
     postal,
     position_x: Number.isFinite(positionX) ? positionX : null,

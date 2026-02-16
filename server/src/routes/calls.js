@@ -79,6 +79,7 @@ router.post('/', requireAuth, (req, res) => {
     location: location || '',
     description: description || '',
     job_code: job_code || '',
+    status: 'active',
     created_by: req.user.id,
   });
 
