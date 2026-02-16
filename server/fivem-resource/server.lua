@@ -35,20 +35,30 @@ local function request(method, path, payload, cb)
   end, method, payload and encodeJson(payload) or '', headers)
 end
 
-local function getSteamIdentifier(src)
-  local identifiers = GetPlayerIdentifiers(src)
+local function hasTrackedIdentifier(identifiers)
   for _, identifier in ipairs(identifiers) do
     if identifier:sub(1, 6) == 'steam:' then
-      return identifier
+      return true
+    end
+    if identifier:sub(1, 8) == 'discord:' then
+      return true
+    end
+    if identifier:sub(1, 8) == 'license:' then
+      return true
+    end
+    if identifier:sub(1, 9) == 'license2:' then
+      return true
     end
   end
-  return nil
+  return false
 end
 
 local function getCitizenId(src)
-  if GetResourceState('qbx_core') == 'started' and exports.qbx_core and exports.qbx_core.GetPlayer then
-    local xPlayer = exports.qbx_core:GetPlayer(src)
-    if xPlayer and xPlayer.PlayerData and xPlayer.PlayerData.citizenid then
+  if GetResourceState('qbx_core') == 'started' then
+    local ok, xPlayer = pcall(function()
+      return exports.qbx_core:GetPlayer(src)
+    end)
+    if ok and xPlayer and xPlayer.PlayerData and xPlayer.PlayerData.citizenid then
       return tostring(xPlayer.PlayerData.citizenid)
     end
   end
@@ -104,8 +114,7 @@ CreateThread(function()
       local s = tonumber(src)
       if s then
         local identifiers = GetPlayerIdentifiers(s)
-        local steam = getSteamIdentifier(s)
-        if Config.PublishAllPlayers or steam then
+        if Config.PublishAllPlayers or hasTrackedIdentifier(identifiers) then
           local pos = PlayerPositions[s] or {
             x = 0.0,
             y = 0.0,

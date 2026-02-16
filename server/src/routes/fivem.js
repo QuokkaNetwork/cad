@@ -59,15 +59,21 @@ function parseDiscordIdentifier(identifiers = []) {
   return parseIdentifier(identifiers, 'discord');
 }
 
+function parseLicenseIdentifier(identifiers = []) {
+  return parseIdentifier(identifiers, 'license') || parseIdentifier(identifiers, 'license2');
+}
+
 function resolveLinkIdentifiers(identifiers = []) {
   const steamId = parseSteamIdentifier(identifiers);
   const discordId = parseDiscordIdentifier(identifiers);
+  const licenseId = parseLicenseIdentifier(identifiers);
 
   if (steamId) {
     return {
       linkKey: steamId,
       steamId,
       discordId,
+      licenseId,
       source: 'steam',
     };
   }
@@ -76,13 +82,24 @@ function resolveLinkIdentifiers(identifiers = []) {
       linkKey: `discord:${discordId}`,
       steamId: '',
       discordId,
+      licenseId,
       source: 'discord',
+    };
+  }
+  if (licenseId) {
+    return {
+      linkKey: `license:${licenseId}`,
+      steamId: '',
+      discordId: '',
+      licenseId,
+      source: 'license',
     };
   }
   return {
     linkKey: '',
     steamId: '',
     discordId: '',
+    licenseId: '',
     source: '',
   };
 }
@@ -184,7 +201,7 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     const unit = Units.findByUserId(cadUser.id);
     if (!unit) continue;
 
-    const idSource = ids.source === 'discord' ? 'discord' : 'steam';
+    const idSource = ids.source || 'unknown';
     Units.update(unit.id, {
       location: formatUnitLocation(player),
       note: `In-game #${link.game_id} ${link.player_name || ''} (${idSource})`.trim(),
@@ -202,6 +219,7 @@ router.post('/offline', requireBridgeAuth, (req, res) => {
   const ids = resolveLinkIdentifiers(req.body?.identifiers || []);
   if (ids.steamId) FiveMPlayerLinks.removeBySteamId(ids.steamId);
   if (ids.discordId) FiveMPlayerLinks.removeBySteamId(`discord:${ids.discordId}`);
+  if (ids.licenseId) FiveMPlayerLinks.removeBySteamId(`license:${ids.licenseId}`);
 
   let autoOffDuty = false;
   const cadUser = resolveCadUserFromIdentifiers(ids);

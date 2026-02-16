@@ -19,7 +19,7 @@ const {
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
-const ACTIVE_LINK_MAX_AGE_MS = 2 * 60 * 1000;
+const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -33,6 +33,18 @@ function isActiveFiveMLink(link) {
   const ts = parseSqliteUtc(link?.updated_at);
   if (Number.isNaN(ts)) return false;
   return (Date.now() - ts) <= ACTIVE_LINK_MAX_AGE_MS;
+}
+
+function parseFiveMLinkKey(value) {
+  const key = String(value || '').trim();
+  if (!key) return { type: 'unknown', value: '' };
+  if (key.startsWith('discord:')) {
+    return { type: 'discord', value: key.slice('discord:'.length) };
+  }
+  if (key.startsWith('license:')) {
+    return { type: 'license', value: key.slice('license:'.length) };
+  }
+  return { type: 'steam', value: key };
 }
 
 const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
@@ -342,17 +354,16 @@ router.get('/fivem/links', (_req, res) => {
   const links = FiveMPlayerLinks.list();
   const filtered = activeOnly ? links.filter(isActiveFiveMLink) : links;
   const enriched = filtered.map((link) => {
-    const key = String(link.steam_id || '');
-    const isDiscordKey = key.startsWith('discord:');
-    const discordId = isDiscordKey ? key.slice('discord:'.length) : '';
-    const cadUser = isDiscordKey
-      ? Users.findByDiscordId(discordId)
-      : (Users.findBySteamId(key) || null);
+    const parsed = parseFiveMLinkKey(link.steam_id);
+    const cadUser = parsed.type === 'discord'
+      ? (Users.findByDiscordId(parsed.value) || null)
+      : (parsed.type === 'steam' ? (Users.findBySteamId(parsed.value) || null) : null);
     return {
       ...link,
-      identifier_type: isDiscordKey ? 'discord' : 'steam',
-      steam_id_resolved: isDiscordKey ? '' : key,
-      discord_id_resolved: isDiscordKey ? discordId : (cadUser?.discord_id || ''),
+      identifier_type: parsed.type,
+      steam_id_resolved: parsed.type === 'steam' ? parsed.value : '',
+      discord_id_resolved: parsed.type === 'discord' ? parsed.value : (cadUser?.discord_id || ''),
+      license_id_resolved: parsed.type === 'license' ? parsed.value : '',
       cad_user_id: cadUser?.id || null,
       cad_user_name: cadUser?.steam_name || '',
     };

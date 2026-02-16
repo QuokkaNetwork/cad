@@ -9,8 +9,9 @@ Config.SharedToken = GetConvar('cad_bridge_token', '')
 Config.HeartbeatIntervalMs = tonumber(GetConvar('cad_bridge_heartbeat_ms', '5000')) or 5000
 Config.FinePollIntervalMs = tonumber(GetConvar('cad_bridge_fine_poll_ms', '7000')) or 7000
 
--- If true, publish all online players. If false, only players with steam identifiers are published.
-Config.PublishAllPlayers = false
+-- If true, publish all online players.
+-- If false, only players with steam/discord/license identifiers are published.
+Config.PublishAllPlayers = GetConvar('cad_bridge_publish_all_players', 'true') == 'true'
 
 -- Nearest postal integration (client-side export lookup).
 -- Typical script: nearest-postal with export getPostal.

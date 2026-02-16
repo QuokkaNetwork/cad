@@ -13,6 +13,10 @@ function formatErr(err) {
   return base;
 }
 
+function hasCitizenId(link) {
+  return String(link?.citizen_id || '').trim().length > 0;
+}
+
 export default function AdminSystemSettings() {
   const { key: locationKey } = useLocation();
   const [settings, setSettings] = useState({});
@@ -56,9 +60,7 @@ export default function AdminSystemSettings() {
     setLoadingFineTargets(true);
     try {
       const data = await api.get('/api/admin/fivem/links?active=true');
-      const links = Array.isArray(data)
-        ? data.filter(link => String(link?.citizen_id || '').trim())
-        : [];
+      const links = Array.isArray(data) ? data : [];
       setFineTargets(links);
       setSelectedFineTarget(prev => (
         links.some(link => link.steam_id === prev) ? prev : (links[0]?.steam_id || '')
@@ -133,6 +135,15 @@ export default function AdminSystemSettings() {
       alert('Select an active player first');
       return;
     }
+    const target = fineTargets.find(link => link.steam_id === selectedFineTarget);
+    if (!target) {
+      alert('Selected player is no longer detected');
+      return;
+    }
+    if (!hasCitizenId(target)) {
+      alert('Selected player has no citizen ID yet. Check the FiveM bridge/QBox player lookup.');
+      return;
+    }
     const amount = Number(testFineAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
       alert('Test fine amount must be greater than 0');
@@ -158,6 +169,9 @@ export default function AdminSystemSettings() {
       setQueueingTestFine(false);
     }
   }
+
+  const selectedFineTargetEntry = fineTargets.find(link => link.steam_id === selectedFineTarget) || null;
+  const selectedFineTargetHasCitizenId = hasCitizenId(selectedFineTargetEntry);
 
   return (
     <div className="max-w-2xl">
@@ -413,13 +427,18 @@ export default function AdminSystemSettings() {
               disabled={loadingFineTargets || fineTargets.length === 0}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent disabled:opacity-60"
             >
-              {fineTargets.length === 0 && <option value="">No active players with citizen IDs</option>}
+              {fineTargets.length === 0 && <option value="">No active players detected</option>}
               {fineTargets.map(link => (
                 <option key={link.steam_id} value={link.steam_id}>
-                  #{link.game_id || '?'} {link.player_name || 'Unknown'} | CAD {link.cad_user_name || 'Unlinked'} | CID {link.citizen_id}
+                  #{link.game_id || '?'} {link.player_name || 'Unknown'} | CAD {link.cad_user_name || 'Unlinked'} | {hasCitizenId(link) ? `CID ${link.citizen_id}` : 'No CID'}
                 </option>
               ))}
             </select>
+            {selectedFineTargetEntry && !selectedFineTargetHasCitizenId && (
+              <p className="text-xs text-amber-300 mt-1">
+                Player is detected, but no citizen ID was received yet. Fine queueing is disabled for this player.
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-xs text-cad-muted mb-1">Amount</label>
@@ -444,7 +463,7 @@ export default function AdminSystemSettings() {
         <div className="flex items-center gap-2 mt-4">
           <button
             onClick={queueTestFine}
-            disabled={queueingTestFine || fineTargets.length === 0}
+            disabled={queueingTestFine || fineTargets.length === 0 || !selectedFineTargetHasCitizenId}
             className="px-3 py-1.5 text-sm bg-cad-accent hover:bg-cad-accent-light text-white rounded border border-cad-accent/40 transition-colors disabled:opacity-50"
           >
             {queueingTestFine ? 'Queueing...' : 'Queue Test Fine'}
