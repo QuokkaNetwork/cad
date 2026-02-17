@@ -22,7 +22,10 @@ function getVoiceCfgConfig() {
   const publicIp   = String(process.env.MUMBLE_PUBLIC_IP || process.env.MUMBLE_HOST || '').trim();
   const port       = parseInt(process.env.MUMBLE_PORT || '64738', 10) || 64738;
   const token      = getSetting('fivem_bridge_shared_token', process.env.FIVEM_BRIDGE_SHARED_TOKEN || '');
-  const baseUrl    = getSetting('fivem_bridge_base_url', 'http://127.0.0.1:3030');
+  // Bridge URL defaults to the HTTP-only port 3031 so FiveM's PerformHttpRequest
+  // works without TLS. The main CAD server serves HTTPS on port 3030 for browsers.
+  const bridgeHttpPort = parseInt(process.env.BRIDGE_HTTP_PORT || '3031', 10) || 3031;
+  const baseUrl    = getSetting('fivem_bridge_base_url', `http://127.0.0.1:${bridgeHttpPort}`);
   return { serverPath, publicIp, port, token, baseUrl };
 }
 
@@ -187,7 +190,8 @@ function applyRuntimeConfig(targetDir) {
   const configPath = path.join(targetDir, 'config.lua');
   if (!fs.existsSync(configPath)) return;
 
-  const baseUrl = getSetting('fivem_bridge_base_url', 'http://127.0.0.1:3030');
+  const _bridgeHttpPort = parseInt(process.env.BRIDGE_HTTP_PORT || '3031', 10) || 3031;
+  const baseUrl = getSetting('fivem_bridge_base_url', `http://127.0.0.1:${_bridgeHttpPort}`);
   const token = getSetting('fivem_bridge_shared_token', '');
   const escapedBaseUrl = escapeLuaSingleQuoted(baseUrl);
   const escapedToken = escapeLuaSingleQuoted(token);

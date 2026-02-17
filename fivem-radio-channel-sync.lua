@@ -16,7 +16,7 @@ local function trim(s)
   return (tostring(s or '')):gsub('^%s+', ''):gsub('%s+$', '')
 end
 
-local CAD_URL      = trim(GetConvar('cad_bridge_base_url', 'http://127.0.0.1:3030'))
+local CAD_URL      = trim(GetConvar('cad_bridge_base_url', 'http://127.0.0.1:3031'))
 local BRIDGE_TOKEN = trim(GetConvar('cad_bridge_token', ''))
 
 -- ── Channel definitions ──────────────────────────────────────────────────────

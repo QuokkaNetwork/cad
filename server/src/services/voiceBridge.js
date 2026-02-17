@@ -406,16 +406,31 @@ class VoiceBridgeServer {
     const map = new Map();
     if (!client || !client.isReady || !client.users) return map;
     try {
+      const prefix = this.config.dispatcherNamePrefix;
       for (const user of client.users.values()) {
         const name = String(user?.name || '').trim();
         const session = normalizePositiveInt(user?.session ?? user?.sessionId ?? 0);
         if (!name || !session) continue;
-        // Match if the name is purely numeric (FiveM source ID) or starts with
-        // the source number followed by non-digit characters.
+        // Skip dispatcher connections (they have the CAD_Dispatcher prefix)
+        if (prefix && name.startsWith(prefix)) continue;
+        // pma-voice names Mumble users by their FiveM source (server) ID.
+        // Try pure numeric match first (most common: name = "5").
         const numericId = normalizePositiveInt(name);
         if (numericId > 0) {
           map.set(String(numericId), session);
+          continue;
         }
+        // Also handle names like "5_CharacterName" where prefix is the source ID
+        const leadingDigits = name.match(/^(\d+)/);
+        if (leadingDigits) {
+          const prefixId = normalizePositiveInt(leadingDigits[1]);
+          if (prefixId > 0 && !map.has(String(prefixId))) {
+            map.set(String(prefixId), session);
+          }
+        }
+      }
+      if (map.size > 0) {
+        console.log(`[VoiceBridge] Session map: ${[...map.entries()].map(([g, s]) => `game${g}→sess${s}`).join(', ')}`);
       }
     } catch {
       // Ignore errors iterating user list.

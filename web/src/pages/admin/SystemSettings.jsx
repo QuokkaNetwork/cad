@@ -440,10 +440,10 @@ export default function AdminSystemSettings() {
               value={settings.fivem_bridge_base_url || ''}
               onChange={e => updateSetting('fivem_bridge_base_url', e.target.value)}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="http://127.0.0.1:3030"
+              placeholder="http://127.0.0.1:3031"
             />
             <p className="text-xs text-cad-muted mt-1">
-              Used as the default CAD endpoint inside the installed <span className="font-mono">cad_bridge</span> resource.
+              Used as the default CAD endpoint inside the installed <span className="font-mono">cad_bridge</span> resource. Port 3031 is the plain HTTP bridge port (FiveM cannot use HTTPS with self-signed certs).
             </p>
           </div>
           <div className="col-span-2">

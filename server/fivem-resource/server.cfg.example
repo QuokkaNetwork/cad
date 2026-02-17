@@ -46,7 +46,7 @@ setr voice_use2dAudio true
 # STEP 3: Configure the CAD bridge resource
 # =============================================================================
 
-set cad_bridge_base_url "http://127.0.0.1:3030"
+set cad_bridge_base_url "http://127.0.0.1:3031"
 set cad_bridge_token "Ku3xaT6MVe+GgGC9qQu2bMbdqBEPY7cXCyRd3WISCjA="
 
 # NPWD 000 emergency number interception
