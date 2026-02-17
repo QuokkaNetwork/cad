@@ -9,10 +9,11 @@
  * and the CAD voice bridge (mumble-node) connect to this same Murmur process.
  */
 
-const { spawn } = require('child_process');
-const fs = require('fs');
+const { spawn, execSync } = require('child_process');
+const fs   = require('fs');
+const net  = require('net');
 const path = require('path');
-const os = require('os');
+const os   = require('os');
 
 const IS_WINDOWS = os.platform() === 'win32';
 
@@ -32,9 +33,13 @@ const LINUX_CANDIDATES = [
   'mumble-server',
 ];
 
+// Alternative ports to try if the primary port is taken
+const PORT_FALLBACK_OFFSETS = [1, 2, 3, 4, 5];
+
 let murmurProcess = null;
-let shuttingDown = false;
-let restartTimer = null;
+let shuttingDown  = false;
+let restartTimer  = null;
+let activePort    = null; // the port Murmur actually bound to
 
 function parseBool(value, fallback = false) {
   const v = String(value ?? '').trim().toLowerCase();
@@ -61,11 +66,11 @@ function getIniPath() {
   return path.join(__dirname, '../../data/murmur.ini');
 }
 
-function buildIniContent(bindHost = '0.0.0.0') {
-  const port = getMumblePort();
+function buildIniContent(bindHost = '0.0.0.0', port = null) {
+  port = port || getMumblePort();
   const password = getMumblePassword();
   const dataDir = path.join(__dirname, '../../data');
-  const dbPath = path.join(dataDir, 'mumble-server.sqlite').replace(/\\/g, '/');
+  const dbPath  = path.join(dataDir, 'mumble-server.sqlite').replace(/\\/g, '/');
   const logPath = path.join(dataDir, 'murmur.log').replace(/\\/g, '/');
 
   const lines = [
@@ -99,12 +104,12 @@ function ensureDataDir() {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 }
 
-function ensureIniFile(bindHost = '0.0.0.0') {
+function ensureIniFile(bindHost = '0.0.0.0', port = null) {
   ensureDataDir();
   const iniPath = getIniPath();
   const dir = path.dirname(iniPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(iniPath, buildIniContent(bindHost), 'utf8');
+  fs.writeFileSync(iniPath, buildIniContent(bindHost, port), 'utf8');
   return iniPath;
 }
 
@@ -130,13 +135,113 @@ function findMurmurBinary() {
   return null;
 }
 
-function spawnMurmur(bindHost = '0.0.0.0') {
+/**
+ * Check whether a TCP port is free by attempting to bind to it.
+ * Returns a Promise<boolean> — true = free, false = in use.
+ */
+function isPortFree(port) {
+  return new Promise(resolve => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => { srv.close(); resolve(true); });
+    srv.listen(port, '0.0.0.0');
+  });
+}
+
+/**
+ * On Windows, try to stop any Murmur/MumbleServer Windows Service
+ * that may be holding the Mumble port.
+ *
+ * Common service names installed by the Murmur MSI installer:
+ *   "MumbleServer", "Murmur", "mumble-server", "murmurd"
+ *
+ * Returns true if a service was found and stopped successfully.
+ */
+function tryStopMumbleWindowsService() {
+  if (!IS_WINDOWS) return false;
+
+  const serviceNames = ['MumbleServer', 'Murmur', 'mumble-server', 'murmurd'];
+  for (const name of serviceNames) {
+    try {
+      // sc query returns exit code 0 if service exists
+      execSync(`sc query "${name}"`, { stdio: 'ignore', timeout: 5000 });
+      console.warn(`[MumbleServer] Found conflicting Windows service: "${name}"`);
+      console.warn(`[MumbleServer] Attempting to stop service "${name}"...`);
+      try {
+        execSync(`sc stop "${name}"`, { stdio: 'ignore', timeout: 10000 });
+        console.log(`[MumbleServer] Service "${name}" stopped.`);
+        return true;
+      } catch {
+        console.warn(`[MumbleServer] Could not stop service "${name}" (may need Administrator rights).`);
+        console.warn(`[MumbleServer] Run this manually: sc stop "${name}"`);
+        console.warn(`[MumbleServer] Or disable it: sc config "${name}" start= disabled`);
+      }
+    } catch {
+      // Service doesn't exist — try next name
+    }
+  }
+  return false;
+}
+
+/**
+ * Find a free port starting from the configured port.
+ * If the preferred port is taken, tries to stop any conflicting Murmur
+ * Windows service first, then tries fallback ports.
+ *
+ * Returns the first free port found, or null if none available.
+ */
+async function findFreePort() {
+  const preferredPort = getMumblePort();
+
+  if (await isPortFree(preferredPort)) {
+    return preferredPort;
+  }
+
+  // Port is taken — log a clear warning
+  console.warn(`[MumbleServer] ⚠️  Port ${preferredPort} is already in use!`);
+  console.warn(`[MumbleServer]    This usually means a Murmur Windows Service is running`);
+  console.warn(`[MumbleServer]    from a previous MSI installation. That service is using`);
+  console.warn(`[MumbleServer]    an UNPATCHED Murmur — players connecting to it won't be`);
+  console.warn(`[MumbleServer]    able to create temporary channels (proximity voice broken).`);
+  console.warn(`[MumbleServer] Attempting to stop conflicting Murmur Windows service...`);
+
+  const stopped = tryStopMumbleWindowsService();
+
+  if (stopped) {
+    // Give the service time to release the port
+    await new Promise(r => setTimeout(r, 3000));
+    if (await isPortFree(preferredPort)) {
+      console.log(`[MumbleServer] ✓ Port ${preferredPort} is now free after stopping the service.`);
+      return preferredPort;
+    }
+    console.warn(`[MumbleServer] Port ${preferredPort} still in use after stopping service. Trying fallback ports...`);
+  } else {
+    console.warn(`[MumbleServer] Could not stop conflicting service. Trying fallback ports...`);
+    console.warn(`[MumbleServer] NOTE: voice_externalPort in voice.cfg must match the port we bind to.`);
+  }
+
+  // Try fallback ports
+  for (const offset of PORT_FALLBACK_OFFSETS) {
+    const candidate = preferredPort + offset;
+    if (await isPortFree(candidate)) {
+      console.warn(`[MumbleServer] ⚠️  Using fallback port ${candidate} instead of ${preferredPort}.`);
+      console.warn(`[MumbleServer]    UPDATE voice_externalPort in voice.cfg to ${candidate} and restart FiveM!`);
+      return candidate;
+    }
+  }
+
+  console.error(`[MumbleServer] ✗ Could not find a free port in range ${preferredPort}–${preferredPort + PORT_FALLBACK_OFFSETS.slice(-1)[0]}`);
+  return null;
+}
+
+function spawnMurmur(bindHost = '0.0.0.0', port = null) {
   if (shuttingDown) return;
 
   const binary = findMurmurBinary();
   if (!binary) return;
 
-  const iniPath = ensureIniFile(bindHost);
+  port = port || getMumblePort();
+  const iniPath = ensureIniFile(bindHost, port);
   // -fg keeps Murmur in the foreground so we can capture stdout/stderr
   const args = IS_WINDOWS
     ? ['-ini', iniPath]      // murmur.exe on Windows doesn't support -fg but runs in foreground by default
@@ -165,18 +270,23 @@ function spawnMurmur(bindHost = '0.0.0.0') {
     if (shuttingDown) return;
     const reason = signal ? `signal ${signal}` : `code ${code}`;
     console.warn(`[MumbleServer] Murmur exited (${reason}). Restarting in 5 seconds...`);
-    restartTimer = setTimeout(spawnMurmur, 5000);
+    restartTimer = setTimeout(() => spawnMurmur(bindHost, port), 5000);
   });
 
   murmurProcess.on('error', (err) => {
     console.error('[MumbleServer] Failed to start Murmur:', err.message);
     murmurProcess = null;
     if (!shuttingDown) {
-      restartTimer = setTimeout(spawnMurmur, 10000);
+      restartTimer = setTimeout(() => spawnMurmur(bindHost, port), 10000);
     }
   });
 
-  console.log(`[MumbleServer] Murmur started (PID ${murmurProcess.pid}) on 0.0.0.0:${getMumblePort()}`);
+  activePort = port;
+  console.log(`[MumbleServer] Murmur started (PID ${murmurProcess.pid}) on ${bindHost}:${port}`);
+  if (port !== getMumblePort()) {
+    console.warn(`[MumbleServer] ⚠️  Murmur is on port ${port}, NOT the configured ${getMumblePort()}.`);
+    console.warn(`[MumbleServer]    Set voice_externalPort "${port}" in voice.cfg and restart FiveM!`);
+  }
 }
 
 /**
@@ -215,8 +325,7 @@ function patchMurmurAcl() {
     const GRANT_BITS = 0x400 | 0x4 | 0x2;
 
     if (isV15) {
-      // Murmur 1.5 schema: aff_user_id, aff_group_id, apply_in_current, apply_in_sub, granted_flags, revoked_flags
-      // Group-based ACL rows have aff_group_id set and aff_user_id NULL (or absent)
+      // Murmur 1.5 schema
       const existing = murmurDb.prepare(`
         SELECT rowid, granted_flags FROM acl
         WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'
@@ -229,7 +338,6 @@ function patchMurmurAcl() {
       }
 
       if (existing) {
-        // Also ensure apply_in_sub=1 so the permission covers sub-channels
         murmurDb.prepare(`
           UPDATE acl SET granted_flags = granted_flags | ?, apply_in_sub = 1
           WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'
@@ -241,8 +349,7 @@ function patchMurmurAcl() {
         `).run(GRANT_BITS);
       }
     } else {
-      // Murmur 1.4 schema: user_id, group_name, apply_here, apply_sub(s), grantpriv, revokepriv
-      // Note: some builds use apply_sub, others apply_subs — detect from schema
+      // Murmur 1.4 schema
       const applySubCol = colNames.includes('apply_sub') ? 'apply_sub' : 'apply_subs';
 
       const existing = murmurDb.prepare(`
@@ -257,7 +364,6 @@ function patchMurmurAcl() {
       }
 
       if (existing) {
-        // Also ensure apply_sub=1 so the permission covers sub-channels (where pma-voice creates temp channels)
         murmurDb.prepare(`
           UPDATE acl SET grantpriv = grantpriv | ?, ${applySubCol} = 1
           WHERE server_id=1 AND channel_id=0 AND group_name='all'
@@ -272,7 +378,7 @@ function patchMurmurAcl() {
 
     // Log what's actually in the ACL table for Root after patching
     const allRows = murmurDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
-    console.log('[MumbleServer] Root ACL rows after patch:', JSON.stringify(allRows));
+    console.log('[MumbleServer] Root ACL after patch:', JSON.stringify(allRows));
 
     murmurDb.close();
     console.log('[MumbleServer] Root channel ACL patched — Make permission granted to @all');
@@ -297,9 +403,11 @@ function stopMurmur() {
  * Called from index.js before the voice bridge initializes.
  *
  * Strategy:
- *  - If mumble-server.sqlite already exists and ACL is patched → start normally (fast path)
- *  - If DB is missing → first boot: start Murmur on 127.0.0.1 only so no external
- *    players can connect, wait for schema to initialize, stop, patch ACL, restart on 0.0.0.0
+ *  1. Check if preferred port is free. If not, try to stop conflicting
+ *     Murmur Windows service, then fall back to alternate ports.
+ *  2. If mumble-server.sqlite already exists and ACL is patched → start (fast path)
+ *  3. If DB is missing → first boot: start on 127.0.0.1, wait for schema,
+ *     stop, patch ACL, restart on 0.0.0.0
  */
 async function startMumbleServer() {
   if (!isManagedEnabled()) {
@@ -307,10 +415,17 @@ async function startMumbleServer() {
     return;
   }
 
+  // ── Port conflict detection ───────────────────────────────────────────────
+  const port = await findFreePort();
+  if (!port) {
+    console.error('[MumbleServer] ✗ Cannot start Murmur — no free port available.');
+    console.error('[MumbleServer]   Stop the conflicting process and restart the CAD server.');
+    return;
+  }
+
   const dbPath = path.join(__dirname, '../../data/mumble-server.sqlite');
 
-  // Fast path: DB already exists — patch if needed, then start.
-  // Murmur is not running yet so we can write to the DB freely.
+  // ── Fast path: DB already exists ─────────────────────────────────────────
   if (fs.existsSync(dbPath)) {
     console.log('[MumbleServer] Existing DB found — checking ACL...');
     if (!isAclPatched(dbPath)) {
@@ -319,23 +434,32 @@ async function startMumbleServer() {
     } else {
       console.log('[MumbleServer] ACL already correct');
     }
+
+    // Log the actual ACL so we have evidence in every startup log
+    logCurrentAcl(dbPath);
+
     shuttingDown = false;
-    spawnMurmur('0.0.0.0');
+    spawnMurmur('0.0.0.0', port);
     console.log('[MumbleServer] Murmur running with proximity voice ACLs');
     return;
   }
 
-  // First boot: DB doesn't exist yet.
-  // Start Murmur on 127.0.0.1 only so no players can connect during init.
-  // Disable auto-restart for the entire init cycle — we manage restarts manually.
+  // ── First boot: DB doesn't exist yet ─────────────────────────────────────
   console.log('[MumbleServer] First boot — initializing DB on 127.0.0.1 (players cannot connect yet)...');
   shuttingDown = true; // block auto-restart timer for the whole init cycle
+
   const binary = findMurmurBinary();
   if (!binary) return;
-  const iniPath = ensureIniFile('127.0.0.1');
-  const args = IS_WINDOWS ? ['-ini', iniPath] : ['-ini', iniPath, '-fg'];
+
+  const iniPath = ensureIniFile('127.0.0.1', port);
+  const args    = IS_WINDOWS ? ['-ini', iniPath] : ['-ini', iniPath, '-fg'];
+
   console.log(`[MumbleServer] Starting Murmur (init): ${binary} ${args.join(' ')}`);
-  const initProc = spawn(binary, args, { stdio: ['ignore','pipe','pipe'], detached: false, windowsHide: true });
+  const initProc = spawn(binary, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+    windowsHide: true,
+  });
   initProc.stdout.on('data', d => { const t = d.toString().trim(); if (t) console.log(`[Murmur] ${t}`); });
   initProc.stderr.on('data', d => { const t = d.toString().trim(); if (t) console.warn(`[Murmur] ${t}`); });
   console.log(`[MumbleServer] Init Murmur started (PID ${initProc.pid})`);
@@ -348,7 +472,7 @@ async function startMumbleServer() {
     if (!fs.existsSync(dbPath)) continue;
     try {
       const Database = require('better-sqlite3');
-      const checkDb = new Database(dbPath, { readonly: true });
+      const checkDb  = new Database(dbPath, { readonly: true });
       const t = checkDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='acl'`).get();
       checkDb.close();
       if (t) { dbReady = true; break; }
@@ -370,12 +494,39 @@ async function startMumbleServer() {
   } else {
     console.log('[MumbleServer] DB ready — patching ACL...');
     patchMurmurAcl();
+    logCurrentAcl(dbPath);
   }
 
   // Now start Murmur publicly with the patched DB
   shuttingDown = false;
-  spawnMurmur('0.0.0.0');
+  spawnMurmur('0.0.0.0', port);
   console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
+}
+
+/**
+ * Log the current Root ACL row so we always have evidence in startup logs.
+ */
+function logCurrentAcl(dbPath) {
+  try {
+    const Database = require('better-sqlite3');
+    const db = new Database(dbPath, { readonly: true });
+    const cols  = db.prepare(`PRAGMA table_info(acl)`).all().map(c => c.name);
+    const isV15 = cols.includes('granted_flags');
+    let row;
+    if (isV15) {
+      row = db.prepare(`SELECT granted_flags, apply_in_sub FROM acl WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'`).get();
+      if (row) console.log(`[MumbleServer] Root ACL: granted_flags=${row.granted_flags} (0x${row.granted_flags.toString(16)}), apply_in_sub=${row.apply_in_sub}, MakeTempChannel=${(row.granted_flags & 0x400) ? 'YES ✓' : 'NO ✗'}`);
+      else console.warn('[MumbleServer] Root ACL: no @all row found!');
+    } else {
+      const applySubCol = cols.includes('apply_sub') ? 'apply_sub' : 'apply_subs';
+      row = db.prepare(`SELECT grantpriv, ${applySubCol} FROM acl WHERE server_id=1 AND channel_id=0 AND group_name='all'`).get();
+      if (row) console.log(`[MumbleServer] Root ACL: grantpriv=${row.grantpriv} (0x${row.grantpriv.toString(16)}), apply_sub=${row[applySubCol]}, MakeTempChannel=${(row.grantpriv & 0x400) ? 'YES ✓' : 'NO ✗'}`);
+      else console.warn('[MumbleServer] Root ACL: no @all row found!');
+    }
+    db.close();
+  } catch (e) {
+    console.warn('[MumbleServer] Could not read ACL for logging:', e.message);
+  }
 }
 
 /**
@@ -413,10 +564,11 @@ function getMurmurStatus() {
   const binary  = findMurmurBinary();
   return {
     managed,
-    binary:  binary || null,
-    running: managed && murmurProcess != null && murmurProcess.exitCode === null,
-    host:    process.env.MUMBLE_HOST || '127.0.0.1',
-    port:    parseInt(process.env.MUMBLE_PORT || '64738', 10),
+    binary:     binary || null,
+    running:    managed && murmurProcess != null && murmurProcess.exitCode === null,
+    host:       process.env.MUMBLE_HOST || '127.0.0.1',
+    port:       activePort || parseInt(process.env.MUMBLE_PORT || '64738', 10),
+    configPort: parseInt(process.env.MUMBLE_PORT || '64738', 10),
   };
 }
 
