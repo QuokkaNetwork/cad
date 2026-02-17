@@ -1,0 +1,49 @@
+
+[1m=== Mumble Local End-to-End Test ===[0m
+
+[36mStep 1: Pre-flight checks[0m
+[32m  ✓ murmur.exe found: C:\Users\levis\Documents\Development files\cad\server\murmur\murmur.exe[0m
+[32m  ✓ murmur.exe size: 33.3 MB[0m
+[32m  ✓ Port 64738 is free[0m
+
+[36mRemoving old mumble-server.sqlite for clean first-boot test...[0m
+[32m  ✓ Old DB removed[0m
+
+[36mStep 2: Start Murmur on 127.0.0.1 (first boot — initialising DB)[0m
+[32m  ✓ INI written to: C:\Users\levis\Documents\Development files\cad\server\data\murmur-test.ini[0m
+  Murmur PID: 45104
+
+[32m  ✓ DB initialised and ACL table exists[0m
+
+[36mStopping init Murmur process...[0m
+[32m  ✓ Init Murmur stopped[0m
+
+[36mStep 3: Patch ACL and verify[0m
+  Tables in DB: meta, servers, sqlite_sequence, slog, config, channels, channel_info, users, user_info, groups, group_members, acl, channel_links, bans, channel_listeners
+  ACL columns: server_id, channel_id, priority, user_id, group_name, apply_here, apply_sub, grantpriv, revokepriv
+  @all ACL row (before): {
+  server_id: 1,
+  channel_id: 0,
+  priority: 3,
+  user_id: null,
+  group_name: 'all',
+  apply_here: 1,
+  apply_sub: 0,
+  grantpriv: 524288,
+  revokepriv: null
+}
+  @all ACL row (after): { grantpriv: 525318, apply_sub: 1 }
+[32m  ✓ ACL patched correctly (v1.4 schema). grantpriv=0x80406, apply_sub=1[0m
+
+[36mStep 4: Start Murmur on 0.0.0.0:64738 (public)[0m
+  Public Murmur PID: 40484
+[31m  ✗ Port 64738 is still free — Murmur may have failed to bind[0m
+
+[36mStep 5: Verify ACL survived Murmur startup (Murmur must not have reset it)[0m
+[32m  ✓ ACL survived Murmur restart. grantpriv=0x80406, apply_sub=1[0m
+
+[1m=== Test Complete ===[0m
+If all steps show ✓, Murmur + pma-voice ACL is correctly configured.
+Key thing pma-voice needs: MakeTempChannel (0x400) granted to @all on Root, apply_sub=1
+
+Exit code: 0 
