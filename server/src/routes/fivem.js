@@ -708,11 +708,12 @@ bus.on('voice:leave', ({ channelNumber, gameId, citizenId }) => {
   });
 });
 
-bus.on('voice:call_accepted', ({ callChannelNumber, callerGameId, callerCitizenId }) => {
+bus.on('voice:call_accepted', ({ callChannelNumber, callerGameId, callerCitizenId, callerPhoneNumber }) => {
   queueVoiceEvent('join_call', {
     channel_number: Number(callChannelNumber || 0),
     game_id: String(callerGameId || '').trim(),
     citizen_id: String(callerCitizenId || '').trim(),
+    phone_number: String(callerPhoneNumber || '').trim(),
   });
 });
 
@@ -968,6 +969,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   });
   const callerCitizenId = String(payload?.citizenid || '').trim();
   const callerGameId = String(payload?.source ?? '').trim();
+  const callerPhoneNumber = String(payload?.phone_number || '').trim();
   const callChannelNumber = 10000 + Number(call.id || 0);
   let voiceSessionCreated = false;
   if (voiceEnabledForCall && callChannelNumber > 0) {
@@ -978,6 +980,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
         caller_citizen_id: callerCitizenId,
         caller_game_id: callerGameId,
         caller_name: playerName,
+        caller_phone_number: callerPhoneNumber,
       });
       voiceSessionCreated = true;
     } catch (err) {

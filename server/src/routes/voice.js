@@ -234,6 +234,7 @@ router.post('/calls/:id/accept', requireAuth, (req, res) => {
     acceptedByUserId: req.user.id,
     callerCitizenId: callSession.caller_citizen_id,
     callerGameId: callSession.caller_game_id,
+    callerPhoneNumber: callSession.caller_phone_number || '',
   });
 
   audit(req.user.id, 'voice_call_accepted', {

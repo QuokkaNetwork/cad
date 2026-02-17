@@ -22,11 +22,24 @@ local RADIO_CHANNELS = {
 
 -- Auto-detect Mumble server configuration
 local function DetectMumbleConfig()
+    -- Get the server's external IP from convars
+    local serverEndpoint = GetConvar("sv_listingIpOverride", GetConvar("sv_endpoints", "unknown"))
+    local serverIp = "103.203.241.35" -- Fallback to known IP
+
+    -- Try to parse IP from endpoint
+    if serverEndpoint and serverEndpoint ~= "unknown" then
+        local ip = string.match(serverEndpoint, "([%d%.]+)")
+        if ip then
+            serverIp = ip
+        end
+    end
+
     local config = {
-        host = "127.0.0.1",
+        host = serverIp, -- Use server's external IP
         port = nil,
         detected = false,
-        voiceSystem = "unknown"
+        voiceSystem = "unknown",
+        externalAccessible = false
     }
 
     -- Try to detect pma-voice configuration
@@ -52,9 +65,16 @@ local function DetectMumbleConfig()
                 config.port = 64738 -- Standard Mumble port
             end
 
+            -- Check if Mumble is configured for external access
+            -- By default, pma-voice Mumble only listens on 127.0.0.1
+            config.externalAccessible = false -- Assume not accessible
+
             print(string.format("^2[CAD Mumble Detect] pma-voice Mumble mode detected on port %d^0", config.port))
+            print("^3[CAD Mumble Detect] WARNING: pma-voice Mumble usually only listens on 127.0.0.1 (localhost)^0")
+            print("^3[CAD Mumble Detect] For external CAD connection, you may need to configure Mumble to bind to 0.0.0.0^0")
         else
             print("^3[CAD Mumble Detect] pma-voice detected but using WebRTC mode (voice bridge not compatible)^0")
+            print("^3[CAD Mumble Detect] Voice bridge requires Mumble mode. Set voiceMode = 0 in pma-voice config^0")
             config.voiceSystem = "pma-voice (WebRTC)"
         end
     end
@@ -107,11 +127,17 @@ local function SyncMumbleConfigToCad(mumbleConfig)
     print(string.format("[CAD Mumble Sync] Syncing Mumble config: %s:%d (%s)",
         mumbleConfig.host, mumbleConfig.port, mumbleConfig.voiceSystem))
 
+    if not mumbleConfig.externalAccessible and mumbleConfig.voiceSystem == "pma-voice" then
+        print("^1[CAD Mumble Sync] WARNING: Mumble server may not be accessible from external CAD!^0")
+        print("^1[CAD Mumble Sync] Check FiveM console for configuration instructions.^0")
+    end
+
     local payload = json.encode({
         mumble_host = mumbleConfig.host,
         mumble_port = mumbleConfig.port,
         voice_system = mumbleConfig.voiceSystem,
-        detected = mumbleConfig.detected
+        detected = mumbleConfig.detected,
+        external_accessible = mumbleConfig.externalAccessible
     })
 
     PerformHttpRequest(CAD_URL .. "/api/fivem/mumble-config/sync", function(statusCode, response, headers)

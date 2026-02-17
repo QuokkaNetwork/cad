@@ -4,6 +4,7 @@ const config = require('../config');
 const {
   VoiceChannels,
   VoiceParticipants,
+  VoiceCallSessions,
   Users,
   Units,
   Departments,
@@ -12,6 +13,9 @@ const {
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const { handleParticipantJoin, handleParticipantLeave } = require('./voiceBridgeSync');
+
+// Call channel numbers are 10000 + call.id — above this threshold means it's a 000 call
+const CALL_CHANNEL_THRESHOLD = 10000;
 
 function isWsOpen(ws) {
   return Number(ws?.readyState) === 1;
@@ -38,6 +42,11 @@ class VoiceSignalingServer {
 
     this.wss.on('connection', (ws, request, user) => {
       this.handleConnection(ws, request, user);
+    });
+
+    // When a dispatcher accepts a 000 call, auto-join them into the call's Mumble channel
+    bus.on('voice:call_accepted', ({ callChannelNumber, acceptedByUserId, callerName, callerPhoneNumber }) => {
+      this.handleCallAccepted(acceptedByUserId, callChannelNumber, callerName, callerPhoneNumber);
     });
   }
 
@@ -155,14 +164,33 @@ class VoiceSignalingServer {
         throw new Error('Invalid channel number');
       }
 
-      const channel = VoiceChannels.findByChannelNumber(parsedChannelNumber);
-      if (!channel || !channel.is_active) {
-        throw new Error(`Channel ${parsedChannelNumber} not found`);
-      }
-
       const isDispatch = !!(user.is_admin || user.departments.some(d => d.is_dispatch));
       if (!isDispatch) {
         throw new Error('Only dispatchers can join voice channels');
+      }
+
+      // Call channels (10000+) are 000 phone call sessions, not radio channels
+      const isCallChannel = parsedChannelNumber >= CALL_CHANNEL_THRESHOLD;
+
+      let channelName;
+      let channelId = null;
+
+      if (isCallChannel) {
+        const callSession = VoiceCallSessions.findByChannelNumber(parsedChannelNumber);
+        if (!callSession) {
+          throw new Error(`Call channel ${parsedChannelNumber} not found`);
+        }
+        if (callSession.status === 'ended' || callSession.status === 'declined') {
+          throw new Error('This call has already ended');
+        }
+        channelName = `000 Call - ${callSession.caller_name || callSession.caller_phone_number || 'Unknown'}`;
+      } else {
+        const channel = VoiceChannels.findByChannelNumber(parsedChannelNumber);
+        if (!channel || !channel.is_active) {
+          throw new Error(`Channel ${parsedChannelNumber} not found`);
+        }
+        channelName = channel.name;
+        channelId = channel.id;
       }
 
       await this.voiceBridge.connectDispatcherToMumble(user.id, user.steam_name);
@@ -180,38 +208,41 @@ class VoiceSignalingServer {
         }));
       });
 
-      const unit = Units.findByUserId(user.id);
-      const existingParticipant = VoiceParticipants.findByUserAndChannel(user.id, channel.id);
-      if (!existingParticipant) {
-        VoiceParticipants.add({
-          channel_id: channel.id,
-          user_id: user.id,
-          unit_id: unit?.id || null,
-          citizen_id: '',
-          game_id: '',
+      if (!isCallChannel && channelId) {
+        const unit = Units.findByUserId(user.id);
+        const existingParticipant = VoiceParticipants.findByUserAndChannel(user.id, channelId);
+        if (!existingParticipant) {
+          VoiceParticipants.add({
+            channel_id: channelId,
+            user_id: user.id,
+            unit_id: unit?.id || null,
+            citizen_id: '',
+            game_id: '',
+          });
+        }
+
+        bus.emit('voice:join', {
+          channelId,
+          channelNumber: parsedChannelNumber,
+          userId: user.id,
+          unitId: unit?.id || null,
         });
+
+        handleParticipantJoin(parsedChannelNumber);
       }
-
-      bus.emit('voice:join', {
-        channelId: channel.id,
-        channelNumber: parsedChannelNumber,
-        userId: user.id,
-        unitId: unit?.id || null,
-      });
-
-      // Update voice bridge routing
-      handleParticipantJoin(parsedChannelNumber);
 
       audit(user.id, 'voice_bridge_joined_channel', {
         channelNumber: parsedChannelNumber,
-        channelName: channel.name,
+        channelName,
+        isCallChannel,
       });
 
       if (isWsOpen(ws)) {
         ws.send(JSON.stringify({
           type: 'channel-joined',
           channelNumber: parsedChannelNumber,
-          channelName: channel.name,
+          channelName,
+          isCallChannel,
         }));
       }
     } catch (error) {
@@ -226,22 +257,30 @@ class VoiceSignalingServer {
       this.voiceBridge.removeAudioListeners(user.id);
 
       if (channelInfo?.channelNumber) {
-        const channel = VoiceChannels.findByChannelNumber(Number(channelInfo.channelNumber));
-        if (channel) {
-          VoiceParticipants.removeByUser(user.id, channel.id);
-          bus.emit('voice:leave', {
-            channelId: channel.id,
-            channelNumber: Number(channelInfo.channelNumber),
-            userId: user.id,
-          });
+        const chNum = Number(channelInfo.channelNumber);
+        const isCallChannel = chNum >= CALL_CHANNEL_THRESHOLD;
 
-          // Update voice bridge routing
-          handleParticipantLeave(Number(channelInfo.channelNumber));
-
+        if (isCallChannel) {
           audit(user.id, 'voice_bridge_left_channel', {
-            channelNumber: Number(channelInfo.channelNumber),
-            channelName: channel.name,
+            channelNumber: chNum,
+            channelName: channelInfo.channelName || `Call ${chNum}`,
+            isCallChannel: true,
           });
+        } else {
+          const channel = VoiceChannels.findByChannelNumber(chNum);
+          if (channel) {
+            VoiceParticipants.removeByUser(user.id, channel.id);
+            bus.emit('voice:leave', {
+              channelId: channel.id,
+              channelNumber: chNum,
+              userId: user.id,
+            });
+            handleParticipantLeave(chNum);
+            audit(user.id, 'voice_bridge_left_channel', {
+              channelNumber: chNum,
+              channelName: channel.name,
+            });
+          }
         }
       }
 
@@ -265,6 +304,53 @@ class VoiceSignalingServer {
     }
     this.connections.delete(user.id);
     audit(user.id, 'voice_bridge_disconnected', {});
+  }
+
+  // Auto-join dispatcher into the call's Mumble channel when they accept a 000 call.
+  // The dispatcher must already have a WebSocket connection open (i.e. be in the CAD voice tab).
+  async handleCallAccepted(userId, callChannelNumber, callerName, callerPhoneNumber) {
+    const conn = this.connections.get(userId);
+    if (!conn || !isWsOpen(conn.ws)) return; // dispatcher not connected to voice tab
+
+    const chNum = Number(callChannelNumber || 0);
+    if (!chNum || chNum < CALL_CHANNEL_THRESHOLD) return;
+
+    try {
+      await this.voiceBridge.connectDispatcherToMumble(userId, conn.user.steam_name);
+      await this.voiceBridge.joinChannel(userId, chNum);
+
+      this.voiceBridge.removeAudioListeners(userId);
+      this.voiceBridge.addAudioListener(userId, ({ pcm, sampleRate, channels, bitsPerSample }) => {
+        if (!isWsOpen(conn.ws)) return;
+        conn.ws.send(JSON.stringify({
+          type: 'mumble-audio',
+          sampleRate,
+          channels,
+          bitsPerSample,
+          data: Buffer.from(pcm).toString('base64'),
+        }));
+      });
+
+      const channelName = `000 Call - ${callerName || callerPhoneNumber || 'Unknown'}`;
+      audit(userId, 'voice_bridge_joined_call_channel', { channelNumber: chNum, channelName });
+
+      if (isWsOpen(conn.ws)) {
+        conn.ws.send(JSON.stringify({
+          type: 'channel-joined',
+          channelNumber: chNum,
+          channelName,
+          isCallChannel: true,
+        }));
+      }
+    } catch (err) {
+      console.warn('[VoiceSignaling] Failed to auto-join dispatcher into call channel:', err?.message || err);
+      if (isWsOpen(conn.ws)) {
+        conn.ws.send(JSON.stringify({
+          type: 'error',
+          error: `Could not connect to call audio: ${err?.message || 'Unknown error'}`,
+        }));
+      }
+    }
   }
 
   sendError(ws, message) {

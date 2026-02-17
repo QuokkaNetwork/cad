@@ -16,6 +16,7 @@ const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
 const { ensureLiveMapTilesDir } = require('./services/liveMapTiles');
+const { startMumbleServer } = require('./services/mumbleServer');
 
 // Initialize database
 console.log('Initializing database...');
@@ -142,50 +143,50 @@ app.use((err, req, res, next) => {
 // Create HTTP server for Express + WebSocket
 const httpServer = http.createServer(app);
 
-// Initialize Voice Bridge (optional - only if dependencies are installed)
-let voiceBridge = null;
-let voiceSignaling = null;
+// Async startup — start Murmur first so the voice bridge can connect to it
+(async () => {
+  // Start managed Murmur server if MUMBLE_MANAGE=true in .env
+  await startMumbleServer();
 
-try {
-  const { getVoiceBridge } = require('./services/voiceBridge');
-  const VoiceSignalingServer = require('./services/voiceSignaling');
-  const { initVoiceBridgeSync } = require('./services/voiceBridgeSync');
+  // Initialize Voice Bridge (optional - only if dependencies are installed)
+  try {
+    const { getVoiceBridge } = require('./services/voiceBridge');
+    const VoiceSignalingServer = require('./services/voiceSignaling');
+    const { initVoiceBridgeSync } = require('./services/voiceBridgeSync');
 
-  voiceBridge = getVoiceBridge();
-  if (voiceBridge?.getStatus?.().available) {
-    voiceSignaling = new VoiceSignalingServer(httpServer, voiceBridge);
-    initVoiceBridgeSync(voiceBridge);
-    console.log('[VoiceBridge] Voice bridge initialized successfully');
-  } else {
-    const missing = voiceBridge?.getStatus?.().dependency_missing || 'unknown';
-    console.warn(`[VoiceBridge] Voice bridge not available: missing ${missing}`);
-    console.warn('[VoiceBridge] Install dependencies in server workspace: npm install mumble-node opusscript ws');
+    const voiceBridge = getVoiceBridge();
+    if (voiceBridge?.getStatus?.().available) {
+      new VoiceSignalingServer(httpServer, voiceBridge);
+      initVoiceBridgeSync(voiceBridge);
+      console.log('[VoiceBridge] Voice bridge initialized successfully');
+    } else {
+      const missing = voiceBridge?.getStatus?.().dependency_missing || 'unknown';
+      console.warn(`[VoiceBridge] Voice bridge not available: missing ${missing}`);
+      console.warn('[VoiceBridge] Install dependencies: npm install --workspace=server mumble-node opusscript');
+    }
+  } catch (error) {
+    console.warn('[VoiceBridge] Voice bridge not available:', error.message);
+    console.warn('[VoiceBridge] CAD will run without voice bridge support');
   }
-} catch (error) {
-  console.warn('[VoiceBridge] Voice bridge not available:', error.message);
-  console.warn('[VoiceBridge] Install dependencies in server workspace: npm install mumble-node opusscript ws');
-  console.warn('[VoiceBridge] CAD will run without voice bridge support');
-}
 
-// Start server
-httpServer.listen(config.port, () => {
-  console.log(`CAD server running on port ${config.port}`);
-  console.log(`Environment: ${config.nodeEnv}`);
-  if (voiceBridge) {
+  // Start HTTP server
+  httpServer.listen(config.port, () => {
+    console.log(`CAD server running on port ${config.port}`);
+    console.log(`Environment: ${config.nodeEnv}`);
     console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
-  }
-});
+  });
 
-// Start Discord bot
-startBot().then(client => {
-  if (client) console.log('Discord bot started');
-}).catch(err => {
-  console.error('Discord bot failed to start:', err.message);
-});
+  // Start Discord bot
+  startBot().then(client => {
+    if (client) console.log('Discord bot started');
+  }).catch(err => {
+    console.error('Discord bot failed to start:', err.message);
+  });
 
-startAutoUpdater().catch(err => {
-  console.error('Auto updater failed to start:', err.message);
-});
+  startAutoUpdater().catch(err => {
+    console.error('Auto updater failed to start:', err.message);
+  });
 
-startFiveMResourceAutoSync();
-startFineProcessor();
+  startFiveMResourceAutoSync();
+  startFineProcessor();
+})();

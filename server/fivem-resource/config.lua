@@ -12,6 +12,10 @@ Config.FinePollIntervalMs = tonumber(GetConvar('cad_bridge_fine_poll_ms', '7000'
 Config.JobSyncPollIntervalMs = tonumber(GetConvar('cad_bridge_job_sync_poll_ms', '5000')) or 5000
 Config.RoutePollIntervalMs = tonumber(GetConvar('cad_bridge_route_poll_ms', '4000')) or 4000
 
+-- Voice event poll interval (milliseconds)
+-- How often the bridge polls CAD for pending voice join/leave events (radio and calls).
+Config.VoicePollIntervalMs = tonumber(GetConvar('cad_bridge_voice_poll_ms', '1000')) or 1000
+
 -- If true, publish all online players.
 -- If false, only players with steam/discord/license identifiers are published.
 Config.PublishAllPlayers = GetConvar('cad_bridge_publish_all_players', 'true') == 'true'

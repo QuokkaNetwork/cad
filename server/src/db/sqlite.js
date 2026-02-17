@@ -1489,6 +1489,18 @@ const VoiceCallSessions = {
       WHERE vcs.call_id = ?
     `).get(callId);
   },
+  findByChannelNumber(channelNumber) {
+    return db.prepare(`
+      SELECT vcs.*,
+             c.title as call_title,
+             c.location as call_location,
+             u.steam_name as accepted_by_name
+      FROM voice_call_sessions vcs
+      JOIN calls c ON c.id = vcs.call_id
+      LEFT JOIN users u ON u.id = vcs.accepted_by_user_id
+      WHERE vcs.call_channel_number = ?
+    `).get(channelNumber);
+  },
   findById(id) {
     return db.prepare(`
       SELECT vcs.*,
@@ -1527,11 +1539,11 @@ const VoiceCallSessions = {
       ORDER BY vcs.accepted_at DESC
     `).all();
   },
-  create({ call_id, call_channel_number, caller_citizen_id, caller_game_id, caller_name }) {
+  create({ call_id, call_channel_number, caller_citizen_id, caller_game_id, caller_name, caller_phone_number }) {
     const info = db.prepare(`
-      INSERT INTO voice_call_sessions (call_id, call_channel_number, caller_citizen_id, caller_game_id, caller_name, status)
-      VALUES (?, ?, ?, ?, ?, 'pending')
-    `).run(call_id, call_channel_number, caller_citizen_id || '', caller_game_id || '', caller_name || '');
+      INSERT INTO voice_call_sessions (call_id, call_channel_number, caller_citizen_id, caller_game_id, caller_name, caller_phone_number, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending')
+    `).run(call_id, call_channel_number, caller_citizen_id || '', caller_game_id || '', caller_name || '', caller_phone_number || '');
     return this.findById(info.lastInsertRowid);
   },
   accept(id, userId) {
