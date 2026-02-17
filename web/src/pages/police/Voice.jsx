@@ -24,6 +24,7 @@ export default function Voice() {
   const [error, setError] = useState(null);
   const [selectedCall, setSelectedCall] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showAllChannels, setShowAllChannels] = useState(false);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
@@ -326,11 +327,23 @@ export default function Voice() {
       <div className="flex gap-4 flex-1 min-h-0">
         {/* Radio Channels */}
         <div className="flex-1 overflow-y-auto">
-          <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-3">
-            Radio Channels ({channels.length})
-          </h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">
+              Radio Channels ({showAllChannels ? channels.length : channels.filter(c => c.participant_count > 0).length} {!showAllChannels && 'active'})
+            </h3>
+            <button
+              onClick={() => setShowAllChannels(v => !v)}
+              className="text-xs text-cad-muted hover:text-cad-accent transition-colors"
+            >
+              {showAllChannels ? 'Show active only' : 'Show all'}
+            </button>
+          </div>
           <div className="space-y-3">
-            {channels.length > 0 ? channels.map(channel => {
+            {(() => {
+              const visibleChannels = showAllChannels
+                ? channels
+                : channels.filter(c => c.participant_count > 0 || currentChannel === c.channel_number);
+              return visibleChannels.length > 0 ? visibleChannels.map(channel => {
               const isInChannel = currentChannel === channel.channel_number;
               return (
                 <div
@@ -397,22 +410,38 @@ export default function Voice() {
                   </div>
                 </div>
               );
-            }) : (
-              <div className="text-center py-12">
-                <div className="bg-cad-surface rounded-lg border border-cad-border p-6 max-w-md mx-auto">
-                  <svg className="w-12 h-12 text-cad-muted mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
-                  </svg>
-                  <p className="text-cad-muted font-medium mb-2">No radio channels available</p>
-                  <p className="text-xs text-cad-muted mb-3">
-                    Voice channels need to be created by an administrator before you can use the radio.
-                  </p>
-                  <p className="text-xs text-cad-accent">
-                    Admin → System Settings → Voice Channels
-                  </p>
+              }) : (
+                <div className="text-center py-12">
+                  <div className="bg-cad-surface rounded-lg border border-cad-border p-6 max-w-md mx-auto">
+                    <svg className="w-12 h-12 text-cad-muted mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+                    </svg>
+                    {showAllChannels ? (
+                      <>
+                        <p className="text-cad-muted font-medium mb-2">No radio channels configured</p>
+                        <p className="text-xs text-cad-muted mb-3">
+                          Voice channels need to be created by an administrator.
+                        </p>
+                        <p className="text-xs text-cad-accent">Admin → System Settings → Voice Channels</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-cad-muted font-medium mb-2">No active channels</p>
+                        <p className="text-xs text-cad-muted mb-3">
+                          No in-game units are currently on any radio channel.
+                        </p>
+                        <button
+                          onClick={() => setShowAllChannels(true)}
+                          className="text-xs text-cad-accent hover:underline"
+                        >
+                          Show all channels
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
 

@@ -85,6 +85,10 @@ function buildIniContent() {
     'timeout=30',
     'sslCert=',
     'sslKey=',
+    // Force Opus codec for all clients (pma-voice uses Opus only)
+    'opusthreshold=0',
+    // Don't remember last channel — pma-voice manages channel placement
+    'rememberchannel=false',
   ].filter(line => line !== '');
 
   return lines.join('\n') + '\n';
