@@ -625,3 +625,32 @@ CreateThread(function()
     end
   end
 end)
+
+-- ============================================================================
+-- mm_radio channel member sync
+-- The server cannot call mm_radio:server:addToRadioChannel directly because
+-- FiveM net events use the *calling client's* source — a server-to-server
+-- TriggerEvent would have source = 0. Instead the server sends this client
+-- event so the player's own client triggers the mm_radio server event, giving
+-- mm_radio the correct source for its channels{} table tracking.
+-- ============================================================================
+local cadBridgeCurrentMmRadioChannel = nil -- track for leave cleanup
+
+RegisterNetEvent('cad_bridge:syncMmRadio', function(channelNumber, playerName)
+  if GetResourceState('mm_radio') ~= 'started' then return end
+  local ch = tonumber(channelNumber) or 0
+  if ch > 0 then
+    -- Leave old channel first so mm_radio's list stays clean
+    if cadBridgeCurrentMmRadioChannel and cadBridgeCurrentMmRadioChannel ~= ch then
+      TriggerServerEvent('mm_radio:server:removeFromRadioChannel', cadBridgeCurrentMmRadioChannel)
+    end
+    cadBridgeCurrentMmRadioChannel = ch
+    TriggerServerEvent('mm_radio:server:addToRadioChannel', ch, tostring(playerName or ''))
+  else
+    -- channel 0 means leave radio entirely
+    if cadBridgeCurrentMmRadioChannel then
+      TriggerServerEvent('mm_radio:server:removeFromRadioChannel', cadBridgeCurrentMmRadioChannel)
+      cadBridgeCurrentMmRadioChannel = nil
+    end
+  end
+end)

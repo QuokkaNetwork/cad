@@ -991,6 +991,18 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   }
 
   bus.emit('call:create', { departmentId, call });
+
+  // Notify all connected CAD clients that a 000 emergency call just came in
+  // so dispatchers see it immediately without having to manually refresh.
+  bus.emit('voice:call_incoming', {
+    callId: call.id,
+    callChannelNumber,
+    callerName: playerName,
+    callerPhoneNumber,
+    voiceSessionCreated,
+    departmentId,
+  });
+
   audit(cadUser?.id || null, 'fivem_000_call_created', {
     callId: call.id,
     departmentId,

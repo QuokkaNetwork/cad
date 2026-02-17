@@ -72,7 +72,7 @@ router.get('/', (req, res) => {
     'unit:online', 'unit:offline', 'unit:update',
     'call:create', 'call:update', 'call:close', 'call:assign', 'call:unassign',
     'bolo:create', 'bolo:resolve', 'bolo:cancel',
-    'voice:join', 'voice:leave', 'voice:call_accepted', 'voice:call_declined', 'voice:call_ended',
+    'voice:join', 'voice:leave', 'voice:call_incoming', 'voice:call_accepted', 'voice:call_declined', 'voice:call_ended',
     'announcement:new', 'sync:department',
   ];
 

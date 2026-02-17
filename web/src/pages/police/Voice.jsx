@@ -79,6 +79,8 @@ export default function Voice() {
   useEventSource({
     'voice:join': () => fetchData(),
     'voice:leave': () => fetchData(),
+    // Refresh when a new 000 call comes in so dispatchers see it immediately
+    'voice:call_incoming': () => fetchData(),
     'voice:call_accepted': () => fetchData(),
     'voice:call_declined': () => fetchData(),
     'voice:call_ended': () => fetchData(),

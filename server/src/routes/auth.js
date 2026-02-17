@@ -26,15 +26,38 @@ function authCookieOptions() {
 router.get('/steam', passport.authenticate('steam', { session: false }));
 
 // Steam callback
+// Steam redirects the browser to the HTTP bridge port (3031) since self-signed
+// HTTPS certs cause ERR_EMPTY_RESPONSE. After verifying the OpenID assertion here,
+// we redirect to the HTTPS SPA (WEB_URL, port 3030) passing the JWT as a query
+// param so AuthCallback can POST it back to the HTTPS origin to set the cookie.
 router.get('/steam/callback',
   passport.authenticate('steam', { session: false, failureRedirect: `${config.webUrl}/login?error=steam_failed` }),
   (req, res) => {
     const token = generateToken(req.user);
-    res.cookie(config.auth.cookieName, token, authCookieOptions());
     audit(req.user.id, 'login', 'Steam login');
-    res.redirect(`${config.webUrl}/auth/callback`);
+    // Pass token in URL so the HTTPS SPA can set the cookie on its own origin.
+    res.redirect(`${config.webUrl}/auth/callback?token=${encodeURIComponent(token)}`);
   }
 );
+
+// Called by AuthCallback on the HTTPS origin to exchange the URL token for a cookie.
+// This sets the httpOnly cookie on the correct origin (HTTPS port 3030).
+router.post('/set-cookie', (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  if (!token) return res.status(400).json({ error: 'Token required' });
+  const { verifyToken } = require('../auth/jwt');
+  let decoded;
+  try {
+    decoded = verifyToken(token);
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  const { Users } = require('../db/sqlite');
+  const user = Users.findById(decoded.userId);
+  if (!user || user.is_banned) return res.status(403).json({ error: 'Forbidden' });
+  res.cookie(config.auth.cookieName, token, authCookieOptions());
+  res.json({ ok: true });
+});
 
 // Get current user profile
 router.get('/me', requireAuth, (req, res) => {

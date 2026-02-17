@@ -42,8 +42,26 @@ app.use((_req, res, next) => {
   res.setHeader('Permissions-Policy', 'microphone=(self)');
   next();
 });
+// Allow both the HTTP (port 3031) and HTTPS (port 3030) origins so users can
+// access the CAD from either URL without CORS errors.
+const allowedOrigins = new Set([config.webUrl]);
+// Also accept the HTTPS variant on 3030 (for microphone access / dispatcher voice)
+try {
+  const httpUrl  = new URL(config.webUrl);
+  const httpsUrl = new URL(config.webUrl);
+  httpsUrl.protocol = 'https:';
+  httpsUrl.port = process.env.PORT || '3030';
+  httpUrl.protocol  = 'http:';
+  httpUrl.port = process.env.BRIDGE_HTTP_PORT || '3031';
+  allowedOrigins.add(httpsUrl.toString().replace(/\/$/, ''));
+  allowedOrigins.add(httpUrl.toString().replace(/\/$/, ''));
+} catch {}
 app.use(cors({
-  origin: config.webUrl,
+  origin: (origin, cb) => {
+    // No origin = same-origin / server-to-server — always allow
+    if (!origin || allowedOrigins.has(origin)) return cb(null, true);
+    cb(null, false);
+  },
   credentials: true,
 }));
 app.use(express.json());
@@ -240,19 +258,23 @@ if (serverProtocol === 'http') {
   console.warn('[TLS] Running over plain HTTP. Set TLS_CERT and TLS_KEY in .env for HTTPS (required for microphone).');
 }
 
-// Secondary plain-HTTP server for the FiveM bridge.
-// FiveM's PerformHttpRequest cannot verify self-signed TLS certs, so the
-// bridge resource must use http:// — but the primary server is HTTPS.
-// We bind a lightweight HTTP listener on BRIDGE_HTTP_PORT (default 3031,
-// localhost only) so FiveM can reach /api/integration/fivem/* without TLS.
-// In server.cfg: set cad_bridge_base_url "http://127.0.0.1:3031"
+// Secondary plain-HTTP server on BRIDGE_HTTP_PORT (default 3031).
+// Serves two purposes:
+//   1. FiveM bridge — PerformHttpRequest cannot verify self-signed TLS certs,
+//      so the bridge resource must reach the CAD over plain HTTP.
+//      In voice.cfg: set cad_bridge_base_url "http://127.0.0.1:3031"
+//   2. Steam OpenID callback — Steam redirects the browser back to returnURL.
+//      If returnURL is HTTPS with a self-signed cert, the browser blocks it.
+//      Set STEAM_REALM=http://103.203.241.35:3031 in .env so the callback
+//      arrives over plain HTTP (no cert warning, no ERR_EMPTY_RESPONSE).
+// Binds to 0.0.0.0 so both FiveM (localhost) and browsers (public IP) can reach it.
 const bridgeHttpPort = parseInt(process.env.BRIDGE_HTTP_PORT || '3031', 10) || 3031;
 const bridgeHttpServer = http.createServer(app);
-bridgeHttpServer.listen(bridgeHttpPort, '127.0.0.1', () => {
-  console.log(`[BridgeHTTP] FiveM bridge HTTP listener on http://127.0.0.1:${bridgeHttpPort} (internal only)`);
+bridgeHttpServer.listen(bridgeHttpPort, '0.0.0.0', () => {
+  console.log(`[BridgeHTTP] HTTP listener on 0.0.0.0:${bridgeHttpPort} (FiveM bridge + Steam callbacks)`);
 });
 bridgeHttpServer.on('error', (err) => {
-  console.warn(`[BridgeHTTP] Could not start bridge HTTP listener on port ${bridgeHttpPort}: ${err.message}`);
+  console.warn(`[BridgeHTTP] Could not start HTTP listener on port ${bridgeHttpPort}: ${err.message}`);
 });
 
 // Async startup — start Murmur first so the voice bridge can connect to it

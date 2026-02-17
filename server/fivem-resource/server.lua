@@ -573,15 +573,15 @@ local function handleNpwdEmergencyCall(emergencyNumber, callRequest)
   local incomingCaller = type(requestObj.incomingCaller) == 'table' and requestObj.incomingCaller or {}
   local src = tonumber(incomingCaller.source) or 0
 
-  -- Allow NPWD to continue its own default call flow so this hook is non-blocking.
+  -- Intercept the NPWD call completely — do NOT call requestObj.next().
+  -- Calling next() would let NPWD try to route the call as a regular phone-to-phone
+  -- call (which fails since "000" isn't a real phone number), causing the caller to
+  -- hear NPWD ringing/busy tones instead of being connected via the CAD voice bridge.
+  -- We use requestObj.reply() to give the caller a status message in the NPWD UI,
+  -- then handle the voice session entirely through the CAD.
   if type(requestObj.reply) == 'function' then
     pcall(function()
-      requestObj.reply('Connecting emergency dispatch...')
-    end)
-  end
-  if type(requestObj.next) == 'function' then
-    pcall(function()
-      requestObj.next()
+      requestObj.reply('Connecting to emergency dispatch...')
     end)
   end
 
@@ -1602,6 +1602,22 @@ local function setPlayerToRadioChannel(source, channelNumber)
 
   if not success then
     return false, 'pma-voice setPlayerRadio failed: ' .. tostring(err)
+  end
+
+  -- Keep mm_radio's server-side channel member list in sync.
+  -- mm_radio tracks members in its own channels{} table via the net events
+  -- mm_radio:server:addToRadioChannel / removeFromRadioChannel, which use
+  -- the FiveM `source` variable set by the calling client.
+  -- We cannot call those net events server-to-server (source would be wrong),
+  -- so we tell the player's own client to call them on its behalf via
+  -- cad_bridge:syncMmRadio — the client handler then TriggerServerEvent's
+  -- mm_radio with the correct source automatically.
+  if isMmRadioAvailable() then
+    pcall(function()
+      local ch = tonumber(channelNumber) or 0
+      local playerName = GetPlayerName(source) or ('Player ' .. tostring(source))
+      TriggerClientEvent('cad_bridge:syncMmRadio', source, ch, playerName)
+    end)
   end
 
   return true, nil

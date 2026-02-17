@@ -8,11 +8,29 @@ export default function AuthCallback() {
 
   useEffect(() => {
     clearToken();
+
     const error = searchParams.get('error');
     if (error) {
       navigate(`/login?error=${encodeURIComponent(error)}`, { replace: true });
       return;
     }
+
+    // Steam auth callback on port 3031 passes the JWT as ?token= so we can
+    // set the httpOnly cookie on this origin (the HTTPS SPA, port 3030).
+    const token = searchParams.get('token');
+    if (token) {
+      fetch('/api/auth/set-cookie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token }),
+      })
+        .then(() => navigate('/home', { replace: true }))
+        .catch(() => navigate('/login?error=auth_failed', { replace: true }));
+      return;
+    }
+
+    // No token in URL — already on the right origin, cookie was set server-side.
     navigate('/home', { replace: true });
   }, [searchParams, navigate]);
 
