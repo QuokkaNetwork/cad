@@ -348,9 +348,9 @@ class VoiceBridgeServer {
 
     client.moveToChannel(Number(rootChannel.channelId || 0));
 
-    // Set voice target 1 = whisper to root channel so dispatcher audio reaches
-    // all in-game pma-voice players (who all sit in the root channel).
-    this.setupRootChannelWhisper(client);
+    // Clear any stale whisper targets; per-member targets are set dynamically
+    // in refreshDispatcherWhisperTargets() each time the dispatcher transmits.
+    this.dispatcherWhisperTargets.delete(dispatcherId);
 
     this.activeChannels.set(dispatcherId, {
       channelNumber: Number.isInteger(numericChannel) && numericChannel > 0 ? numericChannel : null,
@@ -400,48 +400,72 @@ class VoiceBridgeServer {
   }
 
   /**
-   * Set up voice target 1 to whisper to the Mumble root channel (channel ID 0).
+   * Refresh per-dispatcher voice whisper targets.
    *
-   * Architecture note:
-   * pma-voice keeps ALL in-game players in the Mumble root channel and uses
-   * Mumble voice targets purely for radio/proximity isolation between players.
-   * The dispatcher bridge client is also in root. Whispering to channel 0 (root)
-   * means all in-game players connected via pma-voice will receive dispatcher audio.
-   * Their own pma-voice whisper targets (managed by the FiveM resource) handle
-   * which players hear each other — the dispatcher just needs to reach the channel.
+   * pma-voice architecture (key insight):
+   *   - Each FiveM player's Mumble channel = their server source ID.
+   *     `MumbleSetVoiceChannel(playerServerId)` puts them in that channel.
+   *   - Radio routing uses `MumbleAddVoiceTargetChannel(voiceTarget, serverId)`
+   *     where serverId is another player's FiveM source — used as a channel ID.
+   *   - Therefore: to whisper to a player, we call
+   *     `setVoiceTarget(targetId, sourceId, {links:false, children:false})`
+   *     where sourceId is that player's FiveM server source number.
    *
-   * mumble-node API: setVoiceTarget(targetId, channelId, {links, children})
-   * targetId 1-30 are whisper targets; 0 = normal talk.
-   * We use target 1 = root channel whisper for all dispatcher transmissions.
+   * mumble-node API: setVoiceTarget(targetId, channelId, opts)
+   *   targetId 1-30 = whisper targets; 0 = normal talk (everyone in same channel).
+   *   channelId = the Mumble channel to whisper to.
+   *   For pma-voice, channelId == FiveM source number of the target player.
+   *
+   * We set one target slot per route member (up to MAX_WHISPER_TARGETS).
+   * Targets are re-used across frames if the member list hasn't changed
+   * (checked via a cheap string signature comparison).
    */
-  setupRootChannelWhisper(client) {
-    if (!client || !client.isReady) return false;
-    try {
-      // Voice target 1 = whisper to root channel (ID 0), no links, no children
-      client.setVoiceTarget(1, 0, { links: false, children: false });
-      console.log('[VoiceBridge] Voice target 1 set to root channel (ID 0)');
-      return true;
-    } catch (err) {
-      console.warn('[VoiceBridge] Could not set root channel whisper target:', err?.message || err);
-      return false;
-    }
-  }
-
-  // Legacy: kept for signature compatibility but no longer does session-ID lookup.
-  // All dispatcher audio goes through voice target 1 (root channel whisper).
   refreshDispatcherWhisperTargets(dispatcherId) {
-    return [{ targetId: 1 }];
+    const client = this.mumbleClients.get(dispatcherId);
+    if (!client || !client.isReady) return [];
+
+    const members = this.getRouteMembersForDispatcher(dispatcherId)
+      .map(m => normalizePositiveInt(m))
+      .filter(id => id > 0)
+      .slice(0, MAX_WHISPER_TARGETS);
+
+    const active = this.activeChannels.get(dispatcherId);
+    const channelNumber = normalizePositiveInt(active?.channelNumber);
+    const signature = `${channelNumber}:${members.join(',')}`;
+
+    const existing = this.dispatcherWhisperTargets.get(dispatcherId);
+    if (existing && existing.signature === signature) return existing.targets;
+
+    const targets = [];
+    for (let i = 0; i < members.length; i++) {
+      const sourceId = members[i]; // FiveM source ID == pma-voice Mumble channel for that player
+      const targetId = i + 1;
+      try {
+        client.setVoiceTarget(targetId, sourceId, { links: false, children: false });
+        targets.push({ targetId, sourceId });
+      } catch (err) {
+        console.warn(`[VoiceBridge] setVoiceTarget(${targetId}, src${sourceId}) failed:`, err?.message || err);
+      }
+    }
+
+    if (targets.length > 0) {
+      console.log(
+        `[VoiceBridge] Dispatcher ${dispatcherId} → ${targets.length} radio targets: ` +
+        targets.map(t => `src${t.sourceId}(slot${t.targetId})`).join(', ')
+      );
+    }
+
+    this.dispatcherWhisperTargets.set(dispatcherId, { signature, targets });
+    return targets;
   }
 
   sendAudioToDispatcherTargets(dispatcherId, client, opusData, isLastFrame = false) {
-    // Always send on voice target 1 (root channel whisper set in joinChannel).
-    // Target 0 = normal talk (heard only by channel members without whisper override).
-    // Target 1 = our whisper to root channel = all pma-voice in-game players.
-    try {
-      client.sendAudio(Buffer.from(opusData), isLastFrame, 1);
-      return true;
-    } catch {
-      // Fall back to normal talk (target 0) if whisper send fails.
+    const targets = this.refreshDispatcherWhisperTargets(dispatcherId);
+
+    // No route members known yet → fall back to normal talk (target 0).
+    // In pma-voice everyone in the same channel hears normal talk, so this
+    // acts as an unfiltered broadcast until the routing table is populated.
+    if (!targets || targets.length === 0) {
       try {
         client.sendAudio(Buffer.from(opusData), isLastFrame, 0);
         return true;
@@ -449,6 +473,19 @@ class VoiceBridgeServer {
         return false;
       }
     }
+
+    // Send one audio packet per whisper-target slot.
+    // Each slot is configured to reach exactly one in-game player's channel.
+    let sent = false;
+    for (const target of targets) {
+      try {
+        client.sendAudio(Buffer.from(opusData), isLastFrame, Number(target.targetId));
+        sent = true;
+      } catch {
+        // Continue trying remaining targets even if one fails.
+      }
+    }
+    return sent;
   }
 
   sendTerminatorFrame(dispatcherId) {
