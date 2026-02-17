@@ -61,7 +61,7 @@ function getIniPath() {
   return path.join(__dirname, '../../data/murmur.ini');
 }
 
-function buildIniContent() {
+function buildIniContent(bindHost = '0.0.0.0') {
   const port = getMumblePort();
   const password = getMumblePassword();
   const dataDir = path.join(__dirname, '../../data');
@@ -70,7 +70,7 @@ function buildIniContent() {
 
   const lines = [
     '[murmur]',
-    'host=0.0.0.0',
+    `host=${bindHost}`,
     `port=${port}`,
     `database=${dbPath}`,
     `logfile=${logPath}`,
@@ -99,12 +99,12 @@ function ensureDataDir() {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 }
 
-function ensureIniFile() {
+function ensureIniFile(bindHost = '0.0.0.0') {
   ensureDataDir();
   const iniPath = getIniPath();
   const dir = path.dirname(iniPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(iniPath, buildIniContent(), 'utf8');
+  fs.writeFileSync(iniPath, buildIniContent(bindHost), 'utf8');
   return iniPath;
 }
 
@@ -130,13 +130,13 @@ function findMurmurBinary() {
   return null;
 }
 
-function spawnMurmur() {
+function spawnMurmur(bindHost = '0.0.0.0') {
   if (shuttingDown) return;
 
   const binary = findMurmurBinary();
   if (!binary) return;
 
-  const iniPath = ensureIniFile();
+  const iniPath = ensureIniFile(bindHost);
   // -fg keeps Murmur in the foreground so we can capture stdout/stderr
   const args = IS_WINDOWS
     ? ['-ini', iniPath]      // murmur.exe on Windows doesn't support -fg but runs in foreground by default
@@ -292,7 +292,11 @@ function stopMurmur() {
 /**
  * Start the managed Mumble server.
  * Called from index.js before the voice bridge initializes.
- * Resolves once Murmur has had time to bind its port.
+ *
+ * Strategy:
+ *  - If mumble-server.sqlite already exists and ACL is patched → start normally (fast path)
+ *  - If DB is missing → first boot: start Murmur on 127.0.0.1 only so no external
+ *    players can connect, wait for schema to initialize, stop, patch ACL, restart on 0.0.0.0
  */
 async function startMumbleServer() {
   if (!isManagedEnabled()) {
@@ -300,12 +304,33 @@ async function startMumbleServer() {
     return;
   }
 
-  spawnMurmur();
-
-  // Poll until Murmur has created and fully initialized its SQLite database
-  // (the file appears quickly, but the ACL table takes a moment longer)
   const dbPath = path.join(__dirname, '../../data/mumble-server.sqlite');
-  console.log('[MumbleServer] Waiting for Murmur to initialize its database...');
+
+  // Fast path: DB exists — check if already patched, then start normally
+  if (fs.existsSync(dbPath)) {
+    console.log('[MumbleServer] Existing DB found — checking ACL...');
+    const alreadyPatched = isAclPatched(dbPath);
+    if (alreadyPatched) {
+      console.log('[MumbleServer] ACL already correct — starting Murmur normally');
+      spawnMurmur('0.0.0.0');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log('[MumbleServer] Murmur running with proximity voice ACLs');
+      return;
+    }
+    // DB exists but not patched — patch it now (Murmur not running, safe to write)
+    console.log('[MumbleServer] Patching existing DB...');
+    patchMurmurAcl();
+    spawnMurmur('0.0.0.0');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
+    return;
+  }
+
+  // First boot: start on localhost only so no players connect during init
+  console.log('[MumbleServer] First boot — starting Murmur on 127.0.0.1 to initialize DB...');
+  spawnMurmur('127.0.0.1');
+
+  // Poll until ACL table exists in the DB
   const deadline = Date.now() + 20000;
   let dbReady = false;
   while (Date.now() < deadline) {
@@ -323,39 +348,50 @@ async function startMumbleServer() {
   }
 
   if (!dbReady) {
-    console.warn('[MumbleServer] Murmur DB/ACL table never appeared after 20s — skipping ACL patch');
+    console.warn('[MumbleServer] DB never initialized after 20s — starting anyway without ACL patch');
     console.warn('[MumbleServer] Proximity voice may not work. Delete mumble-server.sqlite and restart to retry.');
+    stopMurmur();
+    shuttingDown = false;
+    spawnMurmur('0.0.0.0');
     return;
   }
 
-  console.log('[MumbleServer] Murmur DB ready — checking Root channel ACL...');
-
-  // Stop Murmur so it releases the DB lock, patch, then restart
+  // Stop the localhost-only instance, patch, restart publicly
+  console.log('[MumbleServer] DB ready — patching ACL and restarting publicly...');
   stopMurmur();
   shuttingDown = false;
   await new Promise(resolve => setTimeout(resolve, 1000));
 
-  const patched = patchMurmurAcl();
+  patchMurmurAcl();
 
-  // Restart Murmur (whether patched or not — we stopped it above)
-  spawnMurmur();
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  spawnMurmur('0.0.0.0');
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
+}
 
-  // Verify Murmur didn't reset the ACL on startup
+/**
+ * Check whether the Root channel ACL already has the Make permission granted.
+ * Used to skip the patch cycle on subsequent restarts.
+ */
+function isAclPatched(dbPath) {
   try {
     const Database = require('better-sqlite3');
-    const verifyDb = new Database(dbPath, { readonly: true });
-    const allRows = verifyDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
-    verifyDb.close();
-    console.log('[MumbleServer] Root ACL after Murmur restart:', JSON.stringify(allRows));
-  } catch (e) {
-    console.warn('[MumbleServer] Could not verify ACL after restart:', e.message);
-  }
-
-  if (patched) {
-    console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
-  } else {
-    console.log('[MumbleServer] Murmur running (ACLs already correct)');
+    const db = new Database(dbPath, { readonly: true });
+    const tableInfo = db.prepare(`PRAGMA table_info(acl)`).all();
+    const colNames  = tableInfo.map(c => c.name);
+    const isV15     = colNames.includes('granted_flags');
+    let patched = false;
+    if (isV15) {
+      const row = db.prepare(`SELECT granted_flags FROM acl WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'`).get();
+      patched = row && (row.granted_flags & 0x0008) !== 0;
+    } else {
+      const row = db.prepare(`SELECT grantpriv FROM acl WHERE server_id=1 AND channel_id=0 AND group_name='all'`).get();
+      patched = row && (row.grantpriv & 0x0008) !== 0;
+    }
+    db.close();
+    return patched;
+  } catch {
+    return false;
   }
 }
 
