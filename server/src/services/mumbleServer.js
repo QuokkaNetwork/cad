@@ -202,31 +202,66 @@ function patchMurmurAcl() {
     const Database = require('better-sqlite3');
     const murmurDb = new Database(dbPath);
 
+    // Inspect actual schema to handle both Murmur 1.4 and 1.5 column names
+    const tableInfo = murmurDb.prepare(`PRAGMA table_info(acl)`).all();
+    const colNames  = tableInfo.map(c => c.name);
+    console.log('[MumbleServer] ACL table columns:', colNames.join(', '));
+
+    // Murmur 1.5 renamed columns; detect which version's schema we have
+    const isV15 = colNames.includes('granted_flags');
+
     // Make=0x0008, Enter=0x0010, Traverse=0x0100
     const GRANT_BITS = 0x0008 | 0x0010 | 0x0100;
 
-    // Check if Make is already granted to @all on Root
-    const existing = murmurDb.prepare(`
-      SELECT grantpriv FROM acl
-      WHERE server_id=1 AND channel_id=0 AND group_name='all' AND user_id=-1
-    `).get();
+    if (isV15) {
+      // Murmur 1.5 schema: aff_user_id, aff_group_id, apply_in_current, apply_in_sub, granted_flags, revoked_flags
+      // Group-based ACL rows have aff_group_id set and aff_user_id NULL (or absent)
+      const existing = murmurDb.prepare(`
+        SELECT rowid, granted_flags FROM acl
+        WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'
+      `).get();
 
-    if (existing && (existing.grantpriv & 0x0008)) {
-      murmurDb.close();
-      console.log('[MumbleServer] Root channel ACL already correct — no patch needed');
-      return false;
-    }
+      if (existing && (existing.granted_flags & 0x0008)) {
+        murmurDb.close();
+        console.log('[MumbleServer] Root channel ACL already correct — no patch needed');
+        return false;
+      }
 
-    if (existing) {
-      murmurDb.prepare(`
-        UPDATE acl SET grantpriv = grantpriv | ?
-        WHERE server_id=1 AND channel_id=0 AND group_name='all' AND user_id=-1
-      `).run(GRANT_BITS);
+      if (existing) {
+        murmurDb.prepare(`
+          UPDATE acl SET granted_flags = granted_flags | ?
+          WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'
+        `).run(GRANT_BITS);
+      } else {
+        murmurDb.prepare(`
+          INSERT INTO acl (server_id, channel_id, priority, aff_user_id, aff_group_id, aff_meta_group_id, apply_in_current, apply_in_sub, granted_flags, revoked_flags)
+          VALUES (1, 0, 1000, NULL, 'all', NULL, 1, 1, ?, 0)
+        `).run(GRANT_BITS);
+      }
     } else {
-      murmurDb.prepare(`
-        INSERT INTO acl (server_id, channel_id, priority, user_id, group_name, apply_here, apply_subs, grantpriv, revokepriv)
-        VALUES (1, 0, 1000, -1, 'all', 1, 1, ?, 0)
-      `).run(GRANT_BITS);
+      // Murmur 1.4 schema: user_id, group_name, apply_here, apply_subs, grantpriv, revokepriv
+      const existing = murmurDb.prepare(`
+        SELECT grantpriv FROM acl
+        WHERE server_id=1 AND channel_id=0 AND group_name='all' AND user_id=-1
+      `).get();
+
+      if (existing && (existing.grantpriv & 0x0008)) {
+        murmurDb.close();
+        console.log('[MumbleServer] Root channel ACL already correct — no patch needed');
+        return false;
+      }
+
+      if (existing) {
+        murmurDb.prepare(`
+          UPDATE acl SET grantpriv = grantpriv | ?
+          WHERE server_id=1 AND channel_id=0 AND group_name='all' AND user_id=-1
+        `).run(GRANT_BITS);
+      } else {
+        murmurDb.prepare(`
+          INSERT INTO acl (server_id, channel_id, priority, user_id, group_name, apply_here, apply_subs, grantpriv, revokepriv)
+          VALUES (1, 0, 1000, -1, 'all', 1, 1, ?, 0)
+        `).run(GRANT_BITS);
+      }
     }
 
     murmurDb.close();
@@ -281,12 +316,16 @@ async function startMumbleServer() {
   shuttingDown = false;
   await new Promise(resolve => setTimeout(resolve, 1000));
 
-  patchMurmurAcl();
+  const patched = patchMurmurAcl();
 
-  // Restart Murmur now that the ACL is patched
+  // Restart Murmur (whether patched or not — we stopped it above)
   spawnMurmur();
   await new Promise(resolve => setTimeout(resolve, 2000));
-  console.log('[MumbleServer] Murmur running with proximity voice ACLs');
+  if (patched) {
+    console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
+  } else {
+    console.log('[MumbleServer] Murmur running (ACLs already correct)');
+  }
 }
 
 process.on('exit', stopMurmur);
