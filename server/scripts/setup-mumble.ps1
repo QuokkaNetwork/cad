@@ -1,104 +1,60 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    One-shot setup for the Mumble voice server (murmur.exe) on a Windows VPS.
+    One-shot setup for the Mumble voice server on a Windows VPS.
 
 .DESCRIPTION
-    - Downloads murmur.exe from the official Mumble release
-    - Places it in server/murmur/murmur.exe
     - Opens Windows Firewall for port 64738 TCP + UDP
+    - murmur.exe ships bundled in server/murmur/ via the repo — no download needed
 
-    Run once on the VPS. After this, the CAD server manages Murmur automatically
+    Run once on the VPS after pulling the repo.
+    After this, the CAD server manages Murmur automatically
     whenever MUMBLE_MANAGE=true is set in server/.env.
 
 .NOTES
     Must be run as Administrator (required for firewall rules).
-    Run from the repo root, e.g.:
-        powershell -ExecutionPolicy Bypass -File server\scripts\setup-mumble.ps1
+    Called automatically by start-cad-vps.bat on first run.
 #>
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-$MumbleVersion  = '1.5.857'
-$MsiUrl         = "https://github.com/mumble-voip/mumble/releases/download/v$MumbleVersion/mumble_server-$MumbleVersion.x64.msi"
-$TempMsi        = Join-Path $env:TEMP 'mumble_server.msi'
-$TargetDir      = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\murmur'))
-$TargetExe      = Join-Path $TargetDir 'murmur.exe'
-$MumblePort     = 64738
+$MumblePort = 64738
+$ScriptDir  = $PSScriptRoot
+$MurmurDir  = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir '..\murmur'))
 
 Write-Host ''
 Write-Host '=======================================================' -ForegroundColor Cyan
-Write-Host '  Mumble Server (Murmur) Setup for CAD Voice Bridge'     -ForegroundColor Cyan
+Write-Host '  Mumble Server Setup for CAD Voice Bridge'              -ForegroundColor Cyan
 Write-Host '=======================================================' -ForegroundColor Cyan
 Write-Host ''
 
 # ---------------------------------------------------------------------------
-# Step 1 — Download murmur.exe if not already present
+# Step 1 — Verify murmur.exe is present (it ships with the repo)
 # ---------------------------------------------------------------------------
-if (Test-Path $TargetExe) {
-    Write-Host "[SKIP] murmur.exe already exists at:" -ForegroundColor Yellow
-    Write-Host "       $TargetExe"
-    Write-Host "       Delete it and re-run this script to re-download."
+$ExeCandidates = @(
+    (Join-Path $MurmurDir 'murmur.exe'),
+    (Join-Path $MurmurDir 'mumble-server.exe')
+)
+$FoundExe = $ExeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if ($FoundExe) {
+    Write-Host "[OK] Found: $FoundExe" -ForegroundColor Green
 } else {
-    Write-Host "[1/2] Downloading Mumble Server v$MumbleVersion MSI ..." -ForegroundColor Cyan
-    Write-Host "      From: $MsiUrl"
-
-    # Ensure target directory exists
-    if (-not (Test-Path $TargetDir)) {
-        New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
-    }
-
-    # Download MSI (v1.5+ only ships as an installer, no bare exe available)
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $MsiUrl -OutFile $TempMsi -UseBasicParsing
-    } catch {
-        Write-Host ''
-        Write-Host '[ERROR] Download failed.' -ForegroundColor Red
-        Write-Host "        $_" -ForegroundColor Red
-        Write-Host ''
-        Write-Host 'Manual fallback:' -ForegroundColor Yellow
-        Write-Host '  1. Go to https://www.mumble.info/downloads/'
-        Write-Host '  2. Download the Windows Mumble Server MSI (mumble_server-*.x64.msi)'
-        Write-Host '  3. Install it silently: msiexec /i mumble_server.msi /qn'
-        Write-Host "  4. Copy murmur.exe from 'C:\Program Files\Mumble' into: $TargetDir"
-        exit 1
-    }
-
-    Write-Host "      Installing silently ..." -ForegroundColor Cyan
-    Start-Process msiexec.exe -ArgumentList "/i `"$TempMsi`" /qn /norestart" -Wait
-
-    # Find murmur.exe in the install location
-    $InstallDir = @('C:\Program Files\Mumble', 'C:\Program Files (x86)\Mumble') |
-        Where-Object { Test-Path "$_\murmur.exe" } | Select-Object -First 1
-
-    if (-not $InstallDir) {
-        Write-Host '[ERROR] murmur.exe not found after install. Check the MSI manually.' -ForegroundColor Red
-        exit 1
-    }
-
-    Write-Host "      Copying murmur.exe from $InstallDir ..." -ForegroundColor Cyan
-    Copy-Item "$InstallDir\murmur.exe" $TargetExe -Force
-
-    # Remove the Windows service the MSI created — CAD manages Murmur directly
-    sc.exe stop murmur 2>$null
-    sc.exe delete murmur 2>$null
-
-    # Cleanup MSI
-    Remove-Item $TempMsi -Force -ErrorAction SilentlyContinue
-
-    Write-Host "       Saved to: $TargetExe" -ForegroundColor Green
+    Write-Host '[ERROR] Mumble server exe not found in server\murmur\' -ForegroundColor Red
+    Write-Host '        Expected one of:' -ForegroundColor Yellow
+    $ExeCandidates | ForEach-Object { Write-Host "          $_" }
+    Write-Host ''
+    Write-Host '        The exe should have been included in the repo.' -ForegroundColor Yellow
+    Write-Host '        Try: git pull  then re-run this script.' -ForegroundColor Yellow
+    exit 1
 }
 
 # ---------------------------------------------------------------------------
 # Step 2 — Open Windows Firewall
 # ---------------------------------------------------------------------------
 Write-Host ''
-Write-Host '[2/2] Configuring Windows Firewall (port 64738 TCP + UDP) ...' -ForegroundColor Cyan
+Write-Host '[1/1] Configuring Windows Firewall (port 64738 TCP + UDP) ...' -ForegroundColor Cyan
 
 $RuleTCP = Get-NetFirewallRule -DisplayName 'Mumble Voice TCP' -ErrorAction SilentlyContinue
 $RuleUDP = Get-NetFirewallRule -DisplayName 'Mumble Voice UDP' -ErrorAction SilentlyContinue
@@ -126,7 +82,7 @@ Write-Host '  Setup complete!'                                        -Foregroun
 Write-Host '=======================================================' -ForegroundColor Green
 Write-Host ''
 Write-Host 'What was done:'
-Write-Host "  - murmur.exe placed at: $TargetExe"
+Write-Host "  - Verified murmur exe at: $FoundExe"
 Write-Host "  - Windows Firewall opened for port $MumblePort TCP + UDP"
 Write-Host ''
 Write-Host 'What you still need to do manually:' -ForegroundColor Yellow

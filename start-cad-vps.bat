@@ -231,44 +231,21 @@ if "!UPDATED!"=="1" (
   )
 )
 
-REM --- Mumble server one-time setup ---
-REM If murmur.exe is missing, download the MSI, install silently, copy the exe
-REM out into server\murmur\, then remove the Windows service (CAD manages it).
-REM This only runs once — subsequent starts skip straight past.
-if not exist "%APP_DIR%\server\murmur\murmur.exe" (
-  echo [CAD] murmur.exe not found. Running one-time Mumble setup...
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$ver='1.5.857';" ^
-    "$msiUrl=\"https://github.com/mumble-voip/mumble/releases/download/v$ver/mumble_server-$ver.x64.msi\";" ^
-    "$msiPath=\"$env:TEMP\mumble_server.msi\";" ^
-    "$targetDir='%APP_DIR%\server\murmur';" ^
-    "$targetExe=\"$targetDir\murmur.exe\";" ^
-    "if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null };" ^
-    "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;" ^
-    "Write-Host '[CAD] Downloading Mumble Server MSI...';" ^
-    "Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing;" ^
-    "Write-Host '[CAD] Installing silently (no window will open)...';" ^
-    "Start-Process msiexec.exe -ArgumentList \"/i `\"$msiPath`\" /qn /norestart\" -Wait;" ^
-    "$installDir=@('C:\Program Files\Mumble','C:\Program Files (x86)\Mumble') | Where-Object { Test-Path \"$_\murmur.exe\" } | Select-Object -First 1;" ^
-    "if (-not $installDir) { Write-Host '[CAD] ERROR: murmur.exe not found after install. Check MSI manually.'; exit 1 };" ^
-    "Write-Host \"[CAD] Copying murmur.exe from $installDir...\";" ^
-    "Copy-Item \"$installDir\murmur.exe\" $targetExe -Force;" ^
-    "sc.exe stop murmur 2>$null; sc.exe delete murmur 2>$null;" ^
-    "Remove-Item $msiPath -Force -ErrorAction SilentlyContinue;" ^
-    "Write-Host '[CAD] murmur.exe ready.';" ^
-    "$tcp=Get-NetFirewallRule -DisplayName 'Mumble Voice TCP' -ErrorAction SilentlyContinue;" ^
-    "if (-not $tcp) { netsh advfirewall firewall add rule name='Mumble Voice TCP' protocol=TCP dir=in localport=64738 action=allow | Out-Null; Write-Host '[CAD] Firewall TCP rule added.' };" ^
-    "$udp=Get-NetFirewallRule -DisplayName 'Mumble Voice UDP' -ErrorAction SilentlyContinue;" ^
-    "if (-not $udp) { netsh advfirewall firewall add rule name='Mumble Voice UDP' protocol=UDP dir=in localport=64738 action=allow | Out-Null; Write-Host '[CAD] Firewall UDP rule added.' };" ^
-    "Write-Host '[CAD] Mumble setup complete.'"
+REM --- Mumble firewall setup (runs once, tracked by sentinel file) ---
+REM murmur.exe ships with the repo — no download needed.
+REM The PS1 just opens the firewall port the first time.
+if not exist "%APP_DIR%\server\data\mumble-setup-done.txt" (
+  echo [CAD] Running one-time Mumble firewall setup...
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%APP_DIR%\server\scripts\setup-mumble.ps1"
   if errorlevel 1 (
     echo [CAD] WARNING: Mumble setup encountered an error. Voice features may not work.
-    echo [CAD] You can manually place murmur.exe in server\murmur\ and re-run.
     echo [CAD] Continuing startup in 5 seconds...
     timeout /t 5 /nobreak >nul
+  ) else (
+    echo mumble-setup-done > "%APP_DIR%\server\data\mumble-setup-done.txt"
   )
 ) else (
-  echo [CAD] murmur.exe already present - skipping Mumble setup.
+  echo [CAD] Mumble already configured - skipping setup.
 )
 
 echo [CAD] Launching server...

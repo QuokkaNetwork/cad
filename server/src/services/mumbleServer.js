@@ -16,9 +16,13 @@ const os = require('os');
 
 const IS_WINDOWS = os.platform() === 'win32';
 
-// On Windows: look for murmur.exe bundled inside server/murmur/
+// On Windows: look for bundled exe inside server/murmur/
+// v1.4 shipped as murmur.exe, v1.5+ ships as mumble-server.exe
 // On Linux:   use system package (mumble-server / murmurd)
-const WINDOWS_BUNDLED_PATH = path.join(__dirname, '../../murmur/murmur.exe');
+const WINDOWS_BUNDLED_CANDIDATES = [
+  path.join(__dirname, '../../murmur/murmur.exe'),
+  path.join(__dirname, '../../murmur/mumble-server.exe'),
+];
 const LINUX_CANDIDATES = [
   '/usr/sbin/murmurd',
   '/usr/sbin/mumble-server',
@@ -102,10 +106,11 @@ function ensureIniFile() {
 
 function findMurmurBinary() {
   if (IS_WINDOWS) {
-    if (fs.existsSync(WINDOWS_BUNDLED_PATH)) return WINDOWS_BUNDLED_PATH;
-    console.warn(`[MumbleServer] murmur.exe not found at: ${WINDOWS_BUNDLED_PATH}`);
-    console.warn('[MumbleServer] Download Murmur from https://www.mumble.info/downloads/');
-    console.warn('[MumbleServer] Extract murmur.exe into: server/murmur/murmur.exe');
+    const found = WINDOWS_BUNDLED_CANDIDATES.find(p => fs.existsSync(p));
+    if (found) return found;
+    console.warn('[MumbleServer] Mumble server exe not found. Checked:');
+    WINDOWS_BUNDLED_CANDIDATES.forEach(p => console.warn(`  ${p}`));
+    console.warn('[MumbleServer] Place murmur.exe or mumble-server.exe in server/murmur/');
     return null;
   }
 
