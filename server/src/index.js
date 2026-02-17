@@ -177,22 +177,32 @@ const httpServer = http.createServer(app);
 
     // Print voice/Mumble status summary
     const murmur = getMurmurStatus();
+    const voiceServerLabel = murmur.isRustMumble ? 'rust-mumble' : 'Murmur    ';
     console.log('');
     console.log('=== Voice Status ===');
     if (murmur.managed) {
       if (murmur.running) {
-        console.log(`[Murmur]      ✓ Running  — ${murmur.host}:${murmur.port}`);
-        console.log(`[Murmur]      Binary: ${murmur.binary}`);
+        console.log(`[${voiceServerLabel}] ✓ Running  — ${murmur.host}:${murmur.port}`);
+        console.log(`[${voiceServerLabel}] Binary: ${murmur.binary}`);
       } else if (murmur.binary) {
-        console.log(`[Murmur]      ✗ Not running (binary found but process not started yet)`);
+        console.log(`[${voiceServerLabel}] ✗ Not running (binary found but process not started yet)`);
       } else {
-        console.log(`[Murmur]      ✗ Binary not found — place murmur.exe in server/murmur/`);
+        console.log(`[VoiceServer] ✗ Binary not found — place rust-mumble.exe in server/murmur/`);
+        console.log(`[VoiceServer]   Download: https://github.com/AvarianKnight/rust-mumble/releases`);
       }
     } else {
-      console.log('[Murmur]      — Not managed (MUMBLE_MANAGE not set)');
+      console.log('[VoiceServer] — Not managed (MUMBLE_MANAGE not set)');
+    }
+    const fivemPath = String(process.env.FIVEM_SERVER_PATH || '').trim();
+    const publicIp  = String(process.env.MUMBLE_PUBLIC_IP  || '').trim();
+    if (fivemPath) {
+      console.log(`[VoiceCfg]    voice.cfg auto-deploy → ${fivemPath}`);
+      if (!publicIp) console.log(`[VoiceCfg]    ⚠️  Set MUMBLE_PUBLIC_IP in .env so players can connect`);
+    } else {
+      console.log('[VoiceCfg]    Set FIVEM_SERVER_PATH in .env for automatic voice.cfg deploy');
     }
     console.log('[pma-voice]   Players connect via voice_externalAddress in voice.cfg');
-    console.log(`[pma-voice]   External Mumble: ${process.env.MUMBLE_HOST || '127.0.0.1'}:${process.env.MUMBLE_PORT || '64738'}`);
+    console.log(`[pma-voice]   External Mumble: ${publicIp || process.env.MUMBLE_HOST || '127.0.0.1'}:${process.env.MUMBLE_PORT || '64738'}`);
     console.log('====================');
     console.log('');
   });

@@ -5,17 +5,19 @@
 #
 # SETUP OVERVIEW (everything on one Windows VPS):
 #
-#   murmur.exe  <-- managed by CAD (starts automatically, no manual setup)
+#   rust-mumble.exe  <-- managed by CAD (starts automatically, no manual setup)
 #       |
 #       +-- 127.0.0.1:64738  <-- CAD voice bridge (mumble-node) connects here
 #       |
 #       +-- 0.0.0.0:64738    <-- pma-voice in-game players connect here
 #                                via voice_externalAddress in server.cfg
 #
-# The CAD auto-starts murmur.exe from server/murmur/murmur.exe when
+# The CAD auto-starts rust-mumble.exe from server/murmur/rust-mumble.exe when
 # MUMBLE_MANAGE=true is set in .env. Port 64738 TCP+UDP must be open
 # in Windows Firewall and your VPS provider's security group.
 #
+# TIP: Set FIVEM_SERVER_PATH in .env to have the CAD automatically write
+# voice.cfg to your FiveM server folder and keep it up to date on restart.
 # =============================================================================
 # STEP 1: Open port 64738 in Windows Firewall (run in PowerShell as Admin):
 #
@@ -35,7 +37,10 @@ setr voice_externalAddress "103.203.241.35"
 setr voice_externalPort 64738
 setr voice_allowSetIntent 1
 setr voice_hideEndpoints 1
-setr voice_useSendingRangeOnly 1
+
+# voice_use2dAudio prevents pma-voice from auto-overriding to native audio mode.
+# rust-mumble handles FiveM voice targets natively so proximity works correctly.
+setr voice_use2dAudio true
 
 # =============================================================================
 # STEP 3: Configure the CAD bridge resource
