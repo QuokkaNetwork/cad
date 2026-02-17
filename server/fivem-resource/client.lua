@@ -654,3 +654,62 @@ RegisterNetEvent('cad_bridge:syncMmRadio', function(channelNumber, playerName)
     end
   end
 end)
+
+-- ============================================================================
+-- CAD dispatcher inbound radio listen shim
+--
+-- Why this exists:
+-- - CAD dispatchers connect as standalone Mumble clients (not FiveM players).
+-- - pma-voice radio targets are built from FiveM player IDs, so dispatcher
+--   sessions are not naturally included in player radio whispers.
+-- - Dispatchers stay in Mumble root channel (0) on the CAD bridge side.
+--
+-- Practical workaround:
+-- - While a player is on a radio channel, continuously add channel 0 to the
+--   active radio voice target so player radio TX is also sent to root.
+-- - Dispatcher bots in root then receive inbound radio audio from in-game users.
+--
+-- Notes:
+-- - This does not replace pma-voice targeting; it only adds root as an extra
+--   recipient.
+-- - We avoid clearing any targets here to prevent fighting pma-voice internals.
+-- ============================================================================
+local CAD_BRIDGE_DISPATCH_TARGET_ID = 1
+local CAD_BRIDGE_DISPATCH_PATCH_INTERVAL_MS = 750
+local cadBridgeLastDispatchPatchAtMs = 0
+
+local function getCurrentRadioChannel()
+  if not LocalPlayer or not LocalPlayer.state then
+    return 0
+  end
+  return tonumber(LocalPlayer.state.radioChannel) or 0
+end
+
+CreateThread(function()
+  while true do
+    Wait(250)
+
+    -- Only meaningful when pma-voice is active.
+    if GetResourceState('pma-voice') ~= 'started' then
+      goto continue
+    end
+
+    local radioChannel = getCurrentRadioChannel()
+    if radioChannel <= 0 then
+      goto continue
+    end
+
+    local nowMs = tonumber(GetGameTimer() or 0) or 0
+    if (nowMs - cadBridgeLastDispatchPatchAtMs) < CAD_BRIDGE_DISPATCH_PATCH_INTERVAL_MS then
+      goto continue
+    end
+
+    cadBridgeLastDispatchPatchAtMs = nowMs
+    pcall(function()
+      -- Add root channel as an extra recipient for the active radio target.
+      MumbleAddVoiceTargetChannel(CAD_BRIDGE_DISPATCH_TARGET_ID, 0)
+    end)
+
+    ::continue::
+  end
+end)
