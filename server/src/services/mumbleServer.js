@@ -298,21 +298,33 @@ async function startMumbleServer() {
 
   spawnMurmur();
 
-  // Poll for Murmur's SQLite database to appear (up to 15 seconds)
+  // Poll until Murmur has created and fully initialized its SQLite database
+  // (the file appears quickly, but the ACL table takes a moment longer)
   const dbPath = path.join(__dirname, '../../data/mumble-server.sqlite');
-  console.log('[MumbleServer] Waiting for mumble-server.sqlite to be created...');
-  const deadline = Date.now() + 15000;
-  while (!fs.existsSync(dbPath) && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 500));
+  console.log('[MumbleServer] Waiting for Murmur to initialize its database...');
+  const deadline = Date.now() + 20000;
+  let dbReady = false;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!fs.existsSync(dbPath)) continue;
+    try {
+      const Database = require('better-sqlite3');
+      const checkDb = new Database(dbPath, { readonly: true });
+      const tables = checkDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='acl'`).get();
+      checkDb.close();
+      if (tables) { dbReady = true; break; }
+    } catch {
+      // DB not readable yet — keep waiting
+    }
   }
 
-  if (!fs.existsSync(dbPath)) {
-    console.warn('[MumbleServer] mumble-server.sqlite never appeared after 15s — skipping ACL patch');
+  if (!dbReady) {
+    console.warn('[MumbleServer] Murmur DB/ACL table never appeared after 20s — skipping ACL patch');
     console.warn('[MumbleServer] Proximity voice may not work. Delete mumble-server.sqlite and restart to retry.');
     return;
   }
 
-  console.log('[MumbleServer] mumble-server.sqlite found — checking Root channel ACL...');
+  console.log('[MumbleServer] Murmur DB ready — checking Root channel ACL...');
 
   // Stop Murmur so it releases the DB lock, patch, then restart
   stopMurmur();
