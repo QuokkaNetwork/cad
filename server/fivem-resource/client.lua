@@ -674,9 +674,17 @@ end)
 --   recipient.
 -- - We avoid clearing any targets here to prevent fighting pma-voice internals.
 -- ============================================================================
-local CAD_BRIDGE_DISPATCH_TARGET_ID = 1
-local CAD_BRIDGE_DISPATCH_PATCH_INTERVAL_MS = 750
-local cadBridgeLastDispatchPatchAtMs = 0
+local CAD_BRIDGE_DISPATCH_TARGET_ID = tonumber(GetConvar('cad_bridge_dispatch_target_id', '1')) or 1
+if CAD_BRIDGE_DISPATCH_TARGET_ID < 1 or CAD_BRIDGE_DISPATCH_TARGET_ID > 30 then
+  CAD_BRIDGE_DISPATCH_TARGET_ID = 1
+end
+
+-- pma-voice clears voice target channels in its proximity loop (default ~200ms).
+-- Keep this interval lower so channel 0 stays attached while transmitting.
+local CAD_BRIDGE_DISPATCH_PATCH_LOOP_MS = tonumber(GetConvar('cad_bridge_dispatch_patch_loop_ms', '100')) or 100
+if CAD_BRIDGE_DISPATCH_PATCH_LOOP_MS < 25 then
+  CAD_BRIDGE_DISPATCH_PATCH_LOOP_MS = 25
+end
 
 local function getCurrentRadioChannel()
   if not LocalPlayer or not LocalPlayer.state then
@@ -694,7 +702,7 @@ end
 
 CreateThread(function()
   while true do
-    Wait(250)
+    Wait(CAD_BRIDGE_DISPATCH_PATCH_LOOP_MS)
 
     -- Only meaningful when pma-voice is active.
     if GetResourceState('pma-voice') ~= 'started' then
@@ -707,12 +715,6 @@ CreateThread(function()
       goto continue
     end
 
-    local nowMs = tonumber(GetGameTimer() or 0) or 0
-    if (nowMs - cadBridgeLastDispatchPatchAtMs) < CAD_BRIDGE_DISPATCH_PATCH_INTERVAL_MS then
-      goto continue
-    end
-
-    cadBridgeLastDispatchPatchAtMs = nowMs
     pcall(function()
       -- Add root channel as an extra recipient for the active radio target.
       MumbleAddVoiceTargetChannel(CAD_BRIDGE_DISPATCH_TARGET_ID, 0)

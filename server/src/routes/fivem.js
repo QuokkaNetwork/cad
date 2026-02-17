@@ -7,7 +7,6 @@ const {
   Departments,
   FiveMPlayerLinks,
   FiveMFineJobs,
-  FiveMJobSyncJobs,
   VoiceCallSessions,
   VoiceChannels,
   VoiceParticipants,
@@ -36,12 +35,6 @@ function getFineDeliveryMode() {
 
 function getFineAccountKey() {
   return String(Settings.get('qbox_fine_account_key') || 'bank').trim() || 'bank';
-}
-
-function isJobSyncEnabled() {
-  return String(Settings.get('fivem_bridge_job_sync_enabled') || 'true')
-    .trim()
-    .toLowerCase() === 'true';
 }
 
 function parseSqliteUtc(value) {
@@ -1122,53 +1115,17 @@ router.post('/fine-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// FiveM resource polls pending Discord->CAD driven job sync jobs.
+// CAD -> QBX job sync is temporarily disabled. Keep endpoint for compatibility.
 router.get('/job-jobs', requireBridgeAuth, (req, res) => {
-  if (!isJobSyncEnabled()) {
-    return res.json([]);
-  }
-
-  const requestedLimit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
-  const pending = FiveMJobSyncJobs.listPending(Math.min(500, requestedLimit * 5));
-  const deliverable = [];
-
-  for (const job of pending) {
-    if (deliverable.length >= requestedLimit) break;
-    if (!String(job.job_name || '').trim()) {
-      FiveMJobSyncJobs.markFailed(job.id, 'Job name is empty');
-      continue;
-    }
-
-    const cadUser = Users.findById(job.user_id);
-    const link = chooseActiveLinkForUser(cadUser);
-    if (!cadUser || !link) continue;
-
-    deliverable.push({
-      ...job,
-      steam_id: String(cadUser.steam_id || ''),
-      discord_id: String(cadUser.discord_id || ''),
-      citizen_id: String(link.citizen_id || job.citizen_id || ''),
-      game_id: String(link.game_id || ''),
-      player_name: String(link.player_name || cadUser.steam_name || ''),
-    });
-  }
-
-  res.json(deliverable);
+  res.json([]);
 });
 
 router.post('/job-jobs/:id/sent', requireBridgeAuth, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid job id' });
-  FiveMJobSyncJobs.markSent(id);
-  res.json({ ok: true });
+  res.json({ ok: true, disabled: true });
 });
 
 router.post('/job-jobs/:id/failed', requireBridgeAuth, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid job id' });
-  const error = String(req.body?.error || 'Unknown job sync error');
-  FiveMJobSyncJobs.markFailed(id, error);
-  res.json({ ok: true });
+  res.json({ ok: true, disabled: true });
 });
 
 // Sync Mumble server configuration from FiveM
@@ -1313,6 +1270,32 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
     }
 
     const changedChannels = new Set();
+    const incomingGameIds = new Set();
+
+    // Heartbeat payload is authoritative for current in-game players.
+    // Remove any existing game participant rows not present in this batch.
+    for (const entry of incoming) {
+      const gameId = String(entry?.game_id || '').trim();
+      if (gameId) incomingGameIds.add(gameId);
+    }
+
+    const existingGameParticipants = VoiceParticipants.listAllGameParticipants();
+    for (const existing of existingGameParticipants) {
+      const existingGameId = String(existing?.game_id || '').trim();
+      if (!existingGameId || incomingGameIds.has(existingGameId)) continue;
+
+      VoiceParticipants.removeByGameId(existingGameId);
+      bus.emit('voice:leave', {
+        channelId: Number(existing?.channel_id || 0) || null,
+        channelNumber: Number(existing?.channel_number || 0) || 0,
+        userId: null,
+        gameId: existingGameId,
+        citizenId: String(existing?.citizen_id || ''),
+      });
+
+      const oldChannelNum = Number(existing?.channel_number || 0) || 0;
+      if (oldChannelNum > 0) changedChannels.add(oldChannelNum);
+    }
 
     for (const entry of incoming) {
       const gameId      = String(entry.game_id    || '').trim();

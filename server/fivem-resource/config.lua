@@ -51,7 +51,7 @@ Config.FineCommandTemplate = GetConvar('cad_bridge_fine_command', 'qbx_fine {cit
 -- 'auto' -> try qbx_core/qb-core player SetJob API
 -- 'command' -> ExecuteCommand with template below
 -- 'none' -> disable job sync applies in resource
-Config.JobSyncAdapter = GetConvar('cad_bridge_job_sync_adapter', 'auto')
+Config.JobSyncAdapter = GetConvar('cad_bridge_job_sync_adapter', 'none')
 
 -- Tokens available: {source}, {citizenid}, {job}, {grade}
 Config.JobSyncCommandTemplate = GetConvar('cad_bridge_job_sync_command', 'qbx_setjob {source} {job} {grade}')

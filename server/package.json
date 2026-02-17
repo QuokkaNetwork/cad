@@ -6,7 +6,7 @@
   "scripts": {
     "postinstall": "node scripts/fix-mumble-node.js",
     "dev": "nodemon src/index.js",
-    "start": "node src/index.js"
+    "start": "node ../scripts/patch-mumble-node.js && node scripts/fix-mumble-node.js && node src/index.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

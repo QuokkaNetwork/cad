@@ -1062,6 +1062,9 @@ local jobPollInFlight = false
 CreateThread(function()
   while true do
     Wait(math.max(2000, Config.JobSyncPollIntervalMs))
+    if Config.JobSyncAdapter == 'none' then
+      goto continue
+    end
     if not hasBridgeConfig() then
       goto continue
     end

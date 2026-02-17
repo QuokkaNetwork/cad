@@ -2,13 +2,13 @@
 /**
  * Post-install/startup patch for mumble-node dist/lib/client.js
  *
- * Fixes rust-mumble interoperability issues when running TCP-only voice bridge:
+ * Fixes rust-mumble interoperability issues:
  * 1) PING_INTERVAL 15s -> 5s
  * 2) immediate ping on connect + post-ServerSync ping
  * 3) echo server Ping messages back
- * 4) reply to full CryptSetup in TCP-only mode
- * 5) reply to empty CryptSetup resync in TCP-only mode
- * 6) reply to server_nonce-only CryptSetup resync response in TCP-only mode
+ * 4) robust CryptSetup handling for TCP-only mode
+ *    - remembers last negotiated client/server nonce
+ *    - acks resync requests using the negotiated client nonce (not zero)
  */
 
 const fs = require('fs');
@@ -37,6 +37,21 @@ function applyReplacement(name, before, after, options = {}) {
   src = src.replace(before, after);
   changed = true;
   console.log(`[patch-mumble-node] Applied: ${name}`);
+}
+
+function validateRequiredSnippets() {
+  const required = [
+    { name: 'PING interval', snippet: 'const PING_INTERVAL = 5000;' },
+    { name: 'immediate ping', snippet: 'patch-mumble-node: immediate ping so server sees activity before first interval' },
+    { name: 'post-ServerSync ping', snippet: 'patch-mumble-node: ping immediately after ServerSync so rust-mumble resets its TCP timer' },
+    { name: 'server ping echo', snippet: 'Server ping received' },
+    { name: 'TCP-only nonce cache', snippet: 'this._tcpOnlyCryptClientNonce = Buffer.alloc(16);' },
+    { name: 'TCP-only re-key ack', snippet: 'const ackNonce = (this._tcpOnlyCryptClientNonce && this._tcpOnlyCryptClientNonce.length === 16)' },
+    { name: 'TCP-only empty resync ack', snippet: 'const resyncNonce = (this._tcpOnlyCryptClientNonce && this._tcpOnlyCryptClientNonce.length === 16)' },
+    { name: 'TCP-only server_nonce ack', snippet: 'TCP-only received server_nonce - sending clientNonce ack' },
+    { name: 'patch marker', snippet: 'patch-mumble-node-applied' },
+  ];
+  return required.filter((check) => !src.includes(check.snippet));
 }
 
 applyReplacement(
@@ -111,8 +126,8 @@ const cryptResyncOld = `            else {
             return;
         }`;
 const cryptResyncNew = `            else {
-                // patch-mumble-node: TCP-only resync - send zero-nonce ack so server does not timeout
-                this.log('  CryptSetup: TCP-only resync - sending zero-nonce ack');
+                // patch-mumble-node: TCP-only resync - send clientNonce ack so server does not timeout
+                this.log('  CryptSetup: TCP-only resync - sending clientNonce ack');
                 try {
                     const resync = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: Buffer.alloc(16) });
                     this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(resync).finish());
@@ -150,14 +165,88 @@ const cryptServerNonceNew = `        // Server sent only server_nonce = resync r
         }`;
 applyReplacement('server_nonce-only CryptSetup TCP-only ack', cryptServerNonceOld, cryptServerNonceNew);
 
+applyReplacement(
+  'track TCP-only CryptSetup nonces',
+  '        this._voicePacketsSent = 0;',
+  `        this._voicePacketsSent = 0;
+        this._tcpOnlyCryptClientNonce = Buffer.alloc(16);
+        this._tcpOnlyCryptServerNonce = Buffer.alloc(16);`
+);
+
+applyReplacement(
+  'store nonces on TCP-only full re-key',
+  `            try {
+                const ack = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: message.clientNonce });
+                this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(ack).finish());
+            } catch {}`,
+  `            try {
+                if (message.clientNonce && message.clientNonce.length === 16) {
+                    this._tcpOnlyCryptClientNonce = Buffer.from(message.clientNonce);
+                }
+                if (message.serverNonce && message.serverNonce.length === 16) {
+                    this._tcpOnlyCryptServerNonce = Buffer.from(message.serverNonce);
+                }
+                const ackNonce = (this._tcpOnlyCryptClientNonce && this._tcpOnlyCryptClientNonce.length === 16)
+                    ? this._tcpOnlyCryptClientNonce
+                    : (message.clientNonce || Buffer.alloc(16));
+                const ack = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: ackNonce });
+                this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(ack).finish());
+            } catch {}`,
+  { silentMissing: true }
+);
+
+applyReplacement(
+  'reuse cached nonce for empty TCP-only resync ack',
+  `                    const resync = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: Buffer.alloc(16) });
+                    this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(resync).finish());`,
+  `                    const resyncNonce = (this._tcpOnlyCryptClientNonce && this._tcpOnlyCryptClientNonce.length === 16)
+                        ? this._tcpOnlyCryptClientNonce
+                        : Buffer.alloc(16);
+                    const resync = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: resyncNonce });
+                    this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(resync).finish());`,
+  { silentMissing: true }
+);
+
+applyReplacement(
+  'reuse cached nonce for server_nonce TCP-only ack',
+  `                try {
+                    const ack = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: Buffer.alloc(16) });
+                    this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(ack).finish());
+                } catch {}`,
+  `                try {
+                    if (message.serverNonce && message.serverNonce.length === 16) {
+                        this._tcpOnlyCryptServerNonce = Buffer.from(message.serverNonce);
+                    }
+                    const ackNonce = (this._tcpOnlyCryptClientNonce && this._tcpOnlyCryptClientNonce.length === 16)
+                        ? this._tcpOnlyCryptClientNonce
+                        : Buffer.alloc(16);
+                    const ack = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: ackNonce });
+                    this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(ack).finish());
+                } catch {}`,
+  { silentMissing: true }
+);
+
 if (!src.includes('patch-mumble-node-applied')) {
   src += '\n// patch-mumble-node-applied\n';
   changed = true;
+}
+
+const missing = validateRequiredSnippets();
+if (missing.length > 0) {
+  if (changed) {
+    fs.writeFileSync(clientPath, src, 'utf8');
+    changed = false;
+  }
+  console.error('[patch-mumble-node] Patch validation failed. Missing snippet(s):');
+  for (const item of missing) {
+    console.error(`  - ${item.name}`);
+  }
+  process.exit(1);
 }
 
 if (changed) {
   fs.writeFileSync(clientPath, src, 'utf8');
   console.log('[patch-mumble-node] Patch applied successfully');
 } else {
-  console.log('[patch-mumble-node] No changes needed');
+  console.log('[patch-mumble-node] No changes needed (already patched)');
 }

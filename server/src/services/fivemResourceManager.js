@@ -13,7 +13,7 @@ const RESOURCE_NAME = 'cad_bridge';
  * the result into the FiveM server folder alongside server.cfg.
  * This keeps voice.cfg in sync automatically on every CAD restart/sync.
  */
-const VOICE_CFG_TEMPLATE = path.resolve(__dirname, '../../../../voice.cfg');
+const VOICE_CFG_TEMPLATE = path.resolve(__dirname, '../../../voice.cfg');
 
 function getVoiceCfgConfig() {
   // FIVEM_SERVER_PATH: path to the FiveM server root (the folder that
@@ -77,7 +77,7 @@ function generateVoiceCfgInline(publicIp, port, token, baseUrl) {
     'set cad_bridge_npwd_emergency_numbers "000"',
     'set cad_bridge_npwd_resource "npwd"',
     'set cad_bridge_fine_adapter "auto"',
-    'set cad_bridge_job_sync_adapter "auto"',
+    'set cad_bridge_job_sync_adapter "none"',
     '',
   ].join('\n');
 }

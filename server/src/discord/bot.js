@@ -2,7 +2,6 @@ const { Client, GatewayIntentBits, Events } = require('discord.js');
 const config = require('../config');
 const {
   Users,
-  Departments,
   UserDepartments,
   UserSubDepartments,
   DiscordRoleMappings,
@@ -54,7 +53,8 @@ function getRoleRemovedJobTarget() {
 }
 
 function isJobSyncEnabled() {
-  return toBool(Settings.get('fivem_bridge_job_sync_enabled'), true);
+  // CAD -> QBX job sync is temporarily disabled.
+  return false;
 }
 
 function isGameToDiscordJobSyncEnabled() {
@@ -506,15 +506,4 @@ function getClient() {
   return client;
 }
 
-function queueJobSyncForUserId(userId) {
-  const user = Users.findById(userId);
-  if (!user) return null;
-
-  const depts = user.is_admin ? Departments.list() : UserDepartments.getForUser(user.id);
-  const subDepts = user.is_admin ? SubDepartments.list() : UserSubDepartments.getForUser(user.id);
-  return queueJobSyncIfNeeded(user, depts, subDepts, depts, subDepts, [], {
-    allowRoleRemovalFallback: false,
-  });
-}
-
-module.exports = { startBot, syncUserRoles, syncAllMembers, getGuildRoles, getClient, queueJobSyncForUserId };
+module.exports = { startBot, syncUserRoles, syncAllMembers, getGuildRoles, getClient };

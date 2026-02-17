@@ -173,23 +173,35 @@ class VoiceBridgeServer {
     const dbHost = String(Settings.get('mumble_host') || '').trim();
     const dbPort = String(Settings.get('mumble_port') || '').trim();
     const voiceSystem = String(Settings.get('mumble_voice_system') || '').trim();
+    const requestedDisableUdp = parseBool(process.env.MUMBLE_DISABLE_UDP, false);
+    const selectedHost = envHost || dbHost || '127.0.0.1';
+    const normalizedHost = String(selectedHost).trim().toLowerCase();
+    const isLocalBridgeHost = normalizedHost === '127.0.0.1'
+      || normalizedHost === 'localhost'
+      || normalizedHost === '::1';
+    const effectiveDisableUdp = requestedDisableUdp && !isLocalBridgeHost;
 
     this.config = {
-      mumbleHost: envHost || dbHost || '127.0.0.1',
+      mumbleHost: selectedHost,
       mumblePort: Number(envPort || dbPort || 64738) || 64738,
       mumblePassword: String(process.env.MUMBLE_PASSWORD || '').trim(),
       mumbleTokens: parseCsv(process.env.MUMBLE_TOKENS),
       mumbleRejectUnauthorized: parseBool(process.env.MUMBLE_REJECT_UNAUTHORIZED, false),
-      // Hard-force TCP tunnel mode for dispatcher bridge clients.
-      // rust-mumble can aggressively request CryptSetup resets when dispatcher
-      // bridge UDP state drifts; disabling UDP here avoids that path entirely.
-      mumbleDisableUdp: true,
+      // Allow UDP by default for dispatcher bridge clients.
+      // Set MUMBLE_DISABLE_UDP=true in .env to force TCP tunneling.
+      // When host is localhost we ignore forced TCP-only mode to avoid
+      // rust-mumble CryptSetup reset loops.
+      mumbleDisableUdp: effectiveDisableUdp,
       dispatcherNamePrefix: String(process.env.MUMBLE_DISPATCHER_NAME_PREFIX || 'CAD_Dispatcher').trim() || 'CAD_Dispatcher',
       sampleRate: 48000,
       channels: 1,
       bitsPerSample: 16,
       voiceSystem: voiceSystem || 'unknown',
     };
+
+    if (requestedDisableUdp && isLocalBridgeHost) {
+      console.warn('[VoiceBridge] MUMBLE_DISABLE_UDP=true ignored for localhost Mumble host; using UDP for stability');
+    }
 
     const hostSource = envHost ? '.env' : (dbHost ? 'auto-detect' : 'default');
     console.log(

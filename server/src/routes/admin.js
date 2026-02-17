@@ -13,7 +13,7 @@ const {
 } = require('../services/liveMapTiles');
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
-  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs, FiveMJobSyncJobs, SubDepartments, OffenceCatalog,
+  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs, SubDepartments, OffenceCatalog,
   FieldMappingCategories, FieldMappings,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
@@ -333,22 +333,6 @@ router.patch('/users/:id', (req, res) => {
 
   if (is_banned) {
     Units.removeByUserId(userId);
-  }
-
-  if (preferred_citizen_id !== undefined) {
-    try {
-      const { queueJobSyncForUserId } = require('../discord/bot');
-      const queued = queueJobSyncForUserId(userId);
-      if (queued) {
-        audit(req.user.id, 'user_character_linked', {
-          targetUserId: userId,
-          preferred_citizen_id: String(preferred_citizen_id || '').trim(),
-          jobSyncJobId: queued.id,
-        });
-      }
-    } catch (err) {
-      console.warn('[Admin] Could not queue job sync for character link update:', err?.message || err);
-    }
   }
 
   res.json(Users.findById(userId));
@@ -1208,84 +1192,6 @@ router.post('/fivem/fine-jobs/:id/cancel', (req, res) => {
   FiveMFineJobs.markCancelled(id, 'Cancelled by admin');
   audit(req.user.id, 'fivem_fine_job_cancelled', { fineJobId: id });
   res.json({ ok: true });
-});
-
-router.post('/fivem/fine-jobs/clear-test', (req, res) => {
-  const cleared = FiveMFineJobs.cancelPendingTestJobs('Cleared queued test fine jobs by admin');
-  audit(req.user.id, 'fivem_test_fines_cleared', { cleared });
-  res.json({ ok: true, cleared });
-});
-
-router.get('/fivem/job-sync-jobs', (req, res) => {
-  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
-  const jobs = FiveMJobSyncJobs.listRecent(limit).map((job) => {
-    const user = Users.findById(job.user_id);
-    return {
-      ...job,
-      cad_user_name: user?.steam_name || '',
-      cad_discord_id: user?.discord_id || '',
-    };
-  });
-  res.json(jobs);
-});
-
-router.post('/fivem/job-sync-jobs/:id/retry', (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid job sync id' });
-  const job = FiveMJobSyncJobs.findById(id);
-  if (!job) return res.status(404).json({ error: 'Job sync not found' });
-
-  FiveMJobSyncJobs.markPending(id);
-  res.json({ ok: true });
-});
-
-router.post('/fivem/test-fine', (req, res) => {
-  const { steam_id, citizen_id, amount, reason } = req.body || {};
-  const fineAmount = Number(amount);
-  if (!Number.isFinite(fineAmount) || fineAmount <= 0) {
-    return res.status(400).json({ error: 'amount must be a positive number' });
-  }
-
-  let link = null;
-  if (steam_id) {
-    link = FiveMPlayerLinks.findBySteamId(String(steam_id));
-  } else if (citizen_id) {
-    link = FiveMPlayerLinks.findByCitizenId(String(citizen_id));
-  }
-
-  if (!link) {
-    return res.status(404).json({ error: 'Player not found in active FiveM links' });
-  }
-  if (!isActiveFiveMLink(link)) {
-    return res.status(400).json({ error: 'Player is not currently detected in server' });
-  }
-  if (!String(link.citizen_id || '').trim()) {
-    return res.status(400).json({ error: 'Selected player has no citizen_id available for fines' });
-  }
-
-  const jobReason = String(reason || 'CAD admin test fine').trim() || 'CAD admin test fine';
-  const job = FiveMFineJobs.create({
-    citizen_id: String(link.citizen_id),
-    amount: fineAmount,
-    reason: jobReason,
-    issued_by_user_id: req.user.id,
-    source_record_id: null,
-  });
-  processPendingFineJobs().catch((err) => {
-    console.error('[FineProcessor] Immediate test fine run failed:', err?.message || err);
-  });
-
-  audit(req.user.id, 'fivem_test_fine_queued', {
-    fineJobId: job.id,
-    steam_id: link.steam_id,
-    game_id: link.game_id,
-    citizen_id: link.citizen_id,
-    amount: fineAmount,
-    reason: jobReason,
-  });
-
-  const deliveryMode = String(Settings.get('fivem_bridge_qbox_fines_delivery_mode') || 'bridge').trim().toLowerCase();
-  res.status(201).json({ success: true, job, player: link, delivery_mode: deliveryMode });
 });
 
 // --- Audit Log ---
