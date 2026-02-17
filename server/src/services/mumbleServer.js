@@ -267,6 +267,10 @@ function patchMurmurAcl() {
       }
     }
 
+    // Log what's actually in the ACL table for Root after patching
+    const allRows = murmurDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
+    console.log('[MumbleServer] Root ACL rows after patch:', JSON.stringify(allRows));
+
     murmurDb.close();
     console.log('[MumbleServer] Root channel ACL patched — Make permission granted to @all');
     return true;
@@ -335,7 +339,19 @@ async function startMumbleServer() {
 
   // Restart Murmur (whether patched or not — we stopped it above)
   spawnMurmur();
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise(resolve => setTimeout(resolve, 3000));
+
+  // Verify Murmur didn't reset the ACL on startup
+  try {
+    const Database = require('better-sqlite3');
+    const verifyDb = new Database(dbPath, { readonly: true });
+    const allRows = verifyDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
+    verifyDb.close();
+    console.log('[MumbleServer] Root ACL after Murmur restart:', JSON.stringify(allRows));
+  } catch (e) {
+    console.warn('[MumbleServer] Could not verify ACL after restart:', e.message);
+  }
+
   if (patched) {
     console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
   } else {
