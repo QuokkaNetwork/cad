@@ -1143,6 +1143,40 @@ router.post('/job-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Sync Mumble server configuration from FiveM
+// Expected payload: { mumble_host: "127.0.0.1", mumble_port: 64738, voice_system: "pma-voice", detected: true }
+router.post('/mumble-config/sync', requireBridgeAuth, (req, res) => {
+  try {
+    const host = String(req.body?.mumble_host || '').trim();
+    const port = parseInt(req.body?.mumble_port || 0, 10);
+    const voiceSystem = String(req.body?.voice_system || 'unknown').trim();
+    const detected = !!req.body?.detected;
+
+    if (!host || !port || port <= 0) {
+      return res.status(400).json({ error: 'Invalid mumble_host or mumble_port' });
+    }
+
+    // Update settings in database
+    Settings.set('mumble_host', host);
+    Settings.set('mumble_port', port.toString());
+    Settings.set('mumble_voice_system', voiceSystem);
+    Settings.set('mumble_auto_detected', detected ? '1' : '0');
+
+    console.log(`[MumbleConfigSync] Updated Mumble config: ${host}:${port} (${voiceSystem}, auto-detected: ${detected})`);
+
+    res.json({
+      ok: true,
+      host,
+      port,
+      voice_system: voiceSystem,
+      detected,
+    });
+  } catch (error) {
+    console.error('[MumbleConfigSync] Error syncing Mumble config:', error);
+    res.status(500).json({ error: 'Failed to sync Mumble configuration' });
+  }
+});
+
 // Sync radio channel names from FiveM (pma-voice/mm-radio)
 // Expected payload: { channels: [{ id: 1, name: "Police Primary", description: "..." }, ...] }
 router.post('/radio-channels/sync', requireBridgeAuth, (req, res) => {

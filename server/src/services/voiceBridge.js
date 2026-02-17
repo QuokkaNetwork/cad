@@ -13,6 +13,8 @@ try {
   OpusScript = null;
 }
 
+const { Settings } = require('../db/sqlite');
+
 const OPUS_FRAME_SIZE = 960; // 20ms @ 48kHz mono
 const OPUS_FRAME_BYTES = OPUS_FRAME_SIZE * 2;
 const MAX_WHISPER_TARGETS = 30;
@@ -148,9 +150,14 @@ class VoiceBridgeServer {
       ...(MumbleClientCtor ? [] : ['mumble-node']),
       ...(OpusScript ? [] : ['opusscript']),
     ];
+    // Read Mumble config from Settings database (auto-detected from FiveM) or fall back to .env
+    const dbHost = String(Settings.get('mumble_host') || '').trim();
+    const dbPort = String(Settings.get('mumble_port') || '').trim();
+    const voiceSystem = String(Settings.get('mumble_voice_system') || '').trim();
+
     this.config = {
-      mumbleHost: process.env.MUMBLE_HOST || '127.0.0.1',
-      mumblePort: Number(process.env.MUMBLE_PORT || 64738) || 64738,
+      mumbleHost: dbHost || process.env.MUMBLE_HOST || '127.0.0.1',
+      mumblePort: Number(dbPort || process.env.MUMBLE_PORT || 64738) || 64738,
       mumblePassword: String(process.env.MUMBLE_PASSWORD || '').trim(),
       mumbleTokens: parseCsv(process.env.MUMBLE_TOKENS),
       mumbleRejectUnauthorized: parseBool(process.env.MUMBLE_REJECT_UNAUTHORIZED, false),
@@ -159,7 +166,12 @@ class VoiceBridgeServer {
       sampleRate: 48000,
       channels: 1,
       bitsPerSample: 16,
+      voiceSystem: voiceSystem || 'unknown',
     };
+
+    if (dbHost || dbPort) {
+      console.log(`[VoiceBridge] Using auto-detected Mumble config: ${this.config.mumbleHost}:${this.config.mumblePort} (${this.config.voiceSystem})`);
+    }
   }
 
   assertAvailable() {
