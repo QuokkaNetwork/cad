@@ -1259,11 +1259,32 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
       return res.status(400).json({ error: 'participants must be an array' });
     }
 
-    // Build a map of channel_number → VoiceChannel row (cached for this request)
+    // Build a map of channel_number → VoiceChannel row (cached for this request).
+    // Auto-creates the channel if it doesn't exist yet (e.g. mm_radio channels 1-10
+    // reported by the heartbeat before the radio-channels sync has run).
     const channelCache = new Map();
-    function getChannel(channelNumber) {
+    function getOrCreateChannel(channelNumber) {
       if (channelCache.has(channelNumber)) return channelCache.get(channelNumber);
-      const ch = VoiceChannels.findByChannelNumber(channelNumber);
+      let ch = VoiceChannels.findByChannelNumber(channelNumber);
+      if (!ch) {
+        // Channel not yet synced — create it automatically so participants can be tracked
+        try {
+          ch = VoiceChannels.create({
+            channel_number: channelNumber,
+            department_id: null,
+            name: `Channel ${channelNumber}`,
+            description: `Radio channel ${channelNumber} (auto-created by heartbeat)`,
+          });
+          console.log(`[VoiceHeartbeat] Auto-created voice channel ${channelNumber}`);
+        } catch (createErr) {
+          // Race condition — another request may have created it simultaneously
+          ch = VoiceChannels.findByChannelNumber(channelNumber) || null;
+        }
+      } else if (!ch.is_active) {
+        // Channel exists but was deactivated — reactivate it since in-game players are using it
+        VoiceChannels.update(ch.id, { is_active: 1 });
+        ch = VoiceChannels.findByChannelNumber(channelNumber);
+      }
       channelCache.set(channelNumber, ch || null);
       return ch || null;
     }
@@ -1278,7 +1299,7 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
 
       if (!gameId) continue; // Must have a game_id to identify the player
 
-      const channel = channelNum > 0 ? getChannel(channelNum) : null;
+      const channel = channelNum > 0 ? getOrCreateChannel(channelNum) : null;
 
       // Find existing participant row for this player (by game_id)
       const existing = VoiceParticipants.findByGameId(gameId);
@@ -1288,7 +1309,7 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
         if (!existing || existing.channel_id !== channel.id) {
           // Remove from old channel first
           if (existing) {
-            const oldChannel = getChannel(existing.channel_number);
+            const oldChannel = getOrCreateChannel(existing.channel_number);
             VoiceParticipants.removeByGameId(gameId);
             bus.emit('voice:leave', {
               channelId: existing.channel_id,

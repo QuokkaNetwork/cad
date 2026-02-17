@@ -24,7 +24,7 @@ export default function Voice() {
   const [error, setError] = useState(null);
   const [selectedCall, setSelectedCall] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showAllChannels, setShowAllChannels] = useState(false);
+  const [showAllChannels, setShowAllChannels] = useState(true);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;

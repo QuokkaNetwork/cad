@@ -120,11 +120,9 @@ function buildRoutingMapFromParticipants() {
   const routingMap = new Map();
 
   try {
-    const channels = VoiceChannels.list();
+    const channels = VoiceChannels.listAll();
 
     for (const channel of channels) {
-      if (!channel.is_active) continue;
-
       const channelNumber = Number(channel.channel_number);
       if (!channelNumber || channelNumber <= 0) continue;
 
