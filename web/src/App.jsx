@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { DepartmentProvider } from './context/DepartmentContext';
+import { EventSourceProvider } from './context/EventSourceContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import RequireDepartment from './components/RequireDepartment';
 import MainLayout from './layouts/MainLayout';
@@ -30,8 +31,9 @@ import Voice from './pages/police/Voice';
 export default function App() {
   return (
     <AuthProvider>
-      <DepartmentProvider>
-        <Routes>
+      <EventSourceProvider>
+        <DepartmentProvider>
+          <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
@@ -73,7 +75,8 @@ export default function App() {
           {/* Default redirect */}
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
-      </DepartmentProvider>
+        </DepartmentProvider>
+      </EventSourceProvider>
     </AuthProvider>
   );
 }

@@ -75,7 +75,6 @@ export default function Sidebar() {
   const [isDispatchDepartment, setIsDispatchDepartment] = useState(false);
   const [isOnDuty, setIsOnDuty] = useState(false);
   const [hasActiveCall, setHasActiveCall] = useState(false);
-  const prevDispatcherOnlineRef = useRef(null);
   const callAssignAudioRef = useRef(null);
   const emergencyCallAudioRef = useRef(null);
 
@@ -135,25 +134,13 @@ export default function Sidebar() {
     if (!deptId) {
       setDispatcherOnline(false);
       setIsDispatchDepartment(false);
-      prevDispatcherOnlineRef.current = null;
       return;
     }
 
     try {
       const status = await api.get(`/api/units/dispatcher-status?department_id=${deptId}`);
-      const nextOnline = !!status?.dispatcher_online;
-      const nextIsDispatchDepartment = !!status?.is_dispatch_department;
-
-      setDispatcherOnline(nextOnline);
-      setIsDispatchDepartment(nextIsDispatchDepartment);
-
-      const prevOnline = prevDispatcherOnlineRef.current;
-      prevDispatcherOnlineRef.current = nextOnline;
-
-      // If a dispatcher just came online, reload so department layouts/tabs refresh immediately.
-      if (!nextIsDispatchDepartment && prevOnline === false && nextOnline) {
-        window.location.reload();
-      }
+      setDispatcherOnline(!!status?.dispatcher_online);
+      setIsDispatchDepartment(!!status?.is_dispatch_department);
     } catch {
       // Keep sidebar usable even if dispatcher status lookup fails.
     }

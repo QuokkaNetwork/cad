@@ -1,72 +1,34 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
+import { useEventSourceContext } from '../context/EventSourceContext';
 
+/**
+ * Subscribe to SSE events from the shared global SSE connection.
+ * Pass an object mapping event names to handler functions.
+ * Handlers are updated on every render via a ref so they're always current
+ * without needing to re-subscribe.
+ */
 export function useEventSource(eventHandlers) {
-  const esRef = useRef(null);
-  const reconnectTimerRef = useRef(null);
-  const closedRef = useRef(false);
+  const { on, off } = useEventSourceContext();
   const handlersRef = useRef(eventHandlers);
   handlersRef.current = eventHandlers;
 
-  const connect = useCallback(() => {
-    if (closedRef.current) return;
-
-    if (esRef.current) {
-      esRef.current.close();
-    }
-
-    const es = new EventSource('/api/events');
-    esRef.current = es;
-
-    es.onopen = () => {
-      console.log('SSE connected');
-    };
-
-    es.onerror = () => {
-      es.close();
-      if (closedRef.current) return;
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-      }
-      // Reconnect after 5 seconds
-      reconnectTimerRef.current = setTimeout(connect, 5000);
-    };
-
-    // Register handlers for each event type
-    const events = [
-      'unit:online', 'unit:offline', 'unit:update',
-      'call:create', 'call:update', 'call:close', 'call:assign', 'call:unassign',
-      'bolo:create', 'bolo:resolve', 'bolo:cancel',
-      'voice:join', 'voice:leave', 'voice:call_accepted', 'voice:call_declined', 'voice:call_ended',
-      'announcement:new', 'sync:department',
-    ];
-
-    for (const event of events) {
-      es.addEventListener(event, (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (handlersRef.current[event]) {
-            handlersRef.current[event](data);
-          }
-        } catch {
-          // ignore parse errors
-        }
-      });
-    }
-  }, []);
-
   useEffect(() => {
-    closedRef.current = false;
-    connect();
+    // For each event key, register a stable wrapper that calls the latest handler
+    const wrappers = {};
+    for (const event of Object.keys(handlersRef.current)) {
+      wrappers[event] = (data) => {
+        if (handlersRef.current[event]) {
+          handlersRef.current[event](data);
+        }
+      };
+      on(event, wrappers[event]);
+    }
+
     return () => {
-      closedRef.current = true;
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-      if (esRef.current) {
-        esRef.current.close();
-        esRef.current = null;
+      for (const event of Object.keys(wrappers)) {
+        off(event, wrappers[event]);
       }
     };
-  }, [connect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // empty deps — wrappers are registered once, handlers stay current via ref
 }

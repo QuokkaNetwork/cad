@@ -79,21 +79,31 @@ export default function AdminDepartments() {
     [departments]
   );
 
-  const orderedSubDepartments = useMemo(
-    () => [...subDepartments].sort((a, b) => {
-      const deptA = orderedDepartments.find(d => d.id === a.department_id);
-      const deptB = orderedDepartments.find(d => d.id === b.department_id);
-      const deptOrderA = Number.isFinite(Number(deptA?.sort_order)) ? Number(deptA.sort_order) : 0;
-      const deptOrderB = Number.isFinite(Number(deptB?.sort_order)) ? Number(deptB.sort_order) : 0;
+  const orderedSubDepartments = useMemo(() => {
+    // Build a dept sort-order lookup once so the sort comparator is O(1) per call
+    const deptOrderMap = new Map(orderedDepartments.map(d => [d.id, Number.isFinite(Number(d.sort_order)) ? Number(d.sort_order) : 0]));
+    return [...subDepartments].sort((a, b) => {
+      const deptOrderA = deptOrderMap.get(a.department_id) ?? 0;
+      const deptOrderB = deptOrderMap.get(b.department_id) ?? 0;
       if (deptOrderA !== deptOrderB) return deptOrderA - deptOrderB;
       if (Number(a.department_id) !== Number(b.department_id)) return Number(a.department_id) - Number(b.department_id);
       const aOrder = Number.isFinite(Number(a.sort_order)) ? Number(a.sort_order) : 0;
       const bOrder = Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : 0;
       if (aOrder !== bOrder) return aOrder - bOrder;
       return String(a.name || '').localeCompare(String(b.name || ''));
-    }),
-    [subDepartments, orderedDepartments]
-  );
+    });
+  }, [subDepartments, orderedDepartments]);
+
+  // Pre-compute siblings per department once so the render loop is O(1) per sub-dept
+  const siblingsByDeptId = useMemo(() => {
+    const map = new Map();
+    for (const sub of orderedSubDepartments) {
+      const deptId = sub.department_id;
+      if (!map.has(deptId)) map.set(deptId, []);
+      map.get(deptId).push(sub);
+    }
+    return map;
+  }, [orderedSubDepartments]);
 
   async function fetchDepts() {
     try {
@@ -326,7 +336,7 @@ export default function AdminDepartments() {
   }
 
   function getSiblingSubDepartments(departmentId) {
-    return orderedSubDepartments.filter(s => s.department_id === departmentId);
+    return siblingsByDeptId.get(departmentId) ?? [];
   }
 
   async function moveSubDepartment(sub, direction) {
