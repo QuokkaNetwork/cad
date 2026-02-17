@@ -210,25 +210,28 @@ function createServer(expressApp) {
   const projectRoot = path.resolve(__dirname, '../../');
   const resolveTlsPath = (p) => p ? (path.isAbsolute(p) ? p : path.resolve(projectRoot, p)) : '';
 
-  const certPath = resolveTlsPath(String(process.env.TLS_CERT || '').trim());
-  const keyPath  = resolveTlsPath(String(process.env.TLS_KEY  || '').trim());
+  // Default to server/data/server.key + server.cert if not explicitly set in .env.
+  // This means HTTPS works automatically on first run without needing to edit .env.
+  const defaultKeyPath  = path.resolve(projectRoot, 'server/data/server.key');
+  const defaultCertPath = path.resolve(projectRoot, 'server/data/server.cert');
 
-  if (certPath && keyPath) {
-    // Auto-generate cert if files don't exist yet (e.g. fresh clone / first run)
-    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      console.log('[TLS] Cert files not found — auto-generating self-signed certificate...');
-      ensureSelfSignedCert(keyPath, certPath);
-    }
-    try {
-      const tlsOptions = {
-        cert: fs.readFileSync(certPath),
-        key:  fs.readFileSync(keyPath),
-      };
-      console.log(`[TLS] HTTPS enabled — cert: ${certPath}`);
-      return { server: https.createServer(tlsOptions, expressApp), protocol: 'https' };
-    } catch (err) {
-      console.warn(`[TLS] Failed to load TLS cert/key (${err.message}) — falling back to HTTP`);
-    }
+  const certPath = resolveTlsPath(String(process.env.TLS_CERT || '').trim()) || defaultCertPath;
+  const keyPath  = resolveTlsPath(String(process.env.TLS_KEY  || '').trim()) || defaultKeyPath;
+
+  // Auto-generate cert if files don't exist yet (e.g. fresh clone / first run)
+  if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+    console.log('[TLS] Cert files not found — auto-generating self-signed certificate...');
+    ensureSelfSignedCert(keyPath, certPath);
+  }
+  try {
+    const tlsOptions = {
+      cert: fs.readFileSync(certPath),
+      key:  fs.readFileSync(keyPath),
+    };
+    console.log(`[TLS] HTTPS enabled — cert: ${certPath}`);
+    return { server: https.createServer(tlsOptions, expressApp), protocol: 'https' };
+  } catch (err) {
+    console.warn(`[TLS] Failed to load TLS cert/key (${err.message}) — falling back to HTTP`);
   }
   return { server: http.createServer(expressApp), protocol: 'http' };
 }
