@@ -94,6 +94,11 @@ function buildIniContent(bindHost = '0.0.0.0', port = null) {
     'opusthreshold=0',
     // Don't remember last channel — pma-voice manages channel placement
     'rememberchannel=false',
+    // pma-voice reconnects aggressively on startup — disable autoban to prevent
+    // players being globally banned after the normal startup reconnect burst
+    'autobanAttempts=0',
+    'autobanTimeframe=0',
+    'autobanTime=0',
   ].filter(line => line !== '');
 
   return lines.join('\n') + '\n';
