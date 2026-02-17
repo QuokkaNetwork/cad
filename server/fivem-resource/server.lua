@@ -1766,41 +1766,53 @@ exports('getPlayerCallChannel', getPlayerCallChannel)
 
 -- ============================================================================
 -- Radio Channel Auto-Sync (mm_radio + pma-voice)
--- Reads channel names from mm_radio's Shared.RadioNames and syncs them to the
--- CAD so dispatchers see the correct channel names (e.g. "MRPD CH#1", etc.).
--- Also supports a static fallback table via the cad_bridge_radio_channels convar.
+-- Reads channel names from mm_radio's shared/shared.lua file via
+-- LoadResourceFile, then parses Shared.RadioNames entries from it.
+-- This avoids cross-resource Lua global access (each resource has its own
+-- isolated Lua state — Shared globals are not visible across resources).
 -- ============================================================================
 
--- Build a channel list from mm_radio's Shared.RadioNames table.
--- RadioNames keys are frequency strings like "1", "1.%", "420", "420.%" etc.
--- We only use integer-keyed entries (skip pattern entries like "1.%") since
+-- Parse mm_radio's shared/shared.lua to extract Shared.RadioNames entries.
+-- RadioNames keys are strings like "1", "1.%", "420", "420.%" etc.
+-- We only use exact integer keys (skip pattern entries like "1.%") since
 -- the CAD works with integer channel numbers.
 local function buildChannelsFromMmRadio()
-  local ok, radioNames = pcall(function()
-    -- Shared.RadioNames is a global populated by mm_radio's shared scripts.
-    -- We access it via the resource's shared state by requiring mm_radio exports
-    -- or reading it via a net callback. Simplest approach: check the global.
-    return Shared and Shared.RadioNames or nil
-  end)
+  if not isMmRadioAvailable() then return nil end
 
-  if not ok or not radioNames or type(radioNames) ~= 'table' then
+  -- Try common shared file locations used by mm_radio
+  local sharedPaths = { 'shared/shared.lua', 'config/shared.lua', 'shared.lua' }
+  local content = nil
+  for _, path in ipairs(sharedPaths) do
+    local data = LoadResourceFile('mm_radio', path)
+    if data and #data > 0 then
+      content = data
+      break
+    end
+  end
+
+  if not content then
     return nil
   end
 
+  -- Parse lines of the form:  ["1"] = "MRPD CH#1",
+  -- Captures: key (string inside quotes), name (string inside quotes)
   local channels = {}
   local seen = {}
 
-  for k, name in pairs(radioNames) do
-    local key = tostring(k or '')
-    -- Skip pattern entries like "1.%" — only process exact integer keys
-    if not key:find('%%') and not key:find('%.') then
-      local channelNum = tonumber(key)
-      if channelNum and channelNum == math.floor(channelNum) and channelNum >= 1 and not seen[channelNum] then
-        seen[channelNum] = true
-        channels[#channels + 1] = {
-          id   = math.floor(channelNum),
-          name = tostring(name or ''),
-        }
+  for line in content:gmatch('[^\r\n]+') do
+    -- Match: ["<key>"] = "<name>"  (with optional trailing comma/whitespace)
+    local key, name = line:match('%[%s*"([^"]+)"%s*%]%s*=%s*"([^"]*)"')
+    if key and name then
+      -- Skip pattern entries like "1.%" — only exact integer keys
+      if not key:find('%%') and not key:find('%.') then
+        local channelNum = tonumber(key)
+        if channelNum and channelNum == math.floor(channelNum) and channelNum >= 1 and not seen[channelNum] then
+          seen[channelNum] = true
+          channels[#channels + 1] = {
+            id   = math.floor(channelNum),
+            name = tostring(name),
+          }
+        end
       end
     end
   end
@@ -1830,7 +1842,7 @@ end
 
 -- Auto-sync on resource start (after a short delay to let mm_radio init first)
 CreateThread(function()
-  Wait(8000) -- give mm_radio time to load its Shared table
+  Wait(8000) -- give mm_radio time to fully start
   if not hasBridgeConfig() then return end
 
   local channels = buildChannelsFromMmRadio()
@@ -1838,10 +1850,10 @@ CreateThread(function()
     print(('[cad_bridge] Syncing %d radio channels from mm_radio to CAD...'):format(#channels))
     syncRadioChannelsToCad(channels)
   else
-    -- mm_radio not present or Shared.RadioNames not populated — nothing to sync.
+    -- mm_radio not present or shared file not readable — nothing to auto-sync.
     -- Operators can use fivem-radio-channel-sync.lua for manual channel definitions.
     if isMmRadioAvailable() then
-      print('[cad_bridge] mm_radio detected but Shared.RadioNames not readable — skipping auto-sync.')
+      print('[cad_bridge] mm_radio detected but shared/shared.lua could not be read — skipping auto-sync.')
       print('[cad_bridge] Use fivem-radio-channel-sync.lua to define channels manually.')
     end
   end
