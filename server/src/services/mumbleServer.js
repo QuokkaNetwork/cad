@@ -309,44 +309,38 @@ async function startMumbleServer() {
 
   const dbPath = path.join(__dirname, '../../data/mumble-server.sqlite');
 
-  // Fast path: DB exists — check if already patched, then start normally
+  // Fast path: DB already exists — patch if needed, then start.
+  // Murmur is not running yet so we can write to the DB freely.
   if (fs.existsSync(dbPath)) {
     console.log('[MumbleServer] Existing DB found — checking ACL...');
-    const alreadyPatched = isAclPatched(dbPath);
-    if (!alreadyPatched) {
-      // DB exists but not patched — patch it now (Murmur not running, safe to write)
-      console.log('[MumbleServer] DB exists but not patched — patching now...');
+    if (!isAclPatched(dbPath)) {
+      console.log('[MumbleServer] Patching ACL...');
       patchMurmurAcl();
     } else {
-      console.log('[MumbleServer] ACL already correct — starting Murmur normally');
+      console.log('[MumbleServer] ACL already correct');
     }
-
+    shuttingDown = false;
     spawnMurmur('0.0.0.0');
-    await new Promise(resolve => setTimeout(resolve, 4000));
-
-    // Verify Murmur didn't reset ACL on startup
-    try {
-      const Database = require('better-sqlite3');
-      const verifyDb = new Database(dbPath, { readonly: true });
-      const rows = verifyDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
-      verifyDb.close();
-      console.log('[MumbleServer] Root ACL after startup:', JSON.stringify(rows));
-      if (!isAclPatched(dbPath)) {
-        console.error('[MumbleServer] WARNING: Murmur reset the ACL on startup! Proximity voice will NOT work.');
-      }
-    } catch (e) {
-      console.warn('[MumbleServer] Could not verify ACL after start:', e.message);
-    }
-
-    console.log('[MumbleServer] Murmur running');
+    console.log('[MumbleServer] Murmur running with proximity voice ACLs');
     return;
   }
 
-  // First boot: start on localhost only so no players connect during init
-  console.log('[MumbleServer] First boot — starting Murmur on 127.0.0.1 to initialize DB...');
-  spawnMurmur('127.0.0.1');
+  // First boot: DB doesn't exist yet.
+  // Start Murmur on 127.0.0.1 only so no players can connect during init.
+  // Disable auto-restart for the entire init cycle — we manage restarts manually.
+  console.log('[MumbleServer] First boot — initializing DB on 127.0.0.1 (players cannot connect yet)...');
+  shuttingDown = true; // block auto-restart timer for the whole init cycle
+  const binary = findMurmurBinary();
+  if (!binary) return;
+  const iniPath = ensureIniFile('127.0.0.1');
+  const args = IS_WINDOWS ? ['-ini', iniPath] : ['-ini', iniPath, '-fg'];
+  console.log(`[MumbleServer] Starting Murmur (init): ${binary} ${args.join(' ')}`);
+  const initProc = spawn(binary, args, { stdio: ['ignore','pipe','pipe'], detached: false, windowsHide: true });
+  initProc.stdout.on('data', d => { const t = d.toString().trim(); if (t) console.log(`[Murmur] ${t}`); });
+  initProc.stderr.on('data', d => { const t = d.toString().trim(); if (t) console.warn(`[Murmur] ${t}`); });
+  console.log(`[MumbleServer] Init Murmur started (PID ${initProc.pid})`);
 
-  // Poll until ACL table exists in the DB
+  // Wait until ACL table exists in the DB (up to 20s)
   const deadline = Date.now() + 20000;
   let dbReady = false;
   while (Date.now() < deadline) {
@@ -355,61 +349,32 @@ async function startMumbleServer() {
     try {
       const Database = require('better-sqlite3');
       const checkDb = new Database(dbPath, { readonly: true });
-      const tables = checkDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='acl'`).get();
+      const t = checkDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='acl'`).get();
       checkDb.close();
-      if (tables) { dbReady = true; break; }
-    } catch {
-      // DB not readable yet — keep waiting
-    }
+      if (t) { dbReady = true; break; }
+    } catch { /* not readable yet */ }
   }
+
+  // Kill the init process — wait for it to fully exit before touching the DB
+  console.log('[MumbleServer] Stopping init Murmur...');
+  try { initProc.kill(); } catch {}
+  await new Promise(resolve => {
+    if (initProc.exitCode !== null) { resolve(); return; }
+    initProc.once('exit', resolve);
+    setTimeout(resolve, 3000); // fallback
+  });
+  await new Promise(resolve => setTimeout(resolve, 500)); // extra safety margin
 
   if (!dbReady) {
-    console.warn('[MumbleServer] DB never initialized after 20s — starting anyway without ACL patch');
-    console.warn('[MumbleServer] Proximity voice may not work. Delete mumble-server.sqlite and restart to retry.');
-    stopMurmur();
-    shuttingDown = false;
-    spawnMurmur('0.0.0.0');
-    return;
+    console.warn('[MumbleServer] DB never initialized — starting without ACL patch (proximity voice may not work)');
+  } else {
+    console.log('[MumbleServer] DB ready — patching ACL...');
+    patchMurmurAcl();
   }
 
-  // Stop the localhost-only instance, patch, restart publicly
-  console.log('[MumbleServer] DB ready — patching ACL and restarting publicly...');
-  stopMurmur();
+  // Now start Murmur publicly with the patched DB
   shuttingDown = false;
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
-  patchMurmurAcl();
-
-  // Confirm patch is in DB before starting Murmur
-  try {
-    const Database = require('better-sqlite3');
-    const verifyDb = new Database(dbPath, { readonly: true });
-    const rows = verifyDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
-    verifyDb.close();
-    console.log('[MumbleServer] DB contents before Murmur start:', JSON.stringify(rows));
-  } catch (e) {
-    console.warn('[MumbleServer] Could not read DB before start:', e.message);
-  }
-
   spawnMurmur('0.0.0.0');
-  await new Promise(resolve => setTimeout(resolve, 4000));
-
-  // Confirm Murmur didn't wipe the ACL on startup
-  try {
-    const Database = require('better-sqlite3');
-    const verifyDb = new Database(dbPath, { readonly: true });
-    const rows = verifyDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
-    verifyDb.close();
-    console.log('[MumbleServer] DB contents after Murmur start:', JSON.stringify(rows));
-    const stillPatched = isAclPatched(dbPath);
-    if (!stillPatched) {
-      console.error('[MumbleServer] WARNING: Murmur reset the ACL on startup! Proximity voice will NOT work.');
-      console.error('[MumbleServer] This means Murmur is overwriting our patch. Need Ice/RPC approach.');
-    }
-  } catch (e) {
-    console.warn('[MumbleServer] Could not verify DB after start:', e.message);
-  }
-
   console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
 }
 
