@@ -259,21 +259,34 @@ async function startMumbleServer() {
   }
 
   spawnMurmur();
-  // Give Murmur 2 seconds to bind the port and write its database
-  await new Promise(resolve => setTimeout(resolve, 2000));
 
-  // Patch the Root channel ACL so pma-voice can create temporary channels
-  // for proximity voice. Only restarts Murmur if the DB was actually changed.
-  const needsRestart = patchMurmurAcl();
-  if (needsRestart) {
-    console.log('[MumbleServer] Restarting Murmur to apply ACL changes...');
-    stopMurmur();
-    shuttingDown = false;
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    spawnMurmur();
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    console.log('[MumbleServer] Murmur restarted with patched ACLs');
+  // Poll for Murmur's SQLite database to appear (up to 15 seconds)
+  const dbPath = path.join(__dirname, '../../data/murmur.sqlite');
+  console.log('[MumbleServer] Waiting for murmur.sqlite to be created...');
+  const deadline = Date.now() + 15000;
+  while (!fs.existsSync(dbPath) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
+
+  if (!fs.existsSync(dbPath)) {
+    console.warn('[MumbleServer] murmur.sqlite never appeared after 15s — skipping ACL patch');
+    console.warn('[MumbleServer] Proximity voice may not work. Delete murmur.sqlite and restart to retry.');
+    return;
+  }
+
+  console.log('[MumbleServer] murmur.sqlite found — checking Root channel ACL...');
+
+  // Stop Murmur so it releases the DB lock, patch, then restart
+  stopMurmur();
+  shuttingDown = false;
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  patchMurmurAcl();
+
+  // Restart Murmur now that the ACL is patched
+  spawnMurmur();
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  console.log('[MumbleServer] Murmur running with proximity voice ACLs');
 }
 
 process.on('exit', stopMurmur);
