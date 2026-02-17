@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
-import { api, getToken } from '../../api/client';
+import { api } from '../../api/client';
 import DispatcherVoiceClient from '../../services/voiceClient';
 import Modal from '../../components/Modal';
 
