@@ -231,6 +231,24 @@ if "!UPDATED!"=="1" (
   )
 )
 
+REM --- Always re-apply mumble-node patches on startup ---
+REM npm postinstall only runs during install/update. On normal restarts we still
+REM want to guarantee the patched mumble-node client is in place.
+if exist "scripts\patch-mumble-node.js" (
+  echo [CAD] Re-applying mumble-node startup patch...
+  node "scripts\patch-mumble-node.js"
+  if errorlevel 1 (
+    echo [CAD] WARNING: Root mumble-node patch failed. Voice bridge stability may be impacted.
+  )
+)
+if exist "server\scripts\fix-mumble-node.js" (
+  echo [CAD] Re-applying server mumble-node proto patch...
+  node "server\scripts\fix-mumble-node.js"
+  if errorlevel 1 (
+    echo [CAD] WARNING: Server mumble-node proto patch failed. Voice bridge may not load correctly.
+  )
+)
+
 REM --- Mumble firewall setup (runs once, tracked by sentinel file) ---
 REM murmur.exe ships with the repo — no download needed.
 REM The PS1 just opens the firewall port the first time.

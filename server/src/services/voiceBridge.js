@@ -165,7 +165,10 @@ class VoiceBridgeServer {
       mumblePassword: String(process.env.MUMBLE_PASSWORD || '').trim(),
       mumbleTokens: parseCsv(process.env.MUMBLE_TOKENS),
       mumbleRejectUnauthorized: parseBool(process.env.MUMBLE_REJECT_UNAUTHORIZED, false),
-      mumbleDisableUdp: parseBool(process.env.MUMBLE_DISABLE_UDP, false),
+      // Default to TCP tunnel mode for dispatcher bridge clients.
+      // rust-mumble can aggressively request CryptSetup resets when UDP is flaky
+      // or firewalled; forcing TCP avoids repeated reset churn in server logs.
+      mumbleDisableUdp: parseBool(process.env.MUMBLE_DISABLE_UDP, true),
       dispatcherNamePrefix: String(process.env.MUMBLE_DISPATCHER_NAME_PREFIX || 'CAD_Dispatcher').trim() || 'CAD_Dispatcher',
       sampleRate: 48000,
       channels: 1,
