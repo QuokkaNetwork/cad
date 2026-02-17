@@ -1,5 +1,5 @@
 const express = require('express');
-const { requireAuth } = require('../auth/middleware');
+const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   VoiceChannels,
   VoiceParticipants,
@@ -96,6 +96,73 @@ router.get('/channels', requireAuth, (req, res) => {
     return { ...channel, participants, participant_count: participants.length };
   });
   res.json(channelsWithParticipants);
+});
+
+// List ALL voice channels including inactive (admin management view)
+router.get('/channels/admin', requireAuth, requireAdmin, (req, res) => {
+  const channels = VoiceChannels.listAll();
+  res.json(channels);
+});
+
+// Create a new voice channel (admin only)
+router.post('/channels', requireAuth, requireAdmin, (req, res) => {
+  const { channel_number, name, description, department_id } = req.body || {};
+  const num = parseInt(channel_number, 10);
+  if (!num || num < 1) {
+    return res.status(400).json({ error: 'channel_number must be a positive integer' });
+  }
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) {
+    return res.status(400).json({ error: 'name is required' });
+  }
+  const existing = VoiceChannels.findByChannelNumber(num);
+  if (existing) {
+    return res.status(409).json({ error: `Channel number ${num} already exists` });
+  }
+  const channel = VoiceChannels.create({
+    channel_number: num,
+    department_id: department_id ? parseInt(department_id, 10) : null,
+    name: trimmedName,
+    description: String(description || '').trim(),
+  });
+  audit(req.user.id, 'voice_channel_create', { channel_id: channel.id, channel_number: num, name: trimmedName });
+  res.status(201).json(channel);
+});
+
+// Update a voice channel name/description/active (admin only)
+router.put('/channels/:id', requireAuth, requireAdmin, (req, res) => {
+  const channelId = parseInt(req.params.id, 10);
+  const channel = VoiceChannels.findById(channelId);
+  if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+  const updates = {};
+  if (req.body.name !== undefined) {
+    const name = String(req.body.name).trim();
+    if (!name) return res.status(400).json({ error: 'name cannot be empty' });
+    updates.name = name;
+  }
+  if (req.body.description !== undefined) {
+    updates.description = String(req.body.description).trim();
+  }
+  if (req.body.is_active !== undefined) {
+    updates.is_active = req.body.is_active ? 1 : 0;
+  }
+
+  VoiceChannels.update(channelId, updates);
+  const updated = VoiceChannels.findById(channelId);
+  audit(req.user.id, 'voice_channel_update', { channel_id: channelId, updates });
+  res.json(updated);
+});
+
+// Delete (deactivate) a voice channel (admin only)
+router.delete('/channels/:id', requireAuth, requireAdmin, (req, res) => {
+  const channelId = parseInt(req.params.id, 10);
+  const channel = VoiceChannels.findById(channelId);
+  if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+  VoiceChannels.update(channelId, { is_active: 0 });
+  audit(req.user.id, 'voice_channel_delete', { channel_id: channelId, channel_number: channel.channel_number });
+  res.json({ success: true });
 });
 
 // Get channel participants

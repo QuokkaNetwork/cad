@@ -32,6 +32,12 @@ if (config.http?.trustProxy !== false) {
 
 // Security middleware
 app.use(helmet({ contentSecurityPolicy: false }));
+// Allow microphone access for dispatcher voice (getUserMedia).
+// Helmet v8 does not manage Permissions-Policy, so we set it manually.
+app.use((_req, res, next) => {
+  res.setHeader('Permissions-Policy', 'microphone=(self)');
+  next();
+});
 app.use(cors({
   origin: config.webUrl,
   credentials: true,

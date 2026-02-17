@@ -101,6 +101,17 @@ class DispatcherVoiceClient {
     if (this.localMicProcessor) return;
     await this.ensureAudioContext();
 
+    // getUserMedia requires a secure context (HTTPS or localhost).
+    // On plain HTTP the browser exposes navigator.mediaDevices but getUserMedia
+    // either throws NotAllowedError or is undefined entirely.
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error(
+        window.location.protocol === 'http:' && window.location.hostname !== 'localhost'
+          ? 'Microphone requires HTTPS. Ask your admin to enable HTTPS on the CAD server.'
+          : 'Microphone not supported in this browser.'
+      );
+    }
+
     this.localStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,

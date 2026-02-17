@@ -1372,6 +1372,14 @@ const VoiceChannels = {
       ORDER BY vc.channel_number ASC
     `).all();
   },
+  listAll() {
+    return db.prepare(`
+      SELECT vc.*, d.name as department_name, d.short_name as department_short_name
+      FROM voice_channels vc
+      LEFT JOIN departments d ON d.id = vc.department_id
+      ORDER BY vc.channel_number ASC
+    `).all();
+  },
   findById(id) {
     return db.prepare(`
       SELECT vc.*, d.name as department_name, d.short_name as department_short_name

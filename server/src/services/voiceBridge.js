@@ -150,14 +150,18 @@ class VoiceBridgeServer {
       ...(MumbleClientCtor ? [] : ['mumble-node']),
       ...(OpusScript ? [] : ['opusscript']),
     ];
-    // Read Mumble config from Settings database (auto-detected from FiveM) or fall back to .env
+    // .env MUMBLE_HOST/PORT always takes priority (the CAD and Mumble run on the same machine).
+    // The DB values are populated by FiveM auto-detect (the public IP) which is correct for
+    // pma-voice clients connecting from outside, but the CAD server must connect via localhost.
+    const envHost = String(process.env.MUMBLE_HOST || '').trim();
+    const envPort = String(process.env.MUMBLE_PORT || '').trim();
     const dbHost = String(Settings.get('mumble_host') || '').trim();
     const dbPort = String(Settings.get('mumble_port') || '').trim();
     const voiceSystem = String(Settings.get('mumble_voice_system') || '').trim();
 
     this.config = {
-      mumbleHost: dbHost || process.env.MUMBLE_HOST || '127.0.0.1',
-      mumblePort: Number(dbPort || process.env.MUMBLE_PORT || 64738) || 64738,
+      mumbleHost: envHost || dbHost || '127.0.0.1',
+      mumblePort: Number(envPort || dbPort || 64738) || 64738,
       mumblePassword: String(process.env.MUMBLE_PASSWORD || '').trim(),
       mumbleTokens: parseCsv(process.env.MUMBLE_TOKENS),
       mumbleRejectUnauthorized: parseBool(process.env.MUMBLE_REJECT_UNAUTHORIZED, false),
@@ -169,9 +173,8 @@ class VoiceBridgeServer {
       voiceSystem: voiceSystem || 'unknown',
     };
 
-    if (dbHost || dbPort) {
-      console.log(`[VoiceBridge] Using auto-detected Mumble config: ${this.config.mumbleHost}:${this.config.mumblePort} (${this.config.voiceSystem})`);
-    }
+    const hostSource = envHost ? '.env' : (dbHost ? 'auto-detect' : 'default');
+    console.log(`[VoiceBridge] Mumble config: ${this.config.mumbleHost}:${this.config.mumblePort} (source: ${hostSource}, voice: ${this.config.voiceSystem || 'unknown'})`);
   }
 
   assertAvailable() {
