@@ -179,6 +179,65 @@ function spawnMurmur() {
   console.log(`[MumbleServer] Murmur started (PID ${murmurProcess.pid}) on 0.0.0.0:${getMumblePort()}`);
 }
 
+/**
+ * Patch the Murmur SQLite database to grant the "Make" permission (create
+ * temporary channels) to all users on the Root channel.
+ *
+ * Murmur 1.5 no longer grants this by default, which breaks pma-voice
+ * proximity voice — players need to create temporary sub-channels in Root.
+ *
+ * Returns true if the database was modified (needs Murmur restart).
+ * Returns false if already patched (no restart needed).
+ */
+function patchMurmurAcl() {
+  const dataDir = path.join(__dirname, '../../data');
+  const dbPath  = path.join(dataDir, 'murmur.sqlite');
+
+  if (!fs.existsSync(dbPath)) {
+    console.warn('[MumbleServer] murmur.sqlite not found yet — skipping ACL patch');
+    return false;
+  }
+
+  try {
+    const Database = require('better-sqlite3');
+    const murmurDb = new Database(dbPath);
+
+    // Make=0x0008, Enter=0x0010, Traverse=0x0100
+    const GRANT_BITS = 0x0008 | 0x0010 | 0x0100;
+
+    // Check if Make is already granted to @all on Root
+    const existing = murmurDb.prepare(`
+      SELECT grantpriv FROM acl
+      WHERE server_id=1 AND channel_id=0 AND group_name='all' AND user_id=-1
+    `).get();
+
+    if (existing && (existing.grantpriv & 0x0008)) {
+      murmurDb.close();
+      console.log('[MumbleServer] Root channel ACL already correct — no patch needed');
+      return false;
+    }
+
+    if (existing) {
+      murmurDb.prepare(`
+        UPDATE acl SET grantpriv = grantpriv | ?
+        WHERE server_id=1 AND channel_id=0 AND group_name='all' AND user_id=-1
+      `).run(GRANT_BITS);
+    } else {
+      murmurDb.prepare(`
+        INSERT INTO acl (server_id, channel_id, priority, user_id, group_name, apply_here, apply_subs, grantpriv, revokepriv)
+        VALUES (1, 0, 1000, -1, 'all', 1, 1, ?, 0)
+      `).run(GRANT_BITS);
+    }
+
+    murmurDb.close();
+    console.log('[MumbleServer] Root channel ACL patched — Make permission granted to @all');
+    return true;
+  } catch (err) {
+    console.warn('[MumbleServer] ACL patch failed (non-fatal):', err.message);
+    return false;
+  }
+}
+
 function stopMurmur() {
   shuttingDown = true;
   if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
@@ -200,8 +259,21 @@ async function startMumbleServer() {
   }
 
   spawnMurmur();
-  // Give Murmur 2 seconds to bind the port before voice bridge connects
+  // Give Murmur 2 seconds to bind the port and write its database
   await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // Patch the Root channel ACL so pma-voice can create temporary channels
+  // for proximity voice. Only restarts Murmur if the DB was actually changed.
+  const needsRestart = patchMurmurAcl();
+  if (needsRestart) {
+    console.log('[MumbleServer] Restarting Murmur to apply ACL changes...');
+    stopMurmur();
+    shuttingDown = false;
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    spawnMurmur();
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log('[MumbleServer] Murmur restarted with patched ACLs');
+  }
 }
 
 process.on('exit', stopMurmur);
