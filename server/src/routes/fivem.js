@@ -9,6 +9,7 @@ const {
   FiveMFineJobs,
   FiveMJobSyncJobs,
   VoiceCallSessions,
+  VoiceChannels,
 } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
@@ -1140,6 +1141,64 @@ router.post('/job-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   const error = String(req.body?.error || 'Unknown job sync error');
   FiveMJobSyncJobs.markFailed(id, error);
   res.json({ ok: true });
+});
+
+// Sync radio channel names from FiveM (pma-voice/mm-radio)
+// Expected payload: { channels: [{ id: 1, name: "Police Primary", description: "..." }, ...] }
+router.post('/radio-channels/sync', requireBridgeAuth, (req, res) => {
+  try {
+    const channels = req.body?.channels || [];
+
+    if (!Array.isArray(channels)) {
+      return res.status(400).json({ error: 'channels must be an array' });
+    }
+
+    let updated = 0;
+    let created = 0;
+
+    for (const channelData of channels) {
+      const channelNumber = parseInt(channelData?.id || channelData?.channel || 0, 10);
+      const name = String(channelData?.name || '').trim();
+      const description = String(channelData?.description || channelData?.label || '').trim();
+
+      if (!channelNumber || channelNumber <= 0 || !name) {
+        continue; // Skip invalid entries
+      }
+
+      // Check if channel exists
+      const existing = VoiceChannels.findByChannelNumber(channelNumber);
+
+      if (existing) {
+        // Update existing channel
+        VoiceChannels.update(existing.id, {
+          name,
+          description: description || `Radio channel ${channelNumber}`,
+        });
+        updated++;
+      } else {
+        // Create new channel (no department assigned, available to all)
+        VoiceChannels.create({
+          channel_number: channelNumber,
+          department_id: null,
+          name,
+          description: description || `Radio channel ${channelNumber}`,
+        });
+        created++;
+      }
+    }
+
+    console.log(`[RadioChannelSync] Synced ${channels.length} channels: ${created} created, ${updated} updated`);
+
+    res.json({
+      ok: true,
+      synced: channels.length,
+      created,
+      updated,
+    });
+  } catch (error) {
+    console.error('[RadioChannelSync] Error syncing channels:', error);
+    res.status(500).json({ error: 'Failed to sync radio channels' });
+  }
 });
 
 module.exports = router;

@@ -109,20 +109,11 @@ export default function Voice() {
         setIsPTTActive(talking);
       };
 
-      // Auto-connect on mount - note: getToken() returns null in cookie-based auth
-      const token = getToken();
-      if (token) {
-        voiceClient.connect(token).catch(err => {
-          console.error('Failed to connect to voice bridge:', err);
-          setError('Failed to connect to voice server. Voice features are unavailable.');
-        });
-      } else {
-        // Cookie-based auth - try connecting with empty token
-        voiceClient.connect('').catch(err => {
-          console.error('Failed to connect to voice bridge:', err);
-          setError('Failed to connect to voice server. Voice features are unavailable.');
-        });
-      }
+      // Auto-connect on mount - uses cookie-based auth automatically
+      voiceClient.connect('').catch(err => {
+        console.error('Failed to connect to voice bridge:', err);
+        setError('Failed to connect to voice server. Voice features are unavailable.');
+      });
 
       return () => {
         try {

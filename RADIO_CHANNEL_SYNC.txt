@@ -1,0 +1,150 @@
+========================================
+RADIO CHANNEL SYNC INTEGRATION GUIDE
+========================================
+
+This guide explains how to sync your in-game radio channel names (from pma-voice/mm-radio)
+to the CAD so dispatchers see the same channel names as in-game units.
+
+
+STEP 1: ADD THE SYNC SCRIPT TO YOUR FIVEM SERVER
+-------------------------------------------------
+
+Option A - Add to existing cad-bridge resource:
+1. Copy fivem-radio-channel-sync.lua to your cad-bridge resource folder
+2. Add this to cad-bridge/fxmanifest.lua:
+   server_scripts {
+       'fivem-radio-channel-sync.lua'
+   }
+
+Option B - Create standalone resource:
+1. Create folder: resources/[standalone]/cad-radio-sync
+2. Place fivem-radio-channel-sync.lua inside
+3. Create fxmanifest.lua with:
+   fx_version 'cerulean'
+   game 'gta5'
+   server_script 'fivem-radio-channel-sync.lua'
+4. Add to server.cfg: ensure cad-radio-sync
+
+
+STEP 2: CONFIGURE THE SCRIPT
+-----------------------------
+
+Edit fivem-radio-channel-sync.lua and update:
+
+1. CAD_URL: Your CAD server URL (e.g., "http://103.203.241.35:3030")
+
+2. BRIDGE_TOKEN: Your bridge authentication token
+   - Find in CAD Settings → System → FiveM Bridge Token
+   - Or check server/.env for FIVEM_BRIDGE_SHARED_TOKEN
+
+3. RADIO_CHANNELS: List your actual radio channels
+
+   Example for standard PD setup:
+   ```lua
+   local RADIO_CHANNELS = {
+       {id = 1, name = "Police Primary", description = "Main police channel"},
+       {id = 2, name = "Police Backup", description = "Backup communications"},
+       {id = 3, name = "Police Traffic", description = "Traffic unit coordination"},
+       {id = 4, name = "EMS Primary", description = "Main EMS channel"},
+       {id = 5, name = "Fire Primary", description = "Main fire channel"},
+   }
+   ```
+
+   IMPORTANT: Channel IDs must match your pma-voice/mm-radio configuration!
+   - Default pma-voice: Channel 1 = Police, 2 = EMS, 3 = Fire
+   - Check your radio resource's config to confirm
+
+
+STEP 3: FIND YOUR RADIO CHANNEL CONFIG
+---------------------------------------
+
+To find your current radio channel names:
+
+For pma-voice users:
+- Check: resources/pma-voice/shared.lua or config.lua
+- Look for radioChannels or similar configuration
+
+For mm-radio users:
+- Check: resources/mm-radio/config.lua
+- Look for Config.RestrictedChannels or channel definitions
+
+For legacy tokovoip/mumble-voip:
+- Check your radio resource configuration
+
+
+STEP 4: TEST THE SYNC
+----------------------
+
+1. Restart your FiveM server (or ensure cad-radio-sync)
+2. Check server console for: "[CAD Radio Sync] Success! Synced X channels"
+3. Open CAD → Dispatch → Voice tab
+4. Verify channel names match your in-game radio
+
+Manual sync from server console:
+   synccadradio
+
+
+STEP 5: VERIFY IN CAD
+---------------------
+
+1. Login to CAD as a dispatcher
+2. Navigate to the Voice tab
+3. You should see channels like:
+   - Channel 1 - Police Primary
+   - Channel 2 - Police Backup
+   - etc.
+
+These names will now match what officers see in their radio in-game!
+
+
+TROUBLESHOOTING
+---------------
+
+Sync fails with 401 Unauthorized:
+→ Check BRIDGE_TOKEN matches CAD settings
+
+Sync fails with 404 Not Found:
+→ Check CAD_URL is correct and CAD server is running
+
+Channels not showing in CAD:
+→ Run "synccadradio" from server console
+→ Check CAD logs for errors
+
+Channel IDs don't match in-game:
+→ Verify RADIO_CHANNELS IDs match your pma-voice/mm-radio config
+→ In-game: /radio 1 should match CAD "Channel 1"
+
+
+ADVANCED: AUTO-DETECT CHANNELS
+-------------------------------
+
+If you want to auto-detect channels from pma-voice config, you can modify
+the script to read from exports. Example:
+
+```lua
+local function GetPmaVoiceChannels()
+    local channels = {}
+    -- This depends on your pma-voice config structure
+    local config = exports['pma-voice']:getConfig()
+    for id, data in pairs(config.channels or {}) do
+        table.insert(channels, {
+            id = id,
+            name = data.name or ("Channel " .. id),
+            description = data.description or ""
+        })
+    end
+    return channels
+end
+
+local RADIO_CHANNELS = GetPmaVoiceChannels()
+```
+
+
+NOTES
+-----
+
+- Channels sync automatically on server start
+- Auto-syncs every 30 minutes to catch any config changes
+- Use "synccadradio" command to manually sync
+- Channel names can be changed in CAD admin panel after initial sync
+- Sync only updates NAME and DESCRIPTION, not channel numbers or assignments

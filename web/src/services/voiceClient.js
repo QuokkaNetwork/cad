@@ -43,7 +43,8 @@ class DispatcherVoiceClient {
     return new Promise((resolve, reject) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      const url = `${protocol}//${host}/voice-bridge?token=${encodeURIComponent(authToken)}`;
+      // Cookie-based auth - cookies are automatically sent with WebSocket connections
+      const url = `${protocol}//${host}/voice-bridge`;
 
       this.ws = new WebSocket(url);
 

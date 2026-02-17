@@ -1,5 +1,6 @@
 const { Server: WebSocketServer } = require('ws');
 const { verifyToken } = require('../auth/jwt');
+const config = require('../config');
 const {
   VoiceChannels,
   VoiceParticipants,
@@ -42,8 +43,24 @@ class VoiceSignalingServer {
 
   handleUpgrade(request, socket, head) {
     try {
+      // Try to get token from URL parameter (legacy) or from cookies (current)
       const url = new URL(request.url, 'ws://localhost');
-      const token = url.searchParams.get('token');
+      let token = url.searchParams.get('token');
+
+      // If no URL token or empty, try to parse from cookies
+      if (!token || token === '') {
+        const cookieHeader = request.headers.cookie || '';
+        const cookies = {};
+        cookieHeader.split(';').forEach(cookie => {
+          const [name, ...rest] = cookie.split('=');
+          const trimmedName = name?.trim();
+          if (trimmedName) {
+            cookies[trimmedName] = rest.join('=').trim();
+          }
+        });
+        token = cookies[config.auth.cookieName] || '';
+      }
+
       if (!token) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
@@ -70,7 +87,8 @@ class VoiceSignalingServer {
       this.wss.handleUpgrade(request, socket, head, (ws) => {
         this.wss.emit('connection', ws, request, user);
       });
-    } catch {
+    } catch (err) {
+      console.error('WebSocket upgrade error:', err);
       socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
       socket.destroy();
     }
