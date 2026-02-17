@@ -26,6 +26,14 @@ Config.UseNearestPostal = GetConvar('cad_bridge_use_nearest_postal', 'true') == 
 Config.NearestPostalResource = GetConvar('cad_bridge_postal_resource', 'nearest-postal')
 Config.NearestPostalExport = GetConvar('cad_bridge_postal_export', 'getPostal')
 
+-- Radio adapter for CAD-driven radio channel join/leave events:
+-- 'auto'      -> detect pma-voice or mm-radio automatically (recommended)
+-- 'pma-voice' -> require pma-voice to be running
+-- 'mm-radio'  -> require mm_radio to be running
+--               (mm-radio depends on pma-voice; both use pma-voice server exports)
+-- 'none'      -> disable CAD-driven in-game radio sync
+Config.RadioAdapter = GetConvar('cad_bridge_radio_adapter', 'auto')
+
 -- Fine processing adapter
 -- 'auto' -> try qbx_core/qb-core RemoveMoney on online character + notify
 -- 'command' -> ExecuteCommand with template below

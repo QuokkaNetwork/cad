@@ -140,7 +140,7 @@ local function SyncMumbleConfigToCad(mumbleConfig)
         external_accessible = mumbleConfig.externalAccessible
     })
 
-    PerformHttpRequest(CAD_URL .. "/api/fivem/mumble-config/sync", function(statusCode, response, headers)
+    PerformHttpRequest(CAD_URL .. "/api/integration/fivem/mumble-config/sync", function(statusCode, response, headers)
         if statusCode == 200 then
             print("^2[CAD Mumble Sync] Successfully synced Mumble config to CAD^0")
         elseif statusCode == 404 then
@@ -150,7 +150,7 @@ local function SyncMumbleConfigToCad(mumbleConfig)
         end
     end, "POST", payload, {
         ["Content-Type"] = "application/json",
-        ["Authorization"] = "Bearer " .. BRIDGE_TOKEN
+        ["x-cad-bridge-token"] = BRIDGE_TOKEN
     })
 end
 
@@ -162,7 +162,7 @@ local function SyncChannelsToCad()
         channels = RADIO_CHANNELS
     })
 
-    PerformHttpRequest(CAD_URL .. "/api/fivem/radio-channels/sync", function(statusCode, response, headers)
+    PerformHttpRequest(CAD_URL .. "/api/integration/fivem/radio-channels/sync", function(statusCode, response, headers)
         if statusCode == 200 then
             local data = json.decode(response)
             print(string.format("^2[CAD Radio Sync] Success! Synced %d channels (%d created, %d updated)^0",
@@ -172,7 +172,7 @@ local function SyncChannelsToCad()
         end
     end, "POST", payload, {
         ["Content-Type"] = "application/json",
-        ["Authorization"] = "Bearer " .. BRIDGE_TOKEN
+        ["x-cad-bridge-token"] = BRIDGE_TOKEN
     })
 end
 

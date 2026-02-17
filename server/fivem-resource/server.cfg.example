@@ -57,6 +57,13 @@ set cad_bridge_npwd_resource "npwd"
 set cad_bridge_fine_adapter "auto"
 set cad_bridge_job_sync_adapter "auto"
 
+# Radio adapter for CAD-driven radio channel join/leave events:
+# 'auto'      -> try pma-voice first, fall back to mm-radio (recommended)
+# 'pma-voice' -> use pma-voice exports (setPlayerRadio / setPlayerCall)
+# 'mm-radio'  -> use mm_radio exports (JoinRadio / LeaveRadio)
+# 'none'      -> disable in-game radio sync
+set cad_bridge_radio_adapter "auto"
+
 # =============================================================================
 # STEP 4: Ensure the resource starts
 # =============================================================================
