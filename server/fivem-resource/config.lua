@@ -1,7 +1,11 @@
 Config = {}
 
--- CAD base URL (no trailing slash)
-Config.CadBaseUrl = GetConvar('cad_bridge_base_url', 'http://127.0.0.1:3030')
+-- CAD base URL (no trailing slash).
+-- The CAD server runs HTTPS on port 3030 (for browser mic access) but also
+-- exposes a plain HTTP listener on port 3031 specifically for the FiveM bridge,
+-- because PerformHttpRequest cannot verify self-signed TLS certs.
+-- Leave this default unless you changed BRIDGE_HTTP_PORT in .env.
+Config.CadBaseUrl = GetConvar('cad_bridge_base_url', 'http://127.0.0.1:3031')
 -- Shared token must match Admin > System Settings > FiveM CAD Bridge
 Config.SharedToken = GetConvar('cad_bridge_token', '')
 

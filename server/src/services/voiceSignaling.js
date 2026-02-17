@@ -185,9 +185,28 @@ class VoiceSignalingServer {
         }
         channelName = `000 Call - ${callSession.caller_name || callSession.caller_phone_number || 'Unknown'}`;
       } else {
-        const channel = VoiceChannels.findByChannelNumber(parsedChannelNumber);
-        if (!channel || !channel.is_active) {
+        let channel = VoiceChannels.findByChannelNumber(parsedChannelNumber);
+        if (!channel) {
+          // Auto-create channel so dispatcher can join even if no heartbeat has
+          // reported it yet (e.g. dispatcher joins before any in-game players).
+          try {
+            channel = VoiceChannels.create({
+              channel_number: parsedChannelNumber,
+              department_id: null,
+              name: `Channel ${parsedChannelNumber}`,
+              description: `Radio channel ${parsedChannelNumber} (auto-created)`,
+            });
+          } catch {
+            channel = VoiceChannels.findByChannelNumber(parsedChannelNumber);
+          }
+        }
+        if (!channel) {
           throw new Error(`Channel ${parsedChannelNumber} not found`);
+        }
+        // Reactivate channel if it was marked inactive
+        if (!channel.is_active) {
+          VoiceChannels.update(channel.id, { is_active: 1 });
+          channel = VoiceChannels.findByChannelNumber(parsedChannelNumber) || channel;
         }
         channelName = channel.name;
         channelId = channel.id;

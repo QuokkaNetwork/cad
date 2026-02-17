@@ -332,21 +332,24 @@ class VoiceBridgeServer {
     if (!client.isReady) throw new Error('Voice backend is still initializing for this dispatcher');
 
     const numericChannel = Number(channelNumber || 0);
-    let targetChannel = this.resolveTargetChannel(client, numericChannel);
-    if (!targetChannel && numericChannel > 0) {
-      targetChannel = this.resolveTargetChannel(client, 0);
-      if (targetChannel) {
-        console.warn(`[VoiceBridge] Mumble channel ${numericChannel} was not found, falling back to root channel`);
-      }
-    }
-    if (!targetChannel) {
-      throw new Error('No usable Mumble channel found');
+
+    // pma-voice keeps ALL players in the Mumble root channel and uses
+    // voice whisper targets for radio channel isolation.  The dispatcher
+    // must therefore also sit in the root channel — not a named sub-channel.
+    // We always move to root; the routing map + setVoiceTarget() handles
+    // who hears whom.
+    const rootChannel = client.getRootChannel
+      ? client.getRootChannel()
+      : Array.from(client.channels?.values?.() ?? [])[0] ?? null;
+
+    if (!rootChannel) {
+      throw new Error('No usable Mumble channel found (root channel missing)');
     }
 
-    client.moveToChannel(Number(targetChannel.channelId || 0));
+    client.moveToChannel(Number(rootChannel.channelId || 0));
     this.activeChannels.set(dispatcherId, {
       channelNumber: Number.isInteger(numericChannel) && numericChannel > 0 ? numericChannel : null,
-      channelName: String(targetChannel.name || ''),
+      channelName: String(rootChannel.name || 'Root'),
     });
     this.dispatcherWhisperTargets.delete(dispatcherId);
   }
@@ -391,26 +394,67 @@ class VoiceBridgeServer {
     return `${channelNumber}:${members.join(',')}`;
   }
 
+  /**
+   * Build a Map<gameId(string) -> mumbleSessionId(number)> from the currently
+   * connected Mumble clients visible to this dispatcher's connection.
+   *
+   * pma-voice connects each FiveM player to Mumble using their server source ID
+   * as the Mumble username (e.g. source 5 → Mumble user named "5").
+   * We match on that to convert game_id → Mumble session ID.
+   */
+  buildGameIdToSessionMap(client) {
+    const map = new Map();
+    if (!client || !client.isReady || !client.users) return map;
+    try {
+      for (const user of client.users.values()) {
+        const name = String(user?.name || '').trim();
+        const session = normalizePositiveInt(user?.session ?? user?.sessionId ?? 0);
+        if (!name || !session) continue;
+        // Match if the name is purely numeric (FiveM source ID) or starts with
+        // the source number followed by non-digit characters.
+        const numericId = normalizePositiveInt(name);
+        if (numericId > 0) {
+          map.set(String(numericId), session);
+        }
+      }
+    } catch {
+      // Ignore errors iterating user list.
+    }
+    return map;
+  }
+
   refreshDispatcherWhisperTargets(dispatcherId) {
     const client = this.mumbleClients.get(dispatcherId);
     if (!client || !client.isReady) return [];
 
-    const members = this.getRouteMembersForDispatcher(dispatcherId)
+    // gameIds from the routing table (FiveM source numbers stored as numbers)
+    const gameIdMembers = this.getRouteMembersForDispatcher(dispatcherId)
       .filter((member) => normalizePositiveInt(member) > 0)
       .slice(0, MAX_WHISPER_TARGETS);
-    const signature = this.buildWhisperTargetSignature(dispatcherId, members);
+
+    const signature = this.buildWhisperTargetSignature(dispatcherId, gameIdMembers);
     const existing = this.dispatcherWhisperTargets.get(dispatcherId);
     if (existing && existing.signature === signature) {
       return existing.targets;
     }
 
+    // Resolve game_ids → Mumble session IDs.
+    // pma-voice names Mumble users by their FiveM source number.
+    const gameIdToSession = this.buildGameIdToSessionMap(client);
+
     const targets = [];
-    for (let i = 0; i < members.length; i += 1) {
-      const channelId = members[i];
-      const targetId = i + 1;
+    for (let i = 0; i < gameIdMembers.length; i += 1) {
+      const gameId = gameIdMembers[i];
+      const sessionId = gameIdToSession.get(String(gameId));
+      if (!sessionId) {
+        // Player hasn't connected to Mumble yet — skip this target
+        continue;
+      }
+      const targetId = targets.length + 1;
       try {
-        client.setVoiceTarget(targetId, channelId, { links: false, children: false });
-        targets.push({ targetId, channelId });
+        // setVoiceTarget with a user session ID whispers directly to that user
+        client.setVoiceTarget(targetId, sessionId, { links: false, children: false });
+        targets.push({ targetId, sessionId, gameId });
       } catch (error) {
         console.warn('[VoiceBridge] Could not set whisper target:', error?.message || error);
       }

@@ -240,6 +240,21 @@ if (serverProtocol === 'http') {
   console.warn('[TLS] Running over plain HTTP. Set TLS_CERT and TLS_KEY in .env for HTTPS (required for microphone).');
 }
 
+// Secondary plain-HTTP server for the FiveM bridge.
+// FiveM's PerformHttpRequest cannot verify self-signed TLS certs, so the
+// bridge resource must use http:// — but the primary server is HTTPS.
+// We bind a lightweight HTTP listener on BRIDGE_HTTP_PORT (default 3031,
+// localhost only) so FiveM can reach /api/integration/fivem/* without TLS.
+// In server.cfg: set cad_bridge_base_url "http://127.0.0.1:3031"
+const bridgeHttpPort = parseInt(process.env.BRIDGE_HTTP_PORT || '3031', 10) || 3031;
+const bridgeHttpServer = http.createServer(app);
+bridgeHttpServer.listen(bridgeHttpPort, '127.0.0.1', () => {
+  console.log(`[BridgeHTTP] FiveM bridge HTTP listener on http://127.0.0.1:${bridgeHttpPort} (internal only)`);
+});
+bridgeHttpServer.on('error', (err) => {
+  console.warn(`[BridgeHTTP] Could not start bridge HTTP listener on port ${bridgeHttpPort}: ${err.message}`);
+});
+
 // Async startup — start Murmur first so the voice bridge can connect to it
 (async () => {
   // Start managed Murmur server if MUMBLE_MANAGE=true in .env
