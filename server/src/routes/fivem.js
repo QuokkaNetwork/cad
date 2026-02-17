@@ -985,6 +985,17 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
         caller_phone_number: callerPhoneNumber,
       });
       voiceSessionCreated = true;
+      // Put the in-game caller into the call channel immediately so the
+      // pma-voice phone session exists as soon as 000 is dialed (pending until
+      // a dispatcher accepts on the CAD side).
+      if (callerGameId) {
+        queueVoiceEvent('join_call', {
+          channel_number: callChannelNumber,
+          game_id: callerGameId,
+          citizen_id: callerCitizenId,
+          phone_number: callerPhoneNumber,
+        });
+      }
     } catch (err) {
       console.warn('[FiveMBridge] Could not create voice call session:', err?.message || err);
     }

@@ -584,6 +584,11 @@ local function handleNpwdEmergencyCall(emergencyNumber, callRequest)
       requestObj.reply('Connecting to emergency dispatch...')
     end)
   end
+  if type(requestObj.exit) == 'function' then
+    pcall(function()
+      requestObj.exit()
+    end)
+  end
 
   if src <= 0 then
     return
