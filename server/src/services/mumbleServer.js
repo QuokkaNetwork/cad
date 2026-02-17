@@ -204,4 +204,16 @@ process.on('exit', stopMurmur);
 process.on('SIGINT', () => { stopMurmur(); process.exit(0); });
 process.on('SIGTERM', () => { stopMurmur(); process.exit(0); });
 
-module.exports = { startMumbleServer, stopMurmur };
+function getMurmurStatus() {
+  const managed = isManagedEnabled();
+  const binary  = findMurmurBinary();
+  return {
+    managed,
+    binary:  binary || null,
+    running: managed && murmurProcess != null && murmurProcess.exitCode === null,
+    host:    process.env.MUMBLE_HOST || '127.0.0.1',
+    port:    parseInt(process.env.MUMBLE_PORT || '64738', 10),
+  };
+}
+
+module.exports = { startMumbleServer, stopMurmur, getMurmurStatus };

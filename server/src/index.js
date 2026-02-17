@@ -16,7 +16,7 @@ const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
 const { ensureLiveMapTilesDir } = require('./services/liveMapTiles');
-const { startMumbleServer } = require('./services/mumbleServer');
+const { startMumbleServer, getMurmurStatus } = require('./services/mumbleServer');
 
 // Initialize database
 console.log('Initializing database...');
@@ -174,6 +174,27 @@ const httpServer = http.createServer(app);
     console.log(`CAD server running on port ${config.port}`);
     console.log(`Environment: ${config.nodeEnv}`);
     console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
+
+    // Print voice/Mumble status summary
+    const murmur = getMurmurStatus();
+    console.log('');
+    console.log('=== Voice Status ===');
+    if (murmur.managed) {
+      if (murmur.running) {
+        console.log(`[Murmur]      ✓ Running  — ${murmur.host}:${murmur.port}`);
+        console.log(`[Murmur]      Binary: ${murmur.binary}`);
+      } else if (murmur.binary) {
+        console.log(`[Murmur]      ✗ Not running (binary found but process not started yet)`);
+      } else {
+        console.log(`[Murmur]      ✗ Binary not found — place murmur.exe in server/murmur/`);
+      }
+    } else {
+      console.log('[Murmur]      — Not managed (MUMBLE_MANAGE not set)');
+    }
+    console.log('[pma-voice]   Players connect via voice_externalAddress in voice.cfg');
+    console.log(`[pma-voice]   External Mumble: ${process.env.MUMBLE_HOST || '127.0.0.1'}:${process.env.MUMBLE_PORT || '64738'}`);
+    console.log('====================');
+    console.log('');
   });
 
   // Start Discord bot
