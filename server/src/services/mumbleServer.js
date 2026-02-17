@@ -239,10 +239,13 @@ function patchMurmurAcl() {
         `).run(GRANT_BITS);
       }
     } else {
-      // Murmur 1.4 schema: user_id, group_name, apply_here, apply_subs, grantpriv, revokepriv
+      // Murmur 1.4 schema: user_id, group_name, apply_here, apply_sub(s), grantpriv, revokepriv
+      // Note: some builds use apply_sub, others apply_subs — detect from schema
+      const applySubCol = colNames.includes('apply_sub') ? 'apply_sub' : 'apply_subs';
+
       const existing = murmurDb.prepare(`
         SELECT grantpriv FROM acl
-        WHERE server_id=1 AND channel_id=0 AND group_name='all' AND user_id=-1
+        WHERE server_id=1 AND channel_id=0 AND group_name='all'
       `).get();
 
       if (existing && (existing.grantpriv & 0x0008)) {
@@ -254,11 +257,11 @@ function patchMurmurAcl() {
       if (existing) {
         murmurDb.prepare(`
           UPDATE acl SET grantpriv = grantpriv | ?
-          WHERE server_id=1 AND channel_id=0 AND group_name='all' AND user_id=-1
+          WHERE server_id=1 AND channel_id=0 AND group_name='all'
         `).run(GRANT_BITS);
       } else {
         murmurDb.prepare(`
-          INSERT INTO acl (server_id, channel_id, priority, user_id, group_name, apply_here, apply_subs, grantpriv, revokepriv)
+          INSERT INTO acl (server_id, channel_id, priority, user_id, group_name, apply_here, ${applySubCol}, grantpriv, revokepriv)
           VALUES (1, 0, 1000, -1, 'all', 1, 1, ?, 0)
         `).run(GRANT_BITS);
       }
