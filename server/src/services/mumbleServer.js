@@ -228,8 +228,9 @@ function patchMurmurAcl() {
       }
 
       if (existing) {
+        // Also ensure apply_in_sub=1 so the permission covers sub-channels
         murmurDb.prepare(`
-          UPDATE acl SET granted_flags = granted_flags | ?
+          UPDATE acl SET granted_flags = granted_flags | ?, apply_in_sub = 1
           WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'
         `).run(GRANT_BITS);
       } else {
@@ -255,8 +256,9 @@ function patchMurmurAcl() {
       }
 
       if (existing) {
+        // Also ensure apply_sub=1 so the permission covers sub-channels (where pma-voice creates temp channels)
         murmurDb.prepare(`
-          UPDATE acl SET grantpriv = grantpriv | ?
+          UPDATE acl SET grantpriv = grantpriv | ?, ${applySubCol} = 1
           WHERE server_id=1 AND channel_id=0 AND group_name='all'
         `).run(GRANT_BITS);
       } else {
