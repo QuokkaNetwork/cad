@@ -194,11 +194,14 @@ function buildRustMumbleArgs(port) {
     console.warn('[MumbleServer] support a server connection password. Leave it blank for now.');
   }
 
+  // NOTE: Do NOT pass --restrict-to-version CitizenFX here.
+  // That flag causes rust-mumble to reject (or warn about) non-FiveM clients,
+  // which breaks the CAD voice bridge (mumble-node identifies as 'mumble.js').
+  // Without it, rust-mumble accepts all clients — FiveM players and CAD dispatchers alike.
   return [
-    '--listen',               `0.0.0.0:${port}`,
-    '--http-listen',          `127.0.0.1:8586`,
-    '--http-password',        getOrCreateHttpPassword(),
-    '--restrict-to-version',  'CitizenFX',
+    '--listen',       `0.0.0.0:${port}`,
+    '--http-listen',  `127.0.0.1:8586`,
+    '--http-password', getOrCreateHttpPassword(),
   ];
 }
 
