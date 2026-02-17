@@ -66,6 +66,7 @@ function generateVoiceCfgInline(publicIp, port, token, baseUrl) {
     'setr voice_hideEndpoints 1',
     'setr voice_useNativeAudio true',
     'setr voice_enableSubmix 1',
+    'setr voice_defaultRadioVolume 100',
     '',
     `set cad_bridge_base_url "${baseUrl}"`,
     `set cad_bridge_token "${token}"`,
