@@ -151,9 +151,59 @@ app.use((err, req, res, next) => {
 });
 
 // Create HTTP or HTTPS server for Express + WebSocket.
-// If TLS_CERT and TLS_KEY are set in .env and the files exist, serve over HTTPS
-// (required for browser microphone access via getUserMedia on non-localhost origins).
-// Otherwise fall back to plain HTTP.
+// If TLS_CERT and TLS_KEY are set in .env, serve over HTTPS (required for
+// browser microphone access via getUserMedia on non-localhost origins).
+// If the cert files don't exist yet, auto-generates a self-signed cert using
+// the public IP from MUMBLE_PUBLIC_IP so no manual steps are needed.
+function ensureSelfSignedCert(keyPath, certPath) {
+  const { execSync } = require('child_process');
+  const os = require('os');
+  const dataDir = path.dirname(keyPath);
+  fs.mkdirSync(dataDir, { recursive: true });
+
+  const ip = String(process.env.MUMBLE_PUBLIC_IP || '127.0.0.1').trim();
+  const confPath = path.join(os.tmpdir(), 'cad-openssl-san.cnf');
+  const conf = [
+    '[req]', 'default_bits = 2048', 'prompt = no', 'default_md = sha256',
+    'distinguished_name = dn', 'x509_extensions = v3_req',
+    '', '[dn]', 'CN = CAD Server',
+    '', '[v3_req]', 'subjectAltName = @alt_names',
+    'basicConstraints = CA:FALSE',
+    'keyUsage = digitalSignature, keyEncipherment',
+    'extendedKeyUsage = serverAuth',
+    '', '[alt_names]', `IP.1 = ${ip}`, 'IP.2 = 127.0.0.1',
+  ].join('\n');
+  fs.writeFileSync(confPath, conf, 'utf8');
+
+  // Try openssl candidates in order
+  const candidates = [
+    'openssl',
+    'C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe',
+    'C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe',
+    '/usr/bin/openssl',
+  ];
+  let generated = false;
+  for (const bin of candidates) {
+    try {
+      execSync(
+        `"${bin}" req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes` +
+        ` -keyout "${keyPath}" -out "${certPath}" -config "${confPath}"`,
+        { stdio: 'pipe' }
+      );
+      generated = true;
+      break;
+    } catch { /* try next */ }
+  }
+  try { fs.unlinkSync(confPath); } catch {}
+
+  if (!generated) {
+    console.warn('[TLS] Could not auto-generate cert (openssl not found). Install openssl or generate manually.');
+    return false;
+  }
+  console.log(`[TLS] Self-signed cert generated for IP ${ip} — cert: ${certPath}`);
+  return true;
+}
+
 function createServer(expressApp) {
   // Resolve paths relative to project root (parent of server/) so that
   // values like "server/data/server.key" in .env work correctly.
@@ -162,7 +212,13 @@ function createServer(expressApp) {
 
   const certPath = resolveTlsPath(String(process.env.TLS_CERT || '').trim());
   const keyPath  = resolveTlsPath(String(process.env.TLS_KEY  || '').trim());
+
   if (certPath && keyPath) {
+    // Auto-generate cert if files don't exist yet (e.g. fresh clone / first run)
+    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+      console.log('[TLS] Cert files not found — auto-generating self-signed certificate...');
+      ensureSelfSignedCert(keyPath, certPath);
+    }
     try {
       const tlsOptions = {
         cert: fs.readFileSync(certPath),
