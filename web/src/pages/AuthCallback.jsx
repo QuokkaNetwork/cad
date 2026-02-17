@@ -25,7 +25,13 @@ export default function AuthCallback() {
         credentials: 'include',
         body: JSON.stringify({ token }),
       })
-        .then(() => navigate('/home', { replace: true }))
+        .then(() => {
+          // Use a full page reload instead of React Router navigate so that
+          // AuthProvider re-mounts fresh with the cookie already in place.
+          // Without this, ProtectedRoute sees the pre-cookie auth state
+          // (user=null) and redirects back to /login before the cookie lands.
+          window.location.replace('/home');
+        })
         .catch(() => navigate('/login?error=auth_failed', { replace: true }));
       return;
     }
