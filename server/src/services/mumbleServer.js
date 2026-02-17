@@ -65,7 +65,7 @@ function buildIniContent() {
   const port = getMumblePort();
   const password = getMumblePassword();
   const dataDir = path.join(__dirname, '../../data');
-  const dbPath = path.join(dataDir, 'murmur.sqlite').replace(/\\/g, '/');
+  const dbPath = path.join(dataDir, 'mumble-server.sqlite').replace(/\\/g, '/');
   const logPath = path.join(dataDir, 'murmur.log').replace(/\\/g, '/');
 
   const lines = [
@@ -191,10 +191,10 @@ function spawnMurmur() {
  */
 function patchMurmurAcl() {
   const dataDir = path.join(__dirname, '../../data');
-  const dbPath  = path.join(dataDir, 'murmur.sqlite');
+  const dbPath  = path.join(dataDir, 'mumble-server.sqlite');
 
   if (!fs.existsSync(dbPath)) {
-    console.warn('[MumbleServer] murmur.sqlite not found yet — skipping ACL patch');
+    console.warn('[MumbleServer] mumble-server.sqlite not found yet — skipping ACL patch');
     return false;
   }
 
@@ -261,20 +261,20 @@ async function startMumbleServer() {
   spawnMurmur();
 
   // Poll for Murmur's SQLite database to appear (up to 15 seconds)
-  const dbPath = path.join(__dirname, '../../data/murmur.sqlite');
-  console.log('[MumbleServer] Waiting for murmur.sqlite to be created...');
+  const dbPath = path.join(__dirname, '../../data/mumble-server.sqlite');
+  console.log('[MumbleServer] Waiting for mumble-server.sqlite to be created...');
   const deadline = Date.now() + 15000;
   while (!fs.existsSync(dbPath) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
   if (!fs.existsSync(dbPath)) {
-    console.warn('[MumbleServer] murmur.sqlite never appeared after 15s — skipping ACL patch');
-    console.warn('[MumbleServer] Proximity voice may not work. Delete murmur.sqlite and restart to retry.');
+    console.warn('[MumbleServer] mumble-server.sqlite never appeared after 15s — skipping ACL patch');
+    console.warn('[MumbleServer] Proximity voice may not work. Delete mumble-server.sqlite and restart to retry.');
     return;
   }
 
-  console.log('[MumbleServer] murmur.sqlite found — checking Root channel ACL...');
+  console.log('[MumbleServer] mumble-server.sqlite found — checking Root channel ACL...');
 
   // Stop Murmur so it releases the DB lock, patch, then restart
   stopMurmur();
