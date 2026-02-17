@@ -210,8 +210,9 @@ function patchMurmurAcl() {
     // Murmur 1.5 renamed columns; detect which version's schema we have
     const isV15 = colNames.includes('granted_flags');
 
-    // Make=0x0008, Enter=0x0010, Traverse=0x0100
-    const GRANT_BITS = 0x0008 | 0x0010 | 0x0100;
+    // Correct Mumble permission bits (from ACL.h):
+    // MakeTempChannel=0x400, Enter=0x4, Traverse=0x2
+    const GRANT_BITS = 0x400 | 0x4 | 0x2;
 
     if (isV15) {
       // Murmur 1.5 schema: aff_user_id, aff_group_id, apply_in_current, apply_in_sub, granted_flags, revoked_flags
@@ -221,7 +222,7 @@ function patchMurmurAcl() {
         WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'
       `).get();
 
-      if (existing && (existing.granted_flags & 0x0008)) {
+      if (existing && (existing.granted_flags & 0x400)) {
         murmurDb.close();
         console.log('[MumbleServer] Root channel ACL already correct — no patch needed');
         return false;
@@ -249,7 +250,7 @@ function patchMurmurAcl() {
         WHERE server_id=1 AND channel_id=0 AND group_name='all'
       `).get();
 
-      if (existing && (existing.grantpriv & 0x0008)) {
+      if (existing && (existing.grantpriv & 0x400)) {
         murmurDb.close();
         console.log('[MumbleServer] Root channel ACL already correct — no patch needed');
         return false;
@@ -426,10 +427,10 @@ function isAclPatched(dbPath) {
     let patched = false;
     if (isV15) {
       const row = db.prepare(`SELECT granted_flags FROM acl WHERE server_id=1 AND channel_id=0 AND aff_group_id='all'`).get();
-      patched = row && (row.granted_flags & 0x0008) !== 0;
+      patched = row && (row.granted_flags & 0x400) !== 0;
     } else {
       const row = db.prepare(`SELECT grantpriv FROM acl WHERE server_id=1 AND channel_id=0 AND group_name='all'`).get();
-      patched = row && (row.grantpriv & 0x0008) !== 0;
+      patched = row && (row.grantpriv & 0x400) !== 0;
     }
     db.close();
     return patched;
