@@ -1,18 +1,14 @@
 #!/usr/bin/env node
 /**
- * Post-install patch for mumble-node dist/lib/client.js
+ * Post-install/startup patch for mumble-node dist/lib/client.js
  *
- * Fixes three bugs that cause rust-mumble (the Mumble server used by this CAD)
- * to drop the TCP connection when MUMBLE_DISABLE_UDP=true:
- *
- * 1. PING_INTERVAL reduced 15 s → 5 s  (rust-mumble TCP timeout is 10 s)
- * 2. Immediate ping on TLS connect + post-ServerSync ping
- * 3. Echo server Ping messages back (rust-mumble expects round-trip ping replies)
- * 4. Reply to full CryptSetup (re-key) in TCP-only mode with clientNonce ack
- * 5. Reply to empty CryptSetup (resync) in TCP-only mode with zero-nonce ack
- *
- * This script is run automatically via the "postinstall" npm script.
- * It is idempotent — safe to run multiple times.
+ * Fixes rust-mumble interoperability issues when running TCP-only voice bridge:
+ * 1) PING_INTERVAL 15s -> 5s
+ * 2) immediate ping on connect + post-ServerSync ping
+ * 3) echo server Ping messages back
+ * 4) reply to full CryptSetup in TCP-only mode
+ * 5) reply to empty CryptSetup resync in TCP-only mode
+ * 6) reply to server_nonce-only CryptSetup resync response in TCP-only mode
  */
 
 const fs = require('fs');
@@ -26,26 +22,29 @@ if (!fs.existsSync(clientPath)) {
 }
 
 let src = fs.readFileSync(clientPath, 'utf8');
-
-// ── Guard: already patched? ──────────────────────────────────────────────────
-if (src.includes('patch-mumble-node-applied')) {
-  console.log('[patch-mumble-node] Already patched, skipping');
-  process.exit(0);
-}
-
 let changed = false;
 
-// ── 1. Reduce ping interval ──────────────────────────────────────────────────
-if (src.includes('const PING_INTERVAL = 15000;')) {
-  src = src.replace(
-    'const PING_INTERVAL = 15000;',
-    'const PING_INTERVAL = 5000; // patched: 15 s caused ClientTimedOutTcp on rust-mumble'
-  );
+function applyReplacement(name, before, after, options = {}) {
+  const silentMissing = options.silentMissing ?? true;
+  if (src.includes(after)) return;
+  if (!src.includes(before)) {
+    if (!silentMissing) {
+      console.log(`[patch-mumble-node] Pattern not found for "${name}"`);
+    }
+    return;
+  }
+
+  src = src.replace(before, after);
   changed = true;
-  console.log('[patch-mumble-node] ✓ Reduced PING_INTERVAL 15 s → 5 s');
+  console.log(`[patch-mumble-node] Applied: ${name}`);
 }
 
-// ── 2. Immediate + post-ServerSync ping ─────────────────────────────────────
+applyReplacement(
+  'reduce ping interval',
+  'const PING_INTERVAL = 15000;',
+  'const PING_INTERVAL = 5000; // patched: 15 s caused ClientTimedOutTcp on rust-mumble'
+);
+
 const startPingOld = `    startPing() {
         this.pingInterval = setInterval(() => {`;
 const startPingNew = `    startPing() {
@@ -53,12 +52,7 @@ const startPingNew = `    startPing() {
         this._lastPingTime = Date.now();
         this.connection.send(types_1.MessageType.Ping, (0, protocol_1.encodePing)(this._lastPingTime));
         this.pingInterval = setInterval(() => {`;
-
-if (src.includes(startPingOld)) {
-  src = src.replace(startPingOld, startPingNew);
-  changed = true;
-  console.log('[patch-mumble-node] ✓ Added immediate ping on startPing()');
-}
+applyReplacement('immediate ping on startPing', startPingOld, startPingNew);
 
 const serverSyncOld = `        this._syncComplete = true;
         this._ready = true;
@@ -75,14 +69,8 @@ const serverSyncNew = `        this._syncComplete = true;
         this.emit('ready');
     }
     handleChannelState`;
+applyReplacement('post-ServerSync ping', serverSyncOld, serverSyncNew);
 
-if (src.includes(serverSyncOld)) {
-  src = src.replace(serverSyncOld, serverSyncNew);
-  changed = true;
-  console.log('[patch-mumble-node] ✓ Added post-ServerSync ping');
-}
-
-// ── 3. Echo server pings back ────────────────────────────────────────────────
 const handlePingOld = `    handlePing(message) {
         // Server ping received - just track it for stats, don't respond
         // The client sends its own periodic pings to keep connection alive
@@ -90,53 +78,41 @@ const handlePingOld = `    handlePing(message) {
         this.log(\`  Server ping received, timestamp: \${message.timestamp}\`);
     }`;
 const handlePingNew = `    handlePing(message) {
-        // patch-mumble-node: echo server ping back — rust-mumble requires round-trip replies
+        // patch-mumble-node: echo server ping back - rust-mumble requires round-trip replies
         this._lastPongTime = Date.now();
-        this.log(\`  Server ping received — echoing back\`);
+        this.log(\`  Server ping received - echoing back\`);
         try {
             const ts = message.timestamp ?? Date.now();
             const tsNum = (typeof ts === 'object' && ts !== null && 'toNumber' in ts) ? ts.toNumber() : Number(ts);
             this.connection.send(types_1.MessageType.Ping, (0, protocol_1.encodePing)(tsNum));
         } catch {}
     }`;
+applyReplacement('server ping echo', handlePingOld, handlePingNew);
 
-if (src.includes(handlePingOld)) {
-  src = src.replace(handlePingOld, handlePingNew);
-  changed = true;
-  console.log('[patch-mumble-node] ✓ Added server ping echo');
-}
-
-// ── 4. Reply to full CryptSetup in TCP-only mode ─────────────────────────────
 const cryptDisableOld = `        // Check if UDP is disabled (force TCP tunnel)
         if (this.options.disableUdp) {
             this.log('  CryptSetup received but UDP disabled, using TCP tunnel only');
             return;
         }`;
-const cryptDisableNew = `        // patch-mumble-node: TCP-only mode — acknowledge full CryptSetup re-key
+const cryptDisableNew = `        // patch-mumble-node: TCP-only mode - acknowledge full CryptSetup re-key
         if (this.options.disableUdp) {
-            this.log('  CryptSetup (re-key) in TCP-only mode — sending clientNonce ack');
+            this.log('  CryptSetup (re-key) in TCP-only mode - sending clientNonce ack');
             try {
                 const ack = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: message.clientNonce });
                 this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(ack).finish());
             } catch {}
             return;
         }`;
+applyReplacement('full CryptSetup TCP-only ack', cryptDisableOld, cryptDisableNew);
 
-if (src.includes(cryptDisableOld)) {
-  src = src.replace(cryptDisableOld, cryptDisableNew);
-  changed = true;
-  console.log('[patch-mumble-node] ✓ Added full CryptSetup ack for TCP-only mode');
-}
-
-// ── 5. Reply to empty CryptSetup (resync) in TCP-only mode ──────────────────
 const cryptResyncOld = `            else {
                 this.log('  CryptSetup: Nonce resync request but no UDP initialized yet');
             }
             return;
         }`;
 const cryptResyncNew = `            else {
-                // patch-mumble-node: TCP-only resync — send zero-nonce ack so server doesn't timeout
-                this.log('  CryptSetup: TCP-only resync — sending zero-nonce ack');
+                // patch-mumble-node: TCP-only resync - send zero-nonce ack so server does not timeout
+                this.log('  CryptSetup: TCP-only resync - sending zero-nonce ack');
                 try {
                     const resync = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: Buffer.alloc(16) });
                     this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(resync).finish());
@@ -144,19 +120,44 @@ const cryptResyncNew = `            else {
             }
             return;
         }`;
+applyReplacement('empty CryptSetup TCP-only ack', cryptResyncOld, cryptResyncNew);
 
-if (src.includes(cryptResyncOld)) {
-  src = src.replace(cryptResyncOld, cryptResyncNew);
+const cryptServerNonceOld = `        // Server sent only server_nonce = resync response with new decrypt IV
+        if (keyLen === 0 && clientNonceLen === 0 && serverNonceLen === 16) {
+            if (this.udp && message.serverNonce) {
+                this.log('  CryptSetup: Server sent resync with new decrypt IV');
+                const success = this.udp.setDecryptIV(Buffer.from(message.serverNonce));
+                this.log(\`  CryptSetup: setDecryptIV \${success ? 'succeeded' : 'failed'}\`);
+            }
+            return;
+        }`;
+const cryptServerNonceNew = `        // Server sent only server_nonce = resync response with new decrypt IV
+        if (keyLen === 0 && clientNonceLen === 0 && serverNonceLen === 16) {
+            if (this.udp && message.serverNonce) {
+                this.log('  CryptSetup: Server sent resync with new decrypt IV');
+                const success = this.udp.setDecryptIV(Buffer.from(message.serverNonce));
+                this.log(\`  CryptSetup: setDecryptIV \${success ? 'succeeded' : 'failed'}\`);
+            }
+            else if (this.options.disableUdp) {
+                // patch-mumble-node: TCP-only resync response - send clientNonce ack
+                this.log('  CryptSetup: TCP-only received server_nonce - sending clientNonce ack');
+                try {
+                    const ack = protocol_1.MumbleProto.CryptSetup.create({ clientNonce: Buffer.alloc(16) });
+                    this.connection.send(types_1.MessageType.CryptSetup, protocol_1.MumbleProto.CryptSetup.encode(ack).finish());
+                } catch {}
+            }
+            return;
+        }`;
+applyReplacement('server_nonce-only CryptSetup TCP-only ack', cryptServerNonceOld, cryptServerNonceNew);
+
+if (!src.includes('patch-mumble-node-applied')) {
+  src += '\n// patch-mumble-node-applied\n';
   changed = true;
-  console.log('[patch-mumble-node] ✓ Added empty CryptSetup (resync) ack for TCP-only mode');
 }
-
-// ── Stamp ────────────────────────────────────────────────────────────────────
-src += '\n// patch-mumble-node-applied\n';
 
 if (changed) {
   fs.writeFileSync(clientPath, src, 'utf8');
   console.log('[patch-mumble-node] Patch applied successfully');
 } else {
-  console.log('[patch-mumble-node] No matching patterns found — may already be patched or version mismatch');
+  console.log('[patch-mumble-node] No changes needed');
 }
