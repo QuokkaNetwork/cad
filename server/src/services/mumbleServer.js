@@ -310,19 +310,32 @@ async function startMumbleServer() {
   if (fs.existsSync(dbPath)) {
     console.log('[MumbleServer] Existing DB found — checking ACL...');
     const alreadyPatched = isAclPatched(dbPath);
-    if (alreadyPatched) {
+    if (!alreadyPatched) {
+      // DB exists but not patched — patch it now (Murmur not running, safe to write)
+      console.log('[MumbleServer] DB exists but not patched — patching now...');
+      patchMurmurAcl();
+    } else {
       console.log('[MumbleServer] ACL already correct — starting Murmur normally');
-      spawnMurmur('0.0.0.0');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      console.log('[MumbleServer] Murmur running with proximity voice ACLs');
-      return;
     }
-    // DB exists but not patched — patch it now (Murmur not running, safe to write)
-    console.log('[MumbleServer] Patching existing DB...');
-    patchMurmurAcl();
+
     spawnMurmur('0.0.0.0');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
+    await new Promise(resolve => setTimeout(resolve, 4000));
+
+    // Verify Murmur didn't reset ACL on startup
+    try {
+      const Database = require('better-sqlite3');
+      const verifyDb = new Database(dbPath, { readonly: true });
+      const rows = verifyDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
+      verifyDb.close();
+      console.log('[MumbleServer] Root ACL after startup:', JSON.stringify(rows));
+      if (!isAclPatched(dbPath)) {
+        console.error('[MumbleServer] WARNING: Murmur reset the ACL on startup! Proximity voice will NOT work.');
+      }
+    } catch (e) {
+      console.warn('[MumbleServer] Could not verify ACL after start:', e.message);
+    }
+
+    console.log('[MumbleServer] Murmur running');
     return;
   }
 
@@ -364,8 +377,36 @@ async function startMumbleServer() {
 
   patchMurmurAcl();
 
+  // Confirm patch is in DB before starting Murmur
+  try {
+    const Database = require('better-sqlite3');
+    const verifyDb = new Database(dbPath, { readonly: true });
+    const rows = verifyDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
+    verifyDb.close();
+    console.log('[MumbleServer] DB contents before Murmur start:', JSON.stringify(rows));
+  } catch (e) {
+    console.warn('[MumbleServer] Could not read DB before start:', e.message);
+  }
+
   spawnMurmur('0.0.0.0');
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise(resolve => setTimeout(resolve, 4000));
+
+  // Confirm Murmur didn't wipe the ACL on startup
+  try {
+    const Database = require('better-sqlite3');
+    const verifyDb = new Database(dbPath, { readonly: true });
+    const rows = verifyDb.prepare(`SELECT * FROM acl WHERE server_id=1 AND channel_id=0`).all();
+    verifyDb.close();
+    console.log('[MumbleServer] DB contents after Murmur start:', JSON.stringify(rows));
+    const stillPatched = isAclPatched(dbPath);
+    if (!stillPatched) {
+      console.error('[MumbleServer] WARNING: Murmur reset the ACL on startup! Proximity voice will NOT work.');
+      console.error('[MumbleServer] This means Murmur is overwriting our patch. Need Ice/RPC approach.');
+    }
+  } catch (e) {
+    console.warn('[MumbleServer] Could not verify DB after start:', e.message);
+  }
+
   console.log('[MumbleServer] Murmur running with proximity voice ACLs applied');
 }
 
