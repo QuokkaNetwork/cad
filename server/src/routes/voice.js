@@ -88,6 +88,19 @@ function resolveActiveLinkForUser(user) {
   return candidates[0] || null;
 }
 
+function resolveLatestCallerGameId(callSession) {
+  const existing = String(callSession?.caller_game_id || '').trim();
+  const callerCitizenId = String(callSession?.caller_citizen_id || '').trim();
+  if (!callerCitizenId) return existing;
+
+  const byCitizen = FiveMPlayerLinks.findByCitizenId(callerCitizenId);
+  if (byCitizen && isActiveFiveMLink(byCitizen)) {
+    const gameId = String(byCitizen.game_id || '').trim();
+    if (gameId) return gameId;
+  }
+  return existing;
+}
+
 // List all voice channels
 router.get('/channels', requireAuth, (req, res) => {
   const channels = VoiceChannels.list();
@@ -293,6 +306,7 @@ router.post('/calls/:id/accept', requireAuth, (req, res) => {
 
   VoiceCallSessions.accept(callSessionId, req.user.id);
   const updated = VoiceCallSessions.findById(callSessionId);
+  const callerGameId = resolveLatestCallerGameId(updated || callSession);
 
   bus.emit('voice:call_accepted', {
     callSessionId,
@@ -300,7 +314,7 @@ router.post('/calls/:id/accept', requireAuth, (req, res) => {
     callChannelNumber: callSession.call_channel_number,
     acceptedByUserId: req.user.id,
     callerCitizenId: callSession.caller_citizen_id,
-    callerGameId: callSession.caller_game_id,
+    callerGameId,
     callerPhoneNumber: callSession.caller_phone_number || '',
   });
 
@@ -327,13 +341,14 @@ router.post('/calls/:id/decline', requireAuth, (req, res) => {
   }
 
   VoiceCallSessions.decline(callSessionId);
+  const callerGameId = resolveLatestCallerGameId(callSession);
 
   bus.emit('voice:call_declined', {
     callSessionId,
     callId: callSession.call_id,
     callChannelNumber: callSession.call_channel_number,
     callerCitizenId: callSession.caller_citizen_id,
-    callerGameId: callSession.caller_game_id,
+    callerGameId,
   });
 
   audit(req.user.id, 'voice_call_declined', {
@@ -356,13 +371,14 @@ router.post('/calls/:id/end', requireAuth, (req, res) => {
   if (!callSession) return res.status(404).json({ error: 'Call session not found' });
 
   VoiceCallSessions.end(callSessionId);
+  const callerGameId = resolveLatestCallerGameId(callSession);
 
   bus.emit('voice:call_ended', {
     callSessionId,
     callId: callSession.call_id,
     callChannelNumber: callSession.call_channel_number,
     callerCitizenId: callSession.caller_citizen_id,
-    callerGameId: callSession.caller_game_id,
+    callerGameId,
   });
 
   audit(req.user.id, 'voice_call_ended', {

@@ -25,6 +25,7 @@ export default function Voice() {
   const [selectedCall, setSelectedCall] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAllChannels, setShowAllChannels] = useState(true);
+  const [channelFilter, setChannelFilter] = useState('');
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
@@ -329,22 +330,44 @@ export default function Voice() {
       <div className="flex gap-4 flex-1 min-h-0">
         {/* Radio Channels */}
         <div className="flex-1 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 gap-3">
             <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">
-              Radio Channels ({showAllChannels ? channels.length : channels.filter(c => c.participant_count > 0).length} {!showAllChannels && 'active'})
+              Radio Channels
             </h3>
-            <button
-              onClick={() => setShowAllChannels(v => !v)}
-              className="text-xs text-cad-muted hover:text-cad-accent transition-colors"
-            >
-              {showAllChannels ? 'Show active only' : 'Show all'}
-            </button>
+            <div className="flex items-center gap-2">
+              <input
+                value={channelFilter}
+                onChange={(e) => setChannelFilter(e.target.value)}
+                placeholder="Filter channels..."
+                className="w-40 px-2 py-1 text-xs rounded border border-cad-border bg-cad-surface text-cad-text placeholder-cad-muted"
+              />
+              <button
+                onClick={() => setShowAllChannels(v => !v)}
+                className="text-xs text-cad-muted hover:text-cad-accent transition-colors whitespace-nowrap"
+              >
+                {showAllChannels ? 'Show active only' : 'Show all'}
+              </button>
+            </div>
           </div>
           <div className="space-y-3">
             {(() => {
-              const visibleChannels = showAllChannels
-                ? channels
-                : channels.filter(c => c.participant_count > 0 || currentChannel === c.channel_number);
+              const sortedChannels = [...channels].sort((a, b) => {
+                if (currentChannel === a.channel_number) return -1;
+                if (currentChannel === b.channel_number) return 1;
+                const byParticipants = Number(b.participant_count || 0) - Number(a.participant_count || 0);
+                if (byParticipants !== 0) return byParticipants;
+                return Number(a.channel_number || 0) - Number(b.channel_number || 0);
+              });
+              const activeFiltered = showAllChannels
+                ? sortedChannels
+                : sortedChannels.filter(c => c.participant_count > 0 || currentChannel === c.channel_number);
+              const textFilter = String(channelFilter || '').trim().toLowerCase();
+              const visibleChannels = textFilter
+                ? activeFiltered.filter((channel) => {
+                  const haystack = `${channel.channel_number || ''} ${channel.name || ''} ${channel.description || ''}`.toLowerCase();
+                  return haystack.includes(textFilter);
+                })
+                : activeFiltered;
               return visibleChannels.length > 0 ? visibleChannels.map(channel => {
               const isInChannel = currentChannel === channel.channel_number;
               return (
@@ -378,7 +401,7 @@ export default function Voice() {
                         disabled={!isConnected}
                         className="px-3 py-1 text-xs bg-cad-accent/10 text-cad-accent border border-cad-accent/30 rounded hover:bg-cad-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        Join
+                        {currentChannel ? 'Switch' : 'Join'}
                       </button>
                     )}
                   </div>
@@ -418,13 +441,23 @@ export default function Voice() {
                     <svg className="w-12 h-12 text-cad-muted mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
                     </svg>
-                    {showAllChannels ? (
+                    {String(channelFilter || '').trim() ? (
+                      <>
+                        <p className="text-cad-muted font-medium mb-2">No channels match your filter</p>
+                        <button
+                          onClick={() => setChannelFilter('')}
+                          className="text-xs text-cad-accent hover:underline"
+                        >
+                          Clear filter
+                        </button>
+                      </>
+                    ) : showAllChannels ? (
                       <>
                         <p className="text-cad-muted font-medium mb-2">No radio channels configured</p>
                         <p className="text-xs text-cad-muted mb-3">
                           Voice channels need to be created by an administrator.
                         </p>
-                        <p className="text-xs text-cad-accent">Admin → System Settings → Voice Channels</p>
+                        <p className="text-xs text-cad-accent">Admin -&gt; System Settings -&gt; Voice Channels</p>
                       </>
                     ) : (
                       <>

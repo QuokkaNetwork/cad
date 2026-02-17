@@ -470,30 +470,6 @@ local function getNpwdEmergencyNumbers()
   return parsed
 end
 
-local function sendNpwdMessage(senderNumber, targetNumber, message)
-  local sender = trim(senderNumber)
-  local target = trim(targetNumber)
-  local text = trim(message)
-  if sender == '' or target == '' or text == '' then
-    return
-  end
-  local npwdResource = getNpwdResourceName()
-  if GetResourceState(npwdResource) ~= 'started' then
-    return
-  end
-
-  local ok, err = pcall(function()
-    exports[npwdResource]:emitMessage({
-      senderNumber = sender,
-      targetNumber = target,
-      message = text,
-    })
-  end)
-  if not ok then
-    print(('[cad_bridge] NPWD message send failed: %s'):format(tostring(err)))
-  end
-end
-
 local function submitNpwdEmergencyCall(src, emergencyNumber, incomingCaller)
   local s = tonumber(src)
   if not s then return end
@@ -571,12 +547,10 @@ local function handleNpwdEmergencyCall(emergencyNumber, callRequest)
   local incomingCaller = type(requestObj.incomingCaller) == 'table' and requestObj.incomingCaller or {}
   local src = tonumber(incomingCaller.source) or 0
 
-  -- Intercept the NPWD call completely — do NOT call requestObj.next().
-  -- Calling next() would let NPWD try to route the call as a regular phone-to-phone
-  -- call (which fails since "000" isn't a real phone number), causing the caller to
-  -- hear NPWD ringing/busy tones instead of being connected via the CAD voice bridge.
-  -- We use requestObj.reply() to give the caller a status message in the NPWD UI,
-  -- then handle the voice session entirely through the CAD.
+  -- Continue NPWD middleware chain.
+  -- NPWD's onCall contract expects middleware to call next()/forward()/exit().
+  -- We call next() so NPWD can complete its internal call flow while CAD handles
+  -- emergency call creation + pma-voice channel assignment in parallel.
   if type(requestObj.next) == 'function' then
     pcall(function()
       requestObj.next()

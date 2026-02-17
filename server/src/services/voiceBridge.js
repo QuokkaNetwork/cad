@@ -13,11 +13,12 @@ try {
   OpusScript = null;
 }
 
-const { Settings, VoiceCallSessions } = require('../db/sqlite');
+const { Settings, VoiceCallSessions, FiveMPlayerLinks } = require('../db/sqlite');
 
 const OPUS_FRAME_SIZE = 960; // 20ms @ 48kHz mono
 const OPUS_FRAME_BYTES = OPUS_FRAME_SIZE * 2;
 const MAX_WHISPER_TARGETS = 30;
+const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 
 function parseBool(value, fallback = false) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -54,6 +55,20 @@ function normalizePositiveInt(value) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) return 0;
   return parsed;
+}
+
+function parseSqliteUtc(value) {
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  const base = text.replace(' ', 'T');
+  const normalized = base.endsWith('Z') ? base : `${base}Z`;
+  return Date.parse(normalized);
+}
+
+function isActiveFiveMLink(link) {
+  const ts = parseSqliteUtc(link?.updated_at);
+  if (Number.isNaN(ts)) return false;
+  return (Date.now() - ts) <= ACTIVE_LINK_MAX_AGE_MS;
 }
 
 function normalizeRouteMembersByChannel(rawValue) {
@@ -401,6 +416,14 @@ class VoiceBridgeServer {
     if (channelNumber >= 10000) {
       try {
         const callSession = VoiceCallSessions.findByChannelNumber(channelNumber);
+        const callerCitizenId = String(callSession?.caller_citizen_id || '').trim();
+        if (callerCitizenId) {
+          const liveLink = FiveMPlayerLinks.findByCitizenId(callerCitizenId);
+          const liveGameId = normalizePositiveInt(liveLink?.game_id);
+          if (liveGameId > 0 && isActiveFiveMLink(liveLink)) {
+            return [liveGameId];
+          }
+        }
         const callerGameId = normalizePositiveInt(callSession?.caller_game_id);
         if (callerGameId > 0) return [callerGameId];
       } catch {
@@ -471,7 +494,7 @@ class VoiceBridgeServer {
 
     if (targets.length > 0) {
       console.log(
-        `[VoiceBridge] Dispatcher ${dispatcherId} → ${targets.length} radio targets: ` +
+        `[VoiceBridge] Dispatcher ${dispatcherId} -> ${targets.length} radio targets: ` +
         targets.map(t => `src${t.sourceId}(slot${t.targetId})`).join(', ')
       );
     }

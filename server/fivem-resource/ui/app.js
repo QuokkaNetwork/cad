@@ -151,7 +151,6 @@ function setVisible(visible) {
     return;
   }
   open = visible === true;
-  console.log("[CAD 000] Setting visibility:", open);
 
   if (open) {
     // Force remove hidden class
@@ -167,7 +166,6 @@ function setVisible(visible) {
       }
     }, 50);
 
-    console.log("[CAD 000] UI should now be visible - overlay classes:", overlay.className);
   } else {
     overlay.classList.add("hidden");
     overlay.style.display = "none";
@@ -271,9 +269,7 @@ var lastOpenPayload = null;
 
 window.addEventListener("message", function onMessage(event) {
   var message = event.data || {};
-  console.log("[CAD 000] Received message:", message.action);
   if (message.action === "cadBridge000:open") {
-    console.log("[CAD 000] Opening UI with payload:", message.payload);
     lastOpenPayload = message.payload || {};
     resetForm(lastOpenPayload);
     setVisible(true);
@@ -281,14 +277,12 @@ window.addEventListener("message", function onMessage(event) {
     return;
   }
   if (message.action === "cadBridge000:close") {
-    console.log("[CAD 000] Closing UI");
     setVisible(false);
   }
 });
 
 // Emergency fallback: expose a global function to force open the UI
 window.force000Open = function(departments) {
-  console.log("[CAD 000] FORCE OPEN called");
   var payload = {
     departments: departments || [],
     max_title_length: 80,
@@ -326,8 +320,6 @@ if (hasUiElements()) {
 
 // Wait for DOM to be fully ready before signaling
 function initialize() {
-  console.log("[CAD 000] Initializing UI");
-
   if (!hasUiElements()) {
     console.error("[CAD 000] CRITICAL: UI elements not found in DOM!");
     console.error("[CAD 000] overlay:", !!overlay);
@@ -336,17 +328,12 @@ function initialize() {
     return;
   }
 
-  console.log("[CAD 000] All UI elements found, sending ready signal");
-  console.log("[CAD 000] Overlay initial state - hidden:", overlay.classList.contains("hidden"));
-
   // Ensure overlay starts hidden
   overlay.classList.add("hidden");
   overlay.style.display = "none";
 
   postNui("cadBridge000Ready", {})
-    .then(function() {
-      console.log("[CAD 000] Ready signal sent successfully");
-    })
+    .then(function() {})
     .catch(function(err) {
       console.error("[CAD 000] Ready signal failed:", err);
     });

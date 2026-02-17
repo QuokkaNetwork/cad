@@ -1446,6 +1446,15 @@ const VoiceParticipants = {
       ORDER BY vp.joined_at DESC
     `).all(channelId);
   },
+  listByUser(userId) {
+    return db.prepare(`
+      SELECT vp.*, vc.channel_number
+      FROM voice_participants vp
+      JOIN voice_channels vc ON vc.id = vp.channel_id
+      WHERE vp.user_id = ?
+      ORDER BY vp.joined_at DESC
+    `).all(userId);
+  },
   findByUserAndChannel(userId, channelId) {
     return db.prepare(`
       SELECT * FROM voice_participants

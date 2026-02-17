@@ -35,7 +35,7 @@ class VoiceSignalingServer {
     this.wss = new WebSocketServer({ noServer: true });
 
     httpServer.on('upgrade', (request, socket, head) => {
-      if (request.url.startsWith('/voice-bridge')) {
+      if (String(request.url || '').startsWith('/voice-bridge')) {
         this.handleUpgrade(request, socket, head);
       }
     });
@@ -157,6 +157,32 @@ class VoiceSignalingServer {
     }
   }
 
+  clearUserVoiceParticipants(userId) {
+    const removed = VoiceParticipants.listByUser(userId);
+    if (!Array.isArray(removed) || removed.length === 0) return [];
+
+    const affectedChannels = new Set();
+    for (const participant of removed) {
+      VoiceParticipants.remove(participant.id);
+      const channelId = Number(participant.channel_id || 0);
+      const channelNumber = Number(participant.channel_number || 0);
+      bus.emit('voice:leave', {
+        channelId: channelId || null,
+        channelNumber: channelNumber || 0,
+        userId,
+      });
+      if (channelNumber > 0) {
+        affectedChannels.add(channelNumber);
+      }
+    }
+
+    for (const channelNumber of affectedChannels) {
+      handleParticipantLeave(channelNumber);
+    }
+
+    return removed;
+  }
+
   async handleJoinChannel(user, channelNumber, ws) {
     try {
       const parsedChannelNumber = Number(channelNumber || 0);
@@ -227,6 +253,10 @@ class VoiceSignalingServer {
         }));
       });
 
+      // Keep one authoritative dispatcher participant row at most.
+      // This prevents stale rows when switching channels or auto-joining calls.
+      this.clearUserVoiceParticipants(user.id);
+
       if (!isCallChannel && channelId) {
         const unit = Units.findByUserId(user.id);
         const existingParticipant = VoiceParticipants.findByUserAndChannel(user.id, channelId);
@@ -274,6 +304,7 @@ class VoiceSignalingServer {
       const channelInfo = this.voiceBridge.activeChannels.get(user.id);
       await this.voiceBridge.leaveChannel(user.id);
       this.voiceBridge.removeAudioListeners(user.id);
+      this.clearUserVoiceParticipants(user.id);
 
       if (channelInfo?.channelNumber) {
         const chNum = Number(channelInfo.channelNumber);
@@ -287,19 +318,10 @@ class VoiceSignalingServer {
           });
         } else {
           const channel = VoiceChannels.findByChannelNumber(chNum);
-          if (channel) {
-            VoiceParticipants.removeByUser(user.id, channel.id);
-            bus.emit('voice:leave', {
-              channelId: channel.id,
-              channelNumber: chNum,
-              userId: user.id,
-            });
-            handleParticipantLeave(chNum);
-            audit(user.id, 'voice_bridge_left_channel', {
-              channelNumber: chNum,
-              channelName: channel.name,
-            });
-          }
+          audit(user.id, 'voice_bridge_left_channel', {
+            channelNumber: chNum,
+            channelName: channel?.name || channelInfo.channelName || `Channel ${chNum}`,
+          });
         }
       }
 
@@ -321,6 +343,7 @@ class VoiceSignalingServer {
     } catch {
       // Disconnect best-effort.
     }
+    this.clearUserVoiceParticipants(user.id);
     this.connections.delete(user.id);
     audit(user.id, 'voice_bridge_disconnected', {});
   }
