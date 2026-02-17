@@ -13,7 +13,7 @@ try {
   OpusScript = null;
 }
 
-const { Settings } = require('../db/sqlite');
+const { Settings, VoiceCallSessions } = require('../db/sqlite');
 
 const OPUS_FRAME_SIZE = 960; // 20ms @ 48kHz mono
 const OPUS_FRAME_BYTES = OPUS_FRAME_SIZE * 2;
@@ -165,10 +165,10 @@ class VoiceBridgeServer {
       mumblePassword: String(process.env.MUMBLE_PASSWORD || '').trim(),
       mumbleTokens: parseCsv(process.env.MUMBLE_TOKENS),
       mumbleRejectUnauthorized: parseBool(process.env.MUMBLE_REJECT_UNAUTHORIZED, false),
-      // Default to TCP tunnel mode for dispatcher bridge clients.
-      // rust-mumble can aggressively request CryptSetup resets when UDP is flaky
-      // or firewalled; forcing TCP avoids repeated reset churn in server logs.
-      mumbleDisableUdp: parseBool(process.env.MUMBLE_DISABLE_UDP, true),
+      // Hard-force TCP tunnel mode for dispatcher bridge clients.
+      // rust-mumble can aggressively request CryptSetup resets when dispatcher
+      // bridge UDP state drifts; disabling UDP here avoids that path entirely.
+      mumbleDisableUdp: true,
       dispatcherNamePrefix: String(process.env.MUMBLE_DISPATCHER_NAME_PREFIX || 'CAD_Dispatcher').trim() || 'CAD_Dispatcher',
       sampleRate: 48000,
       channels: 1,
@@ -177,7 +177,10 @@ class VoiceBridgeServer {
     };
 
     const hostSource = envHost ? '.env' : (dbHost ? 'auto-detect' : 'default');
-    console.log(`[VoiceBridge] Mumble config: ${this.config.mumbleHost}:${this.config.mumblePort} (source: ${hostSource}, voice: ${this.config.voiceSystem || 'unknown'})`);
+    console.log(
+      `[VoiceBridge] Mumble config: ${this.config.mumbleHost}:${this.config.mumblePort} ` +
+      `(source: ${hostSource}, voice: ${this.config.voiceSystem || 'unknown'}, disableUdp: ${this.config.mumbleDisableUdp})`
+    );
   }
 
   assertAvailable() {
@@ -390,7 +393,22 @@ class VoiceBridgeServer {
     const active = this.activeChannels.get(dispatcherId);
     const channelNumber = normalizePositiveInt(active?.channelNumber);
     if (!channelNumber) return [];
-    return this.routeMembersByChannel.get(channelNumber) || [];
+    const radioMembers = this.routeMembersByChannel.get(channelNumber) || [];
+    if (radioMembers.length > 0) return radioMembers;
+
+    // Call channels (10000+) are not tracked in VoiceParticipants heartbeat.
+    // Use the stored call session caller game_id as the member target.
+    if (channelNumber >= 10000) {
+      try {
+        const callSession = VoiceCallSessions.findByChannelNumber(channelNumber);
+        const callerGameId = normalizePositiveInt(callSession?.caller_game_id);
+        if (callerGameId > 0) return [callerGameId];
+      } catch {
+        // Best-effort fallback only.
+      }
+    }
+
+    return [];
   }
 
   buildWhisperTargetSignature(dispatcherId, members) {

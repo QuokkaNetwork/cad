@@ -685,6 +685,13 @@ local function getCurrentRadioChannel()
   return tonumber(LocalPlayer.state.radioChannel) or 0
 end
 
+local function getCurrentCallChannel()
+  if not LocalPlayer or not LocalPlayer.state then
+    return 0
+  end
+  return tonumber(LocalPlayer.state.callChannel) or 0
+end
+
 CreateThread(function()
   while true do
     Wait(250)
@@ -695,7 +702,8 @@ CreateThread(function()
     end
 
     local radioChannel = getCurrentRadioChannel()
-    if radioChannel <= 0 then
+    local callChannel = getCurrentCallChannel()
+    if radioChannel <= 0 and callChannel <= 0 then
       goto continue
     end
 

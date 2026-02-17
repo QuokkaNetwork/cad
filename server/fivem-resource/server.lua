@@ -546,7 +546,6 @@ local function submitNpwdEmergencyCall(src, emergencyNumber, incomingCaller)
       end
 
       local confirmation = ('Dispatch received your 000 call (CAD Call #%s). Stay on this line.'):format(callId)
-      sendNpwdMessage(emergencyNumber, callerNumber, confirmation)
       notifyPlayer(s, confirmation)
       print(('[cad_bridge] NPWD 000 call created by %s (#%s) as CAD call #%s')
         :format(payload.player_name, tostring(s), callId))
@@ -563,7 +562,6 @@ local function submitNpwdEmergencyCall(src, emergencyNumber, incomingCaller)
       err = err .. ': ' .. tostring(parsed.error)
     end
     print('[cad_bridge] ' .. err)
-    sendNpwdMessage(emergencyNumber, callerNumber, 'Unable to reach CAD dispatch right now. Please try again.')
     notifyPlayer(s, '000 call failed to send to CAD. Check server logs.')
   end)
 end
@@ -579,14 +577,9 @@ local function handleNpwdEmergencyCall(emergencyNumber, callRequest)
   -- hear NPWD ringing/busy tones instead of being connected via the CAD voice bridge.
   -- We use requestObj.reply() to give the caller a status message in the NPWD UI,
   -- then handle the voice session entirely through the CAD.
-  if type(requestObj.reply) == 'function' then
+  if type(requestObj.next) == 'function' then
     pcall(function()
-      requestObj.reply('Connecting to emergency dispatch...')
-    end)
-  end
-  if type(requestObj.exit) == 'function' then
-    pcall(function()
-      requestObj.exit()
+      requestObj.next()
     end)
   end
 
