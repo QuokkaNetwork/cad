@@ -1481,6 +1481,24 @@ const VoiceParticipants = {
   removeByUser(userId, channelId) {
     db.prepare('DELETE FROM voice_participants WHERE user_id = ? AND channel_id = ?').run(userId, channelId);
   },
+  // Remove FiveM in-game participants (those with a game_id) whose last_activity_at
+  // is older than maxAgeSeconds. Returns the removed rows so callers can emit SSE events.
+  removeStaleGameParticipants(maxAgeSeconds = 120) {
+    const stale = db.prepare(`
+      SELECT vp.*, vc.channel_number
+      FROM voice_participants vp
+      JOIN voice_channels vc ON vc.id = vp.channel_id
+      WHERE vp.game_id != ''
+        AND vp.game_id IS NOT NULL
+        AND vp.last_activity_at < datetime('now', ? || ' seconds')
+    `).all(`-${Math.abs(Math.floor(maxAgeSeconds))}`);
+
+    if (stale.length > 0) {
+      const ids = stale.map(r => r.id);
+      db.prepare(`DELETE FROM voice_participants WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+    }
+    return stale;
+  },
 };
 
 // --- Voice Call Sessions ---

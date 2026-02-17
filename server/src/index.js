@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
@@ -146,8 +147,36 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Create HTTP server for Express + WebSocket
-const httpServer = http.createServer(app);
+// Create HTTP or HTTPS server for Express + WebSocket.
+// If TLS_CERT and TLS_KEY are set in .env and the files exist, serve over HTTPS
+// (required for browser microphone access via getUserMedia on non-localhost origins).
+// Otherwise fall back to plain HTTP.
+function createServer(expressApp) {
+  // Resolve paths relative to project root (parent of server/) so that
+  // values like "server/data/server.key" in .env work correctly.
+  const projectRoot = path.resolve(__dirname, '../../');
+  const resolveTlsPath = (p) => p ? (path.isAbsolute(p) ? p : path.resolve(projectRoot, p)) : '';
+
+  const certPath = resolveTlsPath(String(process.env.TLS_CERT || '').trim());
+  const keyPath  = resolveTlsPath(String(process.env.TLS_KEY  || '').trim());
+  if (certPath && keyPath) {
+    try {
+      const tlsOptions = {
+        cert: fs.readFileSync(certPath),
+        key:  fs.readFileSync(keyPath),
+      };
+      console.log(`[TLS] HTTPS enabled — cert: ${certPath}`);
+      return { server: https.createServer(tlsOptions, expressApp), protocol: 'https' };
+    } catch (err) {
+      console.warn(`[TLS] Failed to load TLS cert/key (${err.message}) — falling back to HTTP`);
+    }
+  }
+  return { server: http.createServer(expressApp), protocol: 'http' };
+}
+const { server: httpServer, protocol: serverProtocol } = createServer(app);
+if (serverProtocol === 'http') {
+  console.warn('[TLS] Running over plain HTTP. Set TLS_CERT and TLS_KEY in .env for HTTPS (required for microphone).');
+}
 
 // Async startup — start Murmur first so the voice bridge can connect to it
 (async () => {
