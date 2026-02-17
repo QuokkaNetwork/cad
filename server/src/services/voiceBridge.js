@@ -180,9 +180,15 @@ class VoiceBridgeServer {
   }
 
   buildDispatcherName(dispatcherId, preferredName = null) {
+    // Always prefix dispatcher names so they NEVER collide with in-game player
+    // names on the Mumble server. Without the prefix, if a dispatcher's Steam
+    // name matches their FiveM character name, Murmur treats the CAD bridge
+    // connection as a duplicate and "ghost-kicks" the player's proximity voice
+    // session, breaking voice for that player.
     const byName = String(preferredName || '').trim();
-    if (byName) return byName.slice(0, 80);
-    return `${this.config.dispatcherNamePrefix}${dispatcherId}`;
+    const prefix = this.config.dispatcherNamePrefix;
+    if (byName) return `${prefix}${byName}`.slice(0, 80);
+    return `${prefix}${dispatcherId}`;
   }
 
   buildClientOptions(dispatcherId, preferredName = null) {
