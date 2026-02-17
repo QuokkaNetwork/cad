@@ -1858,3 +1858,93 @@ CreateThread(function()
     end
   end
 end)
+
+-- ============================================================================
+-- Voice Participant Heartbeat (pma-voice → CAD)
+-- Polls every online player's pma-voice state bag to read their current
+-- radioChannel, then reports the full list to the CAD so the channel
+-- participant panel stays live without needing a resource restart.
+-- ============================================================================
+local VOICE_HEARTBEAT_INTERVAL_MS = 5000  -- send full participant list every 5 s
+local voiceHeartbeatInFlight = false
+-- Small per-source cache: game_id (string) → citizenId (string)
+local hbCitizenIdCache = {}
+
+local function buildParticipantList()
+  if not isPmaVoiceAvailable() then return nil end
+
+  local players = GetPlayers()
+  if #players == 0 then return {} end
+
+  local list = {}
+
+  for _, src in ipairs(players) do
+    local source = tonumber(src)
+    if not source then goto nextPlayer end
+
+    local player = Player(source)
+    if not player or not player.state then goto nextPlayer end
+
+    local radioChannel = tonumber(player.state.radioChannel) or 0
+
+    local gameId    = tostring(source)
+    local citizenId = hbCitizenIdCache[gameId] or ''
+
+    -- Lazily resolve citizenId from identifiers on first encounter
+    if citizenId == '' then
+      citizenId = getCitizenId(source) or ''
+      hbCitizenIdCache[gameId] = citizenId
+    end
+
+    -- Always report the player so the CAD can add or remove them from channels.
+    -- channel_number == 0 means "not in any radio channel".
+    list[#list + 1] = {
+      game_id        = gameId,
+      citizen_id     = citizenId,
+      channel_number = radioChannel,
+      channel_type   = 'radio',
+    }
+
+    ::nextPlayer::
+  end
+
+  return list
+end
+
+-- Clear cache entry when a player drops so stale citizenIds aren't reused.
+AddEventHandler('playerDropped', function()
+  local droppedSrc = source
+  hbCitizenIdCache[tostring(droppedSrc)] = nil
+end)
+
+CreateThread(function()
+  -- Wait for bridge config and pma-voice to be ready
+  Wait(10000)
+
+  while true do
+    Wait(VOICE_HEARTBEAT_INTERVAL_MS)
+
+    if not hasBridgeConfig() then goto heartbeatContinue end
+    if not isPmaVoiceAvailable() then goto heartbeatContinue end
+    if voiceHeartbeatInFlight or isBridgeBackoffActive('voice_hb') then goto heartbeatContinue end
+
+    local participants = buildParticipantList()
+    if not participants then goto heartbeatContinue end
+    -- Send even if empty so the CAD can clear participants when no one is on.
+    -- But skip if the server is completely empty (saves pointless requests).
+    if #participants == 0 then goto heartbeatContinue end
+
+    voiceHeartbeatInFlight = true
+    request('POST', '/api/integration/fivem/voice-participants/heartbeat',
+      { participants = participants },
+      function(status, _, responseHeaders)
+        voiceHeartbeatInFlight = false
+        if status == 429 then
+          setBridgeBackoff('voice_hb', responseHeaders, 10000, 'voice heartbeat')
+        end
+      end
+    )
+
+    ::heartbeatContinue::
+  end
+end)

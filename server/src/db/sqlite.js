@@ -1453,19 +1453,25 @@ const VoiceParticipants = {
     `).get(userId, channelId);
   },
   add({ channel_id, user_id, unit_id, citizen_id, game_id }) {
-    const existing = this.findByUserAndChannel(user_id, channel_id);
+    // Prefer game_id dedup for in-game players; fall back to user_id dedup for dispatchers.
+    let existing = null;
+    if (game_id) {
+      existing = this.findByGameId(game_id);
+    } else if (user_id) {
+      existing = this.findByUserAndChannel(user_id, channel_id);
+    }
     if (existing) {
       db.prepare(`
         UPDATE voice_participants
-        SET unit_id = ?, citizen_id = ?, game_id = ?, last_activity_at = datetime('now')
+        SET channel_id = ?, unit_id = ?, citizen_id = ?, game_id = ?, last_activity_at = datetime('now')
         WHERE id = ?
-      `).run(unit_id || null, citizen_id || '', game_id || '', existing.id);
-      return existing;
+      `).run(channel_id, unit_id || null, citizen_id || '', game_id || '', existing.id);
+      return db.prepare('SELECT * FROM voice_participants WHERE id = ?').get(existing.id);
     }
     const info = db.prepare(`
       INSERT INTO voice_participants (channel_id, user_id, unit_id, citizen_id, game_id)
       VALUES (?, ?, ?, ?, ?)
-    `).run(channel_id, user_id, unit_id || null, citizen_id || '', game_id || '');
+    `).run(channel_id, user_id || null, unit_id || null, citizen_id || '', game_id || '');
     return db.prepare('SELECT * FROM voice_participants WHERE id = ?').get(info.lastInsertRowid);
   },
   updateTalkingStatus(participantId, isTalking) {
@@ -1481,16 +1487,35 @@ const VoiceParticipants = {
   removeByUser(userId, channelId) {
     db.prepare('DELETE FROM voice_participants WHERE user_id = ? AND channel_id = ?').run(userId, channelId);
   },
-  // Remove all participants whose last_activity_at is older than maxAgeSeconds.
-  // Covers both FiveM in-game players (game_id set) and stale entries left by
-  // disconnected sessions where game_id was empty/zero (e.g. server restart).
+  findByGameId(gameId) {
+    if (!gameId) return null;
+    return db.prepare(`
+      SELECT vp.*, vc.channel_number
+      FROM voice_participants vp
+      JOIN voice_channels vc ON vc.id = vp.channel_id
+      WHERE vp.game_id = ?
+    `).get(String(gameId));
+  },
+  removeByGameId(gameId) {
+    if (!gameId) return;
+    db.prepare('DELETE FROM voice_participants WHERE game_id = ?').run(String(gameId));
+  },
+  touch(participantId) {
+    db.prepare(`
+      UPDATE voice_participants SET last_activity_at = datetime('now') WHERE id = ?
+    `).run(participantId);
+  },
+  // Remove stale in-game participant rows (game_id != '') whose last_activity_at
+  // is older than maxAgeSeconds. Dispatcher rows (game_id = '') are never pruned
+  // here — they are managed by explicit join/leave actions in the CAD UI.
   // Returns the removed rows so callers can emit SSE events.
   removeStaleGameParticipants(maxAgeSeconds = 120) {
     const stale = db.prepare(`
       SELECT vp.*, vc.channel_number
       FROM voice_participants vp
       JOIN voice_channels vc ON vc.id = vp.channel_id
-      WHERE vp.last_activity_at < datetime('now', ? || ' seconds')
+      WHERE vp.game_id != ''
+        AND vp.last_activity_at < datetime('now', ? || ' seconds')
     `).all(`-${Math.abs(Math.floor(maxAgeSeconds))}`);
 
     if (stale.length > 0) {

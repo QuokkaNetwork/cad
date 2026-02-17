@@ -10,10 +10,12 @@ const {
   FiveMJobSyncJobs,
   VoiceCallSessions,
   VoiceChannels,
+  VoiceParticipants,
 } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
 const liveMapStore = require('../services/liveMapStore');
+const { handleParticipantJoin, handleParticipantLeave } = require('../services/voiceBridgeSync');
 
 const router = express.Router();
 const liveLinkUserCache = new Map();
@@ -1235,6 +1237,116 @@ router.post('/radio-channels/sync', requireBridgeAuth, (req, res) => {
   } catch (error) {
     console.error('[RadioChannelSync] Error syncing channels:', error);
     res.status(500).json({ error: 'Failed to sync radio channels' });
+  }
+});
+
+// ============================================================================
+// Voice Participant Heartbeat — FiveM → CAD
+// FiveM resource polls pma-voice state for every online player and POSTs
+// batched updates here so the CAD channel participant list stays current
+// without requiring a resource restart.
+//
+// Expected payload:
+//   { participants: [{ game_id, citizen_id, channel_number, channel_type }] }
+//
+// channel_type is "radio" or "call".
+// channel_number 0 (or missing) means the player left that channel.
+// ============================================================================
+router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
+  try {
+    const incoming = req.body?.participants;
+    if (!Array.isArray(incoming)) {
+      return res.status(400).json({ error: 'participants must be an array' });
+    }
+
+    // Build a map of channel_number → VoiceChannel row (cached for this request)
+    const channelCache = new Map();
+    function getChannel(channelNumber) {
+      if (channelCache.has(channelNumber)) return channelCache.get(channelNumber);
+      const ch = VoiceChannels.findByChannelNumber(channelNumber);
+      channelCache.set(channelNumber, ch || null);
+      return ch || null;
+    }
+
+    const changedChannels = new Set();
+
+    for (const entry of incoming) {
+      const gameId      = String(entry.game_id    || '').trim();
+      const citizenId   = String(entry.citizen_id || '').trim();
+      const channelNum  = parseInt(entry.channel_number, 10) || 0;
+      const channelType = String(entry.channel_type || 'radio').trim(); // 'radio' | 'call'
+
+      if (!gameId) continue; // Must have a game_id to identify the player
+
+      const channel = channelNum > 0 ? getChannel(channelNum) : null;
+
+      // Find existing participant row for this player (by game_id)
+      const existing = VoiceParticipants.findByGameId(gameId);
+
+      if (channel && channelNum > 0) {
+        // Player is in a channel — upsert participant
+        if (!existing || existing.channel_id !== channel.id) {
+          // Remove from old channel first
+          if (existing) {
+            const oldChannel = getChannel(existing.channel_number);
+            VoiceParticipants.removeByGameId(gameId);
+            bus.emit('voice:leave', {
+              channelId: existing.channel_id,
+              channelNumber: existing.channel_number,
+              userId: null,
+              gameId,
+              citizenId,
+            });
+            if (oldChannel) changedChannels.add(oldChannel.channel_number);
+          }
+          // Add to new channel
+          const participant = VoiceParticipants.add({
+            channel_id: channel.id,
+            user_id: null,
+            unit_id: null,
+            citizen_id: citizenId,
+            game_id: gameId,
+          });
+          bus.emit('voice:join', {
+            channelId: channel.id,
+            channelNumber: channel.channel_number,
+            userId: null,
+            gameId,
+            citizenId,
+            participant,
+          });
+          changedChannels.add(channel.channel_number);
+        } else {
+          // Already in the right channel — just touch the last_activity_at
+          VoiceParticipants.touch(existing.id);
+        }
+      } else {
+        // Player is not in any channel (channel_number == 0 means left)
+        if (existing) {
+          VoiceParticipants.removeByGameId(gameId);
+          bus.emit('voice:leave', {
+            channelId: existing.channel_id,
+            channelNumber: existing.channel_number,
+            userId: null,
+            gameId,
+            citizenId,
+          });
+          changedChannels.add(existing.channel_number);
+        }
+      }
+    }
+
+    // Sync routing for all changed channels
+    for (const channelNum of changedChannels) {
+      if (channelNum > 0) {
+        handleParticipantJoin(channelNum); // triggers a full route sync
+      }
+    }
+
+    res.json({ ok: true, processed: incoming.length });
+  } catch (error) {
+    console.error('[VoiceHeartbeat] Error processing participant heartbeat:', error);
+    res.status(500).json({ error: 'Failed to process participant heartbeat' });
   }
 });
 
