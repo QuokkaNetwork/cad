@@ -16,6 +16,28 @@
 const { VoiceParticipants, VoiceChannels } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 
+/**
+ * Clear all stale participant rows left over from the previous server run.
+ * Called once at startup before the periodic timers begin.
+ */
+function clearStartupParticipants() {
+  try {
+    const removed = VoiceParticipants.removeAllOnStartup();
+    for (const row of removed) {
+      bus.emit('voice:leave', {
+        channelId: row.channel_id,
+        channelNumber: Number(row.channel_number),
+        userId: row.user_id || null,
+        gameId: String(row.game_id || ''),
+        citizenId: String(row.citizen_id || ''),
+        staleEviction: true,
+      });
+    }
+  } catch (err) {
+    console.error('[VoiceBridgeSync] Error clearing startup participants:', err);
+  }
+}
+
 const PERIODIC_SYNC_MS   = 30_000;  // full route sync interval
 const PRUNE_INTERVAL_MS  = 60_000;  // stale participant scan interval
 const STALE_THRESHOLD_S  = 180;     // remove game participants inactive > 3 min
@@ -35,6 +57,9 @@ function initVoiceBridgeSync(voiceBridge) {
   }
   voiceBridgeInstance = voiceBridge;
   console.log('[VoiceBridgeSync] Voice bridge sync initialized');
+
+  // Clear any ghost participants left from the previous server run
+  clearStartupParticipants();
 
   // Initial sync
   syncAllChannelRoutes();
@@ -207,6 +232,7 @@ function getRoutingStatus() {
 
 module.exports = {
   initVoiceBridgeSync,
+  clearStartupParticipants,
   syncAllChannelRoutes,
   syncChannelRoute,
   handleParticipantJoin,

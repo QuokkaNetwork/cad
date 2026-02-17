@@ -10,7 +10,7 @@ const passport = require('passport');
 const path = require('path');
 const config = require('./config');
 const { verifyToken } = require('./auth/jwt');
-const { initDb } = require('./db/sqlite');
+const { initDb, VoiceParticipants } = require('./db/sqlite');
 const { initSteamAuth } = require('./auth/steam');
 const { startBot } = require('./discord/bot');
 const { startAutoUpdater } = require('./services/autoUpdater');
@@ -23,6 +23,9 @@ const { startMumbleServer, getMurmurStatus } = require('./services/mumbleServer'
 console.log('Initializing database...');
 initDb();
 console.log('Database ready');
+
+// Clear ghost voice participants left from previous run (before any routes are served)
+try { VoiceParticipants.removeAllOnStartup(); } catch {};
 
 // Initialize Express
 const app = express();

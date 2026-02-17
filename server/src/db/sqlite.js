@@ -1481,16 +1481,16 @@ const VoiceParticipants = {
   removeByUser(userId, channelId) {
     db.prepare('DELETE FROM voice_participants WHERE user_id = ? AND channel_id = ?').run(userId, channelId);
   },
-  // Remove FiveM in-game participants (those with a game_id) whose last_activity_at
-  // is older than maxAgeSeconds. Returns the removed rows so callers can emit SSE events.
+  // Remove all participants whose last_activity_at is older than maxAgeSeconds.
+  // Covers both FiveM in-game players (game_id set) and stale entries left by
+  // disconnected sessions where game_id was empty/zero (e.g. server restart).
+  // Returns the removed rows so callers can emit SSE events.
   removeStaleGameParticipants(maxAgeSeconds = 120) {
     const stale = db.prepare(`
       SELECT vp.*, vc.channel_number
       FROM voice_participants vp
       JOIN voice_channels vc ON vc.id = vp.channel_id
-      WHERE vp.game_id != ''
-        AND vp.game_id IS NOT NULL
-        AND vp.last_activity_at < datetime('now', ? || ' seconds')
+      WHERE vp.last_activity_at < datetime('now', ? || ' seconds')
     `).all(`-${Math.abs(Math.floor(maxAgeSeconds))}`);
 
     if (stale.length > 0) {
@@ -1498,6 +1498,21 @@ const VoiceParticipants = {
       db.prepare(`DELETE FROM voice_participants WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
     }
     return stale;
+  },
+  // Called once at server startup — removes every participant row so the CAD
+  // doesn't show ghost entries from the previous run. Dispatchers re-join when
+  // they open the Voice page; FiveM players re-join when pma-voice reconnects.
+  removeAllOnStartup() {
+    const rows = db.prepare(`
+      SELECT vp.*, vc.channel_number
+      FROM voice_participants vp
+      JOIN voice_channels vc ON vc.id = vp.channel_id
+    `).all();
+    if (rows.length > 0) {
+      db.prepare('DELETE FROM voice_participants').run();
+      console.log(`[VoiceParticipants] Cleared ${rows.length} stale participant(s) on startup`);
+    }
+    return rows;
   },
 };
 
