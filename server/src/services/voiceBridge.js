@@ -190,6 +190,7 @@ class VoiceBridgeServer {
     this.dispatcherWhisperTargets = new Map();  // dispatcherId -> { signature, targets }
     this.dispatcherAudioStats = new Map();      // dispatcherId -> diagnostics counters
     this.noRouteLogAtByDispatcher = new Map();  // dispatcherId -> timestamp
+    this.routeSnapshotSignatures = new Map();   // dispatcherId -> signature
     this.clientAudioHandlers = new Map();       // dispatcherId -> fn
     this.clientDisconnectHandlers = new Map();  // dispatcherId -> fn
     this.clientErrorHandlers = new Map();       // dispatcherId -> fn
@@ -541,6 +542,8 @@ class VoiceBridgeServer {
       `[VoiceBridge] Dispatcher ${dispatcherId} joined channel request=${numericChannel || 0} ` +
       `via root channel ${Number(rootChannel.channelId || 0)} (${String(rootChannel.name || 'Root')})`
     );
+    this.refreshDispatcherWhisperTargets(dispatcherId);
+    this.logDispatcherRouteSnapshot(dispatcherId, 'join_channel');
     this.logDispatcherDiagnostics(dispatcherId, 'join_channel');
   }
 
@@ -553,6 +556,55 @@ class VoiceBridgeServer {
     }
     console.log(
       `[VoiceBridge] Route table updated: channels=${this.routeMembersByChannel.size}, members=${totalMembers}`
+    );
+
+    for (const dispatcherId of this.activeChannels.keys()) {
+      this.refreshDispatcherWhisperTargets(dispatcherId);
+      this.logDispatcherRouteSnapshot(dispatcherId, 'route_update');
+    }
+  }
+
+  getDispatcherRouteSnapshot(dispatcherId) {
+    const client = this.mumbleClients.get(dispatcherId);
+    const active = this.activeChannels.get(dispatcherId);
+    const channelNumber = normalizePositiveInt(active?.channelNumber);
+    const routeMembers = channelNumber > 0
+      ? Array.from(this.routeMembersByChannel.get(channelNumber) || [])
+      : [];
+    return {
+      dispatcherId: normalizePositiveInt(dispatcherId) || dispatcherId,
+      connected: !!(client && client.isReady),
+      session: normalizePositiveInt(client?.session) || null,
+      channelNumber: channelNumber || null,
+      channelName: String(active?.channelName || ''),
+      routeMembers,
+      routeMemberCount: routeMembers.length,
+    };
+  }
+
+  logDispatcherRouteSnapshot(dispatcherId, reason = 'route_check') {
+    const snapshot = this.getDispatcherRouteSnapshot(dispatcherId);
+    const members = snapshot.routeMembers || [];
+    const signature = [
+      snapshot.connected ? '1' : '0',
+      snapshot.session || 0,
+      snapshot.channelNumber || 0,
+      members.join(','),
+    ].join('|');
+
+    const previous = this.routeSnapshotSignatures.get(dispatcherId);
+    if (reason === 'route_update' && previous === signature) {
+      return;
+    }
+    this.routeSnapshotSignatures.set(dispatcherId, signature);
+
+    const preview = members.slice(0, 10).join(',');
+    const suffix = members.length > 10 ? ',...' : '';
+    console.log(
+      `[VoiceBridge][RouteCheck] dispatcher=${snapshot.dispatcherId} reason=${reason} ` +
+      `connected=${snapshot.connected ? 'yes' : 'no'} session=${snapshot.session || 'n/a'} ` +
+      `channel=${snapshot.channelNumber || 'none'} members=${snapshot.routeMemberCount}` +
+      `${preview ? ` ids=${preview}${suffix}` : ''}`
     );
   }
 
@@ -870,6 +922,7 @@ class VoiceBridgeServer {
     this.activeChannels.delete(dispatcherId);
     this.dispatcherWhisperTargets.delete(dispatcherId);
     this.noRouteLogAtByDispatcher.delete(dispatcherId);
+    this.routeSnapshotSignatures.delete(dispatcherId);
     this.audioListeners.delete(dispatcherId);
     console.warn(`[VoiceBridge] Dispatcher ${dispatcherId} disconnected from Mumble backend.`);
     this.logDispatcherDiagnostics(dispatcherId, 'disconnect');
@@ -901,6 +954,7 @@ class VoiceBridgeServer {
     this.dispatcherDecoders.delete(dispatcherId);
     this.dispatcherWhisperTargets.delete(dispatcherId);
     this.noRouteLogAtByDispatcher.delete(dispatcherId);
+    this.routeSnapshotSignatures.delete(dispatcherId);
     stats.connected = false;
     stats.lastDisconnectedAtMs = Date.now();
     console.log(`[VoiceBridge] Dispatcher ${dispatcherId} fully disconnected from voice bridge.`);
@@ -916,12 +970,19 @@ class VoiceBridgeServer {
     const connectedDispatchers = Array.from(this.mumbleClients.keys()).map((id) => {
       const stats = this.dispatcherAudioStats.get(id) || {};
       const client = this.mumbleClients.get(id);
+      const active = this.activeChannels.get(id);
+      const channelNumber = normalizePositiveInt(active?.channelNumber);
+      const routeMembers = channelNumber > 0
+        ? Array.from(this.routeMembersByChannel.get(channelNumber) || [])
+        : [];
       return {
         dispatcherId: id,
         session: Number(client?.session || 0) || null,
-        channel: this.activeChannels.get(id)?.channelNumber ?? null,
-        channelName: this.activeChannels.get(id)?.channelName || '',
+        channel: active?.channelNumber ?? null,
+        channelName: active?.channelName || '',
         routeTargets: Number(stats.routeTargetCount || 0),
+        routeMemberCount: routeMembers.length,
+        routeMembers: routeMembers.slice(0, 20),
         micPackets: Number(stats.micPackets || 0),
         micBytes: Number(stats.micBytes || 0),
         opusFramesEncoded: Number(stats.opusFramesEncoded || 0),

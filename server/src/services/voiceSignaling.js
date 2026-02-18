@@ -404,6 +404,21 @@ class VoiceSignalingServer {
         handleParticipantJoin(parsedChannelNumber);
       }
 
+      const routeSnapshot = this.voiceBridge?.getDispatcherRouteSnapshot?.(user.id);
+      if (routeSnapshot) {
+        const routePreview = Array.isArray(routeSnapshot.routeMembers)
+          ? routeSnapshot.routeMembers.slice(0, 10).join(',')
+          : '';
+        const routeSuffix = Number(routeSnapshot.routeMemberCount || 0) > 10 ? ',...' : '';
+        console.log(
+          `[VoiceSignaling] Join verification user=${user.id} channel=${parsedChannelNumber} ` +
+          `bridgeConnected=${routeSnapshot.connected ? 'yes' : 'no'} ` +
+          `session=${routeSnapshot.session || 'n/a'} ` +
+          `routeMembers=${Number(routeSnapshot.routeMemberCount || 0)}` +
+          `${routePreview ? ` ids=${routePreview}${routeSuffix}` : ''}`
+        );
+      }
+
       audit(user.id, 'voice_bridge_joined_channel', {
         channelNumber: parsedChannelNumber,
         channelName,
