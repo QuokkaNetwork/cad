@@ -206,12 +206,16 @@ class VoiceBridgeServer {
     const dbPort = String(Settings.get('mumble_port') || '').trim();
     const voiceSystem = String(Settings.get('mumble_voice_system') || '').trim();
     const requestedDisableUdp = parseBool(process.env.MUMBLE_DISABLE_UDP, false);
+    // When enabled, always honor MUMBLE_DISABLE_UDP even for localhost.
+    // This is a recovery switch for environments where UDP crypto sync loops
+    // (repeat/mac errors) destabilize dispatcher voice sessions.
+    const forceTcpOnLocalhost = parseBool(process.env.MUMBLE_FORCE_TCP_LOCALHOST, false);
     const selectedHost = envHost || dbHost || '127.0.0.1';
     const normalizedHost = String(selectedHost).trim().toLowerCase();
     const isLocalBridgeHost = normalizedHost === '127.0.0.1'
       || normalizedHost === 'localhost'
       || normalizedHost === '::1';
-    const effectiveDisableUdp = requestedDisableUdp && !isLocalBridgeHost;
+    const effectiveDisableUdp = requestedDisableUdp && (!isLocalBridgeHost || forceTcpOnLocalhost);
 
     this.config = {
       mumbleHost: selectedHost,
@@ -221,8 +225,8 @@ class VoiceBridgeServer {
       mumbleRejectUnauthorized: parseBool(process.env.MUMBLE_REJECT_UNAUTHORIZED, false),
       // Allow UDP by default for dispatcher bridge clients.
       // Set MUMBLE_DISABLE_UDP=true in .env to force TCP tunneling.
-      // When host is localhost we ignore forced TCP-only mode to avoid
-      // rust-mumble CryptSetup reset loops.
+      // By default localhost prefers UDP. Set MUMBLE_FORCE_TCP_LOCALHOST=true
+      // to allow forced TCP-only for local bridge clients.
       mumbleDisableUdp: effectiveDisableUdp,
       dispatcherNamePrefix: String(process.env.MUMBLE_DISPATCHER_NAME_PREFIX || 'CAD_Dispatcher').trim() || 'CAD_Dispatcher',
       sampleRate: 48000,
@@ -231,8 +235,14 @@ class VoiceBridgeServer {
       voiceSystem: voiceSystem || 'unknown',
     };
 
-    if (requestedDisableUdp && isLocalBridgeHost) {
-      console.warn('[VoiceBridge] MUMBLE_DISABLE_UDP=true ignored for localhost Mumble host; using UDP for stability');
+    if (requestedDisableUdp && isLocalBridgeHost && !forceTcpOnLocalhost) {
+      console.warn(
+        '[VoiceBridge] MUMBLE_DISABLE_UDP=true ignored for localhost Mumble host; ' +
+        'set MUMBLE_FORCE_TCP_LOCALHOST=true to force TCP-only'
+      );
+    }
+    if (requestedDisableUdp && isLocalBridgeHost && forceTcpOnLocalhost) {
+      console.warn('[VoiceBridge] MUMBLE_FORCE_TCP_LOCALHOST=true active: dispatcher bridge will use TCP-only');
     }
 
     const hostSource = envHost ? '.env' : (dbHost ? 'auto-detect' : 'default');

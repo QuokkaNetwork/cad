@@ -19,6 +19,14 @@ const { startFineProcessor } = require('./services/fivemFineProcessor');
 const { ensureLiveMapTilesDir } = require('./services/liveMapTiles');
 const { startMumbleServer, getMurmurStatus } = require('./services/mumbleServer');
 
+function parseBool(value, fallback = false) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return !!fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return !!fallback;
+}
+
 // Initialize database
 console.log('Initializing database...');
 initDb();
@@ -283,32 +291,36 @@ bridgeHttpServer.on('error', (err) => {
   await startMumbleServer();
 
   // Initialize Voice Bridge (optional - only if dependencies are installed)
-  try {
-    const { getVoiceBridge } = require('./services/voiceBridge');
-    const VoiceSignalingServer = require('./services/voiceSignaling');
-    const { initVoiceBridgeSync } = require('./services/voiceBridgeSync');
+  if (parseBool(process.env.VOICE_BRIDGE_ENABLED, true)) {
+    try {
+      const { getVoiceBridge } = require('./services/voiceBridge');
+      const VoiceSignalingServer = require('./services/voiceSignaling');
+      const { initVoiceBridgeSync } = require('./services/voiceBridgeSync');
 
-    const voiceBridge = getVoiceBridge();
-    if (voiceBridge?.getStatus?.().available) {
-      const voiceSignalingServer = new VoiceSignalingServer(httpServer, voiceBridge);
-      app.locals.voiceSignalingServer = voiceSignalingServer;
-      // Mirror /voice-bridge upgrades on the plain HTTP bridge listener too.
-      // This keeps dispatcher voice available when operators access CAD via :3031.
-      bridgeHttpServer.on('upgrade', (request, socket, head) => {
-        if (request.url && request.url.startsWith('/voice-bridge')) {
-          voiceSignalingServer.handleUpgrade(request, socket, head);
-        }
-      });
-      initVoiceBridgeSync(voiceBridge);
-      console.log('[VoiceBridge] Voice bridge initialized successfully');
-    } else {
-      const missing = voiceBridge?.getStatus?.().dependency_missing || 'unknown';
-      console.warn(`[VoiceBridge] Voice bridge not available: missing ${missing}`);
-      console.warn('[VoiceBridge] Install dependencies: npm install --workspace=server mumble-node opusscript');
+      const voiceBridge = getVoiceBridge();
+      if (voiceBridge?.getStatus?.().available) {
+        const voiceSignalingServer = new VoiceSignalingServer(httpServer, voiceBridge);
+        app.locals.voiceSignalingServer = voiceSignalingServer;
+        // Mirror /voice-bridge upgrades on the plain HTTP bridge listener too.
+        // This keeps dispatcher voice available when operators access CAD via :3031.
+        bridgeHttpServer.on('upgrade', (request, socket, head) => {
+          if (request.url && request.url.startsWith('/voice-bridge')) {
+            voiceSignalingServer.handleUpgrade(request, socket, head);
+          }
+        });
+        initVoiceBridgeSync(voiceBridge);
+        console.log('[VoiceBridge] Voice bridge initialized successfully');
+      } else {
+        const missing = voiceBridge?.getStatus?.().dependency_missing || 'unknown';
+        console.warn(`[VoiceBridge] Voice bridge not available: missing ${missing}`);
+        console.warn('[VoiceBridge] Install dependencies: npm install --workspace=server mumble-node opusscript');
+      }
+    } catch (error) {
+      console.warn('[VoiceBridge] Voice bridge not available:', error.message);
+      console.warn('[VoiceBridge] CAD will run without voice bridge support');
     }
-  } catch (error) {
-    console.warn('[VoiceBridge] Voice bridge not available:', error.message);
-    console.warn('[VoiceBridge] CAD will run without voice bridge support');
+  } else {
+    console.warn('[VoiceBridge] Disabled by VOICE_BRIDGE_ENABLED=false');
   }
 
   // Start HTTP server
