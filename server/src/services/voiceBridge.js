@@ -206,10 +206,14 @@ class VoiceBridgeServer {
     const dbPort = String(Settings.get('mumble_port') || '').trim();
     const voiceSystem = String(Settings.get('mumble_voice_system') || '').trim();
     const requestedDisableUdp = parseBool(process.env.MUMBLE_DISABLE_UDP, false);
-    // When enabled, always honor MUMBLE_DISABLE_UDP even for localhost.
-    // This is a recovery switch for environments where UDP crypto sync loops
-    // (repeat/mac errors) destabilize dispatcher voice sessions.
-    const forceTcpOnLocalhost = parseBool(process.env.MUMBLE_FORCE_TCP_LOCALHOST, false);
+    // If MUMBLE_DISABLE_UDP=true, default to forcing TCP even on localhost
+    // unless explicitly disabled via MUMBLE_FORCE_TCP_LOCALHOST=false.
+    // This avoids dispatcher crypt reset loops on environments where local UDP
+    // transport is unstable with rust-mumble.
+    const forceTcpOnLocalhost = parseBool(
+      process.env.MUMBLE_FORCE_TCP_LOCALHOST,
+      requestedDisableUdp
+    );
     const selectedHost = envHost || dbHost || '127.0.0.1';
     const normalizedHost = String(selectedHost).trim().toLowerCase();
     const isLocalBridgeHost = normalizedHost === '127.0.0.1'
