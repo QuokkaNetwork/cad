@@ -14,6 +14,7 @@ const {
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
   Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMFineJobs, SubDepartments, OffenceCatalog,
+  DriverLicenses, VehicleRegistrations,
   FieldMappingCategories, FieldMappings,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
@@ -820,6 +821,19 @@ router.delete('/offence-catalog/:id', (req, res) => {
   OffenceCatalog.delete(id);
   audit(req.user.id, 'offence_catalog_deleted', { offenceId: id });
   res.json({ success: true });
+});
+
+// --- CAD records maintenance ---
+router.delete('/cad-records/licenses', (req, res) => {
+  const cleared = DriverLicenses.clearAll();
+  audit(req.user.id, 'driver_licenses_cleared', { cleared });
+  res.json({ success: true, cleared });
+});
+
+router.delete('/cad-records/registrations', (req, res) => {
+  const cleared = VehicleRegistrations.clearAll();
+  audit(req.user.id, 'vehicle_registrations_cleared', { cleared });
+  res.json({ success: true, cleared });
 });
 
 // --- Field Mapping Categories ---

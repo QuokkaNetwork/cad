@@ -1133,6 +1133,10 @@ const DriverLicenses = {
     `).run();
     return Number(info?.changes || 0);
   },
+  clearAll() {
+    const info = db.prepare('DELETE FROM driver_licenses').run();
+    return Number(info?.changes || 0);
+  },
 };
 
 // --- Vehicle Registrations ---
@@ -1289,6 +1293,10 @@ const VehicleRegistrations = {
         AND trim(expiry_at) != ''
         AND julianday(expiry_at) <= julianday('now')
     `).run();
+    return Number(info?.changes || 0);
+  },
+  clearAll() {
+    const info = db.prepare('DELETE FROM vehicle_registrations').run();
     return Number(info?.changes || 0);
   },
 };

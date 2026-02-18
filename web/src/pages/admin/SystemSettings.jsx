@@ -45,6 +45,9 @@ export default function AdminSystemSettings() {
   const [newChannelForm, setNewChannelForm] = useState({ channel_number: '', name: '', description: '' });
   const [addingChannel, setAddingChannel] = useState(false);
   const [showAddChannel, setShowAddChannel] = useState(false);
+  const [purgingLicenses, setPurgingLicenses] = useState(false);
+  const [purgingRegistrations, setPurgingRegistrations] = useState(false);
+  const [purgeResult, setPurgeResult] = useState(null);
 
   async function fetchSettings() {
     try {
@@ -275,6 +278,46 @@ export default function AdminSystemSettings() {
       alert('Failed to sync FiveM resource:\n' + formatErr(err));
     } finally {
       setInstallingBridge(false);
+    }
+  }
+
+  async function purgeLicenses() {
+    const confirmed = window.confirm(
+      'This will permanently delete ALL CAD driver licence records. Continue?'
+    );
+    if (!confirmed) return;
+    setPurgingLicenses(true);
+    setPurgeResult(null);
+    try {
+      const result = await api.delete('/api/admin/cad-records/licenses');
+      setPurgeResult({
+        success: true,
+        message: `Purged ${Number(result?.cleared || 0)} driver licence record(s).`,
+      });
+    } catch (err) {
+      setPurgeResult({ success: false, message: formatErr(err) });
+    } finally {
+      setPurgingLicenses(false);
+    }
+  }
+
+  async function purgeRegistrations() {
+    const confirmed = window.confirm(
+      'This will permanently delete ALL CAD vehicle registration (rego) records. Continue?'
+    );
+    if (!confirmed) return;
+    setPurgingRegistrations(true);
+    setPurgeResult(null);
+    try {
+      const result = await api.delete('/api/admin/cad-records/registrations');
+      setPurgeResult({
+        success: true,
+        message: `Purged ${Number(result?.cleared || 0)} registration record(s).`,
+      });
+    } catch (err) {
+      setPurgeResult({ success: false, message: formatErr(err) });
+    } finally {
+      setPurgingRegistrations(false);
     }
   }
 
@@ -673,6 +716,36 @@ export default function AdminSystemSettings() {
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      <div className="bg-cad-card border border-red-500/30 rounded-lg p-5 mb-4">
+        <h3 className="text-sm font-semibold text-red-300 uppercase tracking-wider mb-2">CAD Record Purge</h3>
+        <p className="text-xs text-cad-muted mb-3">
+          Dangerous actions. This permanently removes CAD licence/rego records from the CAD database.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={purgeLicenses}
+            disabled={purgingLicenses || purgingRegistrations}
+            className="px-3 py-1.5 text-xs bg-red-500/15 text-red-200 hover:bg-red-500/25 rounded border border-red-500/40 transition-colors disabled:opacity-50"
+          >
+            {purgingLicenses ? 'Purging Licences...' : 'Purge Licences'}
+          </button>
+          <button
+            type="button"
+            onClick={purgeRegistrations}
+            disabled={purgingRegistrations || purgingLicenses}
+            className="px-3 py-1.5 text-xs bg-red-500/15 text-red-200 hover:bg-red-500/25 rounded border border-red-500/40 transition-colors disabled:opacity-50"
+          >
+            {purgingRegistrations ? 'Purging Rego...' : 'Purge Registrations (Rego)'}
+          </button>
+        </div>
+        {purgeResult && (
+          <p className={`text-xs mt-3 whitespace-pre-wrap ${purgeResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+            {purgeResult.message}
+          </p>
         )}
       </div>
 
