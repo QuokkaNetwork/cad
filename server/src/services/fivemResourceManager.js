@@ -70,6 +70,7 @@ function generateVoiceCfgInline(publicIp, port, token, baseUrl) {
     'setr voice_useNativeAudio true',
     'setr voice_enableSubmix 1',
     'setr voice_defaultRadioVolume 100',
+    'setr voice_enableRadios 0',
     '',
     `set cad_bridge_base_url "${baseUrl}"`,
     `set cad_bridge_token "${token}"`,
@@ -78,6 +79,11 @@ function generateVoiceCfgInline(publicIp, port, token, baseUrl) {
     'set cad_bridge_npwd_resource "npwd"',
     'set cad_bridge_fine_adapter "auto"',
     'set cad_bridge_job_sync_adapter "none"',
+    'set cad_bridge_radio_adapter "cad-radio"',
+    'set cad_bridge_radio_ui_enabled "true"',
+    'set cad_bridge_radio_ui_key "EQUALS"',
+    'set cad_bridge_radio_ptt_key "LMENU"',
+    'set cad_bridge_radio_max_frequency "500"',
     '',
   ].join('\n');
 }

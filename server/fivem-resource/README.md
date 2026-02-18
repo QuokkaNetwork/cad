@@ -36,6 +36,22 @@ Optional:
 - `set cad_bridge_postal_export getPostal`
 - `set cad_bridge_npwd_resource npwd`
 - `set cad_bridge_npwd_emergency_numbers 000`
+- `set cad_bridge_radio_adapter cad-radio`
+- `set cad_bridge_radio_ui_enabled true`
+- `set cad_bridge_radio_ptt_key LMENU`
+- `set cad_bridge_radio_ui_key EQUALS`
+- `set cad_bridge_radio_target_id 2`
+- `set cad_bridge_radio_rx_volume 0.35`
+- `set cad_bridge_radio_max_frequency 500`
+
+## CAD custom radio (built-in mm-style UI)
+- `cad-radio` runs radio membership/routing inside `cad_bridge`; standalone `mm_radio` is not required.
+- Remove `ensure mm_radio` from your `server.cfg` when using this built-in UI.
+- Keep `pma-voice` for proximity voice only.
+- In `voice.cfg`, keep `setr voice_enableRadios 0` to avoid pma radio keybind conflicts.
+- Open radio UI with `cad_bridge_radio_ui_key` (default `EQUALS`).
+- Transmit on radio with `cad_bridge_radio_ptt_key` (default `LMENU`).
+- Restricted channels use `Config.RadioRestrictedChannels` in `config.lua` (mm_radio-compatible format).
 
 CAD-side fine delivery options:
 - In Admin > System Settings, `Fine Delivery Mode = Direct QBX DB` applies fines directly in the QBX players table.

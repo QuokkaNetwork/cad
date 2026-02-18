@@ -17,4 +17,7 @@ files {
   'ui/index.html',
   'ui/styles.css',
   'ui/app.js',
+  'ui/cad_radio.css',
+  'ui/cad_radio.js',
+  'ui/overlay.webp',
 }

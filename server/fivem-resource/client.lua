@@ -627,27 +627,22 @@ CreateThread(function()
 end)
 
 -- ============================================================================
--- mm_radio channel member sync
--- The server cannot call mm_radio:server:addToRadioChannel directly because
--- FiveM net events use the *calling client's* source — a server-to-server
--- TriggerEvent would have source = 0. Instead the server sends this client
--- event so the player's own client triggers the mm_radio server event, giving
--- mm_radio the correct source for its channels{} table tracking.
+-- CAD custom radio (adapter: cad-radio)
+--
+-- This replaces mm_radio/pma radio routing while keeping pma-voice proximity.
+-- We use a dedicated voice target slot so we do not fight pma proximity logic.
 -- ============================================================================
-local cadBridgeCurrentMmRadioChannel = nil -- track for leave cleanup
-
+local cadBridgeCurrentMmRadioChannel = nil
 RegisterNetEvent('cad_bridge:syncMmRadio', function(channelNumber, playerName)
   if GetResourceState('mm_radio') ~= 'started' then return end
   local ch = tonumber(channelNumber) or 0
   if ch > 0 then
-    -- Leave old channel first so mm_radio's list stays clean
     if cadBridgeCurrentMmRadioChannel and cadBridgeCurrentMmRadioChannel ~= ch then
       TriggerServerEvent('mm_radio:server:removeFromRadioChannel', cadBridgeCurrentMmRadioChannel)
     end
     cadBridgeCurrentMmRadioChannel = ch
     TriggerServerEvent('mm_radio:server:addToRadioChannel', ch, tostring(playerName or ''))
   else
-    -- channel 0 means leave radio entirely
     if cadBridgeCurrentMmRadioChannel then
       TriggerServerEvent('mm_radio:server:removeFromRadioChannel', cadBridgeCurrentMmRadioChannel)
       cadBridgeCurrentMmRadioChannel = nil
@@ -655,71 +650,760 @@ RegisterNetEvent('cad_bridge:syncMmRadio', function(channelNumber, playerName)
   end
 end)
 
--- ============================================================================
--- CAD dispatcher inbound radio listen shim
---
--- Why this exists:
--- - CAD dispatchers connect as standalone Mumble clients (not FiveM players).
--- - pma-voice radio targets are built from FiveM player IDs, so dispatcher
---   sessions are not naturally included in player radio whispers.
--- - Dispatchers stay in Mumble root channel (0) on the CAD bridge side.
---
--- Practical workaround:
--- - While a player is on a radio channel, continuously add channel 0 to the
---   active radio voice target so player radio TX is also sent to root.
--- - Dispatcher bots in root then receive inbound radio audio from in-game users.
---
--- Notes:
--- - This does not replace pma-voice targeting; it only adds root as an extra
---   recipient.
--- - We avoid clearing any targets here to prevent fighting pma-voice internals.
--- ============================================================================
-local CAD_BRIDGE_DISPATCH_TARGET_ID = tonumber(GetConvar('cad_bridge_dispatch_target_id', '1')) or 1
-if CAD_BRIDGE_DISPATCH_TARGET_ID < 1 or CAD_BRIDGE_DISPATCH_TARGET_ID > 30 then
-  CAD_BRIDGE_DISPATCH_TARGET_ID = 1
+local CAD_RADIO_ENABLED = tostring(GetConvar('cad_bridge_radio_enabled', 'true')) == 'true'
+local CAD_RADIO_TARGET_ID = tonumber(GetConvar('cad_bridge_radio_target_id', '2')) or 2
+local CAD_PROXIMITY_TARGET_ID = tonumber(GetConvar('cad_bridge_proximity_target_id', '1')) or 1
+local CAD_RADIO_RX_VOLUME = tonumber(GetConvar('cad_bridge_radio_rx_volume', '0.35')) or 0.35
+local CAD_RADIO_PTT_KEY = tostring(GetConvar('cad_bridge_radio_ptt_key', 'LMENU'))
+local CAD_RADIO_FORWARD_ROOT = tostring(GetConvar('cad_bridge_radio_forward_root', 'true')) == 'true'
+local CAD_RADIO_UI_ENABLED = tostring(GetConvar('cad_bridge_radio_ui_enabled', 'true')) == 'true'
+local CAD_RADIO_UI_KEY = tostring(GetConvar('cad_bridge_radio_ui_key', 'EQUALS'))
+local CAD_RADIO_MAX_CHANNEL = tonumber(GetConvar('cad_bridge_radio_max_frequency', tostring(Config.RadioMaxFrequency or 500))) or tonumber(Config.RadioMaxFrequency or 500) or 500
+local CAD_RADIO_UI_KVP = 'cad_bridge_radio_ui_settings'
+
+if CAD_RADIO_TARGET_ID < 1 or CAD_RADIO_TARGET_ID > 30 then
+  CAD_RADIO_TARGET_ID = 2
+end
+if CAD_PROXIMITY_TARGET_ID < 0 or CAD_PROXIMITY_TARGET_ID > 30 then
+  CAD_PROXIMITY_TARGET_ID = 1
+end
+if CAD_RADIO_RX_VOLUME < 0.0 then CAD_RADIO_RX_VOLUME = 0.0 end
+if CAD_RADIO_RX_VOLUME > 1.0 then CAD_RADIO_RX_VOLUME = 1.0 end
+
+local cadRadioChannel = 0
+local cadRadioMembers = {}
+local cadRadioMemberBySource = {}
+local cadRadioTalkingStateBySource = {}
+local cadRadioPttPressed = false
+local cadRadioSubmixId = -1
+local cadRadioRxVolume = CAD_RADIO_RX_VOLUME
+local cadRadioMutedBySource = {}
+local cadRadioUiVisible = false
+
+local cadRadioUiSettings = {
+  name = '',
+  favourite = {},
+  recomended = {},
+  muted = {},
+  volume = math.floor((CAD_RADIO_RX_VOLUME or 0.35) * 100.0 + 0.5),
+  userData = {
+    name = '',
+    favourite = {},
+    overlaySizeMultiplier = 50,
+    radioSizeMultiplier = 50,
+    allowMovement = false,
+    enableClicks = true,
+    playerlist = {
+      show = false,
+      coords = { x = 15.0, y = 40.0 },
+    },
+    radio = {
+      coords = { x = 10, y = 15 },
+    },
+  },
+}
+
+local CAD_RADIO_UI_LOCALE = {
+  ['ui.header'] = 'IN RADIO',
+  ['ui.frequency'] = 'Frequency',
+  ['ui.disconnect'] = 'DISCONNECT',
+  ['ui.notconnected'] = 'NOT CONNECTED',
+  ['ui.settings'] = 'Settings',
+  ['ui.channels'] = 'Channels',
+  ['ui.radio'] = 'Radio',
+  ['ui.members'] = 'Members',
+  ['ui.favorites'] = 'Favorites',
+  ['ui.recommended'] = 'Recommended',
+  ['ui.clear'] = 'CLEAR',
+  ['ui.hide_overlay'] = 'HIDE OVERLAY',
+  ['ui.show_overlay'] = 'SHOW OVERLAY',
+  ['ui.save'] = 'SAVE',
+  ['ui.radio_settings'] = 'Radio Settings',
+  ['ui.move_radio'] = 'Move Radio',
+  ['ui.allow_move'] = 'Allow Move',
+  ['ui.overlay_settings'] = 'Overlay Settings',
+  ['ui.enableClicks'] = 'Radio Sound',
+}
+
+local function isCadRadioAdapterActive()
+  local adapter = tostring(GetConvar('cad_bridge_radio_adapter', 'cad-radio') or 'cad-radio'):lower()
+  return adapter == 'cad-radio' or adapter == 'cad_radio'
 end
 
--- pma-voice clears voice target channels in its proximity loop (default ~200ms).
--- Keep this interval lower so channel 0 stays attached while transmitting.
-local CAD_BRIDGE_DISPATCH_PATCH_LOOP_MS = tonumber(GetConvar('cad_bridge_dispatch_patch_loop_ms', '100')) or 100
-if CAD_BRIDGE_DISPATCH_PATCH_LOOP_MS < 25 then
-  CAD_BRIDGE_DISPATCH_PATCH_LOOP_MS = 25
+local function getLocalServerId()
+  return tonumber(GetPlayerServerId(PlayerId()) or 0) or 0
 end
 
-local function getCurrentRadioChannel()
-  if not LocalPlayer or not LocalPlayer.state then
-    return 0
+local function isPlayerDeadForCadRadio()
+  if LocalPlayer and LocalPlayer.state and LocalPlayer.state.isDead then
+    return true
   end
-  return tonumber(LocalPlayer.state.radioChannel) or 0
+  return IsPlayerDead(PlayerId())
 end
 
-local function getCurrentCallChannel()
-  if not LocalPlayer or not LocalPlayer.state then
-    return 0
-  end
-  return tonumber(LocalPlayer.state.callChannel) or 0
+local function getCadRadioSubmixId()
+  if cadRadioSubmixId ~= -1 then return cadRadioSubmixId end
+  if GetGameName() ~= 'fivem' then return -1 end
+
+  local mix = CreateAudioSubmix('CADBridgeRadio')
+  SetAudioSubmixEffectRadioFx(mix, 0)
+  SetAudioSubmixEffectParamInt(mix, 0, `default`, 1)
+  AddAudioSubmixOutput(mix, 0)
+  cadRadioSubmixId = mix
+  return cadRadioSubmixId
 end
+
+local function playCadRadioMicClick(isOn)
+  if cadRadioUiSettings.userData.enableClicks ~= true then return end
+  -- Fallback click sounds; can be swapped for custom audio later.
+  local soundName = isOn and 'SELECT' or 'BACK'
+  local soundSet = 'HUD_FRONTEND_DEFAULT_SOUNDSET'
+  pcall(function()
+    PlaySoundFrontend(-1, soundName, soundSet, false)
+  end)
+end
+
+local function cadRadioGetLocalDisplayName()
+  local cached = tostring(cadRadioUiSettings.userData.name or ''):gsub('^%s+', ''):gsub('%s+$', '')
+  if cached ~= '' then
+    return cached
+  end
+  local fallback = GetPlayerName(PlayerId()) or ('Player ' .. tostring(getLocalServerId()))
+  fallback = tostring(fallback or ''):gsub('^%s+', ''):gsub('%s+$', '')
+  if fallback == '' then
+    fallback = 'Operator'
+  end
+  cadRadioUiSettings.userData.name = fallback
+  return fallback
+end
+
+local function cadRadioSaveUiSettings()
+  SetResourceKvp(CAD_RADIO_UI_KVP, json.encode(cadRadioUiSettings))
+end
+
+local function cadRadioLoadUiSettings()
+  local raw = GetResourceKvpString(CAD_RADIO_UI_KVP)
+  if not raw or raw == '' then
+    cadRadioUiSettings.userData.name = cadRadioGetLocalDisplayName()
+    cadRadioSaveUiSettings()
+    return
+  end
+
+  local ok, data = pcall(json.decode, raw)
+  if not ok or type(data) ~= 'table' then
+    cadRadioUiSettings.userData.name = cadRadioGetLocalDisplayName()
+    cadRadioSaveUiSettings()
+    return
+  end
+
+  if type(data.favourite) == 'table' then
+    cadRadioUiSettings.favourite = data.favourite
+    cadRadioUiSettings.userData.favourite = data.favourite
+  end
+  if type(data.recomended) == 'table' then
+    cadRadioUiSettings.recomended = data.recomended
+  end
+  if type(data.muted) == 'table' then
+    cadRadioUiSettings.muted = data.muted
+  end
+  if tonumber(data.volume) then
+    cadRadioUiSettings.volume = math.max(0, math.min(100, math.floor(tonumber(data.volume))))
+  end
+  if type(data.userData) == 'table' then
+    local user = data.userData
+    if type(user.name) == 'string' then
+      cadRadioUiSettings.userData.name = user.name
+    end
+    if type(user.favourite) == 'table' then
+      cadRadioUiSettings.userData.favourite = user.favourite
+    end
+    if tonumber(user.overlaySizeMultiplier) then
+      cadRadioUiSettings.userData.overlaySizeMultiplier = math.max(25, math.min(75, math.floor(tonumber(user.overlaySizeMultiplier))))
+    end
+    if tonumber(user.radioSizeMultiplier) then
+      cadRadioUiSettings.userData.radioSizeMultiplier = math.max(25, math.min(75, math.floor(tonumber(user.radioSizeMultiplier))))
+    end
+    if user.allowMovement ~= nil then
+      cadRadioUiSettings.userData.allowMovement = user.allowMovement == true
+    end
+    if user.enableClicks ~= nil then
+      cadRadioUiSettings.userData.enableClicks = user.enableClicks == true
+    end
+    if type(user.playerlist) == 'table' then
+      if user.playerlist.show ~= nil then
+        cadRadioUiSettings.userData.playerlist.show = user.playerlist.show == true
+      end
+      if type(user.playerlist.coords) == 'table' then
+        cadRadioUiSettings.userData.playerlist.coords.x = tonumber(user.playerlist.coords.x) or cadRadioUiSettings.userData.playerlist.coords.x
+        cadRadioUiSettings.userData.playerlist.coords.y = tonumber(user.playerlist.coords.y) or cadRadioUiSettings.userData.playerlist.coords.y
+      end
+    end
+    if type(user.radio) == 'table' and type(user.radio.coords) == 'table' then
+      cadRadioUiSettings.userData.radio.coords.x = tonumber(user.radio.coords.x) or cadRadioUiSettings.userData.radio.coords.x
+      cadRadioUiSettings.userData.radio.coords.y = tonumber(user.radio.coords.y) or cadRadioUiSettings.userData.radio.coords.y
+    end
+  end
+
+  cadRadioUiSettings.userData.name = cadRadioGetLocalDisplayName()
+  if type(cadRadioUiSettings.userData.favourite) ~= 'table' then
+    cadRadioUiSettings.userData.favourite = {}
+  end
+  if type(cadRadioUiSettings.favourite) ~= 'table' then
+    cadRadioUiSettings.favourite = {}
+  end
+  cadRadioUiSettings.userData.favourite = cadRadioUiSettings.favourite
+end
+
+local function cadRadioBuildMutedPayload()
+  local payload = {}
+  for sourceId, _ in pairs(cadRadioMutedBySource) do
+    local src = tonumber(sourceId) or 0
+    if src > 0 then
+      payload[src - 1] = true
+    end
+  end
+  return payload
+end
+
+local function cadRadioBuildUiMemberList()
+  local members = {}
+  for _, member in ipairs(cadRadioMembers) do
+    local src = tonumber(member.source) or 0
+    if src > 0 then
+      members[tostring(src)] = {
+        name = tostring(member.name or ('Player ' .. tostring(src))),
+        isTalking = member.talking == true,
+      }
+    end
+  end
+  return members
+end
+
+local function cadRadioGetClockText()
+  local hour = tonumber(GetClockHours()) or 0
+  local minute = tonumber(GetClockMinutes()) or 0
+  return string.format('%02d:%02d', hour, minute)
+end
+
+local function cadRadioGetStreetText()
+  local ped = PlayerPedId()
+  if ped == 0 then return 'Unknown' end
+  local pos = GetEntityCoords(ped)
+  local street1, street2 = GetStreetNameAtCoord(pos.x, pos.y, pos.z)
+  if street2 and street2 ~= 0 then
+    return GetStreetNameFromHashKey(street2) or 'Unknown'
+  end
+  return GetStreetNameFromHashKey(street1) or 'Unknown'
+end
+
+local function cadRadioBuildUiPayload()
+  return {
+    radioId = 'PERSONAL',
+    onRadio = cadRadioChannel > 0,
+    channel = cadRadioChannel,
+    volume = cadRadioUiSettings.volume,
+    favourite = cadRadioUiSettings.favourite,
+    recomended = cadRadioUiSettings.recomended,
+    userData = cadRadioUiSettings.userData,
+    time = cadRadioGetClockText(),
+    street = cadRadioGetStreetText(),
+    maxChannel = CAD_RADIO_MAX_CHANNEL,
+    locale = CAD_RADIO_UI_LOCALE,
+    channelName = type(Config.RadioNames) == 'table' and Config.RadioNames or {},
+    insideJammerZone = false,
+    battery = 100,
+    overlay = tostring(Config.RadioOverlayMode or 'default'),
+  }
+end
+
+local function cadRadioSendNui(action, data)
+  SendNUIMessage({
+    action = action,
+    data = data,
+  })
+end
+
+local function cadRadioPushUiState()
+  cadRadioSendNui('updateRadio', cadRadioBuildUiPayload())
+  cadRadioSendNui('updateRadioList', cadRadioBuildUiMemberList())
+end
+
+local function cadRadioCloseUi()
+  if not cadRadioUiVisible then return end
+  cadRadioUiVisible = false
+  SetNuiFocus(false, false)
+  SetNuiFocusKeepInput(false)
+  cadRadioSendNui('setRadioHide', nil)
+end
+
+local function cadRadioOpenUi()
+  if not CAD_RADIO_ENABLED or not CAD_RADIO_UI_ENABLED or not isCadRadioAdapterActive() then return end
+  cadRadioUiVisible = true
+  SetNuiFocus(true, true)
+  SetNuiFocusKeepInput(cadRadioUiSettings.userData.allowMovement == true)
+  cadRadioSendNui('setRadioVisible', cadRadioBuildUiPayload())
+  cadRadioSendNui('updateRadioList', cadRadioBuildUiMemberList())
+end
+
+cadRadioLoadUiSettings()
+cadRadioRxVolume = math.max(0.0, math.min(1.0, (tonumber(cadRadioUiSettings.volume) or 35) / 100.0))
+
+if type(cadRadioUiSettings.muted) == 'table' then
+  for sourceId, value in pairs(cadRadioUiSettings.muted) do
+    if value == true then
+      local src = tonumber(sourceId) or 0
+      if src > 0 then
+        cadRadioMutedBySource[src] = true
+      end
+    end
+  end
+end
+
+local function setRemoteCadRadioTalking(sourceId, enabled)
+  local src = tonumber(sourceId) or 0
+  if src <= 0 then return end
+  if src == getLocalServerId() then return end
+
+  cadRadioTalkingStateBySource[src] = enabled == true
+
+  if enabled and cadRadioMutedBySource[src] ~= true then
+    MumbleSetVolumeOverrideByServerId(src, cadRadioRxVolume)
+    local submix = getCadRadioSubmixId()
+    if submix ~= -1 then
+      MumbleSetSubmixForServerId(src, submix)
+    end
+  else
+    MumbleSetVolumeOverrideByServerId(src, -1.0)
+    MumbleSetSubmixForServerId(src, -1)
+  end
+end
+
+local function clearAllRemoteCadRadioTalking()
+  for src, _ in pairs(cadRadioTalkingStateBySource) do
+    setRemoteCadRadioTalking(src, false)
+  end
+  cadRadioTalkingStateBySource = {}
+end
+
+local function cadRadioReapplyRemoteAudio()
+  for src, talking in pairs(cadRadioTalkingStateBySource) do
+    setRemoteCadRadioTalking(src, talking == true)
+  end
+end
+
+local function rebuildCadRadioTarget()
+  MumbleClearVoiceTarget(CAD_RADIO_TARGET_ID)
+  MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
+  MumbleClearVoiceTargetPlayers(CAD_RADIO_TARGET_ID)
+
+  local localSource = getLocalServerId()
+  for src, _ in pairs(cadRadioMemberBySource) do
+    if src ~= localSource then
+      MumbleAddVoiceTargetPlayerByServerId(CAD_RADIO_TARGET_ID, src)
+    end
+  end
+
+  if CAD_RADIO_FORWARD_ROOT then
+    -- Send in-game radio TX to Mumble root so CAD dispatchers can hear it.
+    MumbleAddVoiceTargetChannel(CAD_RADIO_TARGET_ID, 0)
+  end
+end
+
+local function setCadRadioPttState(enabled)
+  if not CAD_RADIO_ENABLED or not isCadRadioAdapterActive() then return end
+  local isEnabled = enabled == true
+  if cadRadioPttPressed == isEnabled then return end
+
+  if isEnabled then
+    if cadRadioChannel <= 0 then return end
+    if isPlayerDeadForCadRadio() then return end
+    cadRadioPttPressed = true
+    rebuildCadRadioTarget()
+    MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
+    TriggerServerEvent('cad_bridge:radio:setTalking', true)
+    TriggerEvent('pma-voice:radioActive', true)
+    cadRadioSendNui('updateRadioTalking', {
+      radioId = tostring(getLocalServerId()),
+      radioTalking = true,
+    })
+    playCadRadioMicClick(true)
+    return
+  end
+
+  cadRadioPttPressed = false
+  TriggerServerEvent('cad_bridge:radio:setTalking', false)
+  TriggerEvent('pma-voice:radioActive', false)
+  cadRadioSendNui('updateRadioTalking', {
+    radioId = tostring(getLocalServerId()),
+    radioTalking = false,
+  })
+  MumbleClearVoiceTargetPlayers(CAD_RADIO_TARGET_ID)
+  MumbleSetVoiceTarget(CAD_PROXIMITY_TARGET_ID)
+  playCadRadioMicClick(false)
+end
+
+RegisterNetEvent('cad_bridge:radio:update', function(payload)
+  if not CAD_RADIO_ENABLED or not isCadRadioAdapterActive() then return end
+  if type(payload) ~= 'table' then return end
+
+  local previousChannel = cadRadioChannel
+  local nextChannel = tonumber(payload.channel_number) or 0
+  local nextMembers = {}
+  local nextBySource = {}
+
+  if type(payload.members) == 'table' then
+    for _, row in ipairs(payload.members) do
+      local src = tonumber(row.source) or 0
+      if src > 0 then
+        local item = {
+          source = src,
+          name = tostring(row.name or ('Player ' .. tostring(src))),
+          talking = row.talking == true,
+        }
+        nextMembers[#nextMembers + 1] = item
+        nextBySource[src] = item
+      end
+    end
+  end
+
+  cadRadioChannel = nextChannel
+  cadRadioMembers = nextMembers
+  cadRadioMemberBySource = nextBySource
+
+  for src, _ in pairs(cadRadioTalkingStateBySource) do
+    if not cadRadioMemberBySource[src] then
+      setRemoteCadRadioTalking(src, false)
+    end
+  end
+
+  for _, member in ipairs(cadRadioMembers) do
+    setRemoteCadRadioTalking(member.source, member.talking == true)
+  end
+
+  if cadRadioPttPressed and cadRadioChannel <= 0 then
+    setCadRadioPttState(false)
+  elseif cadRadioPttPressed then
+    rebuildCadRadioTarget()
+  end
+
+  if previousChannel ~= cadRadioChannel then
+    if GetResourceState('ox_lib') == 'started' then
+      if cadRadioChannel > 0 then
+        TriggerEvent('ox_lib:notify', {
+          title = 'CAD Radio',
+          description = ('Joined channel %s'):format(tostring(cadRadioChannel)),
+          type = 'inform',
+        })
+      elseif previousChannel > 0 then
+        TriggerEvent('ox_lib:notify', {
+          title = 'CAD Radio',
+          description = ('Left channel %s'):format(tostring(previousChannel)),
+          type = 'inform',
+        })
+      end
+    end
+  end
+
+  local memberList = cadRadioBuildUiMemberList()
+  cadRadioSendNui('updateRadioList', memberList)
+  cadRadioPushUiState()
+end)
+
+RegisterNetEvent('cad_bridge:radio:setTalking', function(sourceId, enabled)
+  if not CAD_RADIO_ENABLED or not isCadRadioAdapterActive() then return end
+  local src = tonumber(sourceId) or 0
+  local member = cadRadioMemberBySource[src]
+  if member then
+    member.talking = enabled == true
+  end
+  cadRadioSendNui('updateRadioTalking', {
+    radioId = tostring(src),
+    radioTalking = enabled == true,
+  })
+  setRemoteCadRadioTalking(sourceId, enabled == true)
+end)
+
+RegisterCommand('+cadbridgeradio', function()
+  setCadRadioPttState(true)
+end, false)
+
+RegisterCommand('-cadbridgeradio', function()
+  setCadRadioPttState(false)
+end, false)
+
+RegisterKeyMapping('+cadbridgeradio', 'CAD Radio Push-To-Talk', 'keyboard', CAD_RADIO_PTT_KEY)
+
+local function cadRadioNotify(message, notifyType)
+  local text = tostring(message or '')
+  if text == '' then return end
+  if GetResourceState('ox_lib') == 'started' then
+    TriggerEvent('ox_lib:notify', {
+      title = 'CAD Radio',
+      description = text,
+      type = notifyType or 'inform',
+    })
+  end
+end
+
+local function cadRadioSetVolumePercent(value)
+  local percent = tonumber(value) or cadRadioUiSettings.volume or 35
+  percent = math.max(0, math.min(100, math.floor(percent)))
+  cadRadioUiSettings.volume = percent
+  cadRadioRxVolume = percent / 100.0
+  cadRadioSaveUiSettings()
+  cadRadioReapplyRemoteAudio()
+  cadRadioPushUiState()
+end
+
+local function cadRadioIsChannelInList(list, channel)
+  local target = tonumber(channel) or 0
+  if target <= 0 or type(list) ~= 'table' then return false end
+  for _, value in ipairs(list) do
+    if tonumber(value) == target then
+      return true
+    end
+  end
+  return false
+end
+
+local function cadRadioAddRecommended(channel)
+  local ch = tonumber(channel) or 0
+  if ch <= 0 then return end
+  if cadRadioIsChannelInList(cadRadioUiSettings.recomended, ch) then return end
+  cadRadioUiSettings.recomended[#cadRadioUiSettings.recomended + 1] = ch
+  cadRadioSaveUiSettings()
+  cadRadioPushUiState()
+end
+
+local function cadRadioFailureMessage(reason, channel)
+  local ch = tonumber(channel) or 0
+  if reason == 'invalid_channel' then
+    return ('Station %.2f MHz is not available'):format(ch)
+  end
+  if reason == 'restricted_channel' then
+    return ('You are not allowed to join Station %.2f MHz'):format(ch)
+  end
+  return 'Unable to join radio channel right now.'
+end
+
+RegisterNetEvent('cad_bridge:radio:uiJoinResult', function(success, reason, channel)
+  if success == true then
+    cadRadioAddRecommended(channel)
+    return
+  end
+  cadRadioNotify(cadRadioFailureMessage(reason, channel), 'error')
+end)
+
+RegisterNetEvent('cad_bridge:radio:uiLeaveResult', function(success, reason)
+  if success == true then return end
+  cadRadioNotify(tostring(reason or 'Unable to leave radio channel right now.'), 'error')
+end)
+
+RegisterNUICallback('join', function(data, cb)
+  if not CAD_RADIO_ENABLED or not isCadRadioAdapterActive() then
+    cb('ok')
+    return
+  end
+  local channel = tonumber(data) or 0
+  TriggerServerEvent('cad_bridge:radio:uiJoinRequest', channel, cadRadioGetLocalDisplayName())
+  cb('ok')
+end)
+
+RegisterNUICallback('leave', function(_, cb)
+  TriggerServerEvent('cad_bridge:radio:uiLeaveRequest')
+  cb('ok')
+end)
+
+RegisterNUICallback('hideUI', function(_, cb)
+  cadRadioCloseUi()
+  cb('ok')
+end)
+
+RegisterNUICallback('volumeChange', function(data, cb)
+  cadRadioSetVolumePercent(data)
+  cb('ok')
+end)
+
+RegisterNUICallback('toggleMute', function(volume, cb)
+  cadRadioSetVolumePercent(volume)
+  cb('ok')
+end)
+
+RegisterNUICallback('getMutedList', function(_, cb)
+  cb(cadRadioBuildMutedPayload())
+end)
+
+RegisterNUICallback('togglemutePlayer', function(data, cb)
+  local src = tonumber(data) or 0
+  if src > 0 and src ~= getLocalServerId() then
+    if cadRadioMutedBySource[src] then
+      cadRadioMutedBySource[src] = nil
+    else
+      cadRadioMutedBySource[src] = true
+    end
+    cadRadioUiSettings.muted = cadRadioMutedBySource
+    cadRadioSaveUiSettings()
+    setRemoteCadRadioTalking(src, cadRadioTalkingStateBySource[src] == true)
+  end
+  cb(cadRadioBuildMutedPayload())
+end)
+
+RegisterNUICallback('addFav', function(data, cb)
+  local channel = tonumber(data) or 0
+  if channel > 0 and not cadRadioIsChannelInList(cadRadioUiSettings.favourite, channel) then
+    cadRadioUiSettings.favourite[#cadRadioUiSettings.favourite + 1] = channel
+    cadRadioUiSettings.userData.favourite = cadRadioUiSettings.favourite
+    cadRadioSaveUiSettings()
+    cadRadioPushUiState()
+  end
+  cb('ok')
+end)
+
+RegisterNUICallback('removeFav', function(data, cb)
+  local channel = tonumber(data) or 0
+  if channel > 0 and type(cadRadioUiSettings.favourite) == 'table' then
+    local nextFav = {}
+    for _, value in ipairs(cadRadioUiSettings.favourite) do
+      if tonumber(value) ~= channel then
+        nextFav[#nextFav + 1] = tonumber(value)
+      end
+    end
+    cadRadioUiSettings.favourite = nextFav
+    cadRadioUiSettings.userData.favourite = nextFav
+    cadRadioSaveUiSettings()
+    cadRadioPushUiState()
+  end
+  cb('ok')
+end)
+
+RegisterNUICallback('showPlayerList', function(data, cb)
+  cadRadioUiSettings.userData.playerlist.show = data == true
+  cadRadioSaveUiSettings()
+  cadRadioPushUiState()
+  cb('ok')
+end)
+
+RegisterNUICallback('updatePlayerListPosition', function(data, cb)
+  if type(data) == 'table' then
+    cadRadioUiSettings.userData.playerlist.coords.x = tonumber(data.x) or cadRadioUiSettings.userData.playerlist.coords.x
+    cadRadioUiSettings.userData.playerlist.coords.y = tonumber(data.y) or cadRadioUiSettings.userData.playerlist.coords.y
+    cadRadioSaveUiSettings()
+  end
+  cb('ok')
+end)
+
+RegisterNUICallback('updateRadioPosition', function(data, cb)
+  if type(data) == 'table' then
+    cadRadioUiSettings.userData.radio.coords.x = tonumber(data.x) or cadRadioUiSettings.userData.radio.coords.x
+    cadRadioUiSettings.userData.radio.coords.y = tonumber(data.y) or cadRadioUiSettings.userData.radio.coords.y
+    cadRadioSaveUiSettings()
+  end
+  cb('ok')
+end)
+
+RegisterNUICallback('allowMovement', function(data, cb)
+  cadRadioUiSettings.userData.allowMovement = data == true
+  SetNuiFocusKeepInput(cadRadioUiVisible and cadRadioUiSettings.userData.allowMovement == true)
+  cadRadioSaveUiSettings()
+  cadRadioPushUiState()
+  cb('ok')
+end)
+
+RegisterNUICallback('enableClicks', function(data, cb)
+  cadRadioUiSettings.userData.enableClicks = data == true
+  cadRadioSaveUiSettings()
+  cb('ok')
+end)
+
+RegisterNUICallback('updateRadioSize', function(data, cb)
+  if type(data) == 'table' then
+    local radioSize = tonumber(data.radio)
+    local overlaySize = tonumber(data.overlay)
+    if radioSize then
+      cadRadioUiSettings.userData.radioSizeMultiplier = math.max(25, math.min(75, math.floor(radioSize)))
+    end
+    if overlaySize then
+      cadRadioUiSettings.userData.overlaySizeMultiplier = math.max(25, math.min(75, math.floor(overlaySize)))
+    end
+    cadRadioSaveUiSettings()
+    cadRadioPushUiState()
+  end
+  cb('ok')
+end)
+
+RegisterNUICallback('saveData', function(data, cb)
+  if type(data) == 'table' then
+    local name = tostring(data.name or ''):gsub('^%s+', ''):gsub('%s+$', '')
+    if name ~= '' and #name <= 64 then
+      cadRadioUiSettings.userData.name = name
+      TriggerServerEvent('cad_bridge:radio:setDisplayName', name)
+      cadRadioSaveUiSettings()
+      cadRadioPushUiState()
+    end
+  end
+  cb('ok')
+end)
+
+RegisterCommand('cadbridgeradio', function()
+  if not CAD_RADIO_ENABLED or not CAD_RADIO_UI_ENABLED or not isCadRadioAdapterActive() then return end
+  if cadRadioUiVisible then
+    cadRadioCloseUi()
+  else
+    cadRadioOpenUi()
+  end
+end, false)
+
+RegisterKeyMapping('cadbridgeradio', 'Open CAD Radio UI', 'keyboard', CAD_RADIO_UI_KEY)
 
 CreateThread(function()
   while true do
-    Wait(CAD_BRIDGE_DISPATCH_PATCH_LOOP_MS)
+    if cadRadioUiVisible then
+      cadRadioSendNui('updateTime', cadRadioGetClockText())
+      Wait(1000)
+    else
+      Wait(500)
+    end
+  end
+end)
 
-    -- Only meaningful when pma-voice is active.
-    if GetResourceState('pma-voice') ~= 'started' then
+CreateThread(function()
+  while true do
+    if not CAD_RADIO_ENABLED or not isCadRadioAdapterActive() then
+      Wait(1000)
       goto continue
     end
 
-    local radioChannel = getCurrentRadioChannel()
-    local callChannel = getCurrentCallChannel()
-    if radioChannel <= 0 and callChannel <= 0 then
-      goto continue
+    if cadRadioChannel > 0 then
+      local text = ('~y~CAD RADIO~s~ %s %s'):format(
+        tostring(cadRadioChannel),
+        cadRadioPttPressed and '~r~[TX]~s~' or '~g~[RX]~s~'
+      )
+      SetTextFont(4)
+      SetTextScale(0.32, 0.32)
+      SetTextColour(255, 255, 255, 210)
+      SetTextOutline()
+      SetTextRightJustify(true)
+      SetTextWrap(0.0, 0.98)
+      BeginTextCommandDisplayText('STRING')
+      AddTextComponentSubstringPlayerName(text)
+      EndTextCommandDisplayText(0.98, 0.93)
+      Wait(0)
+    else
+      Wait(250)
     end
-
-    pcall(function()
-      -- Add root channel as an extra recipient for the active radio target.
-      MumbleAddVoiceTargetChannel(CAD_BRIDGE_DISPATCH_TARGET_ID, 0)
-    end)
 
     ::continue::
   end
+end)
+
+AddEventHandler('onClientResourceStop', function(resourceName)
+  if resourceName ~= GetCurrentResourceName() then return end
+  if cadRadioPttPressed then
+    TriggerServerEvent('cad_bridge:radio:setTalking', false)
+    TriggerEvent('pma-voice:radioActive', false)
+  end
+  cadRadioCloseUi()
+  clearAllRemoteCadRadioTalking()
+  MumbleClearVoiceTargetPlayers(CAD_RADIO_TARGET_ID)
+  MumbleSetVoiceTarget(CAD_PROXIMITY_TARGET_ID)
 end)
