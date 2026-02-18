@@ -20,10 +20,9 @@ var licenseNameInput = document.getElementById("licenseNameInput");
 var licenseDobInput = document.getElementById("licenseDobInput");
 var licenseGenderInput = document.getElementById("licenseGenderInput");
 var licenseNumberInput = document.getElementById("licenseNumberInput");
-var licenseExpiryDaysInput = document.getElementById("licenseExpiryDaysInput");
+var licenseDurationSelect = document.getElementById("licenseDurationSelect");
 var licenseExpiryAtInput = document.getElementById("licenseExpiryAtInput");
 var licenseConditionsInput = document.getElementById("licenseConditionsInput");
-var licenseMugshotInput = document.getElementById("licenseMugshotInput");
 var licenseClassList = document.getElementById("licenseClassList");
 var licenseClassEmpty = document.getElementById("licenseClassEmpty");
 var licenseFormError = document.getElementById("licenseFormError");
@@ -38,12 +37,25 @@ var regoPlateInput = document.getElementById("regoPlateInput");
 var regoModelInput = document.getElementById("regoModelInput");
 var regoColourInput = document.getElementById("regoColourInput");
 var regoDurationSelect = document.getElementById("regoDurationSelect");
-var regoExpiryAtInput = document.getElementById("regoExpiryAtInput");
 var registrationFormError = document.getElementById("registrationFormError");
+
+var idCardOverlay = document.getElementById("idCardOverlay");
+var idCardCloseBtn = document.getElementById("idCardCloseBtn");
+var idCardViewerNote = document.getElementById("idCardViewerNote");
+var idCardPhoto = document.getElementById("idCardPhoto");
+var idCardName = document.getElementById("idCardName");
+var idCardDob = document.getElementById("idCardDob");
+var idCardGender = document.getElementById("idCardGender");
+var idCardNumber = document.getElementById("idCardNumber");
+var idCardClasses = document.getElementById("idCardClasses");
+var idCardStatus = document.getElementById("idCardStatus");
+var idCardExpiry = document.getElementById("idCardExpiry");
+var idCardConditions = document.getElementById("idCardConditions");
 
 var emergencyOpen = false;
 var licenseOpen = false;
 var registrationOpen = false;
+var idCardOpen = false;
 
 var titleLimit = 80;
 var detailsLimit = 600;
@@ -51,6 +63,7 @@ var departments = [];
 var selectedDepartmentIds = [];
 var classOptions = [];
 var selectedClasses = [];
+var licenseDurationOptions = [];
 var durationOptions = [];
 
 function safeGet(obj, key, fallback) {
@@ -130,13 +143,14 @@ function setVisible(node, visible) {
 }
 
 function anyModalOpen() {
-  return emergencyOpen || licenseOpen || registrationOpen;
+  return emergencyOpen || licenseOpen || registrationOpen || idCardOpen;
 }
 
 function closeAll() {
   cancelEmergencyForm();
   cancelLicenseForm();
   cancelRegistrationForm();
+  if (idCardOpen) requestCloseIdCard();
 }
 
 function isDepartmentSelected(id) {
@@ -347,6 +361,51 @@ function renderLicenseClasses() {
   }
 }
 
+function normalizeLicenseDurationOptions(raw, fallback) {
+  var list = Array.isArray(raw) ? raw : [];
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < list.length; i += 1) {
+    var value = Number(list[i]);
+    if (!Number.isFinite(value) || value < 1) continue;
+    var rounded = Math.floor(value);
+    if (seen[rounded]) continue;
+    seen[rounded] = true;
+    out.push(rounded);
+  }
+  if (out.length === 0) out = [Number(fallback) || 35];
+  out.sort(function sortNumber(a, b) { return a - b; });
+  return out;
+}
+
+function getLicenseDurationLabel(days) {
+  var value = Number(days) || 0;
+  if (value === 6) return "6 months (6 days)";
+  if (value === 14) return "2 years (2 weeks)";
+  if (value === 35) return "5 years (5 weeks)";
+  if (value === 70) return "10 years (10 weeks)";
+  return String(value) + " day" + (value === 1 ? "" : "s");
+}
+
+function renderLicenseDurationSelect(defaultDuration) {
+  if (!licenseDurationSelect) return;
+  licenseDurationSelect.innerHTML = "";
+  var fallback = Number(defaultDuration) || 35;
+  licenseDurationOptions = normalizeLicenseDurationOptions(licenseDurationOptions, fallback);
+  if (licenseDurationOptions.indexOf(fallback) < 0) {
+    fallback = licenseDurationOptions.indexOf(35) >= 0 ? 35 : licenseDurationOptions[0];
+  }
+
+  for (var i = 0; i < licenseDurationOptions.length; i += 1) {
+    var optionValue = licenseDurationOptions[i];
+    var option = document.createElement("option");
+    option.value = String(optionValue);
+    option.textContent = getLicenseDurationLabel(optionValue);
+    if (optionValue === fallback) option.selected = true;
+    licenseDurationSelect.appendChild(option);
+  }
+}
+
 function resetLicenseForm(payload) {
   var data = payload || {};
   classOptions = normalizeClassOptions(safeGet(data, "class_options", []));
@@ -364,13 +423,9 @@ function resetLicenseForm(payload) {
   if (licenseGenderInput) licenseGenderInput.value = String(safeGet(data, "gender", "") || "");
   if (licenseNumberInput) licenseNumberInput.value = String(safeGet(data, "license_number", "") || "");
   if (licenseConditionsInput) licenseConditionsInput.value = "";
-  if (licenseMugshotInput) licenseMugshotInput.value = String(safeGet(data, "mugshot_url", "") || "");
   if (licenseExpiryAtInput) licenseExpiryAtInput.value = String(safeGet(data, "expiry_at", "") || "");
-  if (licenseExpiryDaysInput) {
-    var expiryDays = Number(safeGet(data, "default_expiry_days", 1095)) || 1095;
-    if (!Number.isFinite(expiryDays) || expiryDays < 1) expiryDays = 1095;
-    licenseExpiryDaysInput.value = String(Math.floor(expiryDays));
-  }
+  licenseDurationOptions = Array.isArray(data.duration_options) ? data.duration_options : [6, 14, 35, 70];
+  renderLicenseDurationSelect(Number(safeGet(data, "default_expiry_days", 35)) || 35);
   if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
   showErrorNode(licenseFormError, "");
 }
@@ -381,8 +436,12 @@ function openLicenseForm(payload) {
   resetLicenseForm(payload || {});
   licenseOpen = true;
   setVisible(licenseOverlay, true);
-  setTimeout(function focusLicenseName() {
-    if (licenseNameInput) licenseNameInput.focus();
+  setTimeout(function focusLicenseInput() {
+    if (licenseNumberInput) {
+      licenseNumberInput.focus();
+      return;
+    }
+    if (licenseConditionsInput) licenseConditionsInput.focus();
   }, 40);
 }
 
@@ -418,7 +477,7 @@ async function submitLicenseForm() {
   showErrorNode(licenseFormError, "");
   if (licenseSubmitBtn) licenseSubmitBtn.disabled = true;
 
-  var expiryDays = Number(licenseExpiryDaysInput && licenseExpiryDaysInput.value || 0);
+  var expiryDays = Number(licenseDurationSelect && licenseDurationSelect.value || 0);
   if (!Number.isFinite(expiryDays) || expiryDays < 1) expiryDays = 1;
   var payload = {
     full_name: fullName,
@@ -427,7 +486,6 @@ async function submitLicenseForm() {
     license_number: String(licenseNumberInput && licenseNumberInput.value || "").trim(),
     license_classes: sanitizeStringArray(selectedClasses, true),
     conditions: parseConditionsFromInput(),
-    mugshot_url: String(licenseMugshotInput && licenseMugshotInput.value || "").trim(),
     expiry_days: Math.floor(expiryDays),
     expiry_at: String(licenseExpiryAtInput && licenseExpiryAtInput.value || "").trim(),
   };
@@ -478,14 +536,14 @@ function normalizeDurationOptions(raw, fallback) {
 function renderDurationSelect(defaultDuration) {
   if (!regoDurationSelect) return;
   regoDurationSelect.innerHTML = "";
-  var fallback = Number(defaultDuration) || 365;
+  var fallback = Number(defaultDuration) || 35;
   durationOptions = normalizeDurationOptions(durationOptions, fallback);
   var selectedValue = durationOptions.indexOf(fallback) >= 0 ? fallback : durationOptions[0];
   for (var i = 0; i < durationOptions.length; i += 1) {
     var optionValue = durationOptions[i];
     var option = document.createElement("option");
     option.value = String(optionValue);
-    option.textContent = String(optionValue) + " day" + (optionValue === 1 ? "" : "s");
+    option.textContent = getLicenseDurationLabel(optionValue);
     if (optionValue === selectedValue) option.selected = true;
     regoDurationSelect.appendChild(option);
   }
@@ -497,9 +555,8 @@ function resetRegistrationForm(payload) {
   if (regoPlateInput) regoPlateInput.value = String(safeGet(data, "plate", "") || "");
   if (regoModelInput) regoModelInput.value = String(safeGet(data, "vehicle_model", "") || "");
   if (regoColourInput) regoColourInput.value = String(safeGet(data, "vehicle_colour", "") || "");
-  if (regoExpiryAtInput) regoExpiryAtInput.value = String(safeGet(data, "expiry_at", "") || "");
   durationOptions = Array.isArray(data.duration_options) ? data.duration_options : [];
-  renderDurationSelect(Number(safeGet(data, "default_duration_days", 365)) || 365);
+  renderDurationSelect(Number(safeGet(data, "default_duration_days", 35)) || 35);
   if (registrationSubmitBtn) registrationSubmitBtn.disabled = false;
   showErrorNode(registrationFormError, "");
 }
@@ -510,8 +567,8 @@ function openRegistrationForm(payload) {
   resetRegistrationForm(payload || {});
   registrationOpen = true;
   setVisible(registrationOverlay, true);
-  setTimeout(function focusRegoPlate() {
-    if (regoPlateInput) regoPlateInput.focus();
+  setTimeout(function focusRegoDuration() {
+    if (regoDurationSelect) regoDurationSelect.focus();
   }, 40);
 }
 
@@ -532,14 +589,13 @@ async function submitRegistrationForm() {
   if (registrationSubmitBtn) registrationSubmitBtn.disabled = true;
 
   var durationDays = Number(regoDurationSelect && regoDurationSelect.value || 0);
-  if (!Number.isFinite(durationDays) || durationDays < 1) durationDays = 365;
+  if (!Number.isFinite(durationDays) || durationDays < 1) durationDays = 35;
   var payload = {
     owner_name: ownerName,
     plate: plate,
     vehicle_model: model,
     vehicle_colour: String(regoColourInput && regoColourInput.value || "").trim(),
     duration_days: Math.floor(durationDays),
-    expiry_at: String(regoExpiryAtInput && regoExpiryAtInput.value || "").trim(),
   };
 
   try {
@@ -568,6 +624,63 @@ function cancelRegistrationForm() {
   closeRegistrationForm();
 }
 
+function setTextNode(node, value, fallback) {
+  if (!node) return;
+  var text = String(value || "").trim();
+  node.textContent = text || String(fallback || "");
+}
+
+function normalizeStatusLabel(value) {
+  var normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "Unknown";
+  if (normalized === "valid") return "Valid";
+  if (normalized === "suspended") return "Suspended";
+  if (normalized === "disqualified") return "Disqualified";
+  if (normalized === "expired") return "Expired";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function listToText(value, fallback) {
+  var list = sanitizeStringArray(Array.isArray(value) ? value : [], false);
+  if (list.length === 0) return String(fallback || "None");
+  return list.join(", ");
+}
+
+function closeIdCard() {
+  idCardOpen = false;
+  setVisible(idCardOverlay, false);
+}
+
+function requestCloseIdCard() {
+  postNui("cadBridgeIdCardClose", {}).catch(function ignoreIdCardCloseError() {});
+  closeIdCard();
+}
+
+function openIdCard(payload) {
+  var data = payload || {};
+  var mugshot = String(safeGet(data, "mugshot_url", "") || "").trim();
+  if (idCardPhoto) {
+    if (mugshot) {
+      idCardPhoto.src = mugshot;
+    } else {
+      idCardPhoto.removeAttribute("src");
+    }
+  }
+
+  setTextNode(idCardViewerNote, safeGet(data, "viewer_note", ""), "");
+  setTextNode(idCardName, safeGet(data, "full_name", ""), "Unknown");
+  setTextNode(idCardDob, safeGet(data, "date_of_birth", ""), "Unknown");
+  setTextNode(idCardGender, safeGet(data, "gender", ""), "Unknown");
+  setTextNode(idCardNumber, safeGet(data, "license_number", ""), "Auto");
+  setTextNode(idCardClasses, listToText(safeGet(data, "license_classes", []), "None"), "None");
+  setTextNode(idCardStatus, normalizeStatusLabel(safeGet(data, "status", "")), "Unknown");
+  setTextNode(idCardExpiry, safeGet(data, "expiry_at", ""), "None");
+  setTextNode(idCardConditions, listToText(safeGet(data, "conditions", []), "None"), "None");
+
+  idCardOpen = true;
+  setVisible(idCardOverlay, true);
+}
+
 window.addEventListener("message", function onMessage(event) {
   var message = event.data || {};
   if (message.action === "cadBridge000:open") {
@@ -593,6 +706,14 @@ window.addEventListener("message", function onMessage(event) {
   }
   if (message.action === "cadBridgeRegistration:close") {
     closeRegistrationForm();
+    return;
+  }
+  if (message.action === "cadBridgeIdCard:show") {
+    openIdCard(message.payload || {});
+    return;
+  }
+  if (message.action === "cadBridgeIdCard:hide") {
+    closeIdCard();
   }
 });
 
@@ -608,6 +729,7 @@ function initialize() {
   setVisible(overlay, false);
   setVisible(licenseOverlay, false);
   setVisible(registrationOverlay, false);
+  setVisible(idCardOverlay, false);
 
   if (form) {
     form.addEventListener("submit", function onEmergencySubmit(event) {
@@ -645,9 +767,15 @@ function initialize() {
   }
   if (registrationCloseBtn) registrationCloseBtn.addEventListener("click", cancelRegistrationForm);
   if (registrationCancelBtn) registrationCancelBtn.addEventListener("click", cancelRegistrationForm);
+  if (idCardCloseBtn) idCardCloseBtn.addEventListener("click", requestCloseIdCard);
 
   window.addEventListener("keydown", function onKeyDown(event) {
     if (!anyModalOpen()) return;
+    if (event.key === "PageDown") {
+      event.preventDefault();
+      if (idCardOpen) requestCloseIdCard();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       closeAll();

@@ -339,6 +339,10 @@ local emergencyUiAwaitingOpenAck = false
 local emergencyUiOpenedAtMs = 0
 local driverLicenseUiOpen = false
 local vehicleRegistrationUiOpen = false
+local idCardUiOpen = false
+local SHOW_ID_COMMAND = trim(GetConvar('cad_bridge_show_id_command', 'showid'))
+if SHOW_ID_COMMAND == '' then SHOW_ID_COMMAND = 'showid' end
+local SHOW_ID_MAX_DISTANCE = tonumber(GetConvar('cad_bridge_show_id_target_distance', '4.0')) or 4.0
 
 local function hasAnyCadBridgeModalOpen()
   return emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen
@@ -648,6 +652,23 @@ local function openVehicleRegistrationPopup(payload)
   })
 end
 
+local function closeShownIdCard()
+  if not idCardUiOpen then return end
+  idCardUiOpen = false
+  SendNUIMessage({
+    action = 'cadBridgeIdCard:hide',
+    payload = {},
+  })
+end
+
+local function openShownIdCard(payload)
+  idCardUiOpen = true
+  SendNUIMessage({
+    action = 'cadBridgeIdCard:show',
+    payload = payload or {},
+  })
+end
+
 RegisterNUICallback('cadBridge000Ready', function(_data, cb)
   emergencyUiReady = true
   print('[cad_bridge] 000 NUI is ready')
@@ -715,10 +736,7 @@ RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
     return
   end
 
-  local mugshotUrl = trim(data and data.mugshot_url or '')
-  if mugshotUrl == '' then
-    mugshotUrl = captureMugshotUrl()
-  end
+  local mugshotUrl = captureMugshotUrl()
 
   closeDriverLicensePopup()
   TriggerServerEvent('cad_bridge:submitDriverLicense', {
@@ -772,6 +790,11 @@ RegisterNUICallback('cadBridgeRegistrationCancel', function(_data, cb)
   if cb then cb({ ok = true }) end
 end)
 
+RegisterNUICallback('cadBridgeIdCardClose', function(_data, cb)
+  closeShownIdCard()
+  if cb then cb({ ok = true }) end
+end)
+
 RegisterNetEvent('cad_bridge:setCallRoute', function(route)
   if type(route) ~= 'table' then return end
   local action = tostring(route.action or ''):lower()
@@ -813,6 +836,66 @@ RegisterNetEvent('cad_bridge:promptVehicleRegistration', function(payload)
   openVehicleRegistrationPopup(payload or {})
 end)
 
+RegisterNetEvent('cad_bridge:showIdCard', function(payload)
+  openShownIdCard(payload or {})
+end)
+
+RegisterNetEvent('cad_bridge:hideIdCard', function()
+  closeShownIdCard()
+end)
+
+local function findFacingPlayerServerId(maxDistance)
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then return 0 end
+
+  local origin = GetEntityCoords(ped)
+  local forward = GetEntityForwardVector(ped)
+  local localPlayer = PlayerId()
+  local distanceLimit = tonumber(maxDistance) or 4.0
+  if distanceLimit < 1.0 then distanceLimit = 1.0 end
+
+  local bestServerId = 0
+  local bestScore = 0.0
+
+  for _, player in ipairs(GetActivePlayers()) do
+    if player ~= localPlayer then
+      local targetPed = GetPlayerPed(player)
+      if targetPed and targetPed ~= 0 then
+        local targetCoords = GetEntityCoords(targetPed)
+        local dx = targetCoords.x - origin.x
+        local dy = targetCoords.y - origin.y
+        local dz = targetCoords.z - origin.z
+        local distance = math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+
+        if distance > 0.001 and distance <= distanceLimit then
+          local invDistance = 1.0 / distance
+          local dot = (forward.x * dx * invDistance) + (forward.y * dy * invDistance) + (forward.z * dz * invDistance)
+          if dot >= 0.35 then
+            local score = dot + (1.0 - (distance / distanceLimit))
+            if score > bestScore then
+              bestScore = score
+              bestServerId = GetPlayerServerId(player)
+            end
+          end
+        end
+      end
+    end
+  end
+
+  return tonumber(bestServerId) or 0
+end
+
+RegisterCommand(SHOW_ID_COMMAND, function()
+  local targetSource = findFacingPlayerServerId(SHOW_ID_MAX_DISTANCE)
+  TriggerServerEvent('cad_bridge:requestShowId', targetSource)
+end, false)
+
+RegisterCommand('cadbridgecloseid', function()
+  closeShownIdCard()
+end, false)
+
+RegisterKeyMapping('cadbridgecloseid', 'Close shown ID card', 'keyboard', 'PGDN')
+
 -- Test command to verify UI works without server
 RegisterCommand('test000ui', function()
   print('[cad_bridge] Testing 000 UI with mock data')
@@ -825,6 +908,9 @@ end, false)
 
 AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
+  if idCardUiOpen then
+    closeShownIdCard()
+  end
   if emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen then
     SetNuiFocus(false, false)
   end

@@ -6,6 +6,13 @@ local function trim(value)
   return (text:gsub('^%s+', ''):gsub('%s+$', ''))
 end
 
+local function urlEncode(value)
+  local text = tostring(value or '')
+  return (text:gsub('[^%w%-_%.~]', function(char)
+    return string.format('%%%02X', string.byte(char))
+  end))
+end
+
 local function getCadUrl(path)
   local base = trim(Config.CadBaseUrl or '')
   base = base:gsub('/+$', '')
@@ -306,6 +313,11 @@ local function registerEmergencySuggestion(target)
   local regoCommand = trim(Config.VehicleRegistrationCommand or 'cadrego')
   if regoCommand ~= '' then
     TriggerClientEvent('chat:addSuggestion', target, '/' .. regoCommand, 'Open CAD vehicle registration form')
+  end
+
+  local showIdCommand = trim(Config.ShowIdCommand or 'showid')
+  if showIdCommand ~= '' then
+    TriggerClientEvent('chat:addSuggestion', target, '/' .. showIdCommand, 'Show your driver licence to the player in front of you')
   end
 
   TriggerClientEvent('chat:addSuggestion', target, '/radio', 'Open CAD radio UI or join/leave channel', {
@@ -979,6 +991,87 @@ RegisterNetEvent('cad_bridge:submitVehicleRegistration', function(payload)
   submitVehicleRegistration(src, formData)
 end)
 
+RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
+  local src = source
+  if not src or src == 0 then return end
+
+  local defaults = getCharacterDefaults(src)
+  local citizenId = trim(defaults.citizenid or getCitizenId(src) or '')
+  if citizenId == '' then
+    notifyPlayer(src, 'Unable to determine your active character (citizenid).')
+    return
+  end
+
+  local target = tonumber(targetSource) or 0
+  if target <= 0 or target == src or not GetPlayerName(target) then
+    target = 0
+  end
+
+  request('GET', '/api/integration/fivem/licenses/' .. urlEncode(citizenId), nil, function(status, body)
+    if status == 404 then
+      notifyPlayer(src, 'No licence record found in CAD. Use /cadlicense first.')
+      return
+    end
+
+    if status < 200 or status >= 300 then
+      notifyPlayer(src, ('Unable to fetch licence from CAD (HTTP %s).'):format(tostring(status)))
+      return
+    end
+
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if not ok or type(parsed) ~= 'table' or type(parsed.license) ~= 'table' then
+      notifyPlayer(src, 'CAD returned an invalid licence response.')
+      return
+    end
+
+    local license = parsed.license
+    local fullName = trim(license.full_name or defaults.full_name or GetPlayerName(src) or '')
+    local payload = {
+      full_name = fullName,
+      date_of_birth = trim(license.date_of_birth or defaults.date_of_birth or ''),
+      gender = trim(license.gender or defaults.gender or ''),
+      license_number = trim(license.license_number or ''),
+      license_classes = normalizeList(license.license_classes or {}, true),
+      conditions = normalizeList(license.conditions or {}, false),
+      status = trim(license.status or ''),
+      expiry_at = trim(license.expiry_at or ''),
+      mugshot_url = trim(license.mugshot_url or ''),
+    }
+
+    TriggerClientEvent('cad_bridge:showIdCard', src, {
+      full_name = payload.full_name,
+      date_of_birth = payload.date_of_birth,
+      gender = payload.gender,
+      license_number = payload.license_number,
+      license_classes = payload.license_classes,
+      conditions = payload.conditions,
+      status = payload.status,
+      expiry_at = payload.expiry_at,
+      mugshot_url = payload.mugshot_url,
+      viewer_note = 'Your licence record',
+    })
+
+    if target > 0 then
+      TriggerClientEvent('cad_bridge:showIdCard', target, {
+        full_name = payload.full_name,
+        date_of_birth = payload.date_of_birth,
+        gender = payload.gender,
+        license_number = payload.license_number,
+        license_classes = payload.license_classes,
+        conditions = payload.conditions,
+        status = payload.status,
+        expiry_at = payload.expiry_at,
+        mugshot_url = payload.mugshot_url,
+        viewer_note = ('Shown by %s'):format(GetPlayerName(src) or ('Player ' .. tostring(src))),
+      })
+      notifyPlayer(src, ('Licence shown to %s.'):format(GetPlayerName(target) or ('Player ' .. tostring(target))))
+      return
+    end
+
+    notifyPlayer(src, 'No player in front. Licence shown to yourself only.')
+  end)
+end)
+
 RegisterCommand('000', function(src, args)
   if not src or src == 0 then
     print('[cad_bridge] /000 command is in-game only')
@@ -1031,13 +1124,16 @@ RegisterCommand(trim(Config.DriverLicenseCommand or 'cadlicense'), function(src,
   end
 
   local defaults = getCharacterDefaults(src)
+  local defaultExpiryDays = tonumber(Config.DriverLicenseDefaultExpiryDays or 35) or 35
+  if defaultExpiryDays < 1 then defaultExpiryDays = 35 end
   TriggerClientEvent('cad_bridge:promptDriverLicense', src, {
     full_name = defaults.full_name,
     date_of_birth = defaults.date_of_birth,
     gender = defaults.gender,
     class_options = Config.DriverLicenseClassOptions or {},
     default_classes = Config.DriverLicenseDefaultClasses or {},
-    default_expiry_days = tonumber(Config.DriverLicenseDefaultExpiryDays or 1095) or 1095,
+    default_expiry_days = defaultExpiryDays,
+    duration_options = Config.DriverLicenseDurationOptions or { 6, 35, 70 },
   })
 end, false)
 

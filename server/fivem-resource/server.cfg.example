@@ -73,8 +73,11 @@ set cad_bridge_radio_max_frequency "500"
 # Driver license + registration commands/forms
 set cad_bridge_license_command "cadlicense"
 set cad_bridge_registration_command "cadrego"
-set cad_bridge_license_default_expiry_days "1095"
-set cad_bridge_registration_default_days "365"
+set cad_bridge_show_id_command "showid"
+set cad_bridge_show_id_target_distance "4.0"
+set cad_bridge_license_default_expiry_days "35"
+set cad_bridge_registration_default_days "35"
+set cad_bridge_document_fee_account "bank"
 set cad_bridge_mugshot_resource "MugShotBase64"
 
 # =============================================================================

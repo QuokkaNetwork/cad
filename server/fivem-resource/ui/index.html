@@ -71,7 +71,7 @@
     </div>
 
     <div id="licenseOverlay" class="overlay hidden" aria-hidden="true">
-      <section class="panel" role="dialog" aria-modal="true" aria-labelledby="license-title">
+      <section class="panel panel-license" role="dialog" aria-modal="true" aria-labelledby="license-title">
         <header class="panel-header">
           <div class="eyebrow">VicRoads Driver Licence</div>
           <button id="licenseCloseBtn" class="icon-btn" type="button" aria-label="Close">x</button>
@@ -85,17 +85,17 @@
         <form id="licenseForm" class="form" novalidate>
           <div class="field">
             <label for="licenseNameInput">Character Name <span class="required">*</span></label>
-            <input id="licenseNameInput" type="text" maxlength="80" autocomplete="off" required />
+            <input id="licenseNameInput" type="text" maxlength="80" autocomplete="off" required readonly />
           </div>
 
           <div class="inline-grid two-col">
             <div class="field">
               <label for="licenseDobInput">Date Of Birth <span class="required">*</span></label>
-              <input id="licenseDobInput" type="date" required />
+              <input id="licenseDobInput" type="date" required readonly />
             </div>
             <div class="field">
               <label for="licenseGenderInput">Gender <span class="required">*</span></label>
-              <input id="licenseGenderInput" type="text" maxlength="30" placeholder="Male / Female / Other" required />
+              <input id="licenseGenderInput" type="text" maxlength="30" required readonly />
             </div>
           </div>
 
@@ -111,8 +111,8 @@
               <input id="licenseNumberInput" type="text" maxlength="32" autocomplete="off" placeholder="Auto-generated if blank" />
             </div>
             <div class="field">
-              <label for="licenseExpiryDaysInput">Expiry Days</label>
-              <input id="licenseExpiryDaysInput" type="number" min="1" step="1" />
+              <label for="licenseDurationSelect">Licence Length</label>
+              <select id="licenseDurationSelect"></select>
             </div>
           </div>
 
@@ -122,8 +122,10 @@
               <input id="licenseExpiryAtInput" type="date" />
             </div>
             <div class="field">
-              <label for="licenseMugshotInput">Mugshot URL (Optional)</label>
-              <input id="licenseMugshotInput" type="text" maxlength="300" autocomplete="off" />
+              <label>Mugshot</label>
+              <div class="inline-note">
+                Captured automatically from <strong>MugShotBase64</strong> when you save.
+              </div>
             </div>
           </div>
 
@@ -143,7 +145,7 @@
     </div>
 
     <div id="registrationOverlay" class="overlay hidden" aria-hidden="true">
-      <section class="panel" role="dialog" aria-modal="true" aria-labelledby="registration-title">
+      <section class="panel panel-registration" role="dialog" aria-modal="true" aria-labelledby="registration-title">
         <header class="panel-header">
           <div class="eyebrow">VicRoads Registration</div>
           <button id="registrationCloseBtn" class="icon-btn" type="button" aria-label="Close">x</button>
@@ -151,29 +153,29 @@
 
         <h1 id="registration-title">Create Vehicle Registration Record</h1>
         <p class="subtitle">
-          Pulls vehicle details from your current driver seat when available. CAD status options are valid, suspended, revoked, and expired.
+          Pulls vehicle details from your current driver seat. Expiry is automatically calculated from today based on the selected registration length.
         </p>
 
         <form id="registrationForm" class="form" novalidate>
           <div class="inline-grid two-col">
             <div class="field">
               <label for="regoOwnerInput">Owner Name <span class="required">*</span></label>
-              <input id="regoOwnerInput" type="text" maxlength="80" autocomplete="off" required />
+              <input id="regoOwnerInput" type="text" maxlength="80" autocomplete="off" required readonly />
             </div>
             <div class="field">
               <label for="regoPlateInput">Plate <span class="required">*</span></label>
-              <input id="regoPlateInput" type="text" maxlength="15" autocomplete="off" required />
+              <input id="regoPlateInput" type="text" maxlength="15" autocomplete="off" required readonly />
             </div>
           </div>
 
           <div class="inline-grid two-col">
             <div class="field">
               <label for="regoModelInput">Vehicle Model <span class="required">*</span></label>
-              <input id="regoModelInput" type="text" maxlength="80" autocomplete="off" required />
+              <input id="regoModelInput" type="text" maxlength="80" autocomplete="off" required readonly />
             </div>
             <div class="field">
               <label for="regoColourInput">Vehicle Colour</label>
-              <input id="regoColourInput" type="text" maxlength="80" autocomplete="off" />
+              <input id="regoColourInput" type="text" maxlength="80" autocomplete="off" readonly />
             </div>
           </div>
 
@@ -183,8 +185,8 @@
               <select id="regoDurationSelect"></select>
             </div>
             <div class="field">
-              <label for="regoExpiryAtInput">Expiry Date (Optional Override)</label>
-              <input id="regoExpiryAtInput" type="date" />
+              <label>Expiry Date</label>
+              <div class="inline-note">Auto-calculated from current date using selected registration length.</div>
             </div>
           </div>
 
@@ -195,6 +197,35 @@
             <button id="registrationSubmitBtn" class="btn btn-primary" type="submit">Save Registration</button>
           </footer>
         </form>
+      </section>
+    </div>
+
+    <div id="idCardOverlay" class="id-card-overlay hidden" aria-hidden="true">
+      <section class="id-card" role="dialog" aria-modal="false" aria-labelledby="idCardTitle">
+        <header class="id-card-header">
+          <div class="id-card-eyebrow">VicRoads Photo Licence</div>
+          <button id="idCardCloseBtn" class="icon-btn" type="button" aria-label="Close">x</button>
+        </header>
+
+        <h2 id="idCardTitle" class="id-card-title">Driver Licence</h2>
+        <div id="idCardViewerNote" class="id-card-note"></div>
+
+        <div class="id-card-body">
+          <img id="idCardPhoto" class="id-card-photo" alt="Licence photo" />
+
+          <div class="id-card-fields">
+            <div class="id-row"><span class="id-label">Name</span><span id="idCardName" class="id-value"></span></div>
+            <div class="id-row"><span class="id-label">DOB</span><span id="idCardDob" class="id-value"></span></div>
+            <div class="id-row"><span class="id-label">Gender</span><span id="idCardGender" class="id-value"></span></div>
+            <div class="id-row"><span class="id-label">Licence No.</span><span id="idCardNumber" class="id-value"></span></div>
+            <div class="id-row"><span class="id-label">Class</span><span id="idCardClasses" class="id-value"></span></div>
+            <div class="id-row"><span class="id-label">Status</span><span id="idCardStatus" class="id-value"></span></div>
+            <div class="id-row"><span class="id-label">Expiry</span><span id="idCardExpiry" class="id-value"></span></div>
+            <div class="id-row"><span class="id-label">Conditions</span><span id="idCardConditions" class="id-value"></span></div>
+          </div>
+        </div>
+
+        <div class="id-card-footer">Press <strong>PGDN</strong> to close</div>
       </section>
     </div>
 

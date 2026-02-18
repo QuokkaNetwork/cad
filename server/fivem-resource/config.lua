@@ -73,8 +73,11 @@ Config.DriverLicenseCommand = trim(GetConvar('cad_bridge_license_command', 'cadl
 if Config.DriverLicenseCommand == '' then Config.DriverLicenseCommand = 'cadlicense' end
 Config.VehicleRegistrationCommand = trim(GetConvar('cad_bridge_registration_command', 'cadrego'))
 if Config.VehicleRegistrationCommand == '' then Config.VehicleRegistrationCommand = 'cadrego' end
+Config.ShowIdCommand = trim(GetConvar('cad_bridge_show_id_command', 'showid'))
+if Config.ShowIdCommand == '' then Config.ShowIdCommand = 'showid' end
 
-Config.DriverLicenseDefaultExpiryDays = tonumber(GetConvar('cad_bridge_license_default_expiry_days', '1095')) or 1095
+Config.DriverLicenseDefaultExpiryDays = tonumber(GetConvar('cad_bridge_license_default_expiry_days', '35')) or 35
+Config.DriverLicenseDurationOptions = { 6, 14, 35, 70 }
 Config.DriverLicenseClassOptions = {
   'CAR',  -- Car
   'LR',   -- Light rigid
@@ -87,8 +90,25 @@ Config.DriverLicenseClassOptions = {
 }
 Config.DriverLicenseDefaultClasses = { 'CAR' }
 
-Config.VehicleRegistrationDefaultDays = tonumber(GetConvar('cad_bridge_registration_default_days', '365')) or 365
-Config.VehicleRegistrationDurationOptions = { 30, 90, 180, 365, 730 }
+Config.VehicleRegistrationDefaultDays = tonumber(GetConvar('cad_bridge_registration_default_days', '35')) or 35
+Config.VehicleRegistrationDurationOptions = { 6, 14, 35, 70 }
+
+-- In-game pricing for licence/rego issue or renewal (charged before CAD upsert).
+-- Keys are duration in days (6d, 14d, 35d, 70d).
+Config.DocumentFeeAccount = trim(GetConvar('cad_bridge_document_fee_account', 'bank'))
+if Config.DocumentFeeAccount == '' then Config.DocumentFeeAccount = 'bank' end
+Config.DriverLicenseFeesByDays = {
+  [6] = 1500,
+  [14] = 3000,
+  [35] = 7500,
+  [70] = 14000,
+}
+Config.VehicleRegistrationFeesByDays = {
+  [6] = 2500,
+  [14] = 5000,
+  [35] = 12000,
+  [70] = 22000,
+}
 
 Config.MugshotResource = trim(GetConvar('cad_bridge_mugshot_resource', 'MugShotBase64'))
 

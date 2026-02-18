@@ -1197,6 +1197,28 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
   }
 });
 
+// Read a driver's current license record for in-game /showid display.
+router.get('/licenses/:citizenid', requireBridgeAuth, (req, res) => {
+  try {
+    DriverLicenses.markExpiredDue();
+
+    const citizenId = String(req.params.citizenid || '').trim();
+    if (!citizenId) {
+      return res.status(400).json({ error: 'citizenid is required' });
+    }
+
+    const record = DriverLicenses.findByCitizenId(citizenId);
+    if (!record) {
+      return res.status(404).json({ error: 'License not found' });
+    }
+
+    return res.json({ ok: true, license: record });
+  } catch (error) {
+    console.error('[FiveMBridge] Failed to read driver license:', error);
+    return res.status(500).json({ error: 'Failed to read driver license record' });
+  }
+});
+
 // Create/update a vehicle registration from in-game CAD bridge UI.
 router.post('/registrations', requireBridgeAuth, (req, res) => {
   try {
