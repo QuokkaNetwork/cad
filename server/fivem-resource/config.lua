@@ -1,5 +1,9 @@
 Config = {}
 
+local function trim(value)
+  return tostring(value or ''):gsub('^%s+', ''):gsub('%s+$', '')
+end
+
 -- CAD base URL (no trailing slash).
 -- The CAD server runs HTTPS on port 3030 (for browser mic access) but also
 -- exposes a plain HTTP listener on port 3031 specifically for the FiveM bridge,
@@ -72,6 +76,30 @@ Config.RadioRestrictedChannels = {
   [421] = { type = 'gang', name = { 'lostmc' } },
   [422] = { type = 'gang', name = { 'vagos' } },
 }
+
+-- CAD-issued driver license + vehicle registration commands/forms.
+Config.DriverLicenseCommand = trim(GetConvar('cad_bridge_license_command', 'cadlicense'))
+if Config.DriverLicenseCommand == '' then Config.DriverLicenseCommand = 'cadlicense' end
+Config.VehicleRegistrationCommand = trim(GetConvar('cad_bridge_registration_command', 'cadrego'))
+if Config.VehicleRegistrationCommand == '' then Config.VehicleRegistrationCommand = 'cadrego' end
+
+Config.DriverLicenseDefaultExpiryDays = tonumber(GetConvar('cad_bridge_license_default_expiry_days', '1095')) or 1095
+Config.DriverLicenseClassOptions = {
+  'CAR',  -- Car
+  'LR',   -- Light rigid
+  'MR',   -- Medium rigid
+  'HR',   -- Heavy rigid
+  'HC',   -- Heavy combination
+  'MC',   -- Multi combination
+  'R',    -- Rider
+  'L',    -- Learner
+}
+Config.DriverLicenseDefaultClasses = { 'CAR' }
+
+Config.VehicleRegistrationDefaultDays = tonumber(GetConvar('cad_bridge_registration_default_days', '365')) or 365
+Config.VehicleRegistrationDurationOptions = { 30, 90, 180, 365, 730 }
+
+Config.MugshotResource = trim(GetConvar('cad_bridge_mugshot_resource', 'MugShotBase64'))
 
 -- Fine processing adapter
 -- 'auto' -> try qbx_core/qb-core RemoveMoney on online character + notify

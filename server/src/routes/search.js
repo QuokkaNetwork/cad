@@ -1,9 +1,39 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { CriminalRecords, Warrants, Bolos } = require('../db/sqlite');
+const {
+  CriminalRecords,
+  Warrants,
+  Bolos,
+  DriverLicenses,
+  VehicleRegistrations,
+} = require('../db/sqlite');
+const { audit } = require('../utils/audit');
 const qbox = require('../db/qbox');
 
 const router = express.Router();
+const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
+const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
+
+function normalizeDateOnly(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) return '';
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function normalizeStatus(value, allowedStatuses) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!allowedStatuses.has(normalized)) return '';
+  return normalized;
+}
+
+function shouldForceExpired(expiryAt) {
+  const normalized = normalizeDateOnly(expiryAt);
+  if (!normalized) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return normalized <= today;
+}
 
 // Search persons in QBox
 router.get('/persons', requireAuth, async (req, res) => {
@@ -18,9 +48,9 @@ router.get('/persons', requireAuth, async (req, res) => {
     const enrichedResults = results.map(person => {
       const warrants = Warrants.findByCitizenId(person.citizenid, 'active');
       const personBolos = Bolos.listByDepartment(req.user.departments[0]?.id || 0, 'active')
-        .filter(bolo => bolo.type === 'person' &&
-          (bolo.title.toLowerCase().includes(`${person.firstname} ${person.lastname}`.toLowerCase()) ||
-           String(bolo.details_json || '').includes(person.citizenid)));
+        .filter(bolo => bolo.type === 'person'
+          && (bolo.title.toLowerCase().includes(`${person.firstname} ${person.lastname}`.toLowerCase())
+            || String(bolo.details_json || '').includes(person.citizenid)));
 
       return {
         ...person,
@@ -46,9 +76,9 @@ router.get('/persons/:citizenid', requireAuth, async (req, res) => {
     // Add warrant and BOLO flags
     const warrants = Warrants.findByCitizenId(person.citizenid, 'active');
     const personBolos = Bolos.listByDepartment(req.user.departments[0]?.id || 0, 'active')
-      .filter(bolo => bolo.type === 'person' &&
-        (bolo.title.toLowerCase().includes(`${person.firstname} ${person.lastname}`.toLowerCase()) ||
-         String(bolo.details_json || '').includes(person.citizenid)));
+      .filter(bolo => bolo.type === 'person'
+        && (bolo.title.toLowerCase().includes(`${person.firstname} ${person.lastname}`.toLowerCase())
+          || String(bolo.details_json || '').includes(person.citizenid)));
 
     const enrichedPerson = {
       ...person,
@@ -58,6 +88,8 @@ router.get('/persons/:citizenid', requireAuth, async (req, res) => {
       bolo_count: personBolos.length,
       warrants,
       bolos: personBolos,
+      cad_driver_license: DriverLicenses.findByCitizenId(person.citizenid),
+      cad_vehicle_registrations: VehicleRegistrations.listByCitizenId(person.citizenid),
     };
 
     res.json(enrichedPerson);
@@ -70,7 +102,13 @@ router.get('/persons/:citizenid', requireAuth, async (req, res) => {
 router.get('/persons/:citizenid/vehicles', requireAuth, async (req, res) => {
   try {
     const vehicles = await qbox.getVehiclesByOwner(req.params.citizenid);
-    res.json(vehicles);
+    const enriched = Array.isArray(vehicles)
+      ? vehicles.map((vehicle) => ({
+          ...vehicle,
+          cad_registration: VehicleRegistrations.findByPlate(vehicle?.plate || ''),
+        }))
+      : [];
+    res.json(enriched);
   } catch (err) {
     res.status(500).json({ error: 'Lookup failed', message: err.message });
   }
@@ -103,10 +141,105 @@ router.get('/vehicles/:plate', requireAuth, async (req, res) => {
   try {
     const vehicle = await qbox.getVehicleByPlate(plate);
     if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
-    res.json(vehicle);
+    res.json({
+      ...vehicle,
+      cad_registration: VehicleRegistrations.findByPlate(plate),
+    });
   } catch (err) {
     res.status(500).json({ error: 'Lookup failed', message: err.message });
   }
+});
+
+// Update CAD driver license status/expiry.
+router.patch('/persons/:citizenid/license', requireAuth, (req, res) => {
+  const citizenId = String(req.params.citizenid || '').trim();
+  if (!citizenId) return res.status(400).json({ error: 'citizenid is required' });
+
+  const existing = DriverLicenses.findByCitizenId(citizenId);
+  if (!existing) return res.status(404).json({ error: 'Driver license not found' });
+
+  const updates = {};
+  if (req.body?.status !== undefined) {
+    const status = normalizeStatus(req.body.status, DRIVER_LICENSE_STATUSES);
+    if (!status) {
+      return res.status(400).json({ error: 'status must be valid, suspended, disqualified, or expired' });
+    }
+    updates.status = status;
+  }
+  if (req.body?.expiry_at !== undefined) {
+    const expiryAt = normalizeDateOnly(req.body.expiry_at);
+    if (!expiryAt && String(req.body.expiry_at || '').trim() !== '') {
+      return res.status(400).json({ error: 'expiry_at must be a valid date' });
+    }
+    updates.expiry_at = expiryAt || null;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid update fields supplied' });
+  }
+
+  updates.updated_by_user_id = req.user.id;
+  let updated = DriverLicenses.update(existing.id, updates);
+  if (updated && shouldForceExpired(updated.expiry_at)) {
+    updated = DriverLicenses.update(existing.id, {
+      status: 'expired',
+      updated_by_user_id: req.user.id,
+    });
+  }
+
+  audit(req.user.id, 'driver_license_updated', {
+    citizen_id: citizenId,
+    license_id: existing.id,
+    updates,
+  });
+
+  res.json(updated);
+});
+
+// Update CAD vehicle registration status/expiry.
+router.patch('/vehicles/:plate/registration', requireAuth, (req, res) => {
+  const plate = String(req.params.plate || '').trim();
+  if (!plate) return res.status(400).json({ error: 'plate is required' });
+
+  const existing = VehicleRegistrations.findByPlate(plate);
+  if (!existing) return res.status(404).json({ error: 'Vehicle registration not found' });
+
+  const updates = {};
+  if (req.body?.status !== undefined) {
+    const status = normalizeStatus(req.body.status, VEHICLE_REGISTRATION_STATUSES);
+    if (!status) {
+      return res.status(400).json({ error: 'status must be valid, suspended, revoked, or expired' });
+    }
+    updates.status = status;
+  }
+  if (req.body?.expiry_at !== undefined) {
+    const expiryAt = normalizeDateOnly(req.body.expiry_at);
+    if (!expiryAt && String(req.body.expiry_at || '').trim() !== '') {
+      return res.status(400).json({ error: 'expiry_at must be a valid date' });
+    }
+    updates.expiry_at = expiryAt || null;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid update fields supplied' });
+  }
+
+  updates.updated_by_user_id = req.user.id;
+  let updated = VehicleRegistrations.update(existing.id, updates);
+  if (updated && shouldForceExpired(updated.expiry_at)) {
+    updated = VehicleRegistrations.update(existing.id, {
+      status: 'expired',
+      updated_by_user_id: req.user.id,
+    });
+  }
+
+  audit(req.user.id, 'vehicle_registration_updated', {
+    plate: existing.plate,
+    registration_id: existing.id,
+    updates,
+  });
+
+  res.json(updated);
 });
 
 module.exports = router;

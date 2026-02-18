@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CAD Bridge 000</title>
+    <title>CAD Bridge Forms</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css" />
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="cad_radio.css" />
@@ -65,6 +65,134 @@
           <footer class="actions">
             <button id="cancelBtn" class="btn btn-ghost" type="button">Cancel</button>
             <button id="submitBtn" class="btn btn-primary" type="submit">Send 000 Call</button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div id="licenseOverlay" class="overlay hidden" aria-hidden="true">
+      <section class="panel" role="dialog" aria-modal="true" aria-labelledby="license-title">
+        <header class="panel-header">
+          <div class="eyebrow">VicRoads Driver Licence</div>
+          <button id="licenseCloseBtn" class="icon-btn" type="button" aria-label="Close">x</button>
+        </header>
+
+        <h1 id="license-title">Create Driver Licence Record</h1>
+        <p class="subtitle">
+          Record is stored in CAD with status controls: valid, suspended, disqualified, and expired.
+        </p>
+
+        <form id="licenseForm" class="form" novalidate>
+          <div class="field">
+            <label for="licenseNameInput">Character Name <span class="required">*</span></label>
+            <input id="licenseNameInput" type="text" maxlength="80" autocomplete="off" required />
+          </div>
+
+          <div class="inline-grid two-col">
+            <div class="field">
+              <label for="licenseDobInput">Date Of Birth <span class="required">*</span></label>
+              <input id="licenseDobInput" type="date" required />
+            </div>
+            <div class="field">
+              <label for="licenseGenderInput">Gender <span class="required">*</span></label>
+              <input id="licenseGenderInput" type="text" maxlength="30" placeholder="Male / Female / Other" required />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Licence Classes <span class="required">*</span></label>
+            <div id="licenseClassEmpty" class="empty-state">No class options configured.</div>
+            <div id="licenseClassList" class="chip-grid hidden"></div>
+          </div>
+
+          <div class="inline-grid two-col">
+            <div class="field">
+              <label for="licenseNumberInput">Licence Number (Optional)</label>
+              <input id="licenseNumberInput" type="text" maxlength="32" autocomplete="off" placeholder="Auto-generated if blank" />
+            </div>
+            <div class="field">
+              <label for="licenseExpiryDaysInput">Expiry Days</label>
+              <input id="licenseExpiryDaysInput" type="number" min="1" step="1" />
+            </div>
+          </div>
+
+          <div class="inline-grid two-col">
+            <div class="field">
+              <label for="licenseExpiryAtInput">Expiry Date (Optional Override)</label>
+              <input id="licenseExpiryAtInput" type="date" />
+            </div>
+            <div class="field">
+              <label for="licenseMugshotInput">Mugshot URL (Optional)</label>
+              <input id="licenseMugshotInput" type="text" maxlength="300" autocomplete="off" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="licenseConditionsInput">Conditions (Comma Separated)</label>
+            <input id="licenseConditionsInput" type="text" maxlength="220" autocomplete="off" placeholder="e.g. Corrective lenses, Automatic only" />
+          </div>
+
+          <div id="licenseFormError" class="error hidden"></div>
+
+          <footer class="actions">
+            <button id="licenseCancelBtn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="licenseSubmitBtn" class="btn btn-primary" type="submit">Save Licence</button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div id="registrationOverlay" class="overlay hidden" aria-hidden="true">
+      <section class="panel" role="dialog" aria-modal="true" aria-labelledby="registration-title">
+        <header class="panel-header">
+          <div class="eyebrow">VicRoads Registration</div>
+          <button id="registrationCloseBtn" class="icon-btn" type="button" aria-label="Close">x</button>
+        </header>
+
+        <h1 id="registration-title">Create Vehicle Registration Record</h1>
+        <p class="subtitle">
+          Pulls vehicle details from your current driver seat when available. CAD status options are valid, suspended, revoked, and expired.
+        </p>
+
+        <form id="registrationForm" class="form" novalidate>
+          <div class="inline-grid two-col">
+            <div class="field">
+              <label for="regoOwnerInput">Owner Name <span class="required">*</span></label>
+              <input id="regoOwnerInput" type="text" maxlength="80" autocomplete="off" required />
+            </div>
+            <div class="field">
+              <label for="regoPlateInput">Plate <span class="required">*</span></label>
+              <input id="regoPlateInput" type="text" maxlength="15" autocomplete="off" required />
+            </div>
+          </div>
+
+          <div class="inline-grid two-col">
+            <div class="field">
+              <label for="regoModelInput">Vehicle Model <span class="required">*</span></label>
+              <input id="regoModelInput" type="text" maxlength="80" autocomplete="off" required />
+            </div>
+            <div class="field">
+              <label for="regoColourInput">Vehicle Colour</label>
+              <input id="regoColourInput" type="text" maxlength="80" autocomplete="off" />
+            </div>
+          </div>
+
+          <div class="inline-grid two-col">
+            <div class="field">
+              <label for="regoDurationSelect">Registration Length</label>
+              <select id="regoDurationSelect"></select>
+            </div>
+            <div class="field">
+              <label for="regoExpiryAtInput">Expiry Date (Optional Override)</label>
+              <input id="regoExpiryAtInput" type="date" />
+            </div>
+          </div>
+
+          <div id="registrationFormError" class="error hidden"></div>
+
+          <footer class="actions">
+            <button id="registrationCancelBtn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="registrationSubmitBtn" class="btn btn-primary" type="submit">Save Registration</button>
           </footer>
         </form>
       </section>

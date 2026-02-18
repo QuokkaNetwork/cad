@@ -158,6 +158,63 @@ local function getCitizenId(src)
   return ''
 end
 
+local function getCharacterDefaults(src)
+  local fullName = trim(GetPlayerName(src) or ('Player ' .. tostring(src)))
+  local dateOfBirth = ''
+  local gender = ''
+
+  if GetResourceState('qbx_core') == 'started' then
+    local ok, xPlayer = pcall(function()
+      return exports.qbx_core:GetPlayer(src)
+    end)
+    if ok and xPlayer and xPlayer.PlayerData then
+      local pd = xPlayer.PlayerData
+      local charinfo = pd.charinfo or {}
+      local first = trim(charinfo.firstname or '')
+      local last = trim(charinfo.lastname or '')
+      if first ~= '' or last ~= '' then
+        fullName = trim((first .. ' ' .. last))
+      end
+      dateOfBirth = trim(charinfo.birthdate or charinfo.dob or '')
+      gender = trim(charinfo.gender or '')
+      if gender ~= '' then
+        if gender == '0' then gender = 'Male' end
+        if gender == '1' then gender = 'Female' end
+      end
+    end
+  end
+
+  if GetResourceState('qb-core') == 'started' and (dateOfBirth == '' or gender == '' or fullName == '') then
+    local ok, obj = pcall(function() return exports['qb-core']:GetCoreObject() end)
+    if ok and obj and obj.Functions and obj.Functions.GetPlayer then
+      local player = obj.Functions.GetPlayer(src)
+      if player and player.PlayerData then
+        local pd = player.PlayerData
+        local charinfo = pd.charinfo or {}
+        local first = trim(charinfo.firstname or '')
+        local last = trim(charinfo.lastname or '')
+        if fullName == '' and (first ~= '' or last ~= '') then
+          fullName = trim((first .. ' ' .. last))
+        end
+        if dateOfBirth == '' then
+          dateOfBirth = trim(charinfo.birthdate or charinfo.dob or '')
+        end
+        if gender == '' then
+          gender = trim(charinfo.gender or '')
+          if gender == '0' then gender = 'Male' end
+          if gender == '1' then gender = 'Female' end
+        end
+      end
+    end
+  end
+
+  return {
+    full_name = fullName,
+    date_of_birth = dateOfBirth,
+    gender = gender,
+  }
+end
+
 RegisterNetEvent('cad_bridge:clientPosition', function(position)
   local src = source
   if type(position) ~= 'table' then return end
@@ -203,6 +260,16 @@ local function registerEmergencySuggestion(target)
   TriggerClientEvent('chat:addSuggestion', target, '/000', 'Send emergency call to CAD', {
     { name = 'message', help = 'Leave blank to open popup. Optional chat format: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>' },
   })
+
+  local licenseCommand = trim(Config.DriverLicenseCommand or 'cadlicense')
+  if licenseCommand ~= '' then
+    TriggerClientEvent('chat:addSuggestion', target, '/' .. licenseCommand, 'Open CAD driver license form')
+  end
+
+  local regoCommand = trim(Config.VehicleRegistrationCommand or 'cadrego')
+  if regoCommand ~= '' then
+    TriggerClientEvent('chat:addSuggestion', target, '/' .. regoCommand, 'Open CAD vehicle registration form')
+  end
 end
 
 local startNpwdEmergencyHandlerRegistration
@@ -373,6 +440,105 @@ local function parseEmergencyPopupReport(payload)
   }
 end
 
+local function normalizeDateOnly(value)
+  local text = trim(value)
+  if text == '' then return '' end
+  local y, m, d = text:match('^(%d%d%d%d)%-(%d%d)%-(%d%d)$')
+  if y and m and d then
+    return ('%s-%s-%s'):format(y, m, d)
+  end
+  return ''
+end
+
+local function addDaysDateOnly(days)
+  local numericDays = tonumber(days) or 1
+  if numericDays < 1 then numericDays = 1 end
+  local when = os.time() + math.floor(numericDays) * 24 * 60 * 60
+  return os.date('!%Y-%m-%d', when)
+end
+
+local function normalizeList(input, makeUpper)
+  local out = {}
+  local seen = {}
+  if type(input) ~= 'table' then return out end
+  for _, item in ipairs(input) do
+    local value = trim(item)
+    if value ~= '' then
+      if makeUpper == true then
+        value = value:upper()
+      end
+      if not seen[value] then
+        seen[value] = true
+        out[#out + 1] = value
+      end
+    end
+  end
+  return out
+end
+
+local function parseDriverLicenseForm(payload)
+  if type(payload) ~= 'table' then
+    return nil, 'Invalid driver license payload.'
+  end
+
+  local fullName = trim(payload.full_name or payload.character_name or '')
+  local dateOfBirth = normalizeDateOnly(payload.date_of_birth or payload.dob or '')
+  local gender = trim(payload.gender or '')
+  local classes = normalizeList(payload.license_classes or payload.classes or {}, true)
+  local conditions = normalizeList(payload.conditions or {}, false)
+  local mugshotUrl = trim(payload.mugshot_url or '')
+  local licenseNumber = trim(payload.license_number or '')
+  local expiryDays = tonumber(payload.expiry_days or payload.duration_days or Config.DriverLicenseDefaultExpiryDays or 1095) or (Config.DriverLicenseDefaultExpiryDays or 1095)
+  if expiryDays < 1 then expiryDays = 1 end
+  local expiryAt = normalizeDateOnly(payload.expiry_at or '') or addDaysDateOnly(expiryDays)
+
+  if fullName == '' then return nil, 'Character name is required.' end
+  if dateOfBirth == '' then return nil, 'Date of birth is required (YYYY-MM-DD).' end
+  if gender == '' then return nil, 'Gender is required.' end
+  if #classes == 0 then return nil, 'At least one license class is required.' end
+
+  return {
+    full_name = fullName,
+    date_of_birth = dateOfBirth,
+    gender = gender,
+    license_classes = classes,
+    conditions = conditions,
+    mugshot_url = mugshotUrl,
+    license_number = licenseNumber,
+    expiry_days = math.floor(expiryDays),
+    expiry_at = expiryAt,
+    status = 'valid',
+  }
+end
+
+local function parseVehicleRegistrationForm(payload)
+  if type(payload) ~= 'table' then
+    return nil, 'Invalid registration payload.'
+  end
+
+  local plate = trim(payload.plate or payload.license_plate or '')
+  local model = trim(payload.vehicle_model or payload.model or '')
+  local colour = trim(payload.vehicle_colour or payload.colour or payload.color or '')
+  local ownerName = trim(payload.owner_name or payload.character_name or '')
+  local durationDays = tonumber(payload.duration_days or payload.expiry_days or Config.VehicleRegistrationDefaultDays or 365) or (Config.VehicleRegistrationDefaultDays or 365)
+  if durationDays < 1 then durationDays = 1 end
+  local expiryAt = normalizeDateOnly(payload.expiry_at or '') or addDaysDateOnly(durationDays)
+
+  if plate == '' then return nil, 'Vehicle plate is required.' end
+  if model == '' then return nil, 'Vehicle model is required.' end
+  if ownerName == '' then return nil, 'Owner name is required.' end
+
+  return {
+    plate = plate,
+    vehicle_model = model,
+    vehicle_colour = colour,
+    owner_name = ownerName,
+    duration_days = math.floor(durationDays),
+    expiry_at = expiryAt,
+    status = 'valid',
+  }
+end
+
 local function buildEmergencyMessage(report)
   local lines = {}
   if report.details ~= '' then lines[#lines + 1] = report.details end
@@ -440,6 +606,113 @@ local function submitEmergencyCall(src, report)
     end
     print('[cad_bridge] ' .. err)
     notifyPlayer(s, '000 call failed to send to CAD. Check server logs.')
+  end)
+end
+
+local function submitDriverLicense(src, formData)
+  local s = tonumber(src)
+  if not s then return end
+  if isBridgeBackoffActive('licenses') then
+    local waitSeconds = math.max(1, math.ceil(getEffectiveBackoffRemainingMs('licenses') / 1000))
+    notifyPlayer(s, ('CAD bridge is rate-limited. Try again in %ss.'):format(waitSeconds))
+    return
+  end
+
+  local defaults = getCharacterDefaults(s)
+  local payload = {
+    source = s,
+    player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
+    identifiers = GetPlayerIdentifiers(s),
+    citizenid = getCitizenId(s),
+    full_name = trim(formData.full_name or defaults.full_name),
+    date_of_birth = normalizeDateOnly(formData.date_of_birth or defaults.date_of_birth),
+    gender = trim(formData.gender or defaults.gender),
+    license_number = trim(formData.license_number or ''),
+    license_classes = formData.license_classes or {},
+    conditions = formData.conditions or {},
+    mugshot_url = trim(formData.mugshot_url or ''),
+    expiry_days = tonumber(formData.expiry_days or Config.DriverLicenseDefaultExpiryDays or 1095) or (Config.DriverLicenseDefaultExpiryDays or 1095),
+    expiry_at = normalizeDateOnly(formData.expiry_at or ''),
+    status = 'valid',
+  }
+
+  request('POST', '/api/integration/fivem/licenses', payload, function(status, body, responseHeaders)
+    if status >= 200 and status < 300 then
+      local expiryAt = payload.expiry_at
+      local ok, parsed = pcall(json.decode, body or '{}')
+      if ok and type(parsed) == 'table' and type(parsed.license) == 'table' then
+        expiryAt = tostring(parsed.license.expiry_at or expiryAt)
+      end
+      notifyPlayer(s, ('Driver license added to CAD. Status: VALID%s%s'):format(
+        expiryAt ~= '' and ' | Expires: ' or '',
+        expiryAt ~= '' and expiryAt or ''
+      ))
+      return
+    end
+
+    if status == 429 then
+      setBridgeBackoff('licenses', responseHeaders, 15000, 'driver license create')
+    end
+
+    local err = ('Failed to create CAD driver license (HTTP %s)'):format(tostring(status))
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if ok and type(parsed) == 'table' and parsed.error then
+      err = err .. ': ' .. tostring(parsed.error)
+    end
+    print('[cad_bridge] ' .. err)
+    notifyPlayer(s, 'Driver license failed to save to CAD. Check server logs.')
+  end)
+end
+
+local function submitVehicleRegistration(src, formData)
+  local s = tonumber(src)
+  if not s then return end
+  if isBridgeBackoffActive('registrations') then
+    local waitSeconds = math.max(1, math.ceil(getEffectiveBackoffRemainingMs('registrations') / 1000))
+    notifyPlayer(s, ('CAD bridge is rate-limited. Try again in %ss.'):format(waitSeconds))
+    return
+  end
+
+  local defaults = getCharacterDefaults(s)
+  local payload = {
+    source = s,
+    player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
+    identifiers = GetPlayerIdentifiers(s),
+    citizenid = getCitizenId(s),
+    owner_name = trim(formData.owner_name or defaults.full_name),
+    plate = trim(formData.plate or ''),
+    vehicle_model = trim(formData.vehicle_model or ''),
+    vehicle_colour = trim(formData.vehicle_colour or ''),
+    duration_days = tonumber(formData.duration_days or Config.VehicleRegistrationDefaultDays or 365) or (Config.VehicleRegistrationDefaultDays or 365),
+    expiry_at = normalizeDateOnly(formData.expiry_at or ''),
+    status = 'valid',
+  }
+
+  request('POST', '/api/integration/fivem/registrations', payload, function(status, body, responseHeaders)
+    if status >= 200 and status < 300 then
+      local expiryAt = payload.expiry_at
+      local ok, parsed = pcall(json.decode, body or '{}')
+      if ok and type(parsed) == 'table' and type(parsed.registration) == 'table' then
+        expiryAt = tostring(parsed.registration.expiry_at or expiryAt)
+      end
+      notifyPlayer(s, ('Vehicle registration saved to CAD%s%s'):format(
+        expiryAt ~= '' and ' | Expires: ' or '',
+        expiryAt ~= '' and expiryAt or ''
+      ))
+      return
+    end
+
+    if status == 429 then
+      setBridgeBackoff('registrations', responseHeaders, 15000, 'vehicle registration create')
+    end
+
+    local err = ('Failed to create CAD vehicle registration (HTTP %s)'):format(tostring(status))
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if ok and type(parsed) == 'table' and parsed.error then
+      err = err .. ': ' .. tostring(parsed.error)
+    end
+    print('[cad_bridge] ' .. err)
+    notifyPlayer(s, 'Vehicle registration failed to save to CAD. Check server logs.')
   end)
 end
 
@@ -627,6 +900,32 @@ RegisterNetEvent('cad_bridge:submit000', function(payload)
   submitEmergencyCall(src, report)
 end)
 
+RegisterNetEvent('cad_bridge:submitDriverLicense', function(payload)
+  local src = source
+  if not src or src == 0 then return end
+
+  local formData, err = parseDriverLicenseForm(payload)
+  if not formData then
+    notifyPlayer(src, err or 'Invalid driver license details.')
+    return
+  end
+
+  submitDriverLicense(src, formData)
+end)
+
+RegisterNetEvent('cad_bridge:submitVehicleRegistration', function(payload)
+  local src = source
+  if not src or src == 0 then return end
+
+  local formData, err = parseVehicleRegistrationForm(payload)
+  if not formData then
+    notifyPlayer(src, err or 'Invalid registration details.')
+    return
+  end
+
+  submitVehicleRegistration(src, formData)
+end)
+
 RegisterCommand('000', function(src, args)
   if not src or src == 0 then
     print('[cad_bridge] /000 command is in-game only')
@@ -670,6 +969,37 @@ RegisterCommand('000', function(src, args)
   end
 
   submitEmergencyCall(src, report)
+end, false)
+
+RegisterCommand(trim(Config.DriverLicenseCommand or 'cadlicense'), function(src, _args)
+  if not src or src == 0 then
+    print('[cad_bridge] Driver license command is in-game only')
+    return
+  end
+
+  local defaults = getCharacterDefaults(src)
+  TriggerClientEvent('cad_bridge:promptDriverLicense', src, {
+    full_name = defaults.full_name,
+    date_of_birth = defaults.date_of_birth,
+    gender = defaults.gender,
+    class_options = Config.DriverLicenseClassOptions or {},
+    default_classes = Config.DriverLicenseDefaultClasses or {},
+    default_expiry_days = tonumber(Config.DriverLicenseDefaultExpiryDays or 1095) or 1095,
+  })
+end, false)
+
+RegisterCommand(trim(Config.VehicleRegistrationCommand or 'cadrego'), function(src, _args)
+  if not src or src == 0 then
+    print('[cad_bridge] Vehicle registration command is in-game only')
+    return
+  end
+
+  local defaults = getCharacterDefaults(src)
+  TriggerClientEvent('cad_bridge:promptVehicleRegistration', src, {
+    owner_name = defaults.full_name,
+    duration_options = Config.VehicleRegistrationDurationOptions or { 365 },
+    default_duration_days = tonumber(Config.VehicleRegistrationDefaultDays or 365) or 365,
+  })
 end, false)
 
 local heartbeatInFlight = false

@@ -10,7 +10,7 @@ const passport = require('passport');
 const path = require('path');
 const config = require('./config');
 const { verifyToken } = require('./auth/jwt');
-const { initDb, VoiceParticipants } = require('./db/sqlite');
+const { initDb, VoiceParticipants, DriverLicenses, VehicleRegistrations } = require('./db/sqlite');
 const { initSteamAuth } = require('./auth/steam');
 const { startBot } = require('./discord/bot');
 const { startAutoUpdater } = require('./services/autoUpdater');
@@ -25,6 +25,20 @@ function parseBool(value, fallback = false) {
   if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
   if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
   return !!fallback;
+}
+
+function runCadExpirySweep() {
+  try {
+    const expiredLicenses = Number(DriverLicenses.markExpiredDue() || 0);
+    const expiredRegistrations = Number(VehicleRegistrations.markExpiredDue() || 0);
+    if (expiredLicenses > 0 || expiredRegistrations > 0) {
+      console.log(
+        `[CadExpiry] Auto-expired licenses=${expiredLicenses} registrations=${expiredRegistrations}`
+      );
+    }
+  } catch (error) {
+    console.error('[CadExpiry] Sweep failed:', error?.message || error);
+  }
 }
 
 // Initialize database
@@ -374,4 +388,9 @@ bridgeHttpServer.on('error', (err) => {
 
   startFiveMResourceAutoSync();
   startFineProcessor();
+
+  const expirySweepMsRaw = parseInt(process.env.CAD_EXPIRY_SWEEP_MS || '60000', 10);
+  const expirySweepMs = Number.isFinite(expirySweepMsRaw) ? Math.max(60000, expirySweepMsRaw) : 60000;
+  runCadExpirySweep();
+  setInterval(runCadExpirySweep, expirySweepMs);
 })();

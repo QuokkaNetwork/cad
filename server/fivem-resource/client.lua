@@ -337,6 +337,122 @@ local emergencyUiOpen = false
 local emergencyUiReady = false
 local emergencyUiAwaitingOpenAck = false
 local emergencyUiOpenedAtMs = 0
+local driverLicenseUiOpen = false
+local vehicleRegistrationUiOpen = false
+
+local function hasAnyCadBridgeModalOpen()
+  return emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen
+end
+
+local function refreshCadBridgeNuiFocus()
+  if hasAnyCadBridgeModalOpen() then
+    SetNuiFocus(true, true)
+  else
+    SetNuiFocus(false, false)
+  end
+end
+
+local function tryMugshotExport(resourceName, exportName, args)
+  local ok, result = pcall(function()
+    local resource = exports[resourceName]
+    if not resource then return nil end
+    local fn = resource[exportName]
+    if type(fn) ~= 'function' then return nil end
+    return fn(table.unpack(args or {}))
+  end)
+  if not ok then return '' end
+  local function normalizeMugshotValue(value)
+    local normalized = trim(value)
+    if normalized == '' then return '' end
+    if normalized:match('^https?://') then return normalized end
+    if normalized:match('^data:image/') then return normalized end
+
+    -- MugShotBase64 returns raw base64 data; convert to a browser-safe data URI.
+    if #normalized > 100 and normalized:match('^[A-Za-z0-9+/=]+$') then
+      return ('data:image/jpeg;base64,%s'):format(normalized)
+    end
+    return normalized
+  end
+
+  if type(result) == 'table' then
+    if result.url then return normalizeMugshotValue(result.url) end
+    if result.image then return normalizeMugshotValue(result.image) end
+    if result.mugshot then return normalizeMugshotValue(result.mugshot) end
+    if result[1] then return normalizeMugshotValue(result[1]) end
+  end
+  return normalizeMugshotValue(result)
+end
+
+local function captureMugshotUrl()
+  local resourceName = trim(Config.MugshotResource or 'MugShotBase64')
+  if resourceName == '' then return '' end
+  if GetResourceState(resourceName) ~= 'started' then return '' end
+
+  local ped = PlayerPedId()
+  local playerId = PlayerId()
+  local serverId = GetPlayerServerId(playerId)
+  local attempts = {
+    { 'GetMugShotBase64', { ped, true } },
+    { 'GetMugShotBase64', { ped } },
+    { 'getMugShotBase64', { ped, true } },
+    { 'getMugShotBase64', { ped } },
+    { 'GetMugShotUrl', { ped } },
+    { 'getMugShotUrl', { ped } },
+    { 'GetMugshotUrl', { ped } },
+    { 'getMugshotUrl', { ped } },
+    { 'GetMugShot', { ped } },
+    { 'getMugShot', { ped } },
+    { 'GetMugshot', { ped } },
+    { 'getMugshot', { ped } },
+    { 'GetPlayerMugshot', { serverId } },
+    { 'getPlayerMugshot', { serverId } },
+    { 'GetMugShotUrl', {} },
+  }
+
+  for _, attempt in ipairs(attempts) do
+    local url = tryMugshotExport(resourceName, attempt[1], attempt[2])
+    if url ~= '' then
+      return url
+    end
+  end
+  return ''
+end
+
+local function getVehicleColourLabel(vehicle)
+  local primary, secondary = GetVehicleColours(vehicle)
+  return ('Primary #%s / Secondary #%s'):format(tostring(primary or '?'), tostring(secondary or '?'))
+end
+
+local function getCurrentVehicleRegistrationDefaults()
+  local payload = {
+    plate = '',
+    vehicle_model = '',
+    vehicle_colour = '',
+  }
+
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then return payload end
+  if not IsPedInAnyVehicle(ped, false) then return payload end
+
+  local vehicle = GetVehiclePedIsIn(ped, false)
+  if not vehicle or vehicle == 0 then return payload end
+  if GetPedInVehicleSeat(vehicle, -1) ~= ped then return payload end
+
+  local plate = trim(GetVehicleNumberPlateText(vehicle) or '')
+  local modelHash = GetEntityModel(vehicle)
+  local model = GetDisplayNameFromVehicleModel(modelHash)
+  if model and model ~= '' then
+    local localized = GetLabelText(model)
+    if localized and localized ~= '' and localized ~= 'NULL' then
+      model = localized
+    end
+  end
+
+  payload.plate = plate
+  payload.vehicle_model = trim(model or '')
+  payload.vehicle_colour = getVehicleColourLabel(vehicle)
+  return payload
+end
 
 local function notifyEmergencyUiIssue(message)
   local text = tostring(message or 'Unable to open the 000 UI right now.')
@@ -390,7 +506,8 @@ local function setEmergencyUiVisible(isVisible, payload)
     emergencyUiAwaitingOpenAck = false
     emergencyUiOpenedAtMs = 0
     print('[cad_bridge] Closing 000 popup')
-    SetNuiFocus(false, false)
+    emergencyUiOpen = false
+    refreshCadBridgeNuiFocus()
     SendNUIMessage({
       action = 'cadBridge000:close',
       payload = {},
@@ -467,6 +584,70 @@ local function openEmergencyPopup(departments)
   end)
 end
 
+local function closeDriverLicensePopup()
+  if not driverLicenseUiOpen then return end
+  driverLicenseUiOpen = false
+  refreshCadBridgeNuiFocus()
+  SendNUIMessage({
+    action = 'cadBridgeLicense:close',
+    payload = {},
+  })
+end
+
+local function closeVehicleRegistrationPopup()
+  if not vehicleRegistrationUiOpen then return end
+  vehicleRegistrationUiOpen = false
+  refreshCadBridgeNuiFocus()
+  SendNUIMessage({
+    action = 'cadBridgeRegistration:close',
+    payload = {},
+  })
+end
+
+local function openDriverLicensePopup(payload)
+  if emergencyUiOpen then
+    closeEmergencyPopup()
+  end
+  if vehicleRegistrationUiOpen then
+    closeVehicleRegistrationPopup()
+  end
+
+  driverLicenseUiOpen = true
+  SetNuiFocus(true, true)
+  SendNUIMessage({
+    action = 'cadBridgeLicense:open',
+    payload = payload or {},
+  })
+end
+
+local function openVehicleRegistrationPopup(payload)
+  if emergencyUiOpen then
+    closeEmergencyPopup()
+  end
+  if driverLicenseUiOpen then
+    closeDriverLicensePopup()
+  end
+
+  local defaults = getCurrentVehicleRegistrationDefaults()
+  local nextPayload = payload or {}
+  if trim(nextPayload.plate or '') == '' then
+    nextPayload.plate = defaults.plate
+  end
+  if trim(nextPayload.vehicle_model or '') == '' then
+    nextPayload.vehicle_model = defaults.vehicle_model
+  end
+  if trim(nextPayload.vehicle_colour or '') == '' then
+    nextPayload.vehicle_colour = defaults.vehicle_colour
+  end
+
+  vehicleRegistrationUiOpen = true
+  SetNuiFocus(true, true)
+  SendNUIMessage({
+    action = 'cadBridgeRegistration:open',
+    payload = nextPayload,
+  })
+end
+
 RegisterNUICallback('cadBridge000Ready', function(_data, cb)
   emergencyUiReady = true
   print('[cad_bridge] 000 NUI is ready')
@@ -512,6 +693,85 @@ RegisterNUICallback('cadBridge000Cancel', function(_data, cb)
   if cb then cb({ ok = true }) end
 end)
 
+RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
+  local fullName = trim(data and data.full_name or data and data.character_name or '')
+  local dateOfBirth = trim(data and data.date_of_birth or data and data.dob or '')
+  local gender = trim(data and data.gender or '')
+  local expiryDays = tonumber(data and data.expiry_days or 0) or tonumber(Config.DriverLicenseDefaultExpiryDays or 1095) or 1095
+  if expiryDays < 1 then expiryDays = 1 end
+
+  local classes = {}
+  if type(data and data.license_classes) == 'table' then
+    for _, value in ipairs(data.license_classes) do
+      local normalized = trim(value)
+      if normalized ~= '' then
+        classes[#classes + 1] = normalized:upper()
+      end
+    end
+  end
+
+  if fullName == '' or dateOfBirth == '' or gender == '' or #classes == 0 then
+    if cb then cb({ ok = false, error = 'invalid_form' }) end
+    return
+  end
+
+  local mugshotUrl = trim(data and data.mugshot_url or '')
+  if mugshotUrl == '' then
+    mugshotUrl = captureMugshotUrl()
+  end
+
+  closeDriverLicensePopup()
+  TriggerServerEvent('cad_bridge:submitDriverLicense', {
+    full_name = fullName,
+    date_of_birth = dateOfBirth,
+    gender = gender,
+    license_number = trim(data and data.license_number or ''),
+    license_classes = classes,
+    conditions = type(data and data.conditions) == 'table' and data.conditions or {},
+    mugshot_url = mugshotUrl,
+    expiry_days = math.floor(expiryDays),
+    expiry_at = trim(data and data.expiry_at or ''),
+  })
+
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeLicenseCancel', function(_data, cb)
+  closeDriverLicensePopup()
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
+  local plate = trim(data and data.plate or data and data.license_plate or '')
+  local model = trim(data and data.vehicle_model or data and data.model or '')
+  local colour = trim(data and data.vehicle_colour or data and data.colour or data and data.color or '')
+  local ownerName = trim(data and data.owner_name or data and data.character_name or '')
+  local durationDays = tonumber(data and data.duration_days or 0) or tonumber(Config.VehicleRegistrationDefaultDays or 365) or 365
+  if durationDays < 1 then durationDays = 1 end
+
+  if plate == '' or model == '' or ownerName == '' then
+    if cb then cb({ ok = false, error = 'invalid_form' }) end
+    return
+  end
+
+  closeVehicleRegistrationPopup()
+  TriggerServerEvent('cad_bridge:submitVehicleRegistration', {
+    plate = plate,
+    vehicle_model = model,
+    vehicle_colour = colour,
+    owner_name = ownerName,
+    duration_days = math.floor(durationDays),
+    expiry_at = trim(data and data.expiry_at or ''),
+  })
+
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeRegistrationCancel', function(_data, cb)
+  closeVehicleRegistrationPopup()
+  if cb then cb({ ok = true }) end
+end)
+
 RegisterNetEvent('cad_bridge:setCallRoute', function(route)
   if type(route) ~= 'table' then return end
   local action = tostring(route.action or ''):lower()
@@ -545,6 +805,14 @@ RegisterNetEvent('cad_bridge:prompt000', function(departments)
   openEmergencyPopup(departments)
 end)
 
+RegisterNetEvent('cad_bridge:promptDriverLicense', function(payload)
+  openDriverLicensePopup(payload or {})
+end)
+
+RegisterNetEvent('cad_bridge:promptVehicleRegistration', function(payload)
+  openVehicleRegistrationPopup(payload or {})
+end)
+
 -- Test command to verify UI works without server
 RegisterCommand('test000ui', function()
   print('[cad_bridge] Testing 000 UI with mock data')
@@ -557,18 +825,20 @@ end, false)
 
 AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
-  if emergencyUiOpen then
+  if emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen then
     SetNuiFocus(false, false)
   end
 end)
 
 CreateThread(function()
   while true do
-    if emergencyUiOpen then
+    if hasAnyCadBridgeModalOpen() then
       Wait(0)
 
       if IsControlJustPressed(0, 200) or IsControlJustPressed(0, 202) or IsControlJustPressed(0, 177) then
         closeEmergencyPopup()
+        closeDriverLicensePopup()
+        closeVehicleRegistrationPopup()
       end
 
       if emergencyUiAwaitingOpenAck and emergencyUiOpenedAtMs > 0 then

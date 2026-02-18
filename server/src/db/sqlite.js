@@ -912,6 +912,358 @@ const CriminalRecords = {
   },
 };
 
+const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
+const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
+
+function parseJsonArrayValue(value) {
+  if (Array.isArray(value)) return value;
+  const text = String(value || '').trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeStringArray(value, { uppercase = false, maxLength = 64 } = {}) {
+  const source = Array.isArray(value) ? value : parseJsonArrayValue(value);
+  const seen = new Set();
+  const out = [];
+  for (const entry of source) {
+    let text = String(entry || '').trim();
+    if (!text) continue;
+    if (uppercase) text = text.toUpperCase();
+    if (text.length > maxLength) {
+      text = text.slice(0, maxLength);
+    }
+    if (seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
+}
+
+function normalizeDateOnly(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) return '';
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function normalizeStatus(value, allowedStatuses, fallback) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (allowedStatuses.has(normalized)) return normalized;
+  return fallback;
+}
+
+function normalizePlateKey(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function hydrateDriverLicenseRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    license_classes: normalizeStringArray(row.license_classes_json, { uppercase: true, maxLength: 10 }),
+    conditions: normalizeStringArray(row.conditions_json, { uppercase: false, maxLength: 80 }),
+  };
+}
+
+function hydrateVehicleRegistrationRow(row) {
+  if (!row) return row;
+  return { ...row };
+}
+
+// --- Driver Licenses ---
+const DriverLicenses = {
+  findById(id) {
+    return hydrateDriverLicenseRow(db.prepare('SELECT * FROM driver_licenses WHERE id = ?').get(id));
+  },
+  findByCitizenId(citizenId) {
+    const normalized = String(citizenId || '').trim();
+    if (!normalized) return null;
+    return hydrateDriverLicenseRow(db.prepare('SELECT * FROM driver_licenses WHERE citizen_id = ?').get(normalized));
+  },
+  upsertByCitizenId({
+    citizen_id,
+    full_name,
+    date_of_birth,
+    gender,
+    license_number,
+    license_classes,
+    conditions,
+    mugshot_url,
+    status,
+    expiry_at,
+    created_by_user_id,
+    updated_by_user_id,
+  }) {
+    const normalizedCitizenId = String(citizen_id || '').trim();
+    if (!normalizedCitizenId) {
+      throw new Error('citizen_id is required');
+    }
+
+    const normalizedClasses = normalizeStringArray(license_classes, { uppercase: true, maxLength: 10 });
+    const normalizedConditions = normalizeStringArray(conditions, { uppercase: false, maxLength: 80 });
+    const normalizedStatus = normalizeStatus(status, DRIVER_LICENSE_STATUSES, 'valid');
+    const normalizedDob = normalizeDateOnly(date_of_birth);
+    const normalizedExpiry = normalizeDateOnly(expiry_at);
+
+    db.prepare(`
+      INSERT INTO driver_licenses (
+        citizen_id, full_name, date_of_birth, gender, license_number, license_classes_json,
+        conditions_json, mugshot_url, status, expiry_at, created_by_user_id, updated_by_user_id,
+        issued_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+      ON CONFLICT(citizen_id) DO UPDATE SET
+        full_name = excluded.full_name,
+        date_of_birth = excluded.date_of_birth,
+        gender = excluded.gender,
+        license_number = excluded.license_number,
+        license_classes_json = excluded.license_classes_json,
+        conditions_json = excluded.conditions_json,
+        mugshot_url = excluded.mugshot_url,
+        status = excluded.status,
+        expiry_at = excluded.expiry_at,
+        updated_by_user_id = excluded.updated_by_user_id,
+        updated_at = datetime('now')
+    `).run(
+      normalizedCitizenId,
+      String(full_name || '').trim(),
+      normalizedDob,
+      String(gender || '').trim(),
+      String(license_number || '').trim(),
+      JSON.stringify(normalizedClasses),
+      JSON.stringify(normalizedConditions),
+      String(mugshot_url || '').trim(),
+      normalizedStatus,
+      normalizedExpiry || null,
+      created_by_user_id || null,
+      updated_by_user_id || null
+    );
+
+    return this.findByCitizenId(normalizedCitizenId);
+  },
+  update(id, fields = {}) {
+    const updates = [];
+    const values = [];
+
+    if (fields.full_name !== undefined) {
+      updates.push('full_name = ?');
+      values.push(String(fields.full_name || '').trim());
+    }
+    if (fields.date_of_birth !== undefined) {
+      updates.push('date_of_birth = ?');
+      values.push(normalizeDateOnly(fields.date_of_birth));
+    }
+    if (fields.gender !== undefined) {
+      updates.push('gender = ?');
+      values.push(String(fields.gender || '').trim());
+    }
+    if (fields.license_number !== undefined) {
+      updates.push('license_number = ?');
+      values.push(String(fields.license_number || '').trim());
+    }
+    if (fields.license_classes !== undefined || fields.license_classes_json !== undefined) {
+      updates.push('license_classes_json = ?');
+      values.push(JSON.stringify(normalizeStringArray(
+        fields.license_classes !== undefined ? fields.license_classes : fields.license_classes_json,
+        { uppercase: true, maxLength: 10 }
+      )));
+    }
+    if (fields.conditions !== undefined || fields.conditions_json !== undefined) {
+      updates.push('conditions_json = ?');
+      values.push(JSON.stringify(normalizeStringArray(
+        fields.conditions !== undefined ? fields.conditions : fields.conditions_json,
+        { uppercase: false, maxLength: 80 }
+      )));
+    }
+    if (fields.mugshot_url !== undefined) {
+      updates.push('mugshot_url = ?');
+      values.push(String(fields.mugshot_url || '').trim());
+    }
+    if (fields.status !== undefined) {
+      updates.push('status = ?');
+      values.push(normalizeStatus(fields.status, DRIVER_LICENSE_STATUSES, 'valid'));
+    }
+    if (fields.expiry_at !== undefined) {
+      const normalizedExpiry = normalizeDateOnly(fields.expiry_at);
+      updates.push('expiry_at = ?');
+      values.push(normalizedExpiry || null);
+    }
+    if (fields.updated_by_user_id !== undefined) {
+      updates.push('updated_by_user_id = ?');
+      values.push(fields.updated_by_user_id || null);
+    }
+
+    if (updates.length === 0) return this.findById(id);
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+    db.prepare(`UPDATE driver_licenses SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    return this.findById(id);
+  },
+  markExpiredDue() {
+    const info = db.prepare(`
+      UPDATE driver_licenses
+      SET status = 'expired', updated_at = datetime('now')
+      WHERE status != 'expired'
+        AND expiry_at IS NOT NULL
+        AND trim(expiry_at) != ''
+        AND julianday(expiry_at) <= julianday('now')
+    `).run();
+    return Number(info?.changes || 0);
+  },
+};
+
+// --- Vehicle Registrations ---
+const VehicleRegistrations = {
+  findById(id) {
+    return hydrateVehicleRegistrationRow(db.prepare('SELECT * FROM vehicle_registrations WHERE id = ?').get(id));
+  },
+  findByPlate(plate) {
+    const normalized = normalizePlateKey(plate);
+    if (!normalized) return null;
+    return hydrateVehicleRegistrationRow(
+      db.prepare('SELECT * FROM vehicle_registrations WHERE plate_normalized = ?').get(normalized)
+    );
+  },
+  listByCitizenId(citizenId) {
+    const normalized = String(citizenId || '').trim();
+    if (!normalized) return [];
+    return db.prepare(`
+      SELECT * FROM vehicle_registrations
+      WHERE citizen_id = ?
+      ORDER BY updated_at DESC
+    `).all(normalized).map(hydrateVehicleRegistrationRow);
+  },
+  upsertByPlate({
+    plate,
+    citizen_id,
+    owner_name,
+    vehicle_model,
+    vehicle_colour,
+    status,
+    expiry_at,
+    duration_days,
+    created_by_user_id,
+    updated_by_user_id,
+  }) {
+    const normalizedPlate = normalizePlateKey(plate);
+    if (!normalizedPlate) {
+      throw new Error('plate is required');
+    }
+
+    const normalizedStatus = normalizeStatus(status, VEHICLE_REGISTRATION_STATUSES, 'valid');
+    const normalizedExpiry = normalizeDateOnly(expiry_at);
+    const normalizedDurationDays = Number.isFinite(Number(duration_days))
+      ? Math.max(1, Math.trunc(Number(duration_days)))
+      : 365;
+
+    db.prepare(`
+      INSERT INTO vehicle_registrations (
+        plate, plate_normalized, citizen_id, owner_name, vehicle_model, vehicle_colour, status,
+        expiry_at, duration_days, created_by_user_id, updated_by_user_id,
+        issued_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+      ON CONFLICT(plate_normalized) DO UPDATE SET
+        plate = excluded.plate,
+        citizen_id = excluded.citizen_id,
+        owner_name = excluded.owner_name,
+        vehicle_model = excluded.vehicle_model,
+        vehicle_colour = excluded.vehicle_colour,
+        status = excluded.status,
+        expiry_at = excluded.expiry_at,
+        duration_days = excluded.duration_days,
+        updated_by_user_id = excluded.updated_by_user_id,
+        updated_at = datetime('now')
+    `).run(
+      String(plate || '').trim(),
+      normalizedPlate,
+      String(citizen_id || '').trim(),
+      String(owner_name || '').trim(),
+      String(vehicle_model || '').trim(),
+      String(vehicle_colour || '').trim(),
+      normalizedStatus,
+      normalizedExpiry || null,
+      normalizedDurationDays,
+      created_by_user_id || null,
+      updated_by_user_id || null
+    );
+
+    return this.findByPlate(normalizedPlate);
+  },
+  update(id, fields = {}) {
+    const updates = [];
+    const values = [];
+
+    if (fields.plate !== undefined) {
+      updates.push('plate = ?');
+      values.push(String(fields.plate || '').trim());
+      updates.push('plate_normalized = ?');
+      values.push(normalizePlateKey(fields.plate));
+    }
+    if (fields.citizen_id !== undefined) {
+      updates.push('citizen_id = ?');
+      values.push(String(fields.citizen_id || '').trim());
+    }
+    if (fields.owner_name !== undefined) {
+      updates.push('owner_name = ?');
+      values.push(String(fields.owner_name || '').trim());
+    }
+    if (fields.vehicle_model !== undefined) {
+      updates.push('vehicle_model = ?');
+      values.push(String(fields.vehicle_model || '').trim());
+    }
+    if (fields.vehicle_colour !== undefined) {
+      updates.push('vehicle_colour = ?');
+      values.push(String(fields.vehicle_colour || '').trim());
+    }
+    if (fields.status !== undefined) {
+      updates.push('status = ?');
+      values.push(normalizeStatus(fields.status, VEHICLE_REGISTRATION_STATUSES, 'valid'));
+    }
+    if (fields.expiry_at !== undefined) {
+      const normalizedExpiry = normalizeDateOnly(fields.expiry_at);
+      updates.push('expiry_at = ?');
+      values.push(normalizedExpiry || null);
+    }
+    if (fields.duration_days !== undefined) {
+      const normalizedDurationDays = Number.isFinite(Number(fields.duration_days))
+        ? Math.max(1, Math.trunc(Number(fields.duration_days)))
+        : 365;
+      updates.push('duration_days = ?');
+      values.push(normalizedDurationDays);
+    }
+    if (fields.updated_by_user_id !== undefined) {
+      updates.push('updated_by_user_id = ?');
+      values.push(fields.updated_by_user_id || null);
+    }
+
+    if (updates.length === 0) return this.findById(id);
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+    db.prepare(`UPDATE vehicle_registrations SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    return this.findById(id);
+  },
+  markExpiredDue() {
+    const info = db.prepare(`
+      UPDATE vehicle_registrations
+      SET status = 'expired', updated_at = datetime('now')
+      WHERE status != 'expired'
+        AND expiry_at IS NOT NULL
+        AND trim(expiry_at) != ''
+        AND julianday(expiry_at) <= julianday('now')
+    `).run();
+    return Number(info?.changes || 0);
+  },
+};
+
 // --- FiveM player links ---
 const FiveMPlayerLinks = {
   upsert({ steam_id, game_id, citizen_id, player_name, position_x, position_y, position_z, heading, speed }) {
@@ -1675,6 +2027,8 @@ module.exports = {
   Warrants,
   OffenceCatalog,
   CriminalRecords,
+  DriverLicenses,
+  VehicleRegistrations,
   FiveMPlayerLinks,
   FiveMFineJobs,
   FiveMJobSyncJobs,

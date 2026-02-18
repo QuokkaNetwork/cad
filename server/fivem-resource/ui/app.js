@@ -11,28 +11,47 @@ var titleError = document.getElementById("titleError");
 var departmentsEmpty = document.getElementById("departmentsEmpty");
 var departmentsList = document.getElementById("departmentsList");
 
-var open = false;
+var licenseOverlay = document.getElementById("licenseOverlay");
+var licenseForm = document.getElementById("licenseForm");
+var licenseCloseBtn = document.getElementById("licenseCloseBtn");
+var licenseCancelBtn = document.getElementById("licenseCancelBtn");
+var licenseSubmitBtn = document.getElementById("licenseSubmitBtn");
+var licenseNameInput = document.getElementById("licenseNameInput");
+var licenseDobInput = document.getElementById("licenseDobInput");
+var licenseGenderInput = document.getElementById("licenseGenderInput");
+var licenseNumberInput = document.getElementById("licenseNumberInput");
+var licenseExpiryDaysInput = document.getElementById("licenseExpiryDaysInput");
+var licenseExpiryAtInput = document.getElementById("licenseExpiryAtInput");
+var licenseConditionsInput = document.getElementById("licenseConditionsInput");
+var licenseMugshotInput = document.getElementById("licenseMugshotInput");
+var licenseClassList = document.getElementById("licenseClassList");
+var licenseClassEmpty = document.getElementById("licenseClassEmpty");
+var licenseFormError = document.getElementById("licenseFormError");
+
+var registrationOverlay = document.getElementById("registrationOverlay");
+var registrationForm = document.getElementById("registrationForm");
+var registrationCloseBtn = document.getElementById("registrationCloseBtn");
+var registrationCancelBtn = document.getElementById("registrationCancelBtn");
+var registrationSubmitBtn = document.getElementById("registrationSubmitBtn");
+var regoOwnerInput = document.getElementById("regoOwnerInput");
+var regoPlateInput = document.getElementById("regoPlateInput");
+var regoModelInput = document.getElementById("regoModelInput");
+var regoColourInput = document.getElementById("regoColourInput");
+var regoDurationSelect = document.getElementById("regoDurationSelect");
+var regoExpiryAtInput = document.getElementById("regoExpiryAtInput");
+var registrationFormError = document.getElementById("registrationFormError");
+
+var emergencyOpen = false;
+var licenseOpen = false;
+var registrationOpen = false;
+
 var titleLimit = 80;
 var detailsLimit = 600;
 var departments = [];
 var selectedDepartmentIds = [];
-
-function hasUiElements() {
-  return !!(
-    overlay &&
-    form &&
-    closeBtn &&
-    cancelBtn &&
-    submitBtn &&
-    titleInput &&
-    detailsInput &&
-    titleCounter &&
-    detailsCounter &&
-    titleError &&
-    departmentsEmpty &&
-    departmentsList
-  );
-}
+var classOptions = [];
+var selectedClasses = [];
+var durationOptions = [];
 
 function safeGet(obj, key, fallback) {
   if (!obj || typeof obj !== "object") return fallback;
@@ -40,43 +59,84 @@ function safeGet(obj, key, fallback) {
   return obj[key];
 }
 
+function getResourceName() {
+  try {
+    return GetParentResourceName();
+  } catch (_err) {
+    return "nui-resource";
+  }
+}
+
+function postNui(endpoint, payload) {
+  return fetch("https://" + getResourceName() + "/" + endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=UTF-8" },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
 function sanitizeDepartments(raw) {
   if (!Array.isArray(raw)) return [];
-  var seen = {};
   var out = [];
+  var seen = {};
   for (var i = 0; i < raw.length; i += 1) {
     var item = raw[i] || {};
     var id = Number(safeGet(item, "id", 0));
     if (!Number.isInteger(id) || id <= 0 || seen[id]) continue;
     seen[id] = true;
-    var defaultName = "Department #" + String(id);
-    var name = String(safeGet(item, "name", defaultName) || "").trim() || defaultName;
-    var shortName = String(safeGet(item, "short_name", "") || "").trim();
-    var color = String(safeGet(item, "color", "") || "").trim();
     out.push({
       id: id,
-      name: name,
-      shortName: shortName,
-      color: color,
+      name: String(safeGet(item, "name", "Department #" + String(id)) || "").trim() || ("Department #" + String(id)),
+      shortName: String(safeGet(item, "short_name", "") || "").trim(),
+      color: String(safeGet(item, "color", "") || "").trim(),
     });
   }
   return out;
 }
 
-function updateCounters() {
-  if (!hasUiElements()) return;
-  titleCounter.textContent = String(titleInput.value.length) + " / " + String(titleLimit);
-  detailsCounter.textContent = String(detailsInput.value.length) + " / " + String(detailsLimit);
+function sanitizeStringArray(raw, toUpper) {
+  if (!Array.isArray(raw)) return [];
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < raw.length; i += 1) {
+    var value = String(raw[i] || "").trim();
+    if (!value) continue;
+    if (toUpper) value = value.toUpperCase();
+    if (seen[value]) continue;
+    seen[value] = true;
+    out.push(value);
+  }
+  return out;
 }
 
-function hideTitleError() {
-  if (!hasUiElements()) return;
-  titleError.classList.add("hidden");
+function showErrorNode(node, text) {
+  if (!node) return;
+  node.textContent = String(text || "");
+  if (text) node.classList.remove("hidden");
+  else node.classList.add("hidden");
 }
 
-function showTitleError() {
-  if (!hasUiElements()) return;
-  titleError.classList.remove("hidden");
+function setVisible(node, visible) {
+  if (!node) return;
+  if (visible) {
+    node.classList.remove("hidden");
+    node.style.display = "grid";
+    node.setAttribute("aria-hidden", "false");
+    return;
+  }
+  node.classList.add("hidden");
+  node.style.display = "none";
+  node.setAttribute("aria-hidden", "true");
+}
+
+function anyModalOpen() {
+  return emergencyOpen || licenseOpen || registrationOpen;
+}
+
+function closeAll() {
+  cancelEmergencyForm();
+  cancelLicenseForm();
+  cancelRegistrationForm();
 }
 
 function isDepartmentSelected(id) {
@@ -97,14 +157,18 @@ function toggleDepartment(id) {
     }
     next.push(current);
   }
-  if (!removed) {
-    next.push(Number(id));
-  }
+  if (!removed) next.push(Number(id));
   selectedDepartmentIds = next;
 }
 
+function updateCounters() {
+  if (!titleCounter || !detailsCounter || !titleInput || !detailsInput) return;
+  titleCounter.textContent = String(titleInput.value.length) + " / " + String(titleLimit);
+  detailsCounter.textContent = String(detailsInput.value.length) + " / " + String(detailsLimit);
+}
+
 function renderDepartments() {
-  if (!hasUiElements()) return;
+  if (!departmentsList || !departmentsEmpty) return;
   departmentsList.innerHTML = "";
   if (departments.length === 0) {
     departmentsEmpty.classList.remove("hidden");
@@ -117,10 +181,9 @@ function renderDepartments() {
 
   for (var i = 0; i < departments.length; i += 1) {
     (function renderDepartmentButton(dept) {
-      var isSelected = isDepartmentSelected(dept.id);
       var btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "dept-btn" + (isSelected ? " active" : "");
+      btn.className = "dept-btn" + (isDepartmentSelected(dept.id) ? " active" : "");
       btn.dataset.id = String(dept.id);
 
       var title = document.createElement("span");
@@ -134,7 +197,6 @@ function renderDepartments() {
 
       btn.appendChild(title);
       btn.appendChild(subtitle);
-
       btn.addEventListener("click", function onDepartmentClick() {
         toggleDepartment(dept.id);
         renderDepartments();
@@ -143,69 +205,6 @@ function renderDepartments() {
       departmentsList.appendChild(btn);
     })(departments[i]);
   }
-}
-
-function setVisible(visible) {
-  if (!hasUiElements()) {
-    console.error("[CAD 000] UI elements not found!");
-    return;
-  }
-  open = visible === true;
-
-  if (open) {
-    // Force remove hidden class
-    overlay.classList.remove("hidden");
-    overlay.style.display = "grid";
-    overlay.setAttribute("aria-hidden", "false");
-
-    // Force focus after a short delay to ensure rendering
-    setTimeout(function() {
-      if (titleInput) {
-        titleInput.focus();
-        titleInput.select();
-      }
-    }, 50);
-
-  } else {
-    overlay.classList.add("hidden");
-    overlay.style.display = "none";
-    overlay.setAttribute("aria-hidden", "true");
-  }
-}
-
-function resetForm(payload) {
-  if (!hasUiElements()) return;
-  var data = payload || {};
-  titleLimit = Math.max(20, Math.min(120, Number(safeGet(data, "max_title_length", 80)) || 80));
-  detailsLimit = Math.max(100, Math.min(1200, Number(safeGet(data, "max_details_length", 600)) || 600));
-  titleInput.maxLength = titleLimit;
-  detailsInput.maxLength = detailsLimit;
-
-  titleInput.value = "";
-  detailsInput.value = "";
-  hideTitleError();
-
-  departments = sanitizeDepartments(safeGet(data, "departments", []));
-  selectedDepartmentIds = [];
-  renderDepartments();
-  updateCounters();
-  submitBtn.disabled = false;
-}
-
-function getResourceName() {
-  try {
-    return GetParentResourceName();
-  } catch (err) {
-    return "nui-resource";
-  }
-}
-
-function postNui(endpoint, payload) {
-  return fetch("https://" + getResourceName() + "/" + endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json; charset=UTF-8" },
-    body: JSON.stringify(payload || {}),
-  });
 }
 
 function collectSelectedDepartmentIds() {
@@ -219,127 +218,449 @@ function collectSelectedDepartmentIds() {
   return out;
 }
 
+function resetEmergencyForm(payload) {
+  var data = payload || {};
+  titleLimit = Math.max(20, Math.min(120, Number(safeGet(data, "max_title_length", 80)) || 80));
+  detailsLimit = Math.max(100, Math.min(1200, Number(safeGet(data, "max_details_length", 600)) || 600));
+  titleInput.maxLength = titleLimit;
+  detailsInput.maxLength = detailsLimit;
+
+  titleInput.value = "";
+  detailsInput.value = "";
+  showErrorNode(titleError, "");
+
+  departments = sanitizeDepartments(safeGet(data, "departments", []));
+  selectedDepartmentIds = [];
+  renderDepartments();
+  updateCounters();
+  submitBtn.disabled = false;
+}
+
+function openEmergencyForm(payload) {
+  if (licenseOpen) closeLicenseForm();
+  if (registrationOpen) closeRegistrationForm();
+  resetEmergencyForm(payload || {});
+  emergencyOpen = true;
+  setVisible(overlay, true);
+  setTimeout(function focusEmergencyTitle() {
+    if (titleInput) {
+      titleInput.focus();
+      titleInput.select();
+    }
+  }, 40);
+}
+
+function closeEmergencyForm() {
+  emergencyOpen = false;
+  setVisible(overlay, false);
+}
+
 async function submitEmergencyForm() {
-  if (!hasUiElements()) return;
   var title = String(titleInput.value || "").trim();
   if (!title) {
-    showTitleError();
-    titleInput.focus();
+    showErrorNode(titleError, "Title is required.");
+    if (titleInput) titleInput.focus();
     return;
   }
-  hideTitleError();
-
+  showErrorNode(titleError, "");
   submitBtn.disabled = true;
-  var payload = {
-    title: title,
-    details: String(detailsInput.value || "").trim(),
-    requested_department_ids: collectSelectedDepartmentIds(),
-  };
 
   try {
-    var response = await postNui("cadBridge000Submit", payload);
+    var response = await postNui("cadBridge000Submit", {
+      title: title,
+      details: String(detailsInput.value || "").trim(),
+      requested_department_ids: collectSelectedDepartmentIds(),
+    });
     var result = null;
     try {
       result = await response.json();
-    } catch (err) {
+    } catch (_err) {
       result = null;
     }
-
     if (!response.ok || (result && result.ok === false)) {
       if (result && result.error === "title_required") {
-        showTitleError();
+        showErrorNode(titleError, "Title is required.");
       }
       submitBtn.disabled = false;
       return;
     }
-
-    setVisible(false);
-  } catch (err) {
+    closeEmergencyForm();
+  } catch (_err) {
     submitBtn.disabled = false;
   }
 }
 
 function cancelEmergencyForm() {
-  if (!open) return;
+  if (!emergencyOpen) return;
   postNui("cadBridge000Cancel", {}).catch(function ignoreCancelError() {});
-  setVisible(false);
+  closeEmergencyForm();
 }
 
-var lastOpenPayload = null;
+function normalizeClassOptions(raw) {
+  var list = sanitizeStringArray(Array.isArray(raw) ? raw : [], true);
+  return list;
+}
+
+function isClassSelected(name) {
+  return selectedClasses.indexOf(String(name || "").toUpperCase()) >= 0;
+}
+
+function toggleClass(name) {
+  var target = String(name || "").toUpperCase();
+  if (!target) return;
+  var next = [];
+  var removed = false;
+  for (var i = 0; i < selectedClasses.length; i += 1) {
+    if (selectedClasses[i] === target) {
+      removed = true;
+      continue;
+    }
+    next.push(selectedClasses[i]);
+  }
+  if (!removed) next.push(target);
+  selectedClasses = next;
+}
+
+function renderLicenseClasses() {
+  if (!licenseClassList || !licenseClassEmpty) return;
+  licenseClassList.innerHTML = "";
+  if (classOptions.length === 0) {
+    licenseClassList.classList.add("hidden");
+    licenseClassEmpty.classList.remove("hidden");
+    return;
+  }
+  licenseClassList.classList.remove("hidden");
+  licenseClassEmpty.classList.add("hidden");
+
+  for (var i = 0; i < classOptions.length; i += 1) {
+    (function renderClassButton(classCode) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip-btn" + (isClassSelected(classCode) ? " active" : "");
+      btn.textContent = classCode;
+      btn.addEventListener("click", function onClassClick() {
+        toggleClass(classCode);
+        renderLicenseClasses();
+      });
+      licenseClassList.appendChild(btn);
+    })(classOptions[i]);
+  }
+}
+
+function resetLicenseForm(payload) {
+  var data = payload || {};
+  classOptions = normalizeClassOptions(safeGet(data, "class_options", []));
+  selectedClasses = sanitizeStringArray(
+    safeGet(data, "default_classes", []),
+    true
+  );
+  if (selectedClasses.length === 0 && classOptions.length > 0) {
+    selectedClasses = [classOptions[0]];
+  }
+  renderLicenseClasses();
+
+  if (licenseNameInput) licenseNameInput.value = String(safeGet(data, "full_name", "") || "");
+  if (licenseDobInput) licenseDobInput.value = String(safeGet(data, "date_of_birth", "") || "");
+  if (licenseGenderInput) licenseGenderInput.value = String(safeGet(data, "gender", "") || "");
+  if (licenseNumberInput) licenseNumberInput.value = String(safeGet(data, "license_number", "") || "");
+  if (licenseConditionsInput) licenseConditionsInput.value = "";
+  if (licenseMugshotInput) licenseMugshotInput.value = String(safeGet(data, "mugshot_url", "") || "");
+  if (licenseExpiryAtInput) licenseExpiryAtInput.value = String(safeGet(data, "expiry_at", "") || "");
+  if (licenseExpiryDaysInput) {
+    var expiryDays = Number(safeGet(data, "default_expiry_days", 1095)) || 1095;
+    if (!Number.isFinite(expiryDays) || expiryDays < 1) expiryDays = 1095;
+    licenseExpiryDaysInput.value = String(Math.floor(expiryDays));
+  }
+  if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
+  showErrorNode(licenseFormError, "");
+}
+
+function openLicenseForm(payload) {
+  if (emergencyOpen) closeEmergencyForm();
+  if (registrationOpen) closeRegistrationForm();
+  resetLicenseForm(payload || {});
+  licenseOpen = true;
+  setVisible(licenseOverlay, true);
+  setTimeout(function focusLicenseName() {
+    if (licenseNameInput) licenseNameInput.focus();
+  }, 40);
+}
+
+function closeLicenseForm() {
+  licenseOpen = false;
+  setVisible(licenseOverlay, false);
+}
+
+function parseConditionsFromInput() {
+  var text = String(licenseConditionsInput && licenseConditionsInput.value || "").trim();
+  if (!text) return [];
+  var parts = text.split(",");
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < parts.length; i += 1) {
+    var value = String(parts[i] || "").trim();
+    if (!value) continue;
+    if (seen[value]) continue;
+    seen[value] = true;
+    out.push(value);
+  }
+  return out;
+}
+
+async function submitLicenseForm() {
+  var fullName = String(licenseNameInput && licenseNameInput.value || "").trim();
+  var dateOfBirth = String(licenseDobInput && licenseDobInput.value || "").trim();
+  var gender = String(licenseGenderInput && licenseGenderInput.value || "").trim();
+  if (!fullName || !dateOfBirth || !gender || selectedClasses.length === 0) {
+    showErrorNode(licenseFormError, "Name, DOB, gender and at least one class are required.");
+    return;
+  }
+  showErrorNode(licenseFormError, "");
+  if (licenseSubmitBtn) licenseSubmitBtn.disabled = true;
+
+  var expiryDays = Number(licenseExpiryDaysInput && licenseExpiryDaysInput.value || 0);
+  if (!Number.isFinite(expiryDays) || expiryDays < 1) expiryDays = 1;
+  var payload = {
+    full_name: fullName,
+    date_of_birth: dateOfBirth,
+    gender: gender,
+    license_number: String(licenseNumberInput && licenseNumberInput.value || "").trim(),
+    license_classes: sanitizeStringArray(selectedClasses, true),
+    conditions: parseConditionsFromInput(),
+    mugshot_url: String(licenseMugshotInput && licenseMugshotInput.value || "").trim(),
+    expiry_days: Math.floor(expiryDays),
+    expiry_at: String(licenseExpiryAtInput && licenseExpiryAtInput.value || "").trim(),
+  };
+
+  try {
+    var response = await postNui("cadBridgeLicenseSubmit", payload);
+    var result = null;
+    try {
+      result = await response.json();
+    } catch (_err) {
+      result = null;
+    }
+    if (!response.ok || (result && result.ok === false)) {
+      showErrorNode(licenseFormError, "Unable to submit license form.");
+      if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
+      return;
+    }
+    closeLicenseForm();
+  } catch (_err2) {
+    showErrorNode(licenseFormError, "Unable to submit license form.");
+    if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
+  }
+}
+
+function cancelLicenseForm() {
+  if (!licenseOpen) return;
+  postNui("cadBridgeLicenseCancel", {}).catch(function ignoreCancelError() {});
+  closeLicenseForm();
+}
+
+function normalizeDurationOptions(raw, fallback) {
+  var list = Array.isArray(raw) ? raw : [];
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < list.length; i += 1) {
+    var value = Number(list[i]);
+    if (!Number.isFinite(value) || value < 1) continue;
+    var rounded = Math.floor(value);
+    if (seen[rounded]) continue;
+    seen[rounded] = true;
+    out.push(rounded);
+  }
+  if (out.length === 0) out = [Number(fallback) || 365];
+  out.sort(function sortNumber(a, b) { return a - b; });
+  return out;
+}
+
+function renderDurationSelect(defaultDuration) {
+  if (!regoDurationSelect) return;
+  regoDurationSelect.innerHTML = "";
+  var fallback = Number(defaultDuration) || 365;
+  durationOptions = normalizeDurationOptions(durationOptions, fallback);
+  var selectedValue = durationOptions.indexOf(fallback) >= 0 ? fallback : durationOptions[0];
+  for (var i = 0; i < durationOptions.length; i += 1) {
+    var optionValue = durationOptions[i];
+    var option = document.createElement("option");
+    option.value = String(optionValue);
+    option.textContent = String(optionValue) + " day" + (optionValue === 1 ? "" : "s");
+    if (optionValue === selectedValue) option.selected = true;
+    regoDurationSelect.appendChild(option);
+  }
+}
+
+function resetRegistrationForm(payload) {
+  var data = payload || {};
+  if (regoOwnerInput) regoOwnerInput.value = String(safeGet(data, "owner_name", "") || "");
+  if (regoPlateInput) regoPlateInput.value = String(safeGet(data, "plate", "") || "");
+  if (regoModelInput) regoModelInput.value = String(safeGet(data, "vehicle_model", "") || "");
+  if (regoColourInput) regoColourInput.value = String(safeGet(data, "vehicle_colour", "") || "");
+  if (regoExpiryAtInput) regoExpiryAtInput.value = String(safeGet(data, "expiry_at", "") || "");
+  durationOptions = Array.isArray(data.duration_options) ? data.duration_options : [];
+  renderDurationSelect(Number(safeGet(data, "default_duration_days", 365)) || 365);
+  if (registrationSubmitBtn) registrationSubmitBtn.disabled = false;
+  showErrorNode(registrationFormError, "");
+}
+
+function openRegistrationForm(payload) {
+  if (emergencyOpen) closeEmergencyForm();
+  if (licenseOpen) closeLicenseForm();
+  resetRegistrationForm(payload || {});
+  registrationOpen = true;
+  setVisible(registrationOverlay, true);
+  setTimeout(function focusRegoPlate() {
+    if (regoPlateInput) regoPlateInput.focus();
+  }, 40);
+}
+
+function closeRegistrationForm() {
+  registrationOpen = false;
+  setVisible(registrationOverlay, false);
+}
+
+async function submitRegistrationForm() {
+  var ownerName = String(regoOwnerInput && regoOwnerInput.value || "").trim();
+  var plate = String(regoPlateInput && regoPlateInput.value || "").trim().toUpperCase();
+  var model = String(regoModelInput && regoModelInput.value || "").trim();
+  if (!ownerName || !plate || !model) {
+    showErrorNode(registrationFormError, "Owner, plate and model are required.");
+    return;
+  }
+  showErrorNode(registrationFormError, "");
+  if (registrationSubmitBtn) registrationSubmitBtn.disabled = true;
+
+  var durationDays = Number(regoDurationSelect && regoDurationSelect.value || 0);
+  if (!Number.isFinite(durationDays) || durationDays < 1) durationDays = 365;
+  var payload = {
+    owner_name: ownerName,
+    plate: plate,
+    vehicle_model: model,
+    vehicle_colour: String(regoColourInput && regoColourInput.value || "").trim(),
+    duration_days: Math.floor(durationDays),
+    expiry_at: String(regoExpiryAtInput && regoExpiryAtInput.value || "").trim(),
+  };
+
+  try {
+    var response = await postNui("cadBridgeRegistrationSubmit", payload);
+    var result = null;
+    try {
+      result = await response.json();
+    } catch (_err) {
+      result = null;
+    }
+    if (!response.ok || (result && result.ok === false)) {
+      showErrorNode(registrationFormError, "Unable to submit registration form.");
+      if (registrationSubmitBtn) registrationSubmitBtn.disabled = false;
+      return;
+    }
+    closeRegistrationForm();
+  } catch (_err2) {
+    showErrorNode(registrationFormError, "Unable to submit registration form.");
+    if (registrationSubmitBtn) registrationSubmitBtn.disabled = false;
+  }
+}
+
+function cancelRegistrationForm() {
+  if (!registrationOpen) return;
+  postNui("cadBridgeRegistrationCancel", {}).catch(function ignoreCancelError() {});
+  closeRegistrationForm();
+}
 
 window.addEventListener("message", function onMessage(event) {
   var message = event.data || {};
   if (message.action === "cadBridge000:open") {
-    lastOpenPayload = message.payload || {};
-    resetForm(lastOpenPayload);
-    setVisible(true);
+    openEmergencyForm(message.payload || {});
     postNui("cadBridge000Opened", {}).catch(function ignoreOpenedError() {});
     return;
   }
   if (message.action === "cadBridge000:close") {
-    setVisible(false);
+    closeEmergencyForm();
+    return;
+  }
+  if (message.action === "cadBridgeLicense:open") {
+    openLicenseForm(message.payload || {});
+    return;
+  }
+  if (message.action === "cadBridgeLicense:close") {
+    closeLicenseForm();
+    return;
+  }
+  if (message.action === "cadBridgeRegistration:open") {
+    openRegistrationForm(message.payload || {});
+    return;
+  }
+  if (message.action === "cadBridgeRegistration:close") {
+    closeRegistrationForm();
   }
 });
 
-// Emergency fallback: expose a global function to force open the UI
-window.force000Open = function(departments) {
-  var payload = {
-    departments: departments || [],
+window.force000Open = function force000Open(departmentsPayload) {
+  openEmergencyForm({
+    departments: departmentsPayload || [],
     max_title_length: 80,
-    max_details_length: 600
-  };
-  resetForm(payload);
-  setVisible(true);
+    max_details_length: 600,
+  });
 };
 
-if (hasUiElements()) {
-  form.addEventListener("submit", function onSubmit(event) {
-    event.preventDefault();
-    submitEmergencyForm();
-  });
+function initialize() {
+  setVisible(overlay, false);
+  setVisible(licenseOverlay, false);
+  setVisible(registrationOverlay, false);
 
-  closeBtn.addEventListener("click", cancelEmergencyForm);
-  cancelBtn.addEventListener("click", cancelEmergencyForm);
+  if (form) {
+    form.addEventListener("submit", function onEmergencySubmit(event) {
+      event.preventDefault();
+      submitEmergencyForm();
+    });
+  }
+  if (closeBtn) closeBtn.addEventListener("click", cancelEmergencyForm);
+  if (cancelBtn) cancelBtn.addEventListener("click", cancelEmergencyForm);
+  if (titleInput) {
+    titleInput.addEventListener("input", function onTitleInput() {
+      if (String(titleInput.value || "").trim()) {
+        showErrorNode(titleError, "");
+      }
+      updateCounters();
+    });
+  }
+  if (detailsInput) detailsInput.addEventListener("input", updateCounters);
+  updateCounters();
 
-  titleInput.addEventListener("input", function onTitleInput() {
-    if (String(titleInput.value || "").trim()) {
-      hideTitleError();
-    }
-    updateCounters();
-  });
-  detailsInput.addEventListener("input", updateCounters);
+  if (licenseForm) {
+    licenseForm.addEventListener("submit", function onLicenseSubmit(event) {
+      event.preventDefault();
+      submitLicenseForm();
+    });
+  }
+  if (licenseCloseBtn) licenseCloseBtn.addEventListener("click", cancelLicenseForm);
+  if (licenseCancelBtn) licenseCancelBtn.addEventListener("click", cancelLicenseForm);
+
+  if (registrationForm) {
+    registrationForm.addEventListener("submit", function onRegistrationSubmit(event) {
+      event.preventDefault();
+      submitRegistrationForm();
+    });
+  }
+  if (registrationCloseBtn) registrationCloseBtn.addEventListener("click", cancelRegistrationForm);
+  if (registrationCancelBtn) registrationCancelBtn.addEventListener("click", cancelRegistrationForm);
 
   window.addEventListener("keydown", function onKeyDown(event) {
-    if (!open) return;
+    if (!anyModalOpen()) return;
     if (event.key === "Escape") {
       event.preventDefault();
-      cancelEmergencyForm();
+      closeAll();
     }
   });
-}
-
-// Wait for DOM to be fully ready before signaling
-function initialize() {
-  if (!hasUiElements()) {
-    console.error("[CAD 000] CRITICAL: UI elements not found in DOM!");
-    console.error("[CAD 000] overlay:", !!overlay);
-    console.error("[CAD 000] form:", !!form);
-    console.error("[CAD 000] titleInput:", !!titleInput);
-    return;
-  }
-
-  // Ensure overlay starts hidden
-  overlay.classList.add("hidden");
-  overlay.style.display = "none";
 
   postNui("cadBridge000Ready", {})
-    .then(function() {})
-    .catch(function(err) {
-      console.error("[CAD 000] Ready signal failed:", err);
+    .then(function noop() {})
+    .catch(function onReadyError(err) {
+      console.error("[CAD UI] Ready signal failed:", err);
     });
 }
 
-// Initialize when DOM is ready
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initialize);
 } else {

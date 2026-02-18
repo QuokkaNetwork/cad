@@ -69,6 +69,13 @@ set cad_bridge_radio_ui_key "EQUALS"
 set cad_bridge_radio_ptt_key "LMENU"
 set cad_bridge_radio_max_frequency "500"
 
+# Driver license + registration commands/forms
+set cad_bridge_license_command "cadlicense"
+set cad_bridge_registration_command "cadrego"
+set cad_bridge_license_default_expiry_days "1095"
+set cad_bridge_registration_default_days "365"
+set cad_bridge_mugshot_resource "MugShotBase64"
+
 # =============================================================================
 # STEP 4: Ensure the resource starts
 # =============================================================================

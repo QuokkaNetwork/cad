@@ -7,6 +7,8 @@ const {
   Departments,
   FiveMPlayerLinks,
   FiveMFineJobs,
+  DriverLicenses,
+  VehicleRegistrations,
   VoiceCallSessions,
   VoiceChannels,
   VoiceParticipants,
@@ -23,6 +25,8 @@ const pendingRouteJobs = new Map();
 const pendingVoiceEvents = new Map();
 let nextVoiceEventId = 1;
 const VOICE_EVENT_RETRY_LIMIT = 5;
+const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
+const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
 const VOICE_HEARTBEAT_LOG_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.FIVEM_VOICE_LOG_INTERVAL_MS || '15000', 10) || 15_000
@@ -336,6 +340,51 @@ function shouldCreateVoiceSession(payload, sourceType) {
   if (sourceType === 'phone') return true;
   if (sourceType === 'command') return false;
   return looksLikePhoneOrigin(payload);
+}
+
+function normalizeStatus(value, allowedStatuses, fallback) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (allowedStatuses.has(normalized)) return normalized;
+  return fallback;
+}
+
+function normalizeDateOnly(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) return '';
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function addDaysDateOnly(daysFromNow) {
+  const days = Number(daysFromNow);
+  const safeDays = Number.isFinite(days) ? Math.max(1, Math.trunc(days)) : 1;
+  const now = new Date();
+  now.setUTCDate(now.getUTCDate() + safeDays);
+  return now.toISOString().slice(0, 10);
+}
+
+function isPastOrTodayDateOnly(value) {
+  const normalized = normalizeDateOnly(value);
+  if (!normalized) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return normalized <= today;
+}
+
+function normalizeTextList(value, { uppercase = false, maxLength = 64 } = {}) {
+  const source = Array.isArray(value) ? value : [];
+  const out = [];
+  const seen = new Set();
+  for (const entry of source) {
+    let text = String(entry || '').trim();
+    if (!text) continue;
+    if (uppercase) text = text.toUpperCase();
+    if (text.length > maxLength) text = text.slice(0, maxLength);
+    if (seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
 }
 
 function getDispatchVisibleDepartments() {
@@ -1057,6 +1106,172 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     source_type: sourceType,
     voice_session_created: voiceSessionCreated,
   });
+});
+
+// Create/update a driver license from in-game CAD bridge UI.
+router.post('/licenses', requireBridgeAuth, (req, res) => {
+  try {
+    const payload = req.body || {};
+    const ids = resolveLinkIdentifiers(payload.identifiers || []);
+    const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
+
+    let cadUser = resolveCadUserFromIdentifiers(ids);
+    if (!cadUser && ids.linkKey) {
+      const cachedUserId = liveLinkUserCache.get(ids.linkKey);
+      if (cachedUserId) cadUser = Users.findById(cachedUserId) || null;
+    }
+    if (!cadUser) {
+      const byName = resolveCadUserByName(playerName, buildOnDutyNameIndex(Units.list()));
+      if (byName) cadUser = byName;
+    }
+    if (cadUser) {
+      if (ids.steamId) liveLinkUserCache.set(ids.steamId, cadUser.id);
+      if (ids.discordId) liveLinkUserCache.set(`discord:${ids.discordId}`, cadUser.id);
+      if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
+    }
+
+    let citizenId = String(payload.citizenid || payload.citizen_id || '').trim();
+    if (!citizenId && ids.linkKey) {
+      citizenId = String(FiveMPlayerLinks.findBySteamId(ids.linkKey)?.citizen_id || '').trim();
+    }
+    if (!citizenId) {
+      return res.status(400).json({ error: 'citizenid is required to create a license' });
+    }
+
+    const fullName = String(payload.full_name || payload.character_name || payload.name || '').trim() || playerName;
+    const dateOfBirth = normalizeDateOnly(payload.date_of_birth || payload.dob || payload.birthdate || '');
+    const gender = String(payload.gender || '').trim();
+    const classesInput = Array.isArray(payload.license_classes)
+      ? payload.license_classes
+      : (Array.isArray(payload.classes) ? payload.classes : []);
+    const licenseClasses = normalizeTextList(classesInput, { uppercase: true, maxLength: 10 });
+    if (!fullName || !dateOfBirth || !gender || licenseClasses.length === 0) {
+      return res.status(400).json({
+        error: 'full_name, date_of_birth, gender and at least one license class are required',
+      });
+    }
+
+    const defaultExpiryDaysRaw = Number(Settings.get('driver_license_default_expiry_days') || 1095);
+    const defaultExpiryDays = Number.isFinite(defaultExpiryDaysRaw) ? Math.max(1, Math.trunc(defaultExpiryDaysRaw)) : 1095;
+    const expiryDaysRaw = Number(payload.expiry_days ?? payload.duration_days ?? defaultExpiryDays);
+    const expiryDays = Number.isFinite(expiryDaysRaw) ? Math.max(1, Math.trunc(expiryDaysRaw)) : defaultExpiryDays;
+    const expiryAt = normalizeDateOnly(payload.expiry_at || '') || addDaysDateOnly(expiryDays);
+    let status = normalizeStatus(payload.status, DRIVER_LICENSE_STATUSES, 'valid');
+    if (isPastOrTodayDateOnly(expiryAt)) {
+      status = 'expired';
+    }
+
+    const providedLicenseNumber = String(payload.license_number || '').trim();
+    const generatedLicenseNumber = `VIC-${citizenId.slice(-8).toUpperCase() || String(Date.now()).slice(-8)}`;
+    const licenseNumber = providedLicenseNumber || generatedLicenseNumber;
+    const conditions = normalizeTextList(payload.conditions, { uppercase: false, maxLength: 80 });
+    const mugshotUrl = String(payload.mugshot_url || '').trim();
+
+    const record = DriverLicenses.upsertByCitizenId({
+      citizen_id: citizenId,
+      full_name: fullName,
+      date_of_birth: dateOfBirth,
+      gender,
+      license_number: licenseNumber,
+      license_classes: licenseClasses,
+      conditions,
+      mugshot_url: mugshotUrl,
+      status,
+      expiry_at: expiryAt,
+      created_by_user_id: cadUser?.id || null,
+      updated_by_user_id: cadUser?.id || null,
+    });
+
+    audit(cadUser?.id || null, 'fivem_driver_license_upserted', {
+      citizen_id: citizenId,
+      status: record?.status || status,
+      expiry_at: record?.expiry_at || expiryAt,
+      classes: licenseClasses,
+      source: 'fivem',
+    });
+
+    res.status(201).json({ ok: true, license: record });
+  } catch (error) {
+    console.error('[FiveMBridge] Failed to upsert driver license:', error);
+    res.status(500).json({ error: 'Failed to create driver license record' });
+  }
+});
+
+// Create/update a vehicle registration from in-game CAD bridge UI.
+router.post('/registrations', requireBridgeAuth, (req, res) => {
+  try {
+    const payload = req.body || {};
+    const ids = resolveLinkIdentifiers(payload.identifiers || []);
+    const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
+
+    let cadUser = resolveCadUserFromIdentifiers(ids);
+    if (!cadUser && ids.linkKey) {
+      const cachedUserId = liveLinkUserCache.get(ids.linkKey);
+      if (cachedUserId) cadUser = Users.findById(cachedUserId) || null;
+    }
+    if (!cadUser) {
+      const byName = resolveCadUserByName(playerName, buildOnDutyNameIndex(Units.list()));
+      if (byName) cadUser = byName;
+    }
+    if (cadUser) {
+      if (ids.steamId) liveLinkUserCache.set(ids.steamId, cadUser.id);
+      if (ids.discordId) liveLinkUserCache.set(`discord:${ids.discordId}`, cadUser.id);
+      if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
+    }
+
+    let citizenId = String(payload.citizenid || payload.citizen_id || '').trim();
+    if (!citizenId && ids.linkKey) {
+      citizenId = String(FiveMPlayerLinks.findBySteamId(ids.linkKey)?.citizen_id || '').trim();
+    }
+
+    const plate = String(payload.plate || payload.license_plate || '').trim();
+    if (!plate) {
+      return res.status(400).json({ error: 'plate is required to create registration' });
+    }
+
+    const ownerName = String(payload.owner_name || payload.character_name || payload.full_name || playerName).trim();
+    const vehicleModel = String(payload.vehicle_model || payload.model || '').trim();
+    const vehicleColour = String(payload.vehicle_colour || payload.colour || payload.color || '').trim();
+    if (!vehicleModel) {
+      return res.status(400).json({ error: 'vehicle_model is required' });
+    }
+
+    const defaultDurationRaw = Number(Settings.get('vehicle_registration_default_days') || 365);
+    const defaultDuration = Number.isFinite(defaultDurationRaw) ? Math.max(1, Math.trunc(defaultDurationRaw)) : 365;
+    const durationRaw = Number(payload.duration_days ?? payload.expiry_days ?? defaultDuration);
+    const durationDays = Number.isFinite(durationRaw) ? Math.max(1, Math.trunc(durationRaw)) : defaultDuration;
+    const expiryAt = normalizeDateOnly(payload.expiry_at || '') || addDaysDateOnly(durationDays);
+    let status = normalizeStatus(payload.status, VEHICLE_REGISTRATION_STATUSES, 'valid');
+    if (isPastOrTodayDateOnly(expiryAt)) {
+      status = 'expired';
+    }
+
+    const record = VehicleRegistrations.upsertByPlate({
+      plate,
+      citizen_id: citizenId,
+      owner_name: ownerName,
+      vehicle_model: vehicleModel,
+      vehicle_colour: vehicleColour,
+      status,
+      expiry_at: expiryAt,
+      duration_days: durationDays,
+      created_by_user_id: cadUser?.id || null,
+      updated_by_user_id: cadUser?.id || null,
+    });
+
+    audit(cadUser?.id || null, 'fivem_vehicle_registration_upserted', {
+      plate: record?.plate || plate,
+      citizen_id: citizenId,
+      status: record?.status || status,
+      expiry_at: record?.expiry_at || expiryAt,
+      source: 'fivem',
+    });
+
+    res.status(201).json({ ok: true, registration: record });
+  } catch (error) {
+    console.error('[FiveMBridge] Failed to upsert vehicle registration:', error);
+    res.status(500).json({ error: 'Failed to create vehicle registration record' });
+  }
 });
 
 // FiveM resource polls pending route jobs to set in-game waypoints for assigned calls.

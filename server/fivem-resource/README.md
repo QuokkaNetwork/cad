@@ -43,6 +43,11 @@ Optional:
 - `set cad_bridge_radio_target_id 2`
 - `set cad_bridge_radio_rx_volume 0.35`
 - `set cad_bridge_radio_max_frequency 500`
+- `set cad_bridge_license_command cadlicense`
+- `set cad_bridge_registration_command cadrego`
+- `set cad_bridge_license_default_expiry_days 1095`
+- `set cad_bridge_registration_default_days 365`
+- `set cad_bridge_mugshot_resource MugShotBase64`
 
 ## CAD custom radio (built-in mm-style UI)
 - `cad-radio` runs radio membership/routing inside `cad_bridge`; standalone `mm_radio` is not required.
@@ -85,6 +90,16 @@ Command adapter execution now waits for the target character to be online.
 - Use `/000 help` to show usage in chat.
 - The bridge sends a high-priority CAD call with current street/postal location (when available).
 - CAD creates the call in an active dispatch-visible department so units can self-attach.
+
+## Driver license + registration commands
+- Use `/cadlicense` (configurable with `cad_bridge_license_command`) to open the in-game driver license form.
+- Use `/cadrego` (configurable with `cad_bridge_registration_command`) to open the vehicle registration form.
+- Driver license captures name, DOB, gender, classes, optional conditions/mugshot URL, and expiry.
+- Vehicle registration captures owner name, plate, model, colour, duration, and expiry.
+- Records are stored in CAD with status workflows:
+  `Driver license`: `valid`, `suspended`, `disqualified`, `expired`
+  `Registration`: `valid`, `suspended`, `revoked`, `expired`
+- CAD auto-marks licenses/registrations as `expired` when expiry date is reached.
 
 ## NPWD 000 phone hook (no NPWD edits)
 - `cad_bridge` now registers NPWD emergency handlers directly via NPWD exports (`onCall`).

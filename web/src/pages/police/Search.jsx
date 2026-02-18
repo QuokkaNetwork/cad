@@ -42,6 +42,18 @@ function normalizeLookupFields(lookupFields) {
     });
 }
 
+const LICENSE_STATUS_OPTIONS = ['valid', 'suspended', 'disqualified', 'expired'];
+const REGISTRATION_STATUS_OPTIONS = ['valid', 'suspended', 'revoked', 'expired'];
+
+function formatStatusLabel(value) {
+  return String(value || '')
+    .trim()
+    .split('_')
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function toBooleanText(value) {
   const text = String(value || '').trim().toLowerCase();
   if (['true', '1', 'yes', 'y', 'on'].includes(text)) return 'Yes';
@@ -140,6 +152,10 @@ export default function Search() {
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [personVehicles, setPersonVehicles] = useState([]);
   const [vehicleOwner, setVehicleOwner] = useState(null);
+  const [licenseStatusDraft, setLicenseStatusDraft] = useState('valid');
+  const [registrationStatusDraft, setRegistrationStatusDraft] = useState('valid');
+  const [licenseStatusSaving, setLicenseStatusSaving] = useState(false);
+  const [registrationStatusSaving, setRegistrationStatusSaving] = useState(false);
 
   const personQuery = `${String(personFirstName || '').trim()} ${String(personLastName || '').trim()}`.trim();
   const activeQuery = searchType === 'person' ? personQuery : String(vehicleQuery || '').trim();
@@ -171,6 +187,7 @@ export default function Search() {
     setSelectedVehicle(null);
     setSelectedPerson(person);
     setPersonVehicles([]);
+    setLicenseStatusDraft('valid');
     try {
       const vehiclePromise = isParamedics
         ? Promise.resolve([])
@@ -179,13 +196,15 @@ export default function Search() {
         api.get(`/api/search/persons/${person.citizenid}`),
         vehiclePromise,
       ]);
+      const resolvedPerson = personDetails && typeof personDetails === 'object' ? personDetails : person;
       setSelectedPerson((current) => {
         if (!current || String(current.citizenid || '') !== String(person.citizenid || '')) {
           return current;
         }
-        return personDetails && typeof personDetails === 'object' ? personDetails : person;
+        return resolvedPerson;
       });
       setPersonVehicles(Array.isArray(vehicles) ? vehicles : []);
+      setLicenseStatusDraft(String(resolvedPerson?.cad_driver_license?.status || 'valid'));
     } catch (err) {
       alert('Failed to load person details:\n' + formatErr(err));
     }
@@ -196,12 +215,15 @@ export default function Search() {
     setPersonVehicles([]);
     setVehicleOwner(null);
     setSelectedVehicle(vehicle);
+    setRegistrationStatusDraft('valid');
 
     try {
       const plate = String(vehicle?.plate || '').trim();
       if (!plate) return;
       const details = await api.get(`/api/search/vehicles/${encodeURIComponent(plate)}`);
-      setSelectedVehicle(details && typeof details === 'object' ? details : vehicle);
+      const resolvedVehicle = details && typeof details === 'object' ? details : vehicle;
+      setSelectedVehicle(resolvedVehicle);
+      setRegistrationStatusDraft(String(resolvedVehicle?.cad_registration?.status || 'valid'));
 
       const ownerCitizenId = String((details && details.owner) || vehicle?.owner || '').trim();
       if (ownerCitizenId) {
@@ -214,6 +236,47 @@ export default function Search() {
       }
     } catch (err) {
       alert('Failed to load vehicle details:\n' + formatErr(err));
+    }
+  }
+
+  async function savePersonLicenseStatus() {
+    if (!selectedPerson?.citizenid || !selectedPerson?.cad_driver_license) return;
+    setLicenseStatusSaving(true);
+    try {
+      const updated = await api.patch(
+        `/api/search/persons/${encodeURIComponent(selectedPerson.citizenid)}/license`,
+        { status: licenseStatusDraft }
+      );
+      setSelectedPerson((current) => {
+        if (!current || String(current.citizenid || '') !== String(selectedPerson.citizenid || '')) {
+          return current;
+        }
+        return { ...current, cad_driver_license: updated };
+      });
+    } catch (err) {
+      alert('Failed to update license status:\n' + formatErr(err));
+    } finally {
+      setLicenseStatusSaving(false);
+    }
+  }
+
+  async function saveVehicleRegistrationStatus() {
+    const plate = String(selectedVehicle?.plate || '').trim();
+    if (!plate || !selectedVehicle?.cad_registration) return;
+    setRegistrationStatusSaving(true);
+    try {
+      const updated = await api.patch(
+        `/api/search/vehicles/${encodeURIComponent(plate)}/registration`,
+        { status: registrationStatusDraft }
+      );
+      setSelectedVehicle((current) => {
+        if (!current || String(current.plate || '').trim() !== plate) return current;
+        return { ...current, cad_registration: updated };
+      });
+    } catch (err) {
+      alert('Failed to update registration status:\n' + formatErr(err));
+    } finally {
+      setRegistrationStatusSaving(false);
     }
   }
 
@@ -324,6 +387,7 @@ export default function Search() {
           setSelectedPerson(null);
           setPersonVehicles([]);
           setVehicleOwner(null);
+          setLicenseStatusDraft('valid');
         }}
         title={selectedPerson ? `${selectedPerson.firstname} ${selectedPerson.lastname}` : ''}
         wide
@@ -334,6 +398,45 @@ export default function Search() {
               title="Character Information"
               fields={selectedPerson.lookup_fields}
             />
+
+            <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
+              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                Driver Licence (CAD)
+              </h4>
+              {selectedPerson.cad_driver_license ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <p>Licence No: <span className="text-cad-ink">{selectedPerson.cad_driver_license.license_number || '-'}</span></p>
+                    <p>Expiry: <span className="text-cad-ink">{selectedPerson.cad_driver_license.expiry_at || '-'}</span></p>
+                    <p>DOB: <span className="text-cad-ink">{selectedPerson.cad_driver_license.date_of_birth || '-'}</span></p>
+                    <p>Classes: <span className="text-cad-ink">{Array.isArray(selectedPerson.cad_driver_license.license_classes) && selectedPerson.cad_driver_license.license_classes.length > 0 ? selectedPerson.cad_driver_license.license_classes.join(', ') : '-'}</span></p>
+                  </div>
+                  <div className="flex flex-col md:flex-row gap-2 md:items-center">
+                    <select
+                      value={licenseStatusDraft}
+                      onChange={(e) => setLicenseStatusDraft(e.target.value)}
+                      className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                    >
+                      {LICENSE_STATUS_OPTIONS.map((status) => (
+                        <option key={status} value={status}>
+                          {formatStatusLabel(status)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={savePersonLicenseStatus}
+                      disabled={licenseStatusSaving}
+                      className="px-3 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      {licenseStatusSaving ? 'Saving...' : 'Update Licence Status'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-cad-muted">No CAD driver licence record found.</p>
+              )}
+            </div>
 
             {!isParamedics && (
               <details className="bg-cad-surface border border-cad-border rounded-lg">
@@ -350,6 +453,11 @@ export default function Search() {
                             <span>{v.vehicle}</span>
                             <span className="text-cad-muted">{v.garage}</span>
                           </div>
+                          {v.cad_registration && (
+                            <div className="mt-1 text-xs text-cad-muted">
+                              CAD rego: {formatStatusLabel(v.cad_registration.status)} | Expiry: {v.cad_registration.expiry_at || '-'}
+                            </div>
+                          )}
                           {v.custom_fields && Object.keys(v.custom_fields).length > 0 && (
                             <div className="mt-1 text-xs text-cad-muted">
                               {Object.entries(v.custom_fields).map(([key, value]) => (
@@ -408,6 +516,7 @@ export default function Search() {
         onClose={() => {
           setSelectedVehicle(null);
           setVehicleOwner(null);
+          setRegistrationStatusDraft('valid');
         }}
         title={selectedVehicle ? `Vehicle ${selectedVehicle.plate || ''}` : ''}
         wide
@@ -418,6 +527,45 @@ export default function Search() {
               title="Vehicle Information"
               fields={selectedVehicle.lookup_fields}
             />
+
+            <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
+              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                Registration (CAD)
+              </h4>
+              {selectedVehicle.cad_registration ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <p>Owner: <span className="text-cad-ink">{selectedVehicle.cad_registration.owner_name || '-'}</span></p>
+                    <p>Expiry: <span className="text-cad-ink">{selectedVehicle.cad_registration.expiry_at || '-'}</span></p>
+                    <p>Duration: <span className="text-cad-ink">{selectedVehicle.cad_registration.duration_days || '-'} day(s)</span></p>
+                    <p>Status: <span className="text-cad-ink">{formatStatusLabel(selectedVehicle.cad_registration.status)}</span></p>
+                  </div>
+                  <div className="flex flex-col md:flex-row gap-2 md:items-center">
+                    <select
+                      value={registrationStatusDraft}
+                      onChange={(e) => setRegistrationStatusDraft(e.target.value)}
+                      className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                    >
+                      {REGISTRATION_STATUS_OPTIONS.map((status) => (
+                        <option key={status} value={status}>
+                          {formatStatusLabel(status)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={saveVehicleRegistrationStatus}
+                      disabled={registrationStatusSaving}
+                      className="px-3 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      {registrationStatusSaving ? 'Saving...' : 'Update Registration Status'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-cad-muted">No CAD registration record found.</p>
+              )}
+            </div>
 
             {vehicleOwner && (
               <div className="bg-cad-surface rounded px-3 py-2">
