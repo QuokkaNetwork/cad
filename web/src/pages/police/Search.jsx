@@ -75,6 +75,17 @@ function MugshotPreview({ url }) {
   );
 }
 
+function PersonDetailField({ label, value, mono = false }) {
+  return (
+    <div className="rounded-lg border border-cad-border/60 bg-cad-card/70 px-3 py-2">
+      <p className="text-[11px] uppercase tracking-wider text-cad-muted">{label}</p>
+      <p className={`mt-1 text-sm text-cad-ink ${mono ? 'font-mono' : ''}`}>
+        {String(value || '-')}
+      </p>
+    </div>
+  );
+}
+
 export default function Search() {
   const { activeDepartment } = useDepartment();
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -326,26 +337,28 @@ export default function Search() {
       >
         {selectedPerson && (
           <div className="space-y-4">
-            <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3 text-sm">
-              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                Person
-              </h4>
-                <div className="mb-2 flex items-center justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setShowRecordsModal(true)}
-                    className="px-3 py-1.5 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-xs font-medium transition-colors"
-                  >
-                    Add / Manage Records
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <p>Citizen ID: <span className="text-cad-ink">{selectedPerson.citizenid || '-'}</span></p>
-                  <p>Name: <span className="text-cad-ink">{resolvePersonName(selectedPerson)}</span></p>
-                  <p>DOB: <span className="text-cad-ink">{formatDateAU(selectedPerson.cad_driver_license?.date_of_birth || selectedPerson.birthdate || '', '-')}</span></p>
-                  <p>Gender: <span className="text-cad-ink">{formatGenderLabel(selectedPerson.cad_driver_license?.gender || selectedPerson.gender || '')}</span></p>
-                </div>
+            <div className="bg-cad-surface border border-cad-border rounded-lg px-4 py-4 text-sm">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">
+                  Person Details
+                </h4>
+                <span className="px-2 py-1 rounded border border-cad-border bg-cad-card text-xs text-cad-muted">
+                  Profile
+                </span>
               </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <PersonDetailField label="Name" value={resolvePersonName(selectedPerson)} />
+                <PersonDetailField label="Citizen ID" value={selectedPerson.citizenid || '-'} mono />
+                <PersonDetailField
+                  label="Date of Birth"
+                  value={formatDateAU(selectedPerson.cad_driver_license?.date_of_birth || selectedPerson.birthdate || '', '-')}
+                />
+                <PersonDetailField
+                  label="Gender"
+                  value={formatGenderLabel(selectedPerson.cad_driver_license?.gender || selectedPerson.gender || '')}
+                />
+              </div>
+            </div>
 
             <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
@@ -419,6 +432,16 @@ export default function Search() {
                 )}
               </div>
             )}
+
+            <div className="pt-1 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowRecordsModal(true)}
+                className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors"
+              >
+                Add / Manage Records
+              </button>
+            </div>
           </div>
         )}
       </Modal>
