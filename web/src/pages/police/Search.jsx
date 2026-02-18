@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/client';
 import SearchResults from '../../components/SearchResults';
 import Modal from '../../components/Modal';
+import PatientAnalysisPanel from '../../components/PatientAnalysisPanel';
 import Records from './Records';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { useDepartment } from '../../context/DepartmentContext';
@@ -93,6 +94,7 @@ export default function Search() {
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
 
   const [searchType, setSearchType] = useState('person');
+  const [personLookupQuery, setPersonLookupQuery] = useState('');
   const [personFirstName, setPersonFirstName] = useState('');
   const [personLastName, setPersonLastName] = useState('');
   const [vehicleQuery, setVehicleQuery] = useState('');
@@ -109,7 +111,11 @@ export default function Search() {
   const [licenseStatusSaving, setLicenseStatusSaving] = useState(false);
   const [registrationStatusSaving, setRegistrationStatusSaving] = useState(false);
 
-  const personQuery = `${String(personFirstName || '').trim()} ${String(personLastName || '').trim()}`.trim();
+  const personQuery = [
+    String(personLookupQuery || '').trim(),
+    String(personFirstName || '').trim(),
+    String(personLastName || '').trim(),
+  ].filter(Boolean).join(' ').trim();
   const activeQuery = searchType === 'person' ? personQuery : String(vehicleQuery || '').trim();
   const canSearch = activeQuery.length >= 2;
 
@@ -230,7 +236,7 @@ export default function Search() {
   return (
     <div>
       <h2 className="text-xl font-bold mb-6">
-        {isLaw ? 'Licence & Registration Search' : isParamedics ? 'Patient Lookup' : 'Incident Lookup'}
+        {isLaw ? 'Licence & Registration Search' : isParamedics ? 'Patient Analysis' : 'Incident Lookup'}
       </h2>
 
       <div className="bg-cad-card border border-cad-border rounded-2xl p-4 mb-6">
@@ -259,7 +265,17 @@ export default function Search() {
           </div>
 
           {searchType === 'person' ? (
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
+            <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr_1fr_auto] gap-3 items-end">
+              <div>
+                <label className="block text-xs text-cad-muted mb-1">General Lookup</label>
+                <input
+                  type="text"
+                  value={personLookupQuery}
+                  onChange={(e) => setPersonLookupQuery(e.target.value)}
+                  placeholder="Name, citizen ID, licence no, or plate"
+                  className="w-full bg-cad-surface border border-cad-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                />
+              </div>
               <div>
                 <label className="block text-xs text-cad-muted mb-1">First Name</label>
                 <input
@@ -336,7 +352,13 @@ export default function Search() {
         wide
       >
         {selectedPerson && (
-          <div className="space-y-4">
+          isParamedics ? (
+            <PatientAnalysisPanel
+              person={selectedPerson}
+              activeDepartmentId={activeDepartment?.id || null}
+            />
+          ) : (
+            <div className="space-y-4">
             {(selectedPerson.has_warrant || selectedPerson.has_bolo) ? (
               <div className="flex flex-wrap gap-2">
                 {selectedPerson.has_warrant ? (
@@ -457,7 +479,8 @@ export default function Search() {
                 Add / Manage Records
               </button>
             </div>
-          </div>
+            </div>
+          )
         )}
       </Modal>
 
@@ -529,7 +552,7 @@ export default function Search() {
       </Modal>
 
       <Modal
-        open={showRecordsModal && !!recordsEmbeddedPerson}
+        open={!isParamedics && showRecordsModal && !!recordsEmbeddedPerson}
         onClose={() => setShowRecordsModal(false)}
         title={selectedPerson ? `Records - ${resolvePersonName(selectedPerson)}` : 'Records'}
         wide

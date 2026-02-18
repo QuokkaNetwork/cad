@@ -21,6 +21,9 @@ export default function Voice() {
   const [isConnected, setIsConnected] = useState(false);
   const [currentChannel, setCurrentChannel] = useState(null);
   const [isPTTActive, setIsPTTActive] = useState(false);
+  const [voiceMode, setVoiceMode] = useState('legacy');
+  const [bridgeIntentionallyDisabled, setBridgeIntentionallyDisabled] = useState(false);
+  const [bridgeStatusLoaded, setBridgeStatusLoaded] = useState(false);
   const [error, setError] = useState(null);
   const [selectedCall, setSelectedCall] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -29,6 +32,8 @@ export default function Voice() {
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
+  const isSonoranMode = voiceMode === 'sonoran' || bridgeIntentionallyDisabled;
+  const canUseLegacyBridge = isDispatch && bridgeStatusLoaded && !isSonoranMode;
 
   // Early return if voiceClient failed to initialize
   if (!voiceClient) {
@@ -68,6 +73,32 @@ export default function Voice() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const fetchBridgeStatus = useCallback(async () => {
+    if (!deptId || !isDispatch) return;
+    try {
+      const status = await api.get('/api/voice/bridge/status');
+      const mode = String(status?.mode || 'legacy').toLowerCase();
+      const intentionallyDisabled = !!status?.intentionally_disabled;
+
+      setVoiceMode(mode);
+      setBridgeIntentionallyDisabled(intentionallyDisabled);
+
+      if (!intentionallyDisabled && mode !== 'sonoran') {
+        setIsConnected(!!status?.available);
+      } else {
+        setIsConnected(false);
+      }
+    } catch (err) {
+      console.error('Failed to load voice bridge status:', err);
+    } finally {
+      setBridgeStatusLoaded(true);
+    }
+  }, [deptId, isDispatch]);
+
+  useEffect(() => {
+    fetchBridgeStatus();
+  }, [fetchBridgeStatus]);
+
   // Auto-dismiss errors after 5 seconds
   useEffect(() => {
     if (error) {
@@ -89,7 +120,7 @@ export default function Voice() {
 
   // Initialize voice client
   useEffect(() => {
-    if (!isDispatch || !voiceClient) return;
+    if (!canUseLegacyBridge || !voiceClient) return;
 
     try {
       // Set up voice client callbacks
@@ -130,11 +161,23 @@ export default function Voice() {
       console.error('Error initializing voice client:', err);
       setError('Failed to initialize voice client.');
     }
-  }, [isDispatch, voiceClient]);
+  }, [canUseLegacyBridge, voiceClient]);
+
+  useEffect(() => {
+    if (!isSonoranMode || !voiceClient) return;
+    try {
+      voiceClient.disconnect();
+    } catch (err) {
+      console.error('Error disconnecting voice client for sonoran mode:', err);
+    }
+    setIsConnected(false);
+    setCurrentChannel(null);
+    setIsPTTActive(false);
+  }, [isSonoranMode, voiceClient]);
 
   // PTT keyboard shortcut
   useEffect(() => {
-    if (!currentChannel || !voiceClient) return;
+    if (!currentChannel || !voiceClient || isSonoranMode) return;
 
     const handleKeyDown = (e) => {
       // Space bar for PTT
@@ -170,7 +213,7 @@ export default function Voice() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [currentChannel, voiceClient]);
+  }, [currentChannel, isSonoranMode, voiceClient]);
 
   // Join channel
   async function joinChannel(channelId, channelNumber) {
@@ -180,8 +223,11 @@ export default function Voice() {
     }
     try {
       await api.post(`/api/voice/channels/${channelId}/join`);
-      if (typeof voiceClient.joinChannel === 'function') {
+      if (canUseLegacyBridge && typeof voiceClient.joinChannel === 'function') {
         await voiceClient.joinChannel(channelNumber);
+      } else {
+        setCurrentChannel(channelNumber);
+        setIsPTTActive(false);
       }
       fetchData();
     } catch (err) {
@@ -198,8 +244,11 @@ export default function Voice() {
     }
     try {
       await api.post(`/api/voice/channels/${channelId}/leave`);
-      if (typeof voiceClient.leaveChannel === 'function') {
+      if (canUseLegacyBridge && typeof voiceClient.leaveChannel === 'function') {
         await voiceClient.leaveChannel();
+      } else {
+        setCurrentChannel(null);
+        setIsPTTActive(false);
       }
       fetchData();
     } catch (err) {
@@ -217,8 +266,11 @@ export default function Voice() {
     try {
       const result = await api.post(`/api/voice/calls/${callId}/accept`);
       // Join call channel automatically
-      if (result?.call_channel_number && typeof voiceClient.joinChannel === 'function') {
+      if (result?.call_channel_number && canUseLegacyBridge && typeof voiceClient.joinChannel === 'function') {
         await voiceClient.joinChannel(result.call_channel_number);
+      } else if (result?.call_channel_number) {
+        setCurrentChannel(result.call_channel_number);
+        setIsPTTActive(false);
       }
       setSelectedCall(null);
       fetchData();
@@ -248,8 +300,11 @@ export default function Voice() {
     }
     try {
       await api.post(`/api/voice/calls/${callId}/end`);
-      if (typeof voiceClient.leaveChannel === 'function') {
+      if (canUseLegacyBridge && typeof voiceClient.leaveChannel === 'function') {
         await voiceClient.leaveChannel();
+      } else {
+        setCurrentChannel(null);
+        setIsPTTActive(false);
       }
       fetchData();
     } catch (err) {
@@ -288,9 +343,11 @@ export default function Voice() {
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold">Voice Radio</h2>
           <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-cad-card border border-cad-border">
-            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+            <div className={`w-2 h-2 rounded-full ${isSonoranMode ? 'bg-blue-500' : (isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500')}`} />
             <span className="text-xs font-medium">
-              {isConnected ? 'Voice Bridge Connected' : 'Voice Bridge Disconnected'}
+              {isSonoranMode
+                ? 'External Radio Mode'
+                : (isConnected ? 'Voice Bridge Connected' : 'Voice Bridge Disconnected')}
             </span>
           </div>
         </div>
@@ -317,7 +374,15 @@ export default function Voice() {
       )}
 
       {/* Connection help banner */}
-      {!isConnected && !error && (
+      {isSonoranMode && !error && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-200 text-sm">
+          <p className="font-medium mb-1">Sonoran behavior mode enabled</p>
+          <p className="text-xs">
+            CAD channel membership is active, but live radio audio is expected to be handled by your in-game radio stack.
+          </p>
+        </div>
+      )}
+      {!isSonoranMode && !isConnected && !error && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm">
           <p className="font-medium mb-1">Voice bridge not connected</p>
           <p className="text-xs">
@@ -398,7 +463,7 @@ export default function Voice() {
                     ) : (
                       <button
                         onClick={() => joinChannel(channel.id, channel.channel_number)}
-                        disabled={!isConnected}
+                        disabled={!isConnected && !isSonoranMode}
                         className="px-3 py-1 text-xs bg-cad-accent/10 text-cad-accent border border-cad-accent/30 rounded hover:bg-cad-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {currentChannel ? 'Switch' : 'Join'}
@@ -569,7 +634,7 @@ export default function Voice() {
           </div>
 
           {/* PTT Instructions */}
-          {currentChannel && (
+          {currentChannel && !isSonoranMode && (
             <div className="px-3 py-2 rounded-lg bg-cad-card border border-cad-border">
               <p className="text-xs text-cad-muted mb-1">Push-to-Talk Controls:</p>
               <div className="flex items-center gap-2">

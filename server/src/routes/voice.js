@@ -1,4 +1,5 @@
 const express = require('express');
+const config = require('../config');
 const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   VoiceChannels,
@@ -18,16 +19,29 @@ const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 
 // Get voice bridge status
 router.get('/bridge/status', requireAuth, (req, res) => {
+  const behavior = String(config?.radio?.behavior || 'legacy');
+  if (behavior === 'sonoran') {
+    return res.json({
+      mode: 'sonoran',
+      available: false,
+      intentionally_disabled: true,
+      message: 'Sonoran behavior mode enabled; legacy CAD Mumble bridge is bypassed.',
+      signaling: null,
+    });
+  }
+
   try {
     const voiceBridge = getVoiceBridge();
     const status = voiceBridge.getStatus();
     const signalingStatus = req.app?.locals?.voiceSignalingServer?.getStatus?.() || null;
     res.json({
+      mode: behavior,
       ...status,
       signaling: signalingStatus,
     });
   } catch (error) {
     res.json({
+      mode: behavior,
       available: false,
       error: 'Voice bridge not initialized',
     });
@@ -198,9 +212,12 @@ router.post('/channels/:id/join', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Dispatch access required' });
   }
 
-  const bridgeStatus = getVoiceBridge().getStatus();
-  if (!bridgeStatus.available) {
-    return res.status(503).json({ error: 'Voice bridge is not available on this server' });
+  const behavior = String(config?.radio?.behavior || 'legacy');
+  if (behavior !== 'sonoran') {
+    const bridgeStatus = getVoiceBridge().getStatus();
+    if (!bridgeStatus.available) {
+      return res.status(503).json({ error: 'Voice bridge is not available on this server' });
+    }
   }
 
   const channelId = parseInt(req.params.id, 10);

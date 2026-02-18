@@ -144,6 +144,7 @@ app.use('/api/bolos', require('./routes/bolos'));
 app.use('/api/warrants', require('./routes/warrants'));
 app.use('/api/search', require('./routes/search'));
 app.use('/api/records', require('./routes/records'));
+app.use('/api/medical', require('./routes/medical'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/voice', require('./routes/voice'));
@@ -301,11 +302,18 @@ bridgeHttpServer.on('error', (err) => {
 
 // Async startup — start Murmur first so the voice bridge can connect to it
 (async () => {
+  const radioBehavior = String(config?.radio?.behavior || 'legacy');
+  const sonoranBehavior = radioBehavior === 'sonoran';
+
   // Start managed Murmur server if MUMBLE_MANAGE=true in .env
-  await startMumbleServer();
+  if (!sonoranBehavior) {
+    await startMumbleServer();
+  } else {
+    console.warn('[Radio] Sonoran behavior mode active: skipping managed Mumble startup');
+  }
 
   // Initialize Voice Bridge (optional - only if dependencies are installed)
-  if (parseBool(process.env.VOICE_BRIDGE_ENABLED, true)) {
+  if (!sonoranBehavior && parseBool(process.env.VOICE_BRIDGE_ENABLED, true)) {
     try {
       const { getVoiceBridge } = require('./services/voiceBridge');
       const VoiceSignalingServer = require('./services/voiceSignaling');
@@ -333,6 +341,8 @@ bridgeHttpServer.on('error', (err) => {
       console.warn('[VoiceBridge] Voice bridge not available:', error.message);
       console.warn('[VoiceBridge] CAD will run without voice bridge support');
     }
+  } else if (sonoranBehavior) {
+    console.warn('[VoiceBridge] Disabled by RADIO_BEHAVIOR=sonoran (external radio behavior mode)');
   } else {
     console.warn('[VoiceBridge] Disabled by VOICE_BRIDGE_ENABLED=false');
   }
@@ -341,14 +351,22 @@ bridgeHttpServer.on('error', (err) => {
   httpServer.listen(config.port, () => {
     console.log(`CAD server running on port ${config.port}`);
     console.log(`Environment: ${config.nodeEnv}`);
-    console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
+    console.log(`Radio behavior: ${radioBehavior}`);
+    if (!sonoranBehavior) {
+      console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
+    } else {
+      console.log('[VoiceBridge] WebSocket signaling disabled in sonoran behavior mode');
+    }
 
     // Print voice/Mumble status summary
     const murmur = getMurmurStatus();
     const voiceServerLabel = murmur.isRustMumble ? 'rust-mumble' : 'Murmur    ';
     console.log('');
     console.log('=== Voice Status ===');
-    if (murmur.managed) {
+    if (sonoranBehavior) {
+      console.log('[RadioMode]  Sonoran behavior active (external radio stack expected)');
+      console.log('[VoiceBridge] Legacy CAD<->Mumble bridge is intentionally disabled');
+    } else if (murmur.managed) {
       if (murmur.running) {
         console.log(`[${voiceServerLabel}] ✓ Running  — ${murmur.host}:${murmur.port}`);
         console.log(`[${voiceServerLabel}] Binary: ${murmur.binary}`);
@@ -363,14 +381,18 @@ bridgeHttpServer.on('error', (err) => {
     }
     const fivemPath = String(process.env.FIVEM_SERVER_PATH || '').trim();
     const publicIp  = String(process.env.MUMBLE_PUBLIC_IP  || '').trim();
-    if (fivemPath) {
-      console.log(`[VoiceCfg]    voice.cfg auto-deploy → ${fivemPath}`);
-      if (!publicIp) console.log(`[VoiceCfg]    ⚠️  Set MUMBLE_PUBLIC_IP in .env so players can connect`);
+    if (sonoranBehavior) {
+      console.log('[VoiceCfg]    Skipped (RADIO_BEHAVIOR=sonoran)');
+    } else if (fivemPath) {
+      console.log(`[VoiceCfg]    voice.cfg auto-deploy -> ${fivemPath}`);
+      if (!publicIp) console.log('[VoiceCfg]    WARNING: Set MUMBLE_PUBLIC_IP in .env so players can connect');
     } else {
       console.log('[VoiceCfg]    Set FIVEM_SERVER_PATH in .env for automatic voice.cfg deploy');
     }
-    console.log('[FiveMVoice]  Players connect via voice_externalAddress in voice.cfg');
-    console.log(`[FiveMVoice]  External Mumble: ${publicIp || process.env.MUMBLE_HOST || '127.0.0.1'}:${process.env.MUMBLE_PORT || '64738'}`);
+    if (!sonoranBehavior) {
+      console.log('[FiveMVoice]  Players connect via voice_externalAddress in voice.cfg');
+      console.log(`[FiveMVoice]  External Mumble: ${publicIp || process.env.MUMBLE_HOST || '127.0.0.1'}:${process.env.MUMBLE_PORT || '64738'}`);
+    }
     console.log('====================');
     console.log('');
   });

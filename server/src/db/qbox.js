@@ -752,22 +752,40 @@ async function searchCharacters(term) {
     const citizenIdColSql = escapeIdentifier(citizenIdCol, 'citizen ID column');
     const charInfoColSql = escapeIdentifier(charInfoCol, 'charinfo column');
     const personMappings = normalizeCustomFields(parseJsonSetting('qbox_person_custom_fields', []), ['column', 'charinfo', 'row']);
-    const normalizedTerm = `%${String(term).trim().toLowerCase()}%`;
+    const raw = String(term || '').trim();
+    if (!raw) return [];
+
+    const tokens = Array.from(new Set(raw.toLowerCase().split(/\s+/).filter(Boolean))).slice(0, 6);
+    if (tokens.length === 0) return [];
+
+    const tokenClauses = [];
+    const params = [];
+
+    for (const token of tokens) {
+      const tokenLike = `%${token}%`;
+      const rawLike = `%${token}%`;
+
+      tokenClauses.push(`(
+        LOWER(${citizenIdColSql}) LIKE ?
+        OR LOWER(CAST(${charInfoColSql} AS CHAR)) LIKE ?
+        OR LOWER(CASE WHEN JSON_VALID(${charInfoColSql}) THEN JSON_UNQUOTE(JSON_EXTRACT(${charInfoColSql}, '$.firstname')) ELSE '' END) LIKE ?
+        OR LOWER(CASE WHEN JSON_VALID(${charInfoColSql}) THEN JSON_UNQUOTE(JSON_EXTRACT(${charInfoColSql}, '$.lastname')) ELSE '' END) LIKE ?
+        OR LOWER(CASE WHEN JSON_VALID(${charInfoColSql}) THEN CONCAT(
+             COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${charInfoColSql}, '$.firstname')), ''),
+             ' ',
+             COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${charInfoColSql}, '$.lastname')), '')
+           ) ELSE '' END) LIKE ?
+      )`);
+
+      params.push(rawLike, rawLike, tokenLike, tokenLike, tokenLike);
+    }
 
     const [rows] = await p.query(
       `SELECT *
        FROM ${tableNameSql}
-       WHERE ${citizenIdColSql} LIKE ?
-         OR CAST(${charInfoColSql} AS CHAR) LIKE ?
-         OR LOWER(CASE WHEN JSON_VALID(${charInfoColSql}) THEN JSON_UNQUOTE(JSON_EXTRACT(${charInfoColSql}, '$.firstname')) ELSE '' END) LIKE ?
-         OR LOWER(CASE WHEN JSON_VALID(${charInfoColSql}) THEN JSON_UNQUOTE(JSON_EXTRACT(${charInfoColSql}, '$.lastname')) ELSE '' END) LIKE ?
-         OR LOWER(CASE WHEN JSON_VALID(${charInfoColSql}) THEN CONCAT(
-              COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${charInfoColSql}, '$.firstname')), ''),
-              ' ',
-              COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${charInfoColSql}, '$.lastname')), '')
-            ) ELSE '' END) LIKE ?
+       WHERE ${tokenClauses.join(' AND ')}
        LIMIT 25`,
-      [`%${term}%`, `%${term}%`, normalizedTerm, normalizedTerm, normalizedTerm]
+      params
     );
 
     return Promise.all(rows.map(async (row) => {

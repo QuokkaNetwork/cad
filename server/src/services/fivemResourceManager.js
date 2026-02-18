@@ -15,6 +15,13 @@ const RESOURCE_NAME = 'cad_bridge';
  */
 const VOICE_CFG_TEMPLATE = path.resolve(__dirname, '../../../voice.cfg');
 
+function isSonoranBehaviorMode() {
+  const behavior = String(process.env.RADIO_BEHAVIOR || process.env.CAD_RADIO_BEHAVIOR || 'legacy')
+    .trim()
+    .toLowerCase();
+  return behavior === 'sonoran';
+}
+
 function getVoiceCfgConfig() {
   // FIVEM_SERVER_PATH: path to the FiveM server root (the folder that
   // contains server.cfg). CAD writes voice.cfg here and keeps it in sync.
@@ -61,6 +68,11 @@ function generateVoiceCfgInline(publicIp, port) {
 }
 
 function deployVoiceCfg() {
+  if (isSonoranBehaviorMode()) {
+    console.log('[VoiceCfg] Skipping voice.cfg auto-deploy (RADIO_BEHAVIOR=sonoran)');
+    return;
+  }
+
   const { serverPath, publicIp, port } = getVoiceCfgConfig();
 
   if (!serverPath) return; // FIVEM_SERVER_PATH not set — skip silently

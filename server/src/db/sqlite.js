@@ -1008,6 +1008,7 @@ const CriminalRecords = {
 
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
 const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
+const PATIENT_TRIAGE_CATEGORIES = new Set(['undetermined', 'immediate', 'urgent', 'delayed', 'minor', 'deceased']);
 
 function parseJsonArrayValue(value) {
   if (Array.isArray(value)) return value;
@@ -1018,6 +1019,18 @@ function parseJsonArrayValue(value) {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+function parseJsonObjectValue(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  const text = String(value || '').trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
 }
 
@@ -1053,6 +1066,15 @@ function normalizeStatus(value, allowedStatuses, fallback) {
   return fallback;
 }
 
+function normalizeNumber(value, { min = null, max = null, fallback = 0 } = {}) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  let out = num;
+  if (Number.isFinite(min)) out = Math.max(min, out);
+  if (Number.isFinite(max)) out = Math.min(max, out);
+  return out;
+}
+
 function normalizePlateKey(value) {
   return String(value || '')
     .trim()
@@ -1074,6 +1096,176 @@ function hydrateVehicleRegistrationRow(row) {
   return { ...row };
 }
 
+function normalizeTriageCategory(value) {
+  return normalizeStatus(value, PATIENT_TRIAGE_CATEGORIES, 'undetermined');
+}
+
+function normalizePatientBodyMarks(value) {
+  const source = parseJsonArrayValue(value).slice(0, 100);
+  const cleaned = [];
+
+  for (const entry of source) {
+    if (!entry || typeof entry !== 'object') continue;
+    const view = String(entry.view || '').trim().toLowerCase() === 'back' ? 'back' : 'front';
+    const x = normalizeNumber(entry.x, { min: 0, max: 100, fallback: 50 });
+    const y = normalizeNumber(entry.y, { min: 0, max: 100, fallback: 50 });
+    const type = String(entry.type || '').trim().slice(0, 40);
+    const severity = String(entry.severity || '').trim().toLowerCase().slice(0, 20);
+    const note = String(entry.note || '').trim().slice(0, 160);
+    const id = String(entry.id || `${Date.now()}_${cleaned.length}`).trim().slice(0, 80);
+    if (!type && !note) continue;
+    cleaned.push({
+      id,
+      view,
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+      type,
+      severity,
+      note,
+    });
+  }
+
+  return cleaned;
+}
+
+function hydratePatientAnalysisRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    pain_score: normalizeNumber(row.pain_score, { min: 0, max: 10, fallback: 0 }),
+    triage_category: normalizeTriageCategory(row.triage_category),
+    questionnaire: parseJsonObjectValue(row.questionnaire_json),
+    vitals: parseJsonObjectValue(row.vitals_json),
+    body_marks: normalizePatientBodyMarks(row.body_marks_json),
+  };
+}
+
+// --- Paramedic Patient Analyses ---
+const PatientAnalyses = {
+  findById(id) {
+    return hydratePatientAnalysisRow(db.prepare('SELECT * FROM patient_analyses WHERE id = ?').get(id));
+  },
+  listByCitizenId(citizenId, limit = 30) {
+    const normalized = String(citizenId || '').trim();
+    if (!normalized) return [];
+    const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 30));
+    return db.prepare(`
+      SELECT * FROM patient_analyses
+      WHERE citizen_id = ?
+      ORDER BY updated_at DESC, id DESC
+      LIMIT ?
+    `).all(normalized, safeLimit).map(hydratePatientAnalysisRow);
+  },
+  create({
+    citizen_id,
+    patient_name,
+    department_id,
+    triage_category,
+    chief_complaint,
+    pain_score,
+    questionnaire,
+    vitals,
+    body_marks,
+    notes,
+    created_by_user_id,
+    updated_by_user_id,
+  }) {
+    const normalizedCitizenId = String(citizen_id || '').trim();
+    if (!normalizedCitizenId) {
+      throw new Error('citizen_id is required');
+    }
+
+    const info = db.prepare(`
+      INSERT INTO patient_analyses (
+        citizen_id,
+        patient_name,
+        department_id,
+        triage_category,
+        chief_complaint,
+        pain_score,
+        questionnaire_json,
+        vitals_json,
+        body_marks_json,
+        notes,
+        created_by_user_id,
+        updated_by_user_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      normalizedCitizenId,
+      String(patient_name || '').trim(),
+      Number.isFinite(Number(department_id)) ? Math.trunc(Number(department_id)) : null,
+      normalizeTriageCategory(triage_category),
+      String(chief_complaint || '').trim(),
+      normalizeNumber(pain_score, { min: 0, max: 10, fallback: 0 }),
+      JSON.stringify(parseJsonObjectValue(questionnaire)),
+      JSON.stringify(parseJsonObjectValue(vitals)),
+      JSON.stringify(normalizePatientBodyMarks(body_marks)),
+      String(notes || '').trim(),
+      created_by_user_id || null,
+      updated_by_user_id || null
+    );
+
+    return this.findById(info.lastInsertRowid);
+  },
+  update(id, fields = {}) {
+    const updates = [];
+    const values = [];
+
+    if (fields.patient_name !== undefined) {
+      updates.push('patient_name = ?');
+      values.push(String(fields.patient_name || '').trim());
+    }
+    if (fields.department_id !== undefined) {
+      updates.push('department_id = ?');
+      values.push(Number.isFinite(Number(fields.department_id)) ? Math.trunc(Number(fields.department_id)) : null);
+    }
+    if (fields.triage_category !== undefined) {
+      updates.push('triage_category = ?');
+      values.push(normalizeTriageCategory(fields.triage_category));
+    }
+    if (fields.chief_complaint !== undefined) {
+      updates.push('chief_complaint = ?');
+      values.push(String(fields.chief_complaint || '').trim());
+    }
+    if (fields.pain_score !== undefined) {
+      updates.push('pain_score = ?');
+      values.push(normalizeNumber(fields.pain_score, { min: 0, max: 10, fallback: 0 }));
+    }
+    if (fields.questionnaire !== undefined || fields.questionnaire_json !== undefined) {
+      updates.push('questionnaire_json = ?');
+      const source = fields.questionnaire !== undefined ? fields.questionnaire : fields.questionnaire_json;
+      values.push(JSON.stringify(parseJsonObjectValue(source)));
+    }
+    if (fields.vitals !== undefined || fields.vitals_json !== undefined) {
+      updates.push('vitals_json = ?');
+      const source = fields.vitals !== undefined ? fields.vitals : fields.vitals_json;
+      values.push(JSON.stringify(parseJsonObjectValue(source)));
+    }
+    if (fields.body_marks !== undefined || fields.body_marks_json !== undefined) {
+      updates.push('body_marks_json = ?');
+      const source = fields.body_marks !== undefined ? fields.body_marks : fields.body_marks_json;
+      values.push(JSON.stringify(normalizePatientBodyMarks(source)));
+    }
+    if (fields.notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(String(fields.notes || '').trim());
+    }
+    if (fields.updated_by_user_id !== undefined) {
+      updates.push('updated_by_user_id = ?');
+      values.push(fields.updated_by_user_id || null);
+    }
+
+    if (updates.length === 0) return this.findById(id);
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+
+    db.prepare(`UPDATE patient_analyses SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    return this.findById(id);
+  },
+};
+
 // --- Driver Licenses ---
 const DriverLicenses = {
   findById(id) {
@@ -1087,16 +1279,33 @@ const DriverLicenses = {
   search(query, limit = 50) {
     const text = String(query || '').trim().toLowerCase();
     if (!text) return [];
-    const q = `%${text}%`;
+    const tokens = Array.from(new Set(text.split(/\s+/).filter(Boolean))).slice(0, 6);
+    if (tokens.length === 0) return [];
     const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    const tokenClauses = [];
+    const params = [];
+
+    for (const token of tokens) {
+      const q = `%${token}%`;
+      const normalizedToken = token.replace(/[^a-z0-9]/g, '');
+      const qNormalized = normalizedToken ? `%${normalizedToken}%` : q;
+
+      tokenClauses.push(`(
+        lower(citizen_id) LIKE ?
+        OR lower(full_name) LIKE ?
+        OR lower(license_number) LIKE ?
+        OR replace(replace(lower(license_number), ' ', ''), '-', '') LIKE ?
+      )`);
+
+      params.push(q, q, q, qNormalized);
+    }
+
     return db.prepare(`
       SELECT * FROM driver_licenses
-      WHERE lower(citizen_id) LIKE ?
-         OR lower(full_name) LIKE ?
-         OR lower(license_number) LIKE ?
+      WHERE ${tokenClauses.join(' AND ')}
       ORDER BY updated_at DESC
       LIMIT ?
-    `).all(q, q, q, safeLimit).map(hydrateDriverLicenseRow);
+    `).all(...params, safeLimit).map(hydrateDriverLicenseRow);
   },
   upsertByCitizenId({
     citizen_id,
@@ -1257,17 +1466,34 @@ const VehicleRegistrations = {
   search(query, limit = 50) {
     const text = String(query || '').trim().toLowerCase();
     if (!text) return [];
-    const q = `%${text}%`;
+    const tokens = Array.from(new Set(text.split(/\s+/).filter(Boolean))).slice(0, 6);
+    if (tokens.length === 0) return [];
     const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    const tokenClauses = [];
+    const params = [];
+
+    for (const token of tokens) {
+      const q = `%${token}%`;
+      const normalizedToken = normalizePlateKey(token);
+      const qNormalized = normalizedToken ? `%${normalizedToken}%` : q;
+
+      tokenClauses.push(`(
+        lower(plate) LIKE ?
+        OR lower(owner_name) LIKE ?
+        OR lower(vehicle_model) LIKE ?
+        OR lower(citizen_id) LIKE ?
+        OR plate_normalized LIKE ?
+      )`);
+
+      params.push(q, q, q, q, qNormalized);
+    }
+
     return db.prepare(`
       SELECT * FROM vehicle_registrations
-      WHERE lower(plate) LIKE ?
-         OR lower(owner_name) LIKE ?
-         OR lower(vehicle_model) LIKE ?
-         OR lower(citizen_id) LIKE ?
+      WHERE ${tokenClauses.join(' AND ')}
       ORDER BY updated_at DESC
       LIMIT ?
-    `).all(q, q, q, q, safeLimit).map(hydrateVehicleRegistrationRow);
+    `).all(...params, safeLimit).map(hydrateVehicleRegistrationRow);
   },
   upsertByPlate({
     plate,
@@ -2290,6 +2516,7 @@ module.exports = {
   Warrants,
   OffenceCatalog,
   CriminalRecords,
+  PatientAnalyses,
   DriverLicenses,
   VehicleRegistrations,
   FiveMPlayerLinks,

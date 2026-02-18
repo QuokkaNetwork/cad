@@ -33,6 +33,12 @@ function parseTrustProxyEnv(value, fallback = false) {
   return value;
 }
 
+function parseRadioBehavior(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'sonoran') return 'sonoran';
+  return 'legacy';
+}
+
 const nodeEnv = process.env.NODE_ENV || 'development';
 const steamRealm = normalizeBaseUrl(process.env.STEAM_REALM || 'http://localhost:3030');
 const steamReturnUrl = normalizeBaseUrl(process.env.STEAM_RETURN_URL || `${steamRealm}/api/auth/steam/callback`);
@@ -111,5 +117,8 @@ module.exports = {
     user: process.env.QBOX_DB_USER || 'root',
     password: process.env.QBOX_DB_PASSWORD || '',
     database: process.env.QBOX_DB_NAME || 'qbox',
+  },
+  radio: {
+    behavior: parseRadioBehavior(process.env.RADIO_BEHAVIOR || process.env.CAD_RADIO_BEHAVIOR || 'legacy'),
   },
 };
