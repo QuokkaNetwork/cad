@@ -9,3 +9,4 @@ server/data/
 # Claude
 .claude/
 nul
+server.cfg

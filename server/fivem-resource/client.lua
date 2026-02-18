@@ -356,6 +356,24 @@ local function refreshCadBridgeNuiFocus()
   end
 end
 
+local function normalizeMugshotValue(value)
+  local normalized = trim(value)
+  if normalized == '' then return '' end
+  if normalized:match('^https?://') then return normalized end
+  if normalized:match('^data:image/') then return normalized end
+
+  -- MugShotBase64/screenshot exports can return raw base64 data; convert to browser-safe data URI.
+  if #normalized > 100 and normalized:match('^[A-Za-z0-9+/=]+$') then
+    local encoding = trim(Config.ScreenshotEncoding or 'png'):lower()
+    if encoding ~= 'png' and encoding ~= 'jpg' and encoding ~= 'jpeg' and encoding ~= 'webp' then
+      encoding = 'png'
+    end
+    if encoding == 'jpg' then encoding = 'jpeg' end
+    return ('data:image/%s;base64,%s'):format(encoding, normalized)
+  end
+  return normalized
+end
+
 local function tryMugshotExport(resourceName, exportName, args)
   local ok, result = pcall(function()
     local resource = exports[resourceName]
@@ -365,18 +383,6 @@ local function tryMugshotExport(resourceName, exportName, args)
     return fn(table.unpack(args or {}))
   end)
   if not ok then return '' end
-  local function normalizeMugshotValue(value)
-    local normalized = trim(value)
-    if normalized == '' then return '' end
-    if normalized:match('^https?://') then return normalized end
-    if normalized:match('^data:image/') then return normalized end
-
-    -- MugShotBase64 returns raw base64 data; convert to a browser-safe data URI.
-    if #normalized > 100 and normalized:match('^[A-Za-z0-9+/=]+$') then
-      return ('data:image/png;base64,%s'):format(normalized)
-    end
-    return normalized
-  end
 
   if type(result) == 'table' then
     if result.url then return normalizeMugshotValue(result.url) end
@@ -387,7 +393,7 @@ local function tryMugshotExport(resourceName, exportName, args)
   return normalizeMugshotValue(result)
 end
 
-local function captureMugshotUrl()
+local function captureMugshotViaLegacyExport()
   local resourceName = trim(Config.MugshotResource or 'MugShotBase64')
   if resourceName == '' then return '' end
   if GetResourceState(resourceName) ~= 'started' then return '' end
@@ -424,6 +430,123 @@ local function captureMugshotUrl()
     end
   end
   return ''
+end
+
+local function safeDecodeJson(value)
+  local ok, parsed = pcall(function()
+    return json.decode(value)
+  end)
+  if ok then return parsed end
+  return nil
+end
+
+local function normalizeScreenshotResult(result)
+  if type(result) == 'table' then
+    if result.data then return normalizeMugshotValue(result.data) end
+    if result.image then return normalizeMugshotValue(result.image) end
+    if result.base64 then return normalizeMugshotValue(result.base64) end
+    if result[1] then return normalizeMugshotValue(result[1]) end
+    return ''
+  end
+
+  local text = trim(result)
+  if text == '' then return '' end
+  if text:sub(1, 1) == '{' then
+    local parsed = safeDecodeJson(text)
+    if type(parsed) == 'table' then
+      return normalizeScreenshotResult(parsed)
+    end
+  end
+  return normalizeMugshotValue(text)
+end
+
+local function captureMugshotViaScreenshot()
+  local resourceName = trim(Config.ScreenshotResource or 'screenshot-basic')
+  if resourceName == '' then return '' end
+  if GetResourceState(resourceName) ~= 'started' then return '' end
+
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then return '' end
+
+  local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
+  if not headPos then return '' end
+
+  local forward = GetEntityForwardVector(ped)
+  local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.65
+  local camY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.65
+  local camZ = (headPos.z or 0.0) + 0.04
+  local lookX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.02
+  local lookY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.02
+  local lookZ = (headPos.z or 0.0) + 0.02
+
+  local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
+  SetCamCoord(cam, camX, camY, camZ)
+  PointCamAtCoord(cam, lookX, lookY, lookZ)
+  SetCamFov(cam, 34.0)
+  RenderScriptCams(true, false, 0, true, true)
+  Wait(120)
+
+  local done = false
+  local raw = ''
+  local hideUi = true
+  CreateThread(function()
+    while hideUi do
+      HideHudAndRadarThisFrame()
+      Wait(0)
+    end
+  end)
+
+  local screenshotOptions = {
+    encoding = trim(Config.ScreenshotEncoding or 'png'):lower(),
+    quality = tonumber(Config.ScreenshotQuality or 1.0) or 1.0,
+  }
+
+  local ok = pcall(function()
+    exports[resourceName]:requestScreenshot(screenshotOptions, function(data)
+      raw = data or ''
+      done = true
+    end)
+  end)
+
+  if ok then
+    local timeoutMs = tonumber(Config.ScreenshotTimeoutMs or 5000) or 5000
+    if timeoutMs < 1000 then timeoutMs = 1000 end
+    local deadline = GetGameTimer() + timeoutMs
+    while not done and GetGameTimer() < deadline do
+      Wait(0)
+    end
+  end
+
+  hideUi = false
+  RenderScriptCams(false, false, 0, true, true)
+  DestroyCam(cam, false)
+
+  if not ok or not done then
+    return ''
+  end
+  return normalizeScreenshotResult(raw)
+end
+
+local function captureMugshotUrl()
+  local provider = trim(Config.MugshotProvider or 'screenshot-basic'):lower()
+  if provider == '' then provider = 'screenshot-basic' end
+
+  if provider == 'screenshot-basic' then
+    local screenshot = captureMugshotViaScreenshot()
+    if screenshot ~= '' then return screenshot end
+    return captureMugshotViaLegacyExport()
+  end
+
+  if provider == 'mugshotbase64' then
+    local legacy = captureMugshotViaLegacyExport()
+    if legacy ~= '' then return legacy end
+    return captureMugshotViaScreenshot()
+  end
+
+  -- auto fallback mode
+  local screenshot = captureMugshotViaScreenshot()
+  if screenshot ~= '' then return screenshot end
+  return captureMugshotViaLegacyExport()
 end
 
 local GTA_COLOUR_NAMES = {

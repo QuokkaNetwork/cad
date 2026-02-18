@@ -110,6 +110,23 @@ Config.VehicleRegistrationFeesByDays = {
   [70] = 22000,
 }
 
+-- Mugshot/photo provider
+-- 'screenshot-basic' (recommended): high-quality portrait via scripted camera + screenshot-basic
+-- 'mugshotbase64': legacy MugShotBase64 exports
+-- 'auto': screenshot-basic first, then MugShotBase64 fallback
+Config.MugshotProvider = trim(GetConvar('cad_bridge_mugshot_provider', 'screenshot-basic')):lower()
+if Config.MugshotProvider == '' then Config.MugshotProvider = 'screenshot-basic' end
+
+Config.ScreenshotResource = trim(GetConvar('cad_bridge_screenshot_resource', 'screenshot-basic'))
+if Config.ScreenshotResource == '' then Config.ScreenshotResource = 'screenshot-basic' end
+Config.ScreenshotEncoding = trim(GetConvar('cad_bridge_screenshot_encoding', 'png')):lower()
+if Config.ScreenshotEncoding == '' then Config.ScreenshotEncoding = 'png' end
+Config.ScreenshotQuality = tonumber(GetConvar('cad_bridge_screenshot_quality', '1.0')) or 1.0
+if Config.ScreenshotQuality < 0.1 then Config.ScreenshotQuality = 0.1 end
+if Config.ScreenshotQuality > 1.0 then Config.ScreenshotQuality = 1.0 end
+Config.ScreenshotTimeoutMs = tonumber(GetConvar('cad_bridge_screenshot_timeout_ms', '5000')) or 5000
+if Config.ScreenshotTimeoutMs < 1000 then Config.ScreenshotTimeoutMs = 1000 end
+
 Config.MugshotResource = trim(GetConvar('cad_bridge_mugshot_resource', 'MugShotBase64'))
 
 -- Fine processing adapter
