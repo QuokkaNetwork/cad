@@ -7,6 +7,7 @@ import CallCard from '../../components/CallCard';
 import UnitCard from '../../components/UnitCard';
 import Modal from '../../components/Modal';
 import StatusBadge from '../../components/StatusBadge';
+import { getHighContrastBadgeStyle } from '../../utils/color';
 
 const UNIT_STATUSES = ['available', 'busy', 'enroute', 'on-scene'];
 
@@ -851,23 +852,16 @@ export default function Dispatch() {
                         <span className="font-mono" style={{ color: getUnitCallsignColor(u) }}>{u.callsign}</span>
                         {isDispatch && u.department_short_name && (
                           <span
-                            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
-                            style={{
-                              backgroundColor: `${u.department_color || '#64748b'}22`,
-                              color: u.department_color || '#cbd5e1',
-                              border: `1px solid ${u.department_color || '#64748b'}44`,
-                            }}
+                            className="text-[10px] px-2 py-0.5 rounded font-semibold tracking-wide"
+                            style={getHighContrastBadgeStyle(u.department_color, '#64748b')}
                           >
                             {u.department_short_name}
                           </span>
                         )}
                         {u.sub_department_short_name && (
                           <span
-                            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
-                            style={{
-                              backgroundColor: `${u.sub_department_color || '#64748b'}33`,
-                              color: u.sub_department_color || '#cbd5e1',
-                            }}
+                            className="text-[10px] px-2 py-0.5 rounded font-semibold tracking-wide"
+                            style={getHighContrastBadgeStyle(u.sub_department_color || u.department_color, '#64748b')}
                           >
                             {u.sub_department_short_name}
                           </span>

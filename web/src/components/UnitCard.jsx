@@ -1,9 +1,15 @@
 import StatusBadge from './StatusBadge';
+import { getHighContrastBadgeStyle } from '../utils/color';
 
 export default function UnitCard({ unit, onStatusChange, compact = false, showDepartment = false }) {
   const statuses = ['available', 'busy', 'enroute', 'on-scene'];
   const unitNote = String(unit.note || '').trim();
   const showNote = !!unitNote && !/^in-game\s*#\d+\b/i.test(unitNote);
+  const departmentBadgeStyle = getHighContrastBadgeStyle(unit.department_color, '#64748b');
+  const subDepartmentBadgeStyle = getHighContrastBadgeStyle(
+    unit.sub_department_color || unit.department_color,
+    '#64748b'
+  );
 
   if (compact) {
     return (
@@ -12,23 +18,16 @@ export default function UnitCard({ unit, onStatusChange, compact = false, showDe
           <span className="font-mono font-medium" style={{ color: unit.department_color || '#7dd3fc' }}>{unit.callsign}</span>
           {showDepartment && unit.department_short_name && (
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
-              style={{
-                backgroundColor: `${unit.department_color || '#64748b'}22`,
-                color: unit.department_color || '#cbd5e1',
-                border: `1px solid ${unit.department_color || '#64748b'}44`,
-              }}
+              className="text-[10px] px-2 py-0.5 rounded font-semibold tracking-wide"
+              style={departmentBadgeStyle}
             >
               {unit.department_short_name}
             </span>
           )}
           {unit.sub_department_short_name && (
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
-              style={{
-                backgroundColor: `${unit.sub_department_color || '#64748b'}33`,
-                color: unit.sub_department_color || '#cbd5e1',
-              }}
+              className="text-[10px] px-2 py-0.5 rounded font-semibold tracking-wide"
+              style={subDepartmentBadgeStyle}
             >
               {unit.sub_department_short_name}
             </span>
@@ -54,11 +53,8 @@ export default function UnitCard({ unit, onStatusChange, compact = false, showDe
           <span className="font-mono font-bold" style={{ color: unit.department_color || '#7dd3fc' }}>{unit.callsign}</span>
           {unit.sub_department_short_name && (
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
-              style={{
-                backgroundColor: `${unit.sub_department_color || '#64748b'}33`,
-                color: unit.sub_department_color || '#cbd5e1',
-              }}
+              className="text-[10px] px-2 py-0.5 rounded font-semibold tracking-wide"
+              style={subDepartmentBadgeStyle}
               title={unit.sub_department_name || unit.sub_department_short_name}
             >
               {unit.sub_department_short_name}
