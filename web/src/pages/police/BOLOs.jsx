@@ -39,9 +39,10 @@ function normalizeVehicleSearchOption(row) {
 
 function normalizePersonSearchOption(row) {
   const source = row && typeof row === 'object' ? row : {};
-  const citizenId = String(source.citizenid || source.citizen_id || '').trim();
+  const citizenId = String(source.citizenId || source.citizenid || source.citizen_id || '').trim();
   const fullName = String(
-    source.full_name
+    source.name
+    || source.full_name
     || `${String(source.firstname || '').trim()} ${String(source.lastname || '').trim()}`.trim()
     || ''
   ).trim();
