@@ -1,8 +1,9 @@
 local PlayerPositions = {}
 
-local function trim(s)
-  if not s then return '' end
-  return (s:gsub('^%s+', ''):gsub('%s+$', ''))
+local function trim(value)
+  if value == nil then return '' end
+  local text = tostring(value)
+  return (text:gsub('^%s+', ''):gsub('%s+$', ''))
 end
 
 local function getCadUrl(path)

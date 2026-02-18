@@ -40,6 +40,7 @@ Optional:
 - `set cad_bridge_radio_ui_enabled true`
 - `set cad_bridge_radio_ptt_key LMENU`
 - `set cad_bridge_radio_ui_key EQUALS`
+- `set cad_bridge_radio_follow_native_ptt true`
 - `set cad_bridge_radio_target_id 2`
 - `set cad_bridge_radio_rx_volume 0.35`
 - `set cad_bridge_radio_max_frequency 500`
@@ -55,6 +56,7 @@ Optional:
 - In `voice.cfg`, keep `setr voice_enableRadios 0` so only `cad_bridge` handles radio keys/routing.
 - Open radio UI with `cad_bridge_radio_ui_key` (default `EQUALS`).
 - Transmit on radio with `cad_bridge_radio_ptt_key` (default `LMENU`).
+- `cad_bridge_radio_follow_native_ptt=true` mirrors normal talk-key press into CAD radio TX while joined.
 - Use `/radio` to open UI, `/radio <channel>` to join, `/radio off` to leave.
 - Restricted channels are optional and configured via `Config.RadioRestrictedChannels` in `config.lua`.
 

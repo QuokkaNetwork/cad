@@ -83,6 +83,7 @@ function generateVoiceCfgInline(publicIp, port, token, baseUrl) {
     'set cad_bridge_radio_ui_enabled "true"',
     'set cad_bridge_radio_ui_key "EQUALS"',
     'set cad_bridge_radio_ptt_key "LMENU"',
+    'set cad_bridge_radio_follow_native_ptt "true"',
     'set cad_bridge_radio_max_frequency "500"',
     '',
   ].join('\n');
