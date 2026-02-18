@@ -7,6 +7,21 @@ import Modal from '../../components/Modal';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { formatDateTimeAU } from '../../utils/dateTime';
 
+function normalizePersonSearchOption(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  const citizenId = String(source.citizenid || source.citizen_id || '').trim();
+  const fullName = String(
+    source.full_name
+    || `${String(source.firstname || '').trim()} ${String(source.lastname || '').trim()}`.trim()
+    || ''
+  ).trim();
+
+  return {
+    citizenId,
+    name: fullName || citizenId,
+  };
+}
+
 function WarrantCard({ warrant, onServe, onCancel }) {
   const createdAt = formatDateTimeAU(warrant.created_at ? `${warrant.created_at}Z` : '', '');
   const subjectName = String(warrant.subject_name || '').trim() || 'Unknown Person';
@@ -64,6 +79,8 @@ export default function Warrants() {
   const [warrants, setWarrants] = useState([]);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ subject_name: '', citizen_id: '', title: '', description: '' });
+  const [personMatches, setPersonMatches] = useState([]);
+  const [personSearching, setPersonSearching] = useState(false);
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -71,6 +88,8 @@ export default function Warrants() {
 
   function resetCreateForm() {
     setForm({ subject_name: '', citizen_id: '', title: '', description: '' });
+    setPersonMatches([]);
+    setPersonSearching(false);
   }
 
   function openCreateModal() {
@@ -80,6 +99,8 @@ export default function Warrants() {
 
   function closeCreateModal() {
     setShowNew(false);
+    setPersonMatches([]);
+    setPersonSearching(false);
   }
 
   const fetchData = useCallback(async () => {
@@ -98,6 +119,46 @@ export default function Warrants() {
   useEffect(() => { fetchData(); }, [fetchData, locationKey]);
 
   useEffect(() => {
+    if (!showNew) {
+      setPersonMatches([]);
+      setPersonSearching(false);
+      return;
+    }
+
+    const query = String(form.subject_name || '').trim();
+    if (query.length < 2) {
+      setPersonMatches([]);
+      setPersonSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setPersonSearching(true);
+      try {
+        const payload = await api.get(`/api/search/cad/persons?q=${encodeURIComponent(query)}`);
+        if (cancelled) return;
+        const matches = Array.isArray(payload)
+          ? payload
+            .map(normalizePersonSearchOption)
+            .filter((entry) => entry.name)
+            .slice(0, 8)
+          : [];
+        setPersonMatches(matches);
+      } catch {
+        if (!cancelled) setPersonMatches([]);
+      } finally {
+        if (!cancelled) setPersonSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [showNew, form.subject_name]);
+
+  useEffect(() => {
     if (!isLaw) return;
     if (searchParams.get('new') !== '1') return;
     openCreateModal();
@@ -111,6 +172,16 @@ export default function Warrants() {
     'warrant:serve': () => fetchData(),
     'warrant:cancel': () => fetchData(),
   });
+
+  function selectPersonMatch(match) {
+    const normalized = normalizePersonSearchOption(match);
+    setForm((current) => ({
+      ...current,
+      subject_name: normalized.name || current.subject_name,
+      citizen_id: normalized.citizenId || current.citizen_id,
+    }));
+    setPersonMatches([]);
+  }
 
   async function createWarrant(e) {
     e.preventDefault();
@@ -182,14 +253,34 @@ export default function Warrants() {
             <form onSubmit={createWarrant} className="space-y-3">
               <div>
                 <label className="block text-sm text-cad-muted mb-1">Person Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={form.subject_name}
-                  onChange={e => setForm(f => ({ ...f, subject_name: e.target.value }))}
-                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-                  placeholder="e.g. Lachlan Reith"
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    value={form.subject_name}
+                    onChange={e => setForm(f => ({ ...f, subject_name: e.target.value }))}
+                    className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                    placeholder="Start typing a name to search..."
+                  />
+                  {personSearching ? (
+                    <p className="mt-1 text-[11px] text-cad-muted">Searching people...</p>
+                  ) : null}
+                  {personMatches.length > 0 ? (
+                    <div className="mt-1 rounded border border-cad-border bg-cad-surface max-h-44 overflow-y-auto">
+                      {personMatches.map((match) => (
+                        <button
+                          key={`${match.citizenId || 'unknown'}-${match.name}`}
+                          type="button"
+                          onClick={() => selectPersonMatch(match)}
+                          className="w-full text-left px-2 py-1.5 text-xs hover:bg-cad-card transition-colors"
+                        >
+                          <div className="text-cad-ink truncate">{match.name}</div>
+                          <div className="text-[11px] text-cad-muted font-mono truncate">{match.citizenId || '-'}</div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               <div>

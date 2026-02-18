@@ -37,6 +37,20 @@ function normalizeVehicleSearchOption(row) {
   };
 }
 
+function normalizePersonSearchOption(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  const citizenId = String(source.citizenid || source.citizen_id || '').trim();
+  const fullName = String(
+    source.full_name
+    || `${String(source.firstname || '').trim()} ${String(source.lastname || '').trim()}`.trim()
+    || ''
+  ).trim();
+  return {
+    citizenId,
+    name: fullName || citizenId,
+  };
+}
+
 export default function BOLOs() {
   const { activeDepartment } = useDepartment();
   const location = useLocation();
@@ -47,6 +61,8 @@ export default function BOLOs() {
   const [boloType, setBoloType] = useState('person');
   const [form, setForm] = useState({ title: '', description: '' });
   const [details, setDetails] = useState({ flags: [] });
+  const [personMatches, setPersonMatches] = useState([]);
+  const [personSearching, setPersonSearching] = useState(false);
   const [vehiclePlateQuery, setVehiclePlateQuery] = useState('');
   const [vehiclePlateMatches, setVehiclePlateMatches] = useState([]);
   const [vehiclePlateSearching, setVehiclePlateSearching] = useState(false);
@@ -59,6 +75,8 @@ export default function BOLOs() {
     setBoloType(defaultType);
     setForm({ title: '', description: '' });
     setDetails({ flags: [] });
+    setPersonMatches([]);
+    setPersonSearching(false);
     setVehiclePlateQuery('');
     setVehiclePlateMatches([]);
     setVehiclePlateSearching(false);
@@ -71,6 +89,8 @@ export default function BOLOs() {
 
   function closeCreateModal() {
     setShowNew(false);
+    setPersonMatches([]);
+    setPersonSearching(false);
     setVehiclePlateMatches([]);
     setVehiclePlateSearching(false);
   }
@@ -98,6 +118,46 @@ export default function BOLOs() {
     nextParams.delete('new');
     setSearchParams(nextParams, { replace: true });
   }, [isLaw, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!showNew || boloType !== 'person') {
+      setPersonMatches([]);
+      setPersonSearching(false);
+      return;
+    }
+
+    const query = String(details.name || '').trim();
+    if (query.length < 2) {
+      setPersonMatches([]);
+      setPersonSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setPersonSearching(true);
+      try {
+        const payload = await api.get(`/api/search/cad/persons?q=${encodeURIComponent(query)}`);
+        if (cancelled) return;
+        const matches = Array.isArray(payload)
+          ? payload
+            .map(normalizePersonSearchOption)
+            .filter((entry) => entry.name)
+            .slice(0, 8)
+          : [];
+        setPersonMatches(matches);
+      } catch {
+        if (!cancelled) setPersonMatches([]);
+      } finally {
+        if (!cancelled) setPersonSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [showNew, boloType, details.name]);
 
   useEffect(() => {
     if (!showNew || boloType !== 'vehicle') {
@@ -153,6 +213,16 @@ export default function BOLOs() {
       model: normalized.model || String(current.model || '').trim(),
       color: normalized.color || String(current.color || '').trim(),
     }));
+  }
+
+  function selectPersonMatch(match) {
+    const normalized = normalizePersonSearchOption(match);
+    setDetails((current) => ({
+      ...current,
+      name: normalized.name || current.name,
+      citizen_id: normalized.citizenId || current.citizen_id,
+    }));
+    setPersonMatches([]);
   }
 
   async function createBolo(e) {
@@ -231,6 +301,8 @@ export default function BOLOs() {
                   onClick={() => {
                     setBoloType('person');
                     setDetails({ flags: [] });
+                    setPersonMatches([]);
+                    setPersonSearching(false);
                     setVehiclePlateQuery('');
                     setVehiclePlateMatches([]);
                   }}
@@ -245,6 +317,8 @@ export default function BOLOs() {
                   onClick={() => {
                     setBoloType('vehicle');
                     setDetails({ flags: [] });
+                    setPersonMatches([]);
+                    setPersonSearching(false);
                     setVehiclePlateQuery('');
                     setVehiclePlateMatches([]);
                   }}
@@ -281,16 +355,46 @@ export default function BOLOs() {
               {/* Type-specific details */}
               {boloType === 'person' ? (
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-cad-muted mb-1">Name</label>
-                    <input
-                      type="text"
-                      value={details.name || ''}
-                      onChange={e => setDetails(d => ({ ...d, name: e.target.value }))}
-                      className="w-full bg-cad-card border border-cad-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
-                    />
+                  <div className="relative">
+                    <label className="block text-xs text-cad-muted mb-1">Name / Lookup</label>
+                    <div>
+                      <input
+                        type="text"
+                        value={details.name || ''}
+                        onChange={e => setDetails(d => ({ ...d, name: e.target.value }))}
+                        className="w-full bg-cad-card border border-cad-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
+                        placeholder="Start typing a person name..."
+                      />
+                      {personSearching ? (
+                        <p className="mt-1 text-[11px] text-cad-muted">Searching people...</p>
+                      ) : null}
+                      {personMatches.length > 0 ? (
+                        <div className="mt-1 rounded border border-cad-border bg-cad-surface max-h-44 overflow-y-auto">
+                          {personMatches.map((match) => (
+                            <button
+                              key={`${match.citizenId || 'unknown'}-${match.name}`}
+                              type="button"
+                              onClick={() => selectPersonMatch(match)}
+                              className="w-full text-left px-2 py-1.5 text-xs hover:bg-cad-card transition-colors"
+                            >
+                              <div className="text-cad-ink truncate">{match.name}</div>
+                              <div className="text-[11px] text-cad-muted font-mono truncate">{match.citizenId || '-'}</div>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                   <div>
+                    <label className="block text-xs text-cad-muted mb-1">Citizen ID (optional)</label>
+                    <input
+                      type="text"
+                      value={details.citizen_id || ''}
+                      onChange={e => setDetails(d => ({ ...d, citizen_id: e.target.value }))}
+                      className="w-full bg-cad-card border border-cad-border rounded px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-cad-accent"
+                    />
+                  </div>
+                  <div className="col-span-2">
                     <label className="block text-xs text-cad-muted mb-1">Last Seen</label>
                     <input
                       type="text"
