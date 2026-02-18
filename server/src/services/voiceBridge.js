@@ -300,6 +300,34 @@ class VoiceBridgeServer {
     return options;
   }
 
+  sendClientAudioFrame(client, opusData, isLastFrame = false, target = 0, forceTcp = false) {
+    if (!client || typeof client.sendAudio !== 'function') return false;
+    const payload = toBuffer(opusData);
+    if (!payload.length) return false;
+
+    if (!forceTcp) {
+      client.sendAudio(payload, isLastFrame, target);
+      return true;
+    }
+
+    const udp = client.udp;
+    if (!udp || typeof udp.isConnected !== 'function' || !udp.isConnected()) {
+      client.sendAudio(payload, isLastFrame, target);
+      return true;
+    }
+
+    const originalConnected = !!udp.connected;
+    try {
+      // Force mumble-node to use UDPTunnel/TCP for this frame without
+      // permanently disabling UDP receive for inbound dispatcher audio.
+      udp.connected = false;
+      client.sendAudio(payload, isLastFrame, target);
+      return true;
+    } finally {
+      udp.connected = originalConnected;
+    }
+  }
+
   createEncoder() {
     return new OpusScript(this.config.sampleRate, this.config.channels, OpusScript.Application.VOIP);
   }
@@ -752,20 +780,13 @@ class VoiceBridgeServer {
   sendAudioToDispatcherTargets(dispatcherId, client, opusData, isLastFrame = false) {
     const stats = this.getOrCreateDispatcherStats(dispatcherId);
     const targets = this.refreshDispatcherWhisperTargets(dispatcherId);
-
-    // No route members known yet → fall back to normal talk (target 0).
-    // In pma-voice everyone in the same channel hears normal talk, so this
-    // acts as an unfiltered broadcast until the routing table is populated.
+    const forceTcpOut = !!this.config.forceTcpAudioOut;
+    // No route members known yet: drop outbound frame instead of broadcasting
+    // into root channel (target 0), which can cause unintended cross-talk.
     if (!targets || targets.length === 0) {
-      try {
-        client.sendAudio(Buffer.from(opusData), isLastFrame, 0);
-        stats.noRouteFrames += 1;
-        stats.opusFramesSent += 1;
-        return true;
-      } catch {
-        stats.opusFramesDropped += 1;
-        return false;
-      }
+      stats.noRouteFrames += 1;
+      stats.opusFramesDropped += 1;
+      return false;
     }
 
     // Send one audio packet per whisper-target slot.
@@ -773,9 +794,19 @@ class VoiceBridgeServer {
     let sent = false;
     for (const target of targets) {
       try {
-        client.sendAudio(Buffer.from(opusData), isLastFrame, Number(target.targetId));
-        sent = true;
-        stats.opusFramesSent += 1;
+        const delivered = this.sendClientAudioFrame(
+          client,
+          opusData,
+          isLastFrame,
+          Number(target.targetId),
+          forceTcpOut
+        );
+        sent = delivered || sent;
+        if (delivered) {
+          stats.opusFramesSent += 1;
+        } else {
+          stats.opusFramesDropped += 1;
+        }
       } catch {
         stats.opusFramesDropped += 1;
         // Continue trying remaining targets even if one fails.
@@ -832,8 +863,15 @@ class VoiceBridgeServer {
     const stats = this.getOrCreateDispatcherStats(dispatcherId);
     const client = this.mumbleClients.get(dispatcherId);
     const encoder = this.dispatcherEncoders.get(dispatcherId);
+    const active = this.activeChannels.get(dispatcherId);
+    const channelNumber = normalizePositiveInt(active?.channelNumber);
     if (!client || !encoder || !client.isReady) {
       stats.lastError = 'Dispatcher not ready for outbound audio';
+      return false;
+    }
+    if (!channelNumber) {
+      stats.noRouteFrames += 1;
+      stats.lastError = 'Dispatcher has no active radio channel';
       return false;
     }
 
