@@ -5,6 +5,42 @@ const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 const router = express.Router();
+const VEHICLE_BOLO_FLAGS = new Set([
+  'stolen',
+  'wanted',
+  'armed',
+  'dangerous',
+  'disqualified_driver',
+  'evade_police',
+  'suspended_registration',
+  'unregistered_vehicle',
+]);
+
+function normalizePlateKey(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function normalizeVehicleBoloDetails(detailsRaw) {
+  const details = detailsRaw && typeof detailsRaw === 'object' && !Array.isArray(detailsRaw)
+    ? { ...detailsRaw }
+    : {};
+  const plate = normalizePlateKey(details.plate || details.registration_plate || details.rego || '');
+  const flagsRaw = Array.isArray(details.flags) ? details.flags : [];
+  const flags = Array.from(new Set(
+    flagsRaw
+      .map((entry) => String(entry || '').trim().toLowerCase())
+      .filter((entry) => VEHICLE_BOLO_FLAGS.has(entry))
+  ));
+
+  return {
+    ...details,
+    plate,
+    flags,
+  };
+}
 
 // List active BOLOs for a department
 router.get('/', requireAuth, (req, res) => {
@@ -25,6 +61,18 @@ router.post('/', requireAuth, (req, res) => {
   if (!department_id || !title || !type) {
     return res.status(400).json({ error: 'department_id, type, and title are required' });
   }
+  const normalizedType = String(type || '').trim().toLowerCase();
+  if (!['person', 'vehicle'].includes(normalizedType)) {
+    return res.status(400).json({ error: 'type must be person or vehicle' });
+  }
+
+  let normalizedDetails = details && typeof details === 'object' ? { ...details } : {};
+  if (normalizedType === 'vehicle') {
+    normalizedDetails = normalizeVehicleBoloDetails(details);
+    if (!normalizedDetails.plate) {
+      return res.status(400).json({ error: 'vehicle BOLOs require details.plate (registration plate)' });
+    }
+  }
 
   const deptId = parseInt(department_id, 10);
   const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
@@ -32,14 +80,20 @@ router.post('/', requireAuth, (req, res) => {
 
   const bolo = Bolos.create({
     department_id: deptId,
-    type,
+    type: normalizedType,
     title,
     description: description || '',
-    details_json: details ? JSON.stringify(details) : '{}',
+    details_json: JSON.stringify(normalizedDetails),
     created_by: req.user.id,
   });
 
-  audit(req.user.id, 'bolo_created', { boloId: bolo.id, type, title });
+  audit(req.user.id, 'bolo_created', {
+    boloId: bolo.id,
+    type: normalizedType,
+    title,
+    plate: normalizedType === 'vehicle' ? String(normalizedDetails.plate || '') : '',
+    flags: normalizedType === 'vehicle' ? normalizedDetails.flags : [],
+  });
   bus.emit('bolo:create', { departmentId: deptId, bolo });
   res.status(201).json(bolo);
 });

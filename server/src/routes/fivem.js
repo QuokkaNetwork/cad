@@ -13,6 +13,7 @@ const {
   VoiceCallSessions,
   VoiceChannels,
   VoiceParticipants,
+  Bolos,
 } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
@@ -364,6 +365,57 @@ function describePlateStatus(status) {
   if (normalized === 'expired') return 'Registration expired';
   if (normalized === 'unregistered') return 'No registration found in CAD';
   return 'Registration status unknown';
+}
+
+const VEHICLE_BOLO_FLAG_LABELS = {
+  stolen: 'Stolen',
+  wanted: 'Wanted',
+  armed: 'Armed',
+  dangerous: 'Dangerous',
+  disqualified_driver: 'Disqualified Driver',
+  evade_police: 'Evade Police',
+  suspended_registration: 'Suspended Registration',
+  unregistered_vehicle: 'Unregistered Vehicle',
+};
+
+function parseJsonObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  const text = String(value || '').trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeVehicleBoloFlags(value) {
+  const source = Array.isArray(value) ? value : [];
+  return Array.from(new Set(
+    source
+      .map((entry) => String(entry || '').trim().toLowerCase())
+      .filter(Boolean)
+  ));
+}
+
+function formatVehicleBoloFlag(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (VEHICLE_BOLO_FLAG_LABELS[normalized]) return VEHICLE_BOLO_FLAG_LABELS[normalized];
+  return normalized
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function summarizeVehicleBoloFlags(flags = []) {
+  const labels = flags
+    .map((flag) => formatVehicleBoloFlag(flag))
+    .filter(Boolean);
+  if (labels.length === 0) return 'Vehicle BOLO match';
+  return `BOLO Flags: ${labels.join(', ')}`;
 }
 
 function normalizeDateOnly(value) {
@@ -1323,18 +1375,45 @@ router.get('/plate-status/:plate', requireBridgeAuth, (req, res) => {
     if (!rawPlate) {
       return res.status(400).json({ error: 'plate is required' });
     }
+    const normalizedPlate = normalizePlateKey(rawPlate);
+    const boloMatches = Bolos.listActiveVehicleByPlate(normalizedPlate).map((bolo) => {
+      const details = parseJsonObject(bolo.details_json);
+      const flags = normalizeVehicleBoloFlags(details.flags);
+      return {
+        id: Number(bolo.id || 0),
+        department_id: Number(bolo.department_id || 0),
+        title: String(bolo.title || '').trim(),
+        description: String(bolo.description || '').trim(),
+        plate: String(details.plate || details.registration_plate || details.rego || '').trim().toUpperCase(),
+        flags,
+      };
+    });
+    const boloFlags = Array.from(new Set(
+      boloMatches
+        .flatMap((bolo) => Array.isArray(bolo.flags) ? bolo.flags : [])
+        .map((flag) => String(flag || '').trim().toLowerCase())
+        .filter(Boolean)
+    ));
+    const boloAlert = boloMatches.length > 0;
+    const boloMessage = boloAlert ? summarizeVehicleBoloFlags(boloFlags) : '';
 
     const registration = VehicleRegistrations.findByPlate(rawPlate);
     if (!registration) {
-      const normalizedPlate = normalizePlateKey(rawPlate);
+      const messageParts = [describePlateStatus('unregistered')];
+      if (boloMessage) messageParts.push(boloMessage);
       return res.json({
         ok: true,
         found: false,
         plate: rawPlate.toUpperCase(),
         plate_normalized: normalizedPlate,
         registration_status: 'unregistered',
+        registration_alert: true,
+        bolo_alert: boloAlert,
+        bolo_flags: boloFlags,
+        bolo_count: boloMatches.length,
+        bolo_matches: boloMatches,
         alert: true,
-        message: describePlateStatus('unregistered'),
+        message: messageParts.join(' | '),
       });
     }
 
@@ -1342,6 +1421,15 @@ router.get('/plate-status/:plate', requireBridgeAuth, (req, res) => {
     if (status === 'valid' && isPastOrTodayDateOnly(registration.expiry_at)) {
       status = 'expired';
     }
+    const registrationAlert = status !== 'valid';
+    const alert = registrationAlert || boloAlert;
+    const messageParts = [];
+    if (registrationAlert) {
+      messageParts.push(describePlateStatus(status));
+    } else if (!boloAlert) {
+      messageParts.push(describePlateStatus(status));
+    }
+    if (boloMessage) messageParts.push(boloMessage);
 
     return res.json({
       ok: true,
@@ -1349,8 +1437,13 @@ router.get('/plate-status/:plate', requireBridgeAuth, (req, res) => {
       plate: String(registration.plate || rawPlate).toUpperCase(),
       plate_normalized: String(registration.plate_normalized || normalizePlateKey(rawPlate)),
       registration_status: status,
-      alert: status !== 'valid',
-      message: describePlateStatus(status),
+      registration_alert: registrationAlert,
+      bolo_alert: boloAlert,
+      bolo_flags: boloFlags,
+      bolo_count: boloMatches.length,
+      bolo_matches: boloMatches,
+      alert,
+      message: messageParts.join(' | '),
       expiry_at: String(registration.expiry_at || ''),
       owner_name: String(registration.owner_name || ''),
       citizen_id: String(registration.citizen_id || ''),

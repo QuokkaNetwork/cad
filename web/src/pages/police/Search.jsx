@@ -337,6 +337,21 @@ export default function Search() {
       >
         {selectedPerson && (
           <div className="space-y-4">
+            {(selectedPerson.has_warrant || selectedPerson.has_bolo) ? (
+              <div className="flex flex-wrap gap-2">
+                {selectedPerson.has_warrant ? (
+                  <div className="px-3 py-2 rounded-lg border border-red-500/40 bg-red-500/10 text-sm text-red-200">
+                    Active Warrant{Number(selectedPerson.warrant_count || 0) > 1 ? `s (${Number(selectedPerson.warrant_count)})` : ''}
+                  </div>
+                ) : null}
+                {selectedPerson.has_bolo ? (
+                  <div className="px-3 py-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-sm text-amber-200">
+                    Active BOLO{Number(selectedPerson.bolo_count || 0) > 1 ? `s (${Number(selectedPerson.bolo_count)})` : ''}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="bg-cad-surface border border-cad-border rounded-lg px-4 py-4 text-sm">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">

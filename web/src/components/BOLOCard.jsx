@@ -6,6 +6,10 @@ export default function BOLOCard({ bolo, onResolve, onCancel }) {
   try {
     details = typeof bolo.details_json === 'string' ? JSON.parse(bolo.details_json) : bolo.details_json || {};
   } catch { /* ignore */ }
+  const flags = Array.isArray(details?.flags)
+    ? details.flags.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const plate = String(details?.plate || details?.registration_plate || details?.rego || '').trim();
 
   return (
     <div className={`bg-cad-card border rounded-lg p-4 ${isVehicle ? 'border-blue-500/30' : 'border-amber-500/30'}`}>
@@ -44,11 +48,29 @@ export default function BOLOCard({ bolo, onResolve, onCancel }) {
       {/* Details */}
       {Object.keys(details).length > 0 && (
         <div className="bg-cad-surface rounded p-2 mt-2 space-y-1">
+          {isVehicle && plate ? (
+            <div className="flex gap-2 text-xs">
+              <span className="text-cad-muted">Plate:</span>
+              <span className="text-cad-ink font-mono">{plate}</span>
+            </div>
+          ) : null}
+          {isVehicle && flags.length > 0 ? (
+            <div className="flex flex-wrap gap-1 pt-1">
+              {flags.map((flag) => (
+                <span
+                  key={flag}
+                  className="inline-flex items-center px-2 py-0.5 rounded text-[11px] border border-red-500/40 bg-red-500/10 text-red-300"
+                >
+                  {String(flag).replace(/_/g, ' ')}
+                </span>
+              ))}
+            </div>
+          ) : null}
           {Object.entries(details).map(([key, value]) => (
-            value && (
+            value && key !== 'flags' && key !== 'plate' && key !== 'registration_plate' && key !== 'rego' && (
               <div key={key} className="flex gap-2 text-xs">
                 <span className="text-cad-muted capitalize">{key.replace(/_/g, ' ')}:</span>
-                <span className="text-cad-ink">{value}</span>
+                <span className="text-cad-ink">{Array.isArray(value) ? value.join(', ') : String(value)}</span>
               </div>
             )
           ))}

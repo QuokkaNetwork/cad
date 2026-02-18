@@ -65,6 +65,21 @@ export default function SearchResults({ type, results, onSelect }) {
             <p className="text-xs text-cad-muted">
               {expiry ? `Expiry: ${formatDateAU(expiry, '-')}` : 'No expiry recorded'}
             </p>
+
+            {type === 'person' && (item?.has_warrant || item?.has_bolo) ? (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {item?.has_warrant ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-[11px] font-medium text-red-300">
+                    Warrant{Number(item?.warrant_count || 0) > 1 ? ` x${Number(item.warrant_count)}` : ''}
+                  </span>
+                ) : null}
+                {item?.has_bolo ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-[11px] font-medium text-amber-300">
+                    BOLO{Number(item?.bolo_count || 0) > 1 ? ` x${Number(item.bolo_count)}` : ''}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </button>
         );
       })}

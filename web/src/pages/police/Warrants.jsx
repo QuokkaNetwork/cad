@@ -9,13 +9,20 @@ import { formatDateTimeAU } from '../../utils/dateTime';
 
 function WarrantCard({ warrant, onServe, onCancel }) {
   const createdAt = formatDateTimeAU(warrant.created_at ? `${warrant.created_at}Z` : '', '');
+  const subjectName = String(warrant.subject_name || '').trim() || 'Unknown Person';
+  const citizenId = String(warrant.citizen_id || '').trim();
 
   return (
     <div className="bg-cad-card border border-amber-500/30 rounded-lg p-4">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-amber-300 truncate">{warrant.title}</h3>
-          <p className="text-xs text-cad-muted mt-1">Citizen ID: <span className="font-mono">{warrant.citizen_id}</span></p>
+          <p className="text-xs text-cad-muted mt-1">Person: <span className="text-cad-ink">{subjectName}</span></p>
+          {citizenId ? (
+            <p className="text-xs text-cad-muted mt-1">
+              Citizen ID: <span className="font-mono">{citizenId}</span>
+            </p>
+          ) : null}
         </div>
         <span className="px-2 py-1 rounded text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30 whitespace-nowrap">
           Active
@@ -54,7 +61,7 @@ export default function Warrants() {
   const { key: locationKey } = useLocation();
   const [warrants, setWarrants] = useState([]);
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ citizen_id: '', title: '', description: '' });
+  const [form, setForm] = useState({ subject_name: '', citizen_id: '', title: '', description: '' });
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -86,13 +93,14 @@ export default function Warrants() {
     try {
       await api.post('/api/warrants', {
         department_id: deptId,
+        subject_name: form.subject_name,
         citizen_id: form.citizen_id,
         title: form.title,
         description: form.description,
         details: {},
       });
       setShowNew(false);
-      setForm({ citizen_id: '', title: '', description: '' });
+      setForm({ subject_name: '', citizen_id: '', title: '', description: '' });
       fetchData();
     } catch (err) {
       alert('Failed to create warrant: ' + err.message);
@@ -149,14 +157,25 @@ export default function Warrants() {
           <Modal open={showNew} onClose={() => setShowNew(false)} title="Create Warrant">
             <form onSubmit={createWarrant} className="space-y-3">
               <div>
-                <label className="block text-sm text-cad-muted mb-1">Citizen ID *</label>
+                <label className="block text-sm text-cad-muted mb-1">Person Name *</label>
                 <input
                   type="text"
                   required
+                  value={form.subject_name}
+                  onChange={e => setForm(f => ({ ...f, subject_name: e.target.value }))}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                  placeholder="e.g. Lachlan Reith"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-cad-muted mb-1">Citizen ID (optional)</label>
+                <input
+                  type="text"
                   value={form.citizen_id}
                   onChange={e => setForm(f => ({ ...f, citizen_id: e.target.value }))}
                   className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-                  placeholder="e.g. ABC12345"
+                  placeholder="e.g. VLM1B4NQ"
                 />
               </div>
 

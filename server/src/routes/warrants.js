@@ -21,9 +21,10 @@ router.get('/', requireAuth, (req, res) => {
 
 // Create a warrant
 router.post('/', requireAuth, (req, res) => {
-  const { department_id, citizen_id, title, description, details } = req.body;
-  if (!department_id || !citizen_id || !title) {
-    return res.status(400).json({ error: 'department_id, citizen_id, and title are required' });
+  const { department_id, citizen_id, subject_name, title, description, details } = req.body;
+  const normalizedSubjectName = String(subject_name || '').trim();
+  if (!department_id || !title || !normalizedSubjectName) {
+    return res.status(400).json({ error: 'department_id, subject_name, and title are required' });
   }
 
   const deptId = parseInt(department_id, 10);
@@ -32,14 +33,20 @@ router.post('/', requireAuth, (req, res) => {
 
   const warrant = Warrants.create({
     department_id: deptId,
-    citizen_id,
+    citizen_id: String(citizen_id || '').trim(),
+    subject_name: normalizedSubjectName,
     title,
     description: description || '',
     details_json: details ? JSON.stringify(details) : '{}',
     created_by: req.user.id,
   });
 
-  audit(req.user.id, 'warrant_created', { warrantId: warrant.id, citizenId: citizen_id, title });
+  audit(req.user.id, 'warrant_created', {
+    warrantId: warrant.id,
+    citizenId: String(citizen_id || '').trim(),
+    subjectName: normalizedSubjectName,
+    title,
+  });
   bus.emit('warrant:create', { departmentId: deptId, warrant });
   res.status(201).json(warrant);
 });

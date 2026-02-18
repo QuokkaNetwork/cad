@@ -2538,18 +2538,39 @@ local function lookupWraithPlateStatus(source, camera, plateRaw)
     local statusText = trim(payload.message or '')
     local model = trim(payload.vehicle_model or '')
     local owner = trim(payload.owner_name or '')
+    local boloFlags = {}
+    if type(payload.bolo_flags) == 'table' then
+      for _, rawFlag in ipairs(payload.bolo_flags) do
+        local normalized = trim(rawFlag):lower()
+        if normalized ~= '' then
+          local pretty = normalized:gsub('_', ' ')
+          pretty = pretty:gsub('(%a)([%w_]*)', function(first, rest)
+            return string.upper(first) .. string.lower(rest)
+          end)
+          boloFlags[#boloFlags + 1] = pretty
+        end
+      end
+    end
 
     local details = {}
     if statusText ~= '' then details[#details + 1] = statusText end
     if model ~= '' then details[#details + 1] = model end
     if owner ~= '' then details[#details + 1] = owner end
+    local statusHasBolo = statusText:lower():find('bolo', 1, true) ~= nil
+    if payload.bolo_alert == true then
+      if #boloFlags > 0 and not statusHasBolo then
+        details[#details + 1] = 'BOLO: ' .. table.concat(boloFlags, ', ')
+      elseif #boloFlags == 0 and not statusHasBolo then
+        details[#details + 1] = 'BOLO match'
+      end
+    end
 
     local message = ('%s hit: %s'):format(camLabel, plate)
     if #details > 0 then
       message = message .. ' | ' .. table.concat(details, ' | ')
     end
 
-    local severity = payload.registration_status == 'unregistered' and 'warning' or 'error'
+    local severity = (payload.registration_status == 'unregistered' and payload.bolo_alert ~= true) and 'warning' or 'error'
     notifyAlert(src, 'CAD Plate Alert', message, severity)
   end)
 end

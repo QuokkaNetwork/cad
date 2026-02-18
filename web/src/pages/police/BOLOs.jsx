@@ -7,6 +7,27 @@ import BOLOCard from '../../components/BOLOCard';
 import Modal from '../../components/Modal';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 
+const VEHICLE_BOLO_FLAG_OPTIONS = [
+  { value: 'stolen', label: 'Stolen' },
+  { value: 'wanted', label: 'Wanted Vehicle' },
+  { value: 'armed', label: 'Armed Occupants' },
+  { value: 'dangerous', label: 'Dangerous' },
+  { value: 'disqualified_driver', label: 'Disqualified Driver' },
+  { value: 'evade_police', label: 'Evade Police' },
+];
+
+function normalizeVehicleDetails(details) {
+  const source = details && typeof details === 'object' ? details : {};
+  const flags = Array.isArray(source.flags)
+    ? Array.from(new Set(source.flags.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)))
+    : [];
+  return {
+    ...source,
+    plate: String(source.plate || source.registration_plate || source.rego || '').trim().toUpperCase(),
+    flags,
+  };
+}
+
 export default function BOLOs() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -14,7 +35,7 @@ export default function BOLOs() {
   const [showNew, setShowNew] = useState(false);
   const [boloType, setBoloType] = useState('person');
   const [form, setForm] = useState({ title: '', description: '' });
-  const [details, setDetails] = useState({});
+  const [details, setDetails] = useState({ flags: [] });
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -43,17 +64,23 @@ export default function BOLOs() {
 
   async function createBolo(e) {
     e.preventDefault();
+    const payloadDetails = boloType === 'vehicle' ? normalizeVehicleDetails(details) : details;
+    if (boloType === 'vehicle' && !payloadDetails.plate) {
+      alert('Vehicle BOLOs require a registration plate.');
+      return;
+    }
+
     try {
       await api.post('/api/bolos', {
         department_id: deptId,
         type: boloType,
         title: form.title,
         description: form.description,
-        details,
+        details: payloadDetails,
       });
       setShowNew(false);
       setForm({ title: '', description: '' });
-      setDetails({});
+      setDetails({ flags: [] });
       fetchData();
     } catch (err) {
       alert('Failed to create BOLO: ' + err.message);
@@ -114,7 +141,7 @@ export default function BOLOs() {
               <div className="flex bg-cad-surface rounded border border-cad-border overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => { setBoloType('person'); setDetails({}); }}
+                  onClick={() => { setBoloType('person'); setDetails({ flags: [] }); }}
                   className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                     boloType === 'person' ? 'bg-amber-500/20 text-amber-400' : 'text-cad-muted'
                   }`}
@@ -123,7 +150,7 @@ export default function BOLOs() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setBoloType('vehicle'); setDetails({}); }}
+                  onClick={() => { setBoloType('vehicle'); setDetails({ flags: [] }); }}
                   className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                     boloType === 'vehicle' ? 'bg-blue-500/20 text-blue-400' : 'text-cad-muted'
                   }`}
@@ -188,11 +215,11 @@ export default function BOLOs() {
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-cad-muted mb-1">Plate</label>
+                    <label className="block text-xs text-cad-muted mb-1">Registration Plate *</label>
                     <input
                       type="text"
                       value={details.plate || ''}
-                      onChange={e => setDetails(d => ({ ...d, plate: e.target.value }))}
+                      onChange={e => setDetails(d => ({ ...d, plate: String(e.target.value || '').toUpperCase() }))}
                       className="w-full bg-cad-card border border-cad-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
                     />
                   </div>
@@ -222,6 +249,31 @@ export default function BOLOs() {
                       onChange={e => setDetails(d => ({ ...d, last_seen: e.target.value }))}
                       className="w-full bg-cad-card border border-cad-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
                     />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs text-cad-muted mb-1">Flags</label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {VEHICLE_BOLO_FLAG_OPTIONS.map((flag) => {
+                        const enabled = Array.isArray(details.flags) && details.flags.includes(flag.value);
+                        return (
+                          <label key={flag.value} className="inline-flex items-center gap-2 text-xs text-cad-ink bg-cad-card border border-cad-border rounded px-2 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={enabled}
+                              onChange={(e) => {
+                                const current = Array.isArray(details.flags) ? details.flags : [];
+                                if (e.target.checked) {
+                                  setDetails((d) => ({ ...d, flags: Array.from(new Set([...current, flag.value])) }));
+                                } else {
+                                  setDetails((d) => ({ ...d, flags: current.filter((entry) => entry !== flag.value) }));
+                                }
+                              }}
+                            />
+                            <span>{flag.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}

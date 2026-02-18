@@ -70,18 +70,100 @@ function normalizePersonForResponse(person) {
   };
 }
 
+function normalizeNameKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getScopedDepartmentIds(req) {
+  if (!req?.user) return [];
+  if (!Array.isArray(req.user.departments)) return [];
+  return Array.from(new Set(
+    req.user.departments
+      .map((dept) => Number(dept?.id || 0))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  ));
+}
+
+function parseJsonObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  const text = String(value || '').trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function extractWarrantSubjectName(warrant) {
+  const details = parseJsonObject(warrant?.details_json);
+  return String(
+    warrant?.subject_name
+    || details?.subject_name
+    || details?.name
+    || ''
+  ).trim();
+}
+
+function warrantMatchesPerson(warrant, citizenId, fullName) {
+  const normalizedCitizenId = String(citizenId || '').trim().toLowerCase();
+  const warrantCitizenId = String(warrant?.citizen_id || '').trim().toLowerCase();
+  if (normalizedCitizenId && warrantCitizenId && normalizedCitizenId === warrantCitizenId) return true;
+
+  const personNameKey = normalizeNameKey(fullName);
+  if (!personNameKey) return false;
+
+  const subjectName = extractWarrantSubjectName(warrant);
+  const subjectKey = normalizeNameKey(subjectName);
+  if (subjectKey && (subjectKey === personNameKey || subjectKey.includes(personNameKey) || personNameKey.includes(subjectKey))) {
+    return true;
+  }
+
+  const titleKey = normalizeNameKey(warrant?.title || '');
+  if (titleKey && (titleKey.includes(personNameKey) || personNameKey.includes(titleKey))) {
+    return true;
+  }
+
+  return false;
+}
+
+function findActivePersonWarrants(req, citizenId, fullName) {
+  const departmentIds = getScopedDepartmentIds(req);
+  if (departmentIds.length === 0) return [];
+  if (!Array.isArray(req._activeScopedWarrants)) {
+    req._activeScopedWarrants = Warrants.listByDepartmentIds(departmentIds, 'active');
+  }
+  const activeWarrants = req._activeScopedWarrants;
+  return activeWarrants.filter((warrant) => warrantMatchesPerson(warrant, citizenId, fullName));
+}
+
 function findActivePersonBolos(req, citizenId, fullName) {
-  const departmentId = req.user?.departments?.[0]?.id || 0;
-  if (!departmentId) return [];
-  const needleCitizen = String(citizenId || '').trim();
-  const needleName = String(fullName || '').trim().toLowerCase();
-  return Bolos.listByDepartment(departmentId, 'active')
+  const departmentIds = getScopedDepartmentIds(req);
+  if (departmentIds.length === 0) return [];
+
+  const needleCitizen = String(citizenId || '').trim().toLowerCase();
+  const needleName = normalizeNameKey(fullName);
+  if (!Array.isArray(req._activeScopedBolos)) {
+    req._activeScopedBolos = Bolos.listByDepartmentIds(departmentIds, 'active');
+  }
+  return req._activeScopedBolos
     .filter((bolo) => {
       if (bolo.type !== 'person') return false;
-      const hayTitle = String(bolo.title || '').toLowerCase();
-      const hayDetails = String(bolo.details_json || '').toLowerCase();
-      if (needleCitizen && hayDetails.includes(needleCitizen.toLowerCase())) return true;
+      const details = parseJsonObject(bolo.details_json);
+      const detailCitizenId = String(details?.citizen_id || '').trim().toLowerCase();
+      const detailName = normalizeNameKey(details?.name || '');
+      const hayTitle = normalizeNameKey(bolo.title || '');
+      const hayDescription = normalizeNameKey(bolo.description || '');
+      if (needleCitizen && detailCitizenId && detailCitizenId === needleCitizen) return true;
+      if (needleName && detailName && (detailName === needleName || detailName.includes(needleName) || needleName.includes(detailName))) return true;
       if (needleName && hayTitle.includes(needleName)) return true;
+      if (needleName && hayDescription.includes(needleName)) return true;
       return false;
     });
 }
@@ -90,7 +172,7 @@ function buildCadPersonResponse(req, citizenId, license, fallbackName = '') {
   const cid = String(citizenId || '').trim();
   const fullName = String(license?.full_name || fallbackName || cid).trim();
   const names = splitFullName(fullName);
-  const warrants = cid ? Warrants.findByCitizenId(cid, 'active') : [];
+  const warrants = findActivePersonWarrants(req, cid, fullName);
   const bolos = findActivePersonBolos(req, cid, fullName);
   return {
     citizenid: cid,
@@ -163,11 +245,12 @@ router.get('/persons', requireAuth, async (req, res) => {
     // Add warrant and BOLO flags to each result
     const enrichedResults = results.map(person => {
       const normalizedPerson = normalizePersonForResponse(person);
-      const warrants = Warrants.findByCitizenId(normalizedPerson.citizenid, 'active');
-      const personBolos = Bolos.listByDepartment(req.user.departments[0]?.id || 0, 'active')
-        .filter(bolo => bolo.type === 'person'
-          && (bolo.title.toLowerCase().includes(`${normalizedPerson.firstname} ${normalizedPerson.lastname}`.toLowerCase())
-            || String(bolo.details_json || '').includes(normalizedPerson.citizenid)));
+      const personFullName = String(
+        normalizedPerson.full_name
+        || `${normalizedPerson.firstname || ''} ${normalizedPerson.lastname || ''}`.trim()
+      ).trim();
+      const warrants = findActivePersonWarrants(req, normalizedPerson.citizenid, personFullName);
+      const personBolos = findActivePersonBolos(req, normalizedPerson.citizenid, personFullName);
 
       return {
         ...normalizedPerson,
@@ -192,11 +275,12 @@ router.get('/persons/:citizenid', requireAuth, async (req, res) => {
     const normalizedPerson = normalizePersonForResponse(person);
 
     // Add warrant and BOLO flags
-    const warrants = Warrants.findByCitizenId(normalizedPerson.citizenid, 'active');
-    const personBolos = Bolos.listByDepartment(req.user.departments[0]?.id || 0, 'active')
-      .filter(bolo => bolo.type === 'person'
-        && (bolo.title.toLowerCase().includes(`${normalizedPerson.firstname} ${normalizedPerson.lastname}`.toLowerCase())
-          || String(bolo.details_json || '').includes(normalizedPerson.citizenid)));
+    const personFullName = String(
+      normalizedPerson.full_name
+      || `${normalizedPerson.firstname || ''} ${normalizedPerson.lastname || ''}`.trim()
+    ).trim();
+    const warrants = findActivePersonWarrants(req, normalizedPerson.citizenid, personFullName);
+    const personBolos = findActivePersonBolos(req, normalizedPerson.citizenid, personFullName);
 
     const enrichedPerson = {
       ...normalizedPerson,

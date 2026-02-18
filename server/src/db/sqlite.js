@@ -695,6 +695,70 @@ const Bolos = {
       ORDER BY b.created_at DESC
     `).all(departmentId, status);
   },
+  listByDepartmentIds(departmentIds = [], status = 'active') {
+    const ids = Array.isArray(departmentIds)
+      ? Array.from(new Set(
+        departmentIds
+          .map(id => Number(id))
+          .filter(id => Number.isInteger(id) && id > 0)
+      ))
+      : [];
+    if (ids.length === 0) return [];
+
+    const placeholders = ids.map(() => '?').join(', ');
+    return db.prepare(`
+      SELECT b.*, us.steam_name as creator_name
+      FROM bolos b
+      LEFT JOIN users us ON us.id = b.created_by
+      WHERE b.department_id IN (${placeholders}) AND b.status = ?
+      ORDER BY b.created_at DESC
+    `).all(...ids, status);
+  },
+  listActiveVehicleByPlate(plateKey = '', departmentIds = []) {
+    const normalizedPlate = normalizePlateKey(plateKey);
+    if (!normalizedPlate) return [];
+
+    const ids = Array.isArray(departmentIds)
+      ? Array.from(new Set(
+        departmentIds
+          .map(id => Number(id))
+          .filter(id => Number.isInteger(id) && id > 0)
+      ))
+      : [];
+    const scoped = ids.length > 0;
+    const departmentFilter = scoped ? `AND b.department_id IN (${ids.map(() => '?').join(', ')})` : '';
+
+    const rows = db.prepare(`
+      SELECT b.*, us.steam_name as creator_name
+      FROM bolos b
+      LEFT JOIN users us ON us.id = b.created_by
+      WHERE b.type = 'vehicle' AND b.status = 'active' ${departmentFilter}
+      ORDER BY b.created_at DESC
+    `).all(...ids);
+
+    const matches = [];
+    for (const bolo of rows) {
+      let details = {};
+      try {
+        details = typeof bolo.details_json === 'string'
+          ? JSON.parse(bolo.details_json || '{}')
+          : (bolo.details_json || {});
+      } catch {
+        details = {};
+      }
+
+      const detailPlate = normalizePlateKey(details?.plate || details?.registration_plate || details?.rego || '');
+      const titlePlate = normalizePlateKey(bolo?.title || '');
+      const descriptionPlate = normalizePlateKey(bolo?.description || '');
+      const titleHasPlate = titlePlate.includes(normalizedPlate);
+      const descriptionHasPlate = descriptionPlate.includes(normalizedPlate);
+      if (detailPlate === normalizedPlate || titleHasPlate || descriptionHasPlate) {
+        matches.push(bolo);
+      }
+    }
+
+    return matches;
+  },
   findById(id) {
     return db.prepare(`
       SELECT b.*, us.steam_name as creator_name
@@ -725,6 +789,25 @@ const Warrants = {
       ORDER BY w.created_at DESC
     `).all(departmentId, status);
   },
+  listByDepartmentIds(departmentIds = [], status = 'active') {
+    const ids = Array.isArray(departmentIds)
+      ? Array.from(new Set(
+        departmentIds
+          .map(id => Number(id))
+          .filter(id => Number.isInteger(id) && id > 0)
+      ))
+      : [];
+    if (ids.length === 0) return [];
+
+    const placeholders = ids.map(() => '?').join(', ');
+    return db.prepare(`
+      SELECT w.*, us.steam_name as creator_name
+      FROM warrants w
+      LEFT JOIN users us ON us.id = w.created_by
+      WHERE w.department_id IN (${placeholders}) AND w.status = ?
+      ORDER BY w.created_at DESC
+    `).all(...ids, status);
+  },
   findById(id) {
     return db.prepare(`
       SELECT w.*, us.steam_name as creator_name
@@ -734,18 +817,22 @@ const Warrants = {
     `).get(id);
   },
   findByCitizenId(citizenId, status = 'active') {
+    const normalized = String(citizenId || '').trim();
+    if (!normalized) return [];
     return db.prepare(`
       SELECT w.*, us.steam_name as creator_name
       FROM warrants w
       LEFT JOIN users us ON us.id = w.created_by
       WHERE w.citizen_id = ? AND w.status = ?
       ORDER BY w.created_at DESC
-    `).all(citizenId, status);
+    `).all(normalized, status);
   },
-  create({ department_id, citizen_id, title, description, details_json, created_by }) {
+  create({ department_id, citizen_id, subject_name, title, description, details_json, created_by }) {
+    const normalizedCitizenId = String(citizen_id || '').trim();
+    const normalizedSubjectName = String(subject_name || '').trim();
     const info = db.prepare(
-      'INSERT INTO warrants (department_id, citizen_id, title, description, details_json, created_by) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(department_id, citizen_id, title, description || '', details_json || '{}', created_by);
+      'INSERT INTO warrants (department_id, citizen_id, subject_name, title, description, details_json, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(department_id, normalizedCitizenId, normalizedSubjectName, title, description || '', details_json || '{}', created_by);
     return this.findById(info.lastInsertRowid);
   },
   updateStatus(id, status) {
