@@ -1062,7 +1062,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
       });
       voiceSessionCreated = true;
       // Put the in-game caller into the call channel immediately so the
-      // pma-voice phone session exists as soon as 000 is dialed (pending until
+      // Voice call session exists as soon as 000 is dialed (pending until
       // a dispatcher accepts on the CAD side).
       if (callerGameId) {
         queueVoiceEvent('join_call', {
@@ -1308,7 +1308,7 @@ router.post('/route-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// FiveM resource polls pending voice jobs and applies them via pma-voice exports.
+// FiveM resource polls pending voice jobs and applies them in-game.
 router.get('/voice-events', requireBridgeAuth, (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
   const events = listPendingVoiceEvents(limit);
@@ -1385,7 +1385,7 @@ router.post('/job-jobs/:id/failed', requireBridgeAuth, (req, res) => {
 });
 
 // Sync Mumble server configuration from FiveM
-// Expected payload: { mumble_host: "127.0.0.1", mumble_port: 64738, voice_system: "pma-voice", detected: true }
+// Expected payload: { mumble_host: "127.0.0.1", mumble_port: 64738, voice_system: "custom", detected: true }
 router.post('/mumble-config/sync', requireBridgeAuth, (req, res) => {
   try {
     const host = String(req.body?.mumble_host || '').trim();
@@ -1418,7 +1418,7 @@ router.post('/mumble-config/sync', requireBridgeAuth, (req, res) => {
   }
 });
 
-// Sync radio channel names from FiveM (pma-voice/mm-radio)
+// Sync radio channel names from FiveM cad_bridge config.
 // Expected payload: { channels: [{ id: 1, name: "Police Primary", description: "..." }, ...] }
 router.post('/radio-channels/sync', requireBridgeAuth, (req, res) => {
   try {
@@ -1478,7 +1478,7 @@ router.post('/radio-channels/sync', requireBridgeAuth, (req, res) => {
 
 // ============================================================================
 // Voice Participant Heartbeat — FiveM → CAD
-// FiveM resource polls pma-voice state for every online player and POSTs
+// FiveM resource polls in-game voice state for every online player and POSTs
 // batched updates here so the CAD channel participant list stays current
 // without requiring a resource restart.
 //
@@ -1496,7 +1496,7 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
     }
 
     // Build a map of channel_number → VoiceChannel row (cached for this request).
-    // Auto-creates the channel if it doesn't exist yet (e.g. mm_radio channels 1-10
+    // Auto-creates the channel if it doesn't exist yet (e.g. local config channels
     // reported by the heartbeat before the radio-channels sync has run).
     const channelCache = new Map();
     function getOrCreateChannel(channelNumber) {

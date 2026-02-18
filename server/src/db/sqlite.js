@@ -1896,7 +1896,7 @@ const VoiceParticipants = {
   },
   // Called once at server startup — removes every participant row so the CAD
   // doesn't show ghost entries from the previous run. Dispatchers re-join when
-  // they open the Voice page; FiveM players re-join when pma-voice reconnects.
+  // they open the Voice page; FiveM players re-join when their in-game voice reconnects.
   removeAllOnStartup() {
     const rows = db.prepare(`
       SELECT vp.*, vc.channel_number

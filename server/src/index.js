@@ -369,8 +369,8 @@ bridgeHttpServer.on('error', (err) => {
     } else {
       console.log('[VoiceCfg]    Set FIVEM_SERVER_PATH in .env for automatic voice.cfg deploy');
     }
-    console.log('[pma-voice]   Players connect via voice_externalAddress in voice.cfg');
-    console.log(`[pma-voice]   External Mumble: ${publicIp || process.env.MUMBLE_HOST || '127.0.0.1'}:${process.env.MUMBLE_PORT || '64738'}`);
+    console.log('[FiveMVoice]  Players connect via voice_externalAddress in voice.cfg');
+    console.log(`[FiveMVoice]  External Mumble: ${publicIp || process.env.MUMBLE_HOST || '127.0.0.1'}:${process.env.MUMBLE_PORT || '64738'}`);
     console.log('====================');
     console.log('');
   });

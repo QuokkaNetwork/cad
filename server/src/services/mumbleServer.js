@@ -3,7 +3,7 @@
  *
  * When MUMBLE_MANAGE=true in .env, the CAD server spawns and supervises
  * rust-mumble — a Rust implementation of the Mumble protocol built
- * specifically for FiveM/pma-voice.
+ * specifically for FiveM external voice.
  *
  * Binary: server/murmur/rust-mumble.exe (Windows) or rust-mumble (Linux)
  * Releases: https://github.com/AvarianKnight/rust-mumble/releases

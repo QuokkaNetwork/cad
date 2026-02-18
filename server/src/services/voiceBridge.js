@@ -200,7 +200,7 @@ class VoiceBridgeServer {
     ];
     // .env MUMBLE_HOST/PORT always takes priority (the CAD and Mumble run on the same machine).
     // The DB values are populated by FiveM auto-detect (the public IP) which is correct for
-    // pma-voice clients connecting from outside, but the CAD server must connect via localhost.
+    // In-game clients connect from outside, but the CAD server must connect via localhost.
     const envHost = String(process.env.MUMBLE_HOST || '').trim();
     const envPort = String(process.env.MUMBLE_PORT || '').trim();
     const dbHost = String(Settings.get('mumble_host') || '').trim();
@@ -546,7 +546,7 @@ class VoiceBridgeServer {
 
     const numericChannel = Number(channelNumber || 0);
 
-    // pma-voice keeps ALL players in the Mumble root channel and uses
+    // FiveM keeps players in the Mumble root channel and uses
     // voice whisper targets for radio channel isolation.  The dispatcher
     // must therefore also sit in the root channel — not a named sub-channel.
     // We always move to root; the routing map + setVoiceTarget() handles
@@ -706,7 +706,7 @@ class VoiceBridgeServer {
   /**
    * Refresh per-dispatcher voice whisper targets.
    *
-   * pma-voice architecture (key insight):
+   * FiveM Mumble architecture (key insight):
    *   - Each FiveM player's Mumble channel = their server source ID.
    *     `MumbleSetVoiceChannel(playerServerId)` puts them in that channel.
    *   - Radio routing uses `MumbleAddVoiceTargetChannel(voiceTarget, serverId)`
@@ -718,7 +718,7 @@ class VoiceBridgeServer {
    * mumble-node API: setVoiceTarget(targetId, channelId, opts)
    *   targetId 1-30 = whisper targets; 0 = normal talk (everyone in same channel).
    *   channelId = the Mumble channel to whisper to.
-   *   For pma-voice, channelId == FiveM source number of the target player.
+   *   channelId == FiveM source number of the target player.
    *
    * We set one target slot per route member (up to MAX_WHISPER_TARGETS).
    * Targets are re-used across frames if the member list hasn't changed
@@ -743,7 +743,7 @@ class VoiceBridgeServer {
 
     const targets = [];
     for (let i = 0; i < members.length; i++) {
-      const sourceId = members[i]; // FiveM source ID == pma-voice Mumble channel for that player
+      const sourceId = members[i]; // FiveM source ID == Mumble channel for that player
       const targetId = i + 1;
       try {
         client.setVoiceTarget(targetId, sourceId, { links: false, children: false });

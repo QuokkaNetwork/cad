@@ -35,16 +35,11 @@ Config.NearestPostalResource = GetConvar('cad_bridge_postal_resource', 'nearest-
 Config.NearestPostalExport = GetConvar('cad_bridge_postal_export', 'getPostal')
 
 -- Radio adapter for CAD-driven radio channel join/leave events:
--- 'cad-radio' -> custom CAD radio implementation (recommended)
---                keeps pma-voice proximity and bypasses mm_radio logic.
--- 'auto'      -> detect pma-voice or mm-radio automatically
--- 'pma-voice' -> require pma-voice to be running
--- 'mm-radio'  -> require mm_radio to be running
---               (mm-radio depends on pma-voice; both use pma-voice server exports)
+-- 'cad-radio' -> custom CAD radio implementation (recommended/default)
 -- 'none'      -> disable CAD-driven in-game radio sync
 Config.RadioAdapter = GetConvar('cad_bridge_radio_adapter', 'cad-radio')
 
--- Built-in CAD radio UI/channel config (mm_radio-style tables).
+-- Built-in CAD radio UI/channel config.
 Config.RadioMaxFrequency = tonumber(GetConvar('cad_bridge_radio_max_frequency', '500')) or 500
 Config.RadioOverlayMode = tostring(GetConvar('cad_bridge_radio_overlay', 'default'))
 
@@ -66,16 +61,12 @@ Config.RadioNames = {
   ['422.%'] = 'Vagos CH#1',
 }
 
--- Channel ACL (same structure as mm_radio Shared.RestrictedChannels).
-Config.RadioRestrictedChannels = {
-  [1] = { type = 'job',  name = { 'police', 'ambulance' } },
-  [2] = { type = 'job',  name = { 'police', 'ambulance' } },
-  [3] = { type = 'job',  name = { 'police', 'ambulance' } },
-  [4] = { type = 'job',  name = { 'police', 'ambulance' } },
-  [420] = { type = 'gang', name = { 'ballas' } },
-  [421] = { type = 'gang', name = { 'lostmc' } },
-  [422] = { type = 'gang', name = { 'vagos' } },
-}
+-- Channel ACL (optional; empty means every player can join every channel).
+-- Example:
+-- Config.RadioRestrictedChannels = {
+--   [2] = { type = 'job', name = { 'police', 'ambulance' } },
+-- }
+Config.RadioRestrictedChannels = {}
 
 -- CAD-issued driver license + vehicle registration commands/forms.
 Config.DriverLicenseCommand = trim(GetConvar('cad_bridge_license_command', 'cadlicense'))

@@ -899,27 +899,9 @@ end)
 -- ============================================================================
 -- CAD custom radio (adapter: cad-radio)
 --
--- This replaces mm_radio/pma radio routing while keeping pma-voice proximity.
--- We use a dedicated voice target slot so we do not fight pma proximity logic.
+-- This handles radio routing entirely inside cad_bridge.
+-- We use a dedicated voice target slot so we do not fight proximity logic.
 -- ============================================================================
-local cadBridgeCurrentMmRadioChannel = nil
-RegisterNetEvent('cad_bridge:syncMmRadio', function(channelNumber, playerName)
-  if GetResourceState('mm_radio') ~= 'started' then return end
-  local ch = tonumber(channelNumber) or 0
-  if ch > 0 then
-    if cadBridgeCurrentMmRadioChannel and cadBridgeCurrentMmRadioChannel ~= ch then
-      TriggerServerEvent('mm_radio:server:removeFromRadioChannel', cadBridgeCurrentMmRadioChannel)
-    end
-    cadBridgeCurrentMmRadioChannel = ch
-    TriggerServerEvent('mm_radio:server:addToRadioChannel', ch, tostring(playerName or ''))
-  else
-    if cadBridgeCurrentMmRadioChannel then
-      TriggerServerEvent('mm_radio:server:removeFromRadioChannel', cadBridgeCurrentMmRadioChannel)
-      cadBridgeCurrentMmRadioChannel = nil
-    end
-  end
-end)
-
 local CAD_RADIO_ENABLED = tostring(GetConvar('cad_bridge_radio_enabled', 'true')) == 'true'
 local CAD_RADIO_TARGET_ID = tonumber(GetConvar('cad_bridge_radio_target_id', '2')) or 2
 local CAD_PROXIMITY_TARGET_ID = tonumber(GetConvar('cad_bridge_proximity_target_id', '1')) or 1
@@ -1291,7 +1273,6 @@ local function setCadRadioPttState(enabled)
     rebuildCadRadioTarget()
     MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
     TriggerServerEvent('cad_bridge:radio:setTalking', true)
-    TriggerEvent('pma-voice:radioActive', true)
     cadRadioSendNui('updateRadioTalking', {
       radioId = tostring(getLocalServerId()),
       radioTalking = true,
@@ -1302,7 +1283,6 @@ local function setCadRadioPttState(enabled)
 
   cadRadioPttPressed = false
   TriggerServerEvent('cad_bridge:radio:setTalking', false)
-  TriggerEvent('pma-voice:radioActive', false)
   cadRadioSendNui('updateRadioTalking', {
     radioId = tostring(getLocalServerId()),
     radioTalking = false,
@@ -1614,13 +1594,52 @@ RegisterNUICallback('saveData', function(data, cb)
   cb('ok')
 end)
 
-RegisterCommand('cadbridgeradio', function()
-  if not CAD_RADIO_ENABLED or not CAD_RADIO_UI_ENABLED or not isCadRadioAdapterActive() then return end
+local function canUseCadRadioUi()
+  return CAD_RADIO_ENABLED and CAD_RADIO_UI_ENABLED and isCadRadioAdapterActive()
+end
+
+local function cadRadioToggleUi()
   if cadRadioUiVisible then
     cadRadioCloseUi()
   else
     cadRadioOpenUi()
   end
+end
+
+local function handleCadRadioCommandArgs(args)
+  if type(args) ~= 'table' then return false end
+  local first = tostring(args[1] or ''):gsub('^%s+', ''):gsub('%s+$', '')
+  if first == '' then return false end
+
+  local lowered = first:lower()
+  if lowered == '0' or lowered == 'off' or lowered == 'leave' then
+    TriggerServerEvent('cad_bridge:radio:uiLeaveRequest')
+    return true
+  end
+
+  local channel = tonumber(first)
+  if channel and channel > 0 then
+    TriggerServerEvent('cad_bridge:radio:uiJoinRequest', channel, cadRadioGetLocalDisplayName())
+    return true
+  end
+
+  return false
+end
+
+RegisterCommand('cadbridgeradio', function(_, args)
+  if not canUseCadRadioUi() then return end
+  if handleCadRadioCommandArgs(args) then return end
+  cadRadioToggleUi()
+end, false)
+
+-- Legacy command compatibility.
+-- /radio toggles the built-in CAD radio UI, or can be used as:
+--   /radio <channel>
+--   /radio off
+RegisterCommand('radio', function(_, args)
+  if not canUseCadRadioUi() then return end
+  if handleCadRadioCommandArgs(args) then return end
+  cadRadioToggleUi()
 end, false)
 
 RegisterKeyMapping('cadbridgeradio', 'Open CAD Radio UI', 'keyboard', CAD_RADIO_UI_KEY)
@@ -1670,7 +1689,6 @@ AddEventHandler('onClientResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
   if cadRadioPttPressed then
     TriggerServerEvent('cad_bridge:radio:setTalking', false)
-    TriggerEvent('pma-voice:radioActive', false)
   end
   cadRadioCloseUi()
   clearAllRemoteCadRadioTalking()

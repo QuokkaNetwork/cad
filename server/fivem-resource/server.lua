@@ -270,6 +270,10 @@ local function registerEmergencySuggestion(target)
   if regoCommand ~= '' then
     TriggerClientEvent('chat:addSuggestion', target, '/' .. regoCommand, 'Open CAD vehicle registration form')
   end
+
+  TriggerClientEvent('chat:addSuggestion', target, '/radio', 'Open CAD radio UI or join/leave channel', {
+    { name = 'channel', help = 'Optional channel number. Example: /radio 1. Use /radio off to leave.' },
+  })
 end
 
 local startNpwdEmergencyHandlerRegistration
@@ -823,7 +827,7 @@ local function handleNpwdEmergencyCall(emergencyNumber, callRequest)
   -- Continue NPWD middleware chain.
   -- NPWD's onCall contract expects middleware to call next()/forward()/exit().
   -- We call next() so NPWD can complete its internal call flow while CAD handles
-  -- emergency call creation + pma-voice channel assignment in parallel.
+  -- emergency call creation in parallel.
   if type(requestObj.next) == 'function' then
     pcall(function()
       requestObj.next()
@@ -1850,35 +1854,35 @@ CreateThread(function()
 end)
 
 -- ============================================================================
--- Voice Integration (pma-voice / mm-radio)
+-- Voice Integration (custom CAD radio only)
 --
--- Config.RadioAdapter values:
---   'cad-radio' -> custom CAD radio implementation (recommended)
---   'auto'      -> pma-voice or mm-radio (legacy behavior)
---   'pma-voice' -> require pma-voice to be running
---   'mm-radio'  -> require mm_radio to be running (pma-voice is its dependency)
---   'none'      -> disable CAD-driven radio sync entirely
+-- Radio channel membership/routing is handled only by cad_bridge.
+-- No pma-voice/mm_radio radio exports are used here.
 -- ============================================================================
 
-local function isPmaVoiceAvailable()
-  return GetResourceState('pma-voice') == 'started'
-end
-
-local function isMmRadioAvailable()
-  return GetResourceState('mm_radio') == 'started'
-end
+local radioAdapterFallbackWarned = false
 
 local function getRadioAdapter()
   local adapter = tostring(Config.RadioAdapter or 'cad-radio'):lower()
   if adapter == 'cad_radio' then adapter = 'cad-radio' end
-  return adapter
+  if adapter == 'none' then
+    return 'none'
+  end
+  if adapter ~= 'cad-radio' then
+    if not radioAdapterFallbackWarned then
+      print(('[cad_bridge] Unsupported cad_bridge_radio_adapter "%s"; forcing cad-radio mode'):format(adapter))
+      radioAdapterFallbackWarned = true
+    end
+    return 'cad-radio'
+  end
+  return 'cad-radio'
 end
 
 -- Custom CAD radio state (used when adapter = cad-radio)
 local CadRadioMembersByChannel = {} -- [channel] = { [source] = true }
 local CadRadioChannelBySource = {}  -- [source] = channel
 local CadRadioTalkingBySource = {}  -- [source] = bool
-local CadRadioDisplayNameBySource = {} -- [source] = custom display name (mm_radio callsign)
+local CadRadioDisplayNameBySource = {} -- [source] = custom display name
 
 local function cadRadioGetMemberRows(channelNumber)
   local channel = tonumber(channelNumber) or 0
@@ -1915,20 +1919,6 @@ local function cadRadioGetMemberRows(channelNumber)
   return rows
 end
 
-local function cadRadioBuildMmListPayload(members)
-  local payload = {}
-  for _, row in ipairs(members or {}) do
-    local src = tonumber(row.source) or 0
-    if src > 0 then
-      payload[tostring(src)] = {
-        name = tostring(row.name or ('Player ' .. tostring(src))),
-        isTalking = row.talking == true,
-      }
-    end
-  end
-  return payload
-end
-
 local function cadRadioPushStateToPlayer(source, channelNumber)
   local src = tonumber(source) or 0
   if src <= 0 or not GetPlayerName(src) then return end
@@ -1953,9 +1943,6 @@ local function cadRadioBroadcastChannel(channelNumber)
       })
     end
   end
-
-  -- Keep mm_radio UI player list in sync when using cad-radio backend.
-  TriggerClientEvent('mm_radio:client:radioListUpdate', -1, cadRadioBuildMmListPayload(members), channel)
 end
 
 local function cadRadioSetPlayerChannel(source, channelNumber)
@@ -2038,7 +2025,6 @@ RegisterNetEvent('cad_bridge:radio:setTalking', function(enabled)
   for memberSource, _ in pairs(bucket) do
     if GetPlayerName(memberSource) then
       TriggerClientEvent('cad_bridge:radio:setTalking', memberSource, src, isTalking)
-      TriggerClientEvent('pma-voice:setTalkingOnRadio', memberSource, src, isTalking)
     end
   end
 end)
@@ -2187,118 +2173,30 @@ RegisterNetEvent('cad_bridge:radio:setDisplayName', function(radioName)
   end
 end)
 
--- mm_radio compatibility bridge:
--- Reuse mm UI + restricted channel logic while routing radio membership through cad-radio.
-RegisterNetEvent('mm_radio:server:addToRadioChannel', function(channelNumber, radioName)
-  if getRadioAdapter() ~= 'cad-radio' then return end
-  local src = tonumber(source) or 0
-  if src <= 0 then return end
-  local channel = tonumber(channelNumber) or 0
-
-  local allowed = true
-  local denyReason = nil
-  allowed, denyReason = validateCadRadioJoin(src, channel)
-  if not allowed then
-    TriggerClientEvent('cad_bridge:radio:uiJoinResult', src, false, denyReason, channel)
-    return
-  end
-
-  local name = tostring(radioName or ''):gsub('^%s+', ''):gsub('%s+$', '')
-  if name ~= '' and #name <= 64 then
-    CadRadioDisplayNameBySource[src] = name
-  elseif not CadRadioDisplayNameBySource[src] then
-    CadRadioDisplayNameBySource[src] = GetPlayerName(src) or ('Player ' .. tostring(src))
-  end
-
-  cadRadioSetPlayerChannel(src, channel)
-end)
-
-RegisterNetEvent('mm_radio:server:removeFromRadioChannel', function()
-  if getRadioAdapter() ~= 'cad-radio' then return end
-  local src = tonumber(source) or 0
-  if src <= 0 then return end
-  cadRadioSetPlayerChannel(src, 0)
-end)
-
 local function isRadioAdapterAvailable()
-  local adapter = tostring(Config.RadioAdapter or 'auto'):lower()
-  if adapter == 'none' then return false end
-  if adapter == 'cad_radio' or adapter == 'cad-radio' then
-    return true
-  end
-  -- mm-radio depends on pma-voice so pma-voice will always be present
-  -- when mm-radio is running — check both.
-  if adapter == 'mm-radio' then
-    return isMmRadioAvailable() or isPmaVoiceAvailable()
-  end
-  if adapter == 'pma-voice' then
-    return isPmaVoiceAvailable()
-  end
-  -- 'auto'
-  return isPmaVoiceAvailable() or isMmRadioAvailable()
+  return getRadioAdapter() == 'cad-radio'
 end
 
 local function setPlayerToRadioChannel(source, channelNumber)
-  local adapter = getRadioAdapter()
-
-  if adapter == 'none' then
+  if getRadioAdapter() ~= 'cad-radio' then
     return false, 'Radio adapter is disabled (none)'
   end
-
-  if adapter == 'cad-radio' then
-    return cadRadioSetPlayerChannel(source, channelNumber)
-  end
-
-  if not isRadioAdapterAvailable() then
-    return false, 'No supported radio adapter available (pma-voice or mm-radio)'
-  end
-
-  -- pma-voice server export — works for both standalone pma-voice and mm-radio
-  local success, err = pcall(function()
-    exports['pma-voice']:setPlayerRadio(source, channelNumber)
-  end)
-
-  if not success then
-    return false, 'pma-voice setPlayerRadio failed: ' .. tostring(err)
-  end
-
-  -- Keep mm_radio's server-side channel member list in sync.
-  -- mm_radio tracks members in its own channels{} table via the net events
-  -- mm_radio:server:addToRadioChannel / removeFromRadioChannel, which use
-  -- the FiveM `source` variable set by the calling client.
-  -- We cannot call those net events server-to-server (source would be wrong),
-  -- so we tell the player's own client to call them on its behalf via
-  -- cad_bridge:syncMmRadio — the client handler then TriggerServerEvent's
-  -- mm_radio with the correct source automatically.
-  if isMmRadioAvailable() then
-    pcall(function()
-      local ch = tonumber(channelNumber) or 0
-      local playerName = GetPlayerName(source) or ('Player ' .. tostring(source))
-      TriggerClientEvent('cad_bridge:syncMmRadio', source, ch, playerName)
-    end)
-  end
-
-  return true, nil
+  return cadRadioSetPlayerChannel(source, channelNumber)
 end
 
 local function isCallAdapterAvailable()
-  return isPmaVoiceAvailable()
+  return false
 end
 
 local function setPlayerToCallChannel(source, channelNumber)
-  if not isCallAdapterAvailable() then
-    return false, 'No supported call adapter available (pma-voice)'
+  local src = tonumber(source) or 0
+  if src <= 0 then
+    return false, 'Invalid source'
   end
-
-  -- pma-voice server export for call channels
-  local success, err = pcall(function()
-    exports['pma-voice']:setPlayerCall(source, channelNumber)
-  end)
-
-  if not success then
-    return false, 'pma-voice setPlayerCall failed: ' .. tostring(err)
+  local player = Player(src)
+  if player and player.state then
+    player.state.callChannel = tonumber(channelNumber) or 0
   end
-
   return true, nil
 end
 
@@ -2323,11 +2221,9 @@ local function getPlayerRadioChannel(source)
 end
 
 local function getPlayerCallChannel(source)
-  if isCallAdapterAvailable() then
-    local player = Player(source)
-    if player and player.state then
-      return player.state.callChannel
-    end
+  local player = Player(source)
+  if player and player.state then
+    return player.state.callChannel
   end
   return nil
 end
@@ -2356,7 +2252,7 @@ AddEventHandler('playerDropped', function(reason)
   CadRadioDisplayNameBySource[source] = nil
 end)
 
--- Poll CAD for voice events and sync with pma-voice / mm-radio
+-- Poll CAD for voice events and sync with cad-radio
 local voicePollInFlight = false
 CreateThread(function()
   while true do
@@ -2364,7 +2260,7 @@ CreateThread(function()
     if not hasBridgeConfig() then
       goto voiceContinue
     end
-    if not isRadioAdapterAvailable() and not isCallAdapterAvailable() then
+    if not isRadioAdapterAvailable() then
       goto voiceContinue
     end
     if voicePollInFlight or isBridgeBackoffActive('voice_poll') then
@@ -2408,15 +2304,13 @@ CreateThread(function()
               updatePlayerVoiceChannel(sourceId, 'radio', nil)
             end
           elseif eventType == 'join_call' then
-            success, errorMsg = setPlayerToCallChannel(sourceId, channelNumber)
-            if success then
-              updatePlayerVoiceChannel(sourceId, 'call', channelNumber)
-            end
+            -- Call audio routing is intentionally disabled in cad-radio-only mode.
+            success = true
+            updatePlayerVoiceChannel(sourceId, 'call', channelNumber)
           elseif eventType == 'leave_call' then
-            success, errorMsg = removePlayerFromCall(sourceId)
-            if success then
-              updatePlayerVoiceChannel(sourceId, 'call', nil)
-            end
+            -- Keep queue clean even when call routing is disabled.
+            success = true
+            updatePlayerVoiceChannel(sourceId, 'call', nil)
           else
             errorMsg = 'Unknown voice event type: ' .. eventType
           end
@@ -2445,11 +2339,8 @@ exports('getPlayerRadioChannel', getPlayerRadioChannel)
 exports('getPlayerCallChannel', getPlayerCallChannel)
 
 -- ============================================================================
--- Radio Channel Auto-Sync (mm_radio + pma-voice)
--- Reads channel names from mm_radio's shared/shared.lua file via
--- LoadResourceFile, then parses Shared.RadioNames entries from it.
--- This avoids cross-resource Lua global access (each resource has its own
--- isolated Lua state — Shared globals are not visible across resources).
+-- Radio Channel Auto-Sync (cad-radio)
+-- Syncs channel labels from Config.RadioNames into CAD.
 -- ============================================================================
 
 -- Build channel labels from built-in cad_bridge config (preferred).
@@ -2477,57 +2368,6 @@ local function buildChannelsFromConfigNames()
   return channels
 end
 
--- Parse mm_radio's shared/shared.lua to extract Shared.RadioNames entries.
--- RadioNames keys are strings like "1", "1.%", "420", "420.%" etc.
--- We only use exact integer keys (skip pattern entries like "1.%") since
--- the CAD works with integer channel numbers.
-local function buildChannelsFromMmRadio()
-  if not isMmRadioAvailable() then return nil end
-
-  -- Try common shared file locations used by mm_radio
-  local sharedPaths = { 'shared/shared.lua', 'config/shared.lua', 'shared.lua' }
-  local content = nil
-  for _, path in ipairs(sharedPaths) do
-    local data = LoadResourceFile('mm_radio', path)
-    if data and #data > 0 then
-      content = data
-      break
-    end
-  end
-
-  if not content then
-    return nil
-  end
-
-  -- Parse lines of the form:  ["1"] = "MRPD CH#1",
-  -- Captures: key (string inside quotes), name (string inside quotes)
-  local channels = {}
-  local seen = {}
-
-  for line in content:gmatch('[^\r\n]+') do
-    -- Match: ["<key>"] = "<name>"  (with optional trailing comma/whitespace)
-    local key, name = line:match('%[%s*"([^"]+)"%s*%]%s*=%s*"([^"]*)"')
-    if key and name then
-      -- Skip pattern entries like "1.%" — only exact integer keys
-      if not key:find('%%') and not key:find('%.') then
-        local channelNum = tonumber(key)
-        if channelNum and channelNum == math.floor(channelNum) and channelNum >= 1 and not seen[channelNum] then
-          seen[channelNum] = true
-          channels[#channels + 1] = {
-            id   = math.floor(channelNum),
-            name = tostring(name),
-          }
-        end
-      end
-    end
-  end
-
-  if #channels == 0 then return nil end
-
-  table.sort(channels, function(a, b) return a.id < b.id end)
-  return channels
-end
-
 local function syncRadioChannelsToCad(channels)
   if not channels or #channels == 0 then return end
   if not hasBridgeConfig() then return end
@@ -2545,23 +2385,18 @@ local function syncRadioChannelsToCad(channels)
   end)
 end
 
--- Auto-sync on resource start (after a short delay to let mm_radio init first)
+-- Auto-sync on resource start.
 CreateThread(function()
-  Wait(8000) -- give mm_radio time to fully start
+  Wait(4000)
   if not hasBridgeConfig() then return end
 
-  local sourceLabel = 'cad_bridge config'
   local channels = buildChannelsFromConfigNames()
-  if not channels then
-    channels = buildChannelsFromMmRadio()
-    sourceLabel = 'mm_radio'
-  end
 
   if channels then
-    print(('[cad_bridge] Syncing %d radio channels from %s to CAD...'):format(#channels, sourceLabel))
+    print(('[cad_bridge] Syncing %d radio channels from config to CAD...'):format(#channels))
     syncRadioChannelsToCad(channels)
   else
-    print('[cad_bridge] No radio channel definitions found in Config.RadioNames or mm_radio shared file.')
+    print('[cad_bridge] No radio channel definitions found in Config.RadioNames.')
     print('[cad_bridge] Define Config.RadioNames in cad_bridge config.lua for CAD channel labels.')
   end
 end)
@@ -2578,7 +2413,7 @@ local voiceHeartbeatInFlight = false
 local hbCitizenIdCache = {}
 
 local function buildParticipantList()
-  if not isPmaVoiceAvailable() and not isRadioAdapterAvailable() then return nil end
+  if not isRadioAdapterAvailable() then return nil end
 
   local players = GetPlayers()
   if #players == 0 then return {} end
@@ -2628,14 +2463,14 @@ AddEventHandler('playerDropped', function()
 end)
 
 CreateThread(function()
-  -- Wait for bridge config and pma-voice to be ready
+  -- Wait for bridge config to be ready
   Wait(10000)
 
   while true do
     Wait(VOICE_HEARTBEAT_INTERVAL_MS)
 
     if not hasBridgeConfig() then goto heartbeatContinue end
-    if not isPmaVoiceAvailable() and not isRadioAdapterAvailable() then goto heartbeatContinue end
+    if not isRadioAdapterAvailable() then goto heartbeatContinue end
     if voiceHeartbeatInFlight or isBridgeBackoffActive('voice_hb') then goto heartbeatContinue end
 
     local participants = buildParticipantList()

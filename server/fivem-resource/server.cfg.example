@@ -1,5 +1,5 @@
 # =============================================================================
-# CAD Bridge + pma-voice Voice Configuration
+# CAD Bridge Voice Configuration
 # =============================================================================
 # Add these lines to your FiveM server.cfg.
 #
@@ -9,7 +9,7 @@
 #       |
 #       +-- 127.0.0.1:64738  <-- CAD voice bridge (mumble-node) connects here
 #       |
-#       +-- 0.0.0.0:64738    <-- pma-voice in-game players connect here
+#       +-- 0.0.0.0:64738    <-- FiveM in-game players connect here
 #                                via voice_externalAddress in server.cfg
 #
 # The CAD auto-starts rust-mumble.exe from server/murmur/rust-mumble.exe when
@@ -28,7 +28,7 @@
 # =============================================================================
 
 # =============================================================================
-# STEP 2: Configure pma-voice to use the managed Mumble server
+# STEP 2: Configure FiveM voice to use the managed Mumble server
 # =============================================================================
 # Replace 103.203.241.35 with your VPS public IP.
 # voice_externalPort must match MUMBLE_PORT in your CAD .env (default 64738).
@@ -38,9 +38,12 @@ setr voice_externalPort 64738
 setr voice_allowSetIntent 1
 setr voice_hideEndpoints 1
 
-# voice_use2dAudio prevents pma-voice from auto-overriding to native audio mode.
-# rust-mumble handles FiveM voice targets natively so proximity works correctly.
-setr voice_use2dAudio true
+# Required for radio filter/submix audio.
+setr voice_useNativeAudio true
+setr voice_enableSubmix 1
+setr voice_defaultRadioVolume 100
+# cad_bridge handles radio routing and keybinds.
+setr voice_enableRadios 0
 
 # =============================================================================
 # STEP 3: Configure the CAD bridge resource
@@ -58,10 +61,7 @@ set cad_bridge_fine_adapter "auto"
 set cad_bridge_job_sync_adapter "auto"
 
 # Radio adapter for CAD-driven radio channel join/leave events:
-# 'cad-radio' -> CAD custom radio (recommended)
-# 'auto'      -> try pma-voice first, fall back to mm-radio
-# 'pma-voice' -> use pma-voice exports (setPlayerRadio / setPlayerCall)
-# 'mm-radio'  -> use mm_radio exports (JoinRadio / LeaveRadio)
+# 'cad-radio' -> CAD custom radio (recommended/default)
 # 'none'      -> disable in-game radio sync
 set cad_bridge_radio_adapter "cad-radio"
 set cad_bridge_radio_ui_enabled "true"
