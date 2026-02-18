@@ -135,6 +135,32 @@ local function hasTrackedIdentifier(identifiers)
 end
 
 local function getCitizenId(src)
+  local player = Player(src)
+  if player and player.state then
+    local state = player.state
+
+    local directCandidates = {
+      state.citizenid,
+      state.citizenId,
+      state.cid,
+      state.playerCitizenId,
+    }
+    for _, candidate in ipairs(directCandidates) do
+      local value = trim(candidate)
+      if value ~= '' then
+        return value
+      end
+    end
+
+    local statePlayerData = state.PlayerData
+    if type(statePlayerData) == 'table' then
+      local value = trim(statePlayerData.citizenid or '')
+      if value ~= '' then
+        return value
+      end
+    end
+  end
+
   if GetResourceState('qbx_core') == 'started' then
     local ok, xPlayer = pcall(function()
       return exports.qbx_core:GetPlayer(src)
@@ -162,6 +188,39 @@ local function getCharacterDefaults(src)
   local fullName = trim(GetPlayerName(src) or ('Player ' .. tostring(src)))
   local dateOfBirth = ''
   local gender = ''
+  local citizenId = getCitizenId(src)
+
+  local function applyCharInfo(charinfo)
+    if type(charinfo) ~= 'table' then return end
+    local first = trim(charinfo.firstname or charinfo.firstName or '')
+    local last = trim(charinfo.lastname or charinfo.lastName or '')
+    if first ~= '' or last ~= '' then
+      fullName = trim((first .. ' ' .. last))
+    end
+    if dateOfBirth == '' then
+      dateOfBirth = trim(charinfo.birthdate or charinfo.dob or charinfo.dateOfBirth or '')
+    end
+    if gender == '' then
+      gender = trim(charinfo.gender or '')
+      if gender == '0' then gender = 'Male' end
+      if gender == '1' then gender = 'Female' end
+    end
+  end
+
+  local player = Player(src)
+  if player and player.state then
+    local state = player.state
+    applyCharInfo(state.charinfo)
+    if type(state.PlayerData) == 'table' then
+      applyCharInfo(state.PlayerData.charinfo)
+      if fullName == '' then
+        fullName = trim(state.PlayerData.name or '')
+      end
+    end
+    if fullName == '' then
+      fullName = trim(state.name or '')
+    end
+  end
 
   if GetResourceState('qbx_core') == 'started' then
     local ok, xPlayer = pcall(function()
@@ -169,18 +228,7 @@ local function getCharacterDefaults(src)
     end)
     if ok and xPlayer and xPlayer.PlayerData then
       local pd = xPlayer.PlayerData
-      local charinfo = pd.charinfo or {}
-      local first = trim(charinfo.firstname or '')
-      local last = trim(charinfo.lastname or '')
-      if first ~= '' or last ~= '' then
-        fullName = trim((first .. ' ' .. last))
-      end
-      dateOfBirth = trim(charinfo.birthdate or charinfo.dob or '')
-      gender = trim(charinfo.gender or '')
-      if gender ~= '' then
-        if gender == '0' then gender = 'Male' end
-        if gender == '1' then gender = 'Female' end
-      end
+      applyCharInfo(pd.charinfo or {})
     end
   end
 
@@ -190,25 +238,13 @@ local function getCharacterDefaults(src)
       local player = obj.Functions.GetPlayer(src)
       if player and player.PlayerData then
         local pd = player.PlayerData
-        local charinfo = pd.charinfo or {}
-        local first = trim(charinfo.firstname or '')
-        local last = trim(charinfo.lastname or '')
-        if fullName == '' and (first ~= '' or last ~= '') then
-          fullName = trim((first .. ' ' .. last))
-        end
-        if dateOfBirth == '' then
-          dateOfBirth = trim(charinfo.birthdate or charinfo.dob or '')
-        end
-        if gender == '' then
-          gender = trim(charinfo.gender or '')
-          if gender == '0' then gender = 'Male' end
-          if gender == '1' then gender = 'Female' end
-        end
+        applyCharInfo(pd.charinfo or {})
       end
     end
   end
 
   return {
+    citizenid = citizenId,
     full_name = fullName,
     date_of_birth = dateOfBirth,
     gender = gender,
@@ -627,7 +663,7 @@ local function submitDriverLicense(src, formData)
     source = s,
     player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
     identifiers = GetPlayerIdentifiers(s),
-    citizenid = getCitizenId(s),
+    citizenid = trim(getCitizenId(s) or defaults.citizenid or ''),
     full_name = trim(formData.full_name or defaults.full_name),
     date_of_birth = normalizeDateOnly(formData.date_of_birth or defaults.date_of_birth),
     gender = trim(formData.gender or defaults.gender),
@@ -639,6 +675,12 @@ local function submitDriverLicense(src, formData)
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
+
+  if trim(payload.citizenid) == '' then
+    notifyPlayer(s, 'Unable to determine your active character (citizenid). Re-log and try again.')
+    print(('[cad_bridge] Driver license submit blocked for src %s: missing citizenid'):format(tostring(s)))
+    return
+  end
 
   request('POST', '/api/integration/fivem/licenses', payload, function(status, body, responseHeaders)
     if status >= 200 and status < 300 then
@@ -682,7 +724,7 @@ local function submitVehicleRegistration(src, formData)
     source = s,
     player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
     identifiers = GetPlayerIdentifiers(s),
-    citizenid = getCitizenId(s),
+    citizenid = trim(getCitizenId(s) or defaults.citizenid or ''),
     owner_name = trim(formData.owner_name or defaults.full_name),
     plate = trim(formData.plate or ''),
     vehicle_model = trim(formData.vehicle_model or ''),
@@ -691,6 +733,12 @@ local function submitVehicleRegistration(src, formData)
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
+
+  if trim(payload.citizenid) == '' then
+    notifyPlayer(s, 'Unable to determine your active character (citizenid). Re-log and try again.')
+    print(('[cad_bridge] Registration submit blocked for src %s: missing citizenid'):format(tostring(s)))
+    return
+  end
 
   request('POST', '/api/integration/fivem/registrations', payload, function(status, body, responseHeaders)
     if status >= 200 and status < 300 then

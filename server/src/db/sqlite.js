@@ -990,6 +990,20 @@ const DriverLicenses = {
     if (!normalized) return null;
     return hydrateDriverLicenseRow(db.prepare('SELECT * FROM driver_licenses WHERE citizen_id = ?').get(normalized));
   },
+  search(query, limit = 50) {
+    const text = String(query || '').trim().toLowerCase();
+    if (!text) return [];
+    const q = `%${text}%`;
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    return db.prepare(`
+      SELECT * FROM driver_licenses
+      WHERE lower(citizen_id) LIKE ?
+         OR lower(full_name) LIKE ?
+         OR lower(license_number) LIKE ?
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `).all(q, q, q, safeLimit).map(hydrateDriverLicenseRow);
+  },
   upsertByCitizenId({
     citizen_id,
     full_name,
@@ -1141,6 +1155,21 @@ const VehicleRegistrations = {
       WHERE citizen_id = ?
       ORDER BY updated_at DESC
     `).all(normalized).map(hydrateVehicleRegistrationRow);
+  },
+  search(query, limit = 50) {
+    const text = String(query || '').trim().toLowerCase();
+    if (!text) return [];
+    const q = `%${text}%`;
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    return db.prepare(`
+      SELECT * FROM vehicle_registrations
+      WHERE lower(plate) LIKE ?
+         OR lower(owner_name) LIKE ?
+         OR lower(vehicle_model) LIKE ?
+         OR lower(citizen_id) LIKE ?
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `).all(q, q, q, q, safeLimit).map(hydrateVehicleRegistrationRow);
   },
   upsertByPlate({
     plate,

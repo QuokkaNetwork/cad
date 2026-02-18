@@ -35,6 +35,68 @@ function shouldForceExpired(expiryAt) {
   return normalized <= today;
 }
 
+function splitFullName(fullName) {
+  const normalized = String(fullName || '').trim();
+  if (!normalized) return { firstname: '', lastname: '' };
+  const parts = normalized.split(/\s+/);
+  if (parts.length === 1) return { firstname: parts[0], lastname: '' };
+  return {
+    firstname: parts[0],
+    lastname: parts.slice(1).join(' '),
+  };
+}
+
+function findActivePersonBolos(req, citizenId, fullName) {
+  const departmentId = req.user?.departments?.[0]?.id || 0;
+  if (!departmentId) return [];
+  const needleCitizen = String(citizenId || '').trim();
+  const needleName = String(fullName || '').trim().toLowerCase();
+  return Bolos.listByDepartment(departmentId, 'active')
+    .filter((bolo) => {
+      if (bolo.type !== 'person') return false;
+      const hayTitle = String(bolo.title || '').toLowerCase();
+      const hayDetails = String(bolo.details_json || '').toLowerCase();
+      if (needleCitizen && hayDetails.includes(needleCitizen.toLowerCase())) return true;
+      if (needleName && hayTitle.includes(needleName)) return true;
+      return false;
+    });
+}
+
+function buildCadPersonResponse(req, citizenId, license, fallbackName = '') {
+  const cid = String(citizenId || '').trim();
+  const fullName = String(license?.full_name || fallbackName || cid).trim();
+  const names = splitFullName(fullName);
+  const warrants = cid ? Warrants.findByCitizenId(cid, 'active') : [];
+  const bolos = findActivePersonBolos(req, cid, fullName);
+  return {
+    citizenid: cid,
+    firstname: names.firstname,
+    lastname: names.lastname,
+    full_name: fullName,
+    birthdate: String(license?.date_of_birth || '').trim(),
+    gender: String(license?.gender || '').trim(),
+    has_warrant: warrants.length > 0,
+    has_bolo: bolos.length > 0,
+    warrant_count: warrants.length,
+    bolo_count: bolos.length,
+    warrants,
+    bolos,
+  };
+}
+
+function buildCadVehicleResponse(registration) {
+  const reg = registration || {};
+  return {
+    plate: String(reg.plate || '').trim(),
+    owner: String(reg.citizen_id || '').trim(),
+    owner_name: String(reg.owner_name || '').trim(),
+    vehicle: String(reg.vehicle_model || '').trim(),
+    vehicle_model: String(reg.vehicle_model || '').trim(),
+    vehicle_colour: String(reg.vehicle_colour || '').trim(),
+    cad_registration: reg,
+  };
+}
+
 // Search persons in QBox
 router.get('/persons', requireAuth, async (req, res) => {
   const { q } = req.query;
@@ -145,6 +207,106 @@ router.get('/vehicles/:plate', requireAuth, async (req, res) => {
       ...vehicle,
       cad_registration: VehicleRegistrations.findByPlate(plate),
     });
+  } catch (err) {
+    res.status(500).json({ error: 'Lookup failed', message: err.message });
+  }
+});
+
+// ============================================================================
+// CAD-native search (driver_licenses + vehicle_registrations only)
+// ============================================================================
+
+router.get('/cad/persons', requireAuth, (req, res) => {
+  const q = String(req.query?.q || '').trim();
+  if (q.length < 2) {
+    return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+  }
+
+  try {
+    const byCitizen = new Map();
+
+    for (const license of DriverLicenses.search(q, 100)) {
+      const citizenId = String(license?.citizen_id || '').trim();
+      if (!citizenId) continue;
+      byCitizen.set(citizenId, {
+        ...buildCadPersonResponse(req, citizenId, license),
+        cad_driver_license: license,
+      });
+    }
+
+    // Include owners from registration records even when no license exists yet.
+    for (const reg of VehicleRegistrations.search(q, 100)) {
+      const citizenId = String(reg?.citizen_id || '').trim();
+      if (!citizenId || byCitizen.has(citizenId)) continue;
+      byCitizen.set(citizenId, {
+        ...buildCadPersonResponse(req, citizenId, null, reg.owner_name || citizenId),
+        cad_driver_license: null,
+      });
+    }
+
+    res.json(Array.from(byCitizen.values()).slice(0, 100));
+  } catch (err) {
+    res.status(500).json({ error: 'Search failed', message: err.message });
+  }
+});
+
+router.get('/cad/persons/:citizenid', requireAuth, (req, res) => {
+  const citizenId = String(req.params.citizenid || '').trim();
+  if (!citizenId) return res.status(400).json({ error: 'citizenid is required' });
+
+  try {
+    const license = DriverLicenses.findByCitizenId(citizenId);
+    const registrations = VehicleRegistrations.listByCitizenId(citizenId);
+    if (!license && registrations.length === 0) {
+      return res.status(404).json({ error: 'Person not found' });
+    }
+
+    const fallbackName = registrations[0]?.owner_name || citizenId;
+    const person = buildCadPersonResponse(req, citizenId, license, fallbackName);
+    res.json({
+      ...person,
+      cad_driver_license: license || null,
+      cad_vehicle_registrations: registrations,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Lookup failed', message: err.message });
+  }
+});
+
+router.get('/cad/persons/:citizenid/vehicles', requireAuth, (req, res) => {
+  const citizenId = String(req.params.citizenid || '').trim();
+  if (!citizenId) return res.status(400).json({ error: 'citizenid is required' });
+  try {
+    const registrations = VehicleRegistrations.listByCitizenId(citizenId);
+    res.json(registrations.map((reg) => ({
+      ...buildCadVehicleResponse(reg),
+      cad_registration: reg,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: 'Lookup failed', message: err.message });
+  }
+});
+
+router.get('/cad/vehicles', requireAuth, (req, res) => {
+  const q = String(req.query?.q || '').trim();
+  if (q.length < 2) {
+    return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+  }
+  try {
+    const results = VehicleRegistrations.search(q, 100).map((reg) => buildCadVehicleResponse(reg));
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: 'Search failed', message: err.message });
+  }
+});
+
+router.get('/cad/vehicles/:plate', requireAuth, (req, res) => {
+  const plate = String(req.params.plate || '').trim();
+  if (!plate) return res.status(400).json({ error: 'plate is required' });
+  try {
+    const reg = VehicleRegistrations.findByPlate(plate);
+    if (!reg) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json(buildCadVehicleResponse(reg));
   } catch (err) {
     res.status(500).json({ error: 'Lookup failed', message: err.message });
   }
