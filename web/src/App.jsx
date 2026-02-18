@@ -20,7 +20,6 @@ import CallDetails from './pages/police/CallDetails';
 import AdminUsers from './pages/admin/Users';
 import AdminDepartments from './pages/admin/Departments';
 import AdminRoleMappings from './pages/admin/RoleMappings';
-import AdminJobBindings from './pages/admin/JobBindings';
 import AdminAuditLog from './pages/admin/AuditLog';
 import AdminSystemSettings from './pages/admin/SystemSettings';
 import AdminHome from './pages/admin/Home';
@@ -66,7 +65,6 @@ export default function App() {
             <Route path="/admin/departments" element={<ProtectedRoute requireAdmin><AdminDepartments /></ProtectedRoute>} />
             <Route path="/admin/offences" element={<ProtectedRoute requireAdmin><AdminOffenceCatalog /></ProtectedRoute>} />
             <Route path="/admin/role-mappings" element={<ProtectedRoute requireAdmin><AdminRoleMappings /></ProtectedRoute>} />
-            <Route path="/admin/job-bindings" element={<ProtectedRoute requireAdmin><AdminJobBindings /></ProtectedRoute>} />
             <Route path="/admin/audit-log" element={<ProtectedRoute requireAdmin><AdminAuditLog /></ProtectedRoute>} />
             <Route path="/admin/settings" element={<ProtectedRoute requireAdmin><AdminSystemSettings /></ProtectedRoute>} />
             <Route path="/admin/field-mappings" element={<ProtectedRoute requireAdmin><AdminFieldMappings /></ProtectedRoute>} />

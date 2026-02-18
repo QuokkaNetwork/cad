@@ -569,20 +569,6 @@ export default function AdminSystemSettings() {
               <span className="font-semibold"> FiveM Bridge (In-Game)</span>.
             </p>
           )}
-          <div>
-            <label className="block text-xs text-cad-muted mb-1">Game Job To Discord Role Sync</label>
-            <select
-              value={settings.fivem_bridge_job_sync_reverse_enabled || 'true'}
-              onChange={e => updateSetting('fivem_bridge_job_sync_reverse_enabled', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-            >
-              <option value="true">Enabled</option>
-              <option value="false">Disabled</option>
-            </select>
-          </div>
-          <p className="col-span-2 text-xs text-cad-muted">
-            Reverse sync requires a linked Discord account and a preferred citizen ID. Job role mappings must be configured in <span className="font-semibold">Admin &gt; Job Bindings</span>.
-          </p>
         </div>
 
         <div className="flex items-center gap-2 mt-4">

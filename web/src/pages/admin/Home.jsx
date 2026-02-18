@@ -20,12 +20,6 @@ const ADMIN_ITEMS = [
     color: 'bg-[#5865F2]',
   },
   {
-    to: '/admin/job-bindings',
-    title: 'Job Bindings',
-    description: 'Bind Discord roles to specific in-game jobs and ranks.',
-    color: 'bg-[#5865F2]',
-  },
-  {
     to: '/admin/offences',
     title: 'Offence Catalog',
     description: 'Manage preset Infringements, Summary, and Indictment entries.',
