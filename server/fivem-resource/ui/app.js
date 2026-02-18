@@ -528,7 +528,7 @@ function normalizeDurationOptions(raw, fallback) {
     seen[rounded] = true;
     out.push(rounded);
   }
-  if (out.length === 0) out = [Number(fallback) || 365];
+  if (out.length === 0) out = [Number(fallback) || 35];
   out.sort(function sortNumber(a, b) { return a - b; });
   return out;
 }

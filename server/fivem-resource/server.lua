@@ -541,7 +541,7 @@ local function parseDriverLicenseForm(payload)
   local conditions = normalizeList(payload.conditions or {}, false)
   local mugshotUrl = trim(payload.mugshot_url or '')
   local licenseNumber = trim(payload.license_number or '')
-  local expiryDays = tonumber(payload.expiry_days or payload.duration_days or Config.DriverLicenseDefaultExpiryDays or 1095) or (Config.DriverLicenseDefaultExpiryDays or 1095)
+  local expiryDays = tonumber(payload.expiry_days or payload.duration_days or Config.DriverLicenseDefaultExpiryDays or 35) or (Config.DriverLicenseDefaultExpiryDays or 35)
   if expiryDays < 1 then expiryDays = 1 end
   local expiryAt = normalizeDateOnly(payload.expiry_at or '') or addDaysDateOnly(expiryDays)
 
@@ -573,9 +573,9 @@ local function parseVehicleRegistrationForm(payload)
   local model = trim(payload.vehicle_model or payload.model or '')
   local colour = trim(payload.vehicle_colour or payload.colour or payload.color or '')
   local ownerName = trim(payload.owner_name or payload.character_name or '')
-  local durationDays = tonumber(payload.duration_days or payload.expiry_days or Config.VehicleRegistrationDefaultDays or 365) or (Config.VehicleRegistrationDefaultDays or 365)
+  local durationDays = tonumber(payload.duration_days or payload.expiry_days or Config.VehicleRegistrationDefaultDays or 35) or (Config.VehicleRegistrationDefaultDays or 35)
   if durationDays < 1 then durationDays = 1 end
-  local expiryAt = normalizeDateOnly(payload.expiry_at or '') or addDaysDateOnly(durationDays)
+  local expiryAt = addDaysDateOnly(durationDays)
 
   if plate == '' then return nil, 'Vehicle plate is required.' end
   if model == '' then return nil, 'Vehicle model is required.' end
@@ -590,6 +590,198 @@ local function parseVehicleRegistrationForm(payload)
     expiry_at = expiryAt,
     status = 'valid',
   }
+end
+
+local function resolveDocumentFeeAmount(feeMap, durationDays)
+  local days = math.max(1, math.floor(tonumber(durationDays) or 0))
+  if type(feeMap) ~= 'table' then return 0 end
+
+  local exact = tonumber(feeMap[days])
+  if exact and exact > 0 then
+    return math.floor(exact)
+  end
+
+  local nearestFee = 0
+  local nearestDistance = nil
+  for rawDays, rawFee in pairs(feeMap) do
+    local mappedDays = tonumber(rawDays)
+    local mappedFee = tonumber(rawFee)
+    if mappedDays and mappedFee and mappedFee > 0 then
+      local distance = math.abs(days - math.floor(mappedDays))
+      if nearestDistance == nil or distance < nearestDistance then
+        nearestDistance = distance
+        nearestFee = math.floor(mappedFee)
+      end
+    end
+  end
+
+  if nearestFee > 0 then return nearestFee end
+  return 0
+end
+
+local function formatMoney(amount)
+  return ('$%s'):format(tostring(math.floor(tonumber(amount) or 0)))
+end
+
+local function getDocumentMoneyBalance(sourceId, account)
+  local normalizedAccount = trim(account):lower()
+  if normalizedAccount == '' then normalizedAccount = 'bank' end
+
+  if GetResourceState('qbx_core') == 'started' then
+    local okAmount, amount = pcall(function()
+      return exports.qbx_core:GetMoney(sourceId, normalizedAccount)
+    end)
+    if okAmount and tonumber(amount) then
+      return tonumber(amount)
+    end
+
+    local okPlayer, xPlayer = pcall(function()
+      return exports.qbx_core:GetPlayer(sourceId)
+    end)
+    if okPlayer and xPlayer and type(xPlayer.PlayerData) == 'table' and type(xPlayer.PlayerData.money) == 'table' then
+      local fallback = tonumber(xPlayer.PlayerData.money[normalizedAccount])
+      if fallback then return fallback end
+    end
+  end
+
+  if GetResourceState('qb-core') == 'started' then
+    local okCore, core = pcall(function()
+      return exports['qb-core']:GetCoreObject()
+    end)
+    if okCore and core and core.Functions and core.Functions.GetPlayer then
+      local player = core.Functions.GetPlayer(sourceId)
+      if player and player.PlayerData and type(player.PlayerData.money) == 'table' then
+        local amount = tonumber(player.PlayerData.money[normalizedAccount])
+        if amount then return amount end
+      end
+    end
+  end
+
+  return nil
+end
+
+local function tryDocumentMoneyChange(sourceId, citizenId, account, amount, reason, mode)
+  local normalizedAccount = trim(account):lower()
+  if normalizedAccount == '' then normalizedAccount = 'bank' end
+  local normalizedReason = trim(reason)
+  if normalizedReason == '' then normalizedReason = 'CAD document fee' end
+
+  local fnName = mode == 'add' and 'AddMoney' or 'RemoveMoney'
+  local attempts = {}
+
+  local function pushAttempt(label, fn)
+    attempts[#attempts + 1] = {
+      label = label,
+      fn = fn,
+    }
+  end
+
+  if GetResourceState('qbx_core') == 'started' then
+    local okPlayer, xPlayer = pcall(function()
+      return exports.qbx_core:GetPlayer(sourceId)
+    end)
+
+    if mode == 'add' then
+      pushAttempt('qbx export AddMoney(source, account, amount, reason)', function()
+        return exports.qbx_core:AddMoney(sourceId, normalizedAccount, amount, normalizedReason)
+      end)
+      pushAttempt('qbx export AddMoney(source, account, amount)', function()
+        return exports.qbx_core:AddMoney(sourceId, normalizedAccount, amount)
+      end)
+      if citizenId ~= '' then
+        pushAttempt('qbx export AddMoney(citizenid, account, amount, reason)', function()
+          return exports.qbx_core:AddMoney(citizenId, normalizedAccount, amount, normalizedReason)
+        end)
+        pushAttempt('qbx export AddMoney(citizenid, account, amount)', function()
+          return exports.qbx_core:AddMoney(citizenId, normalizedAccount, amount)
+        end)
+      end
+    else
+      pushAttempt('qbx export RemoveMoney(source, account, amount, reason)', function()
+        return exports.qbx_core:RemoveMoney(sourceId, normalizedAccount, amount, normalizedReason)
+      end)
+      pushAttempt('qbx export RemoveMoney(source, account, amount)', function()
+        return exports.qbx_core:RemoveMoney(sourceId, normalizedAccount, amount)
+      end)
+      if citizenId ~= '' then
+        pushAttempt('qbx export RemoveMoney(citizenid, account, amount, reason)', function()
+          return exports.qbx_core:RemoveMoney(citizenId, normalizedAccount, amount, normalizedReason)
+        end)
+        pushAttempt('qbx export RemoveMoney(citizenid, account, amount)', function()
+          return exports.qbx_core:RemoveMoney(citizenId, normalizedAccount, amount)
+        end)
+      end
+    end
+
+    if okPlayer and xPlayer then
+      if xPlayer.Functions and type(xPlayer.Functions[fnName]) == 'function' then
+        pushAttempt(('xPlayer.Functions.%s(account, amount, reason)'):format(fnName), function()
+          return xPlayer.Functions[fnName](normalizedAccount, amount, normalizedReason)
+        end)
+        pushAttempt(('xPlayer.Functions.%s(account, amount)'):format(fnName), function()
+          return xPlayer.Functions[fnName](normalizedAccount, amount)
+        end)
+      end
+
+      if type(xPlayer[fnName]) == 'function' then
+        pushAttempt(('xPlayer:%s(account, amount, reason)'):format(fnName), function()
+          return xPlayer[fnName](xPlayer, normalizedAccount, amount, normalizedReason)
+        end)
+        pushAttempt(('xPlayer:%s(account, amount)'):format(fnName), function()
+          return xPlayer[fnName](xPlayer, normalizedAccount, amount)
+        end)
+      end
+    end
+  end
+
+  if GetResourceState('qb-core') == 'started' then
+    local okCore, core = pcall(function()
+      return exports['qb-core']:GetCoreObject()
+    end)
+    if okCore and core and core.Functions and core.Functions.GetPlayer then
+      local player = core.Functions.GetPlayer(sourceId)
+      if player and player.Functions and type(player.Functions[fnName]) == 'function' then
+        pushAttempt(('qb player.Functions.%s(account, amount, reason)'):format(fnName), function()
+          return player.Functions[fnName](normalizedAccount, amount, normalizedReason)
+        end)
+        pushAttempt(('qb player.Functions.%s(account, amount)'):format(fnName), function()
+          return player.Functions[fnName](normalizedAccount, amount)
+        end)
+      end
+    end
+  end
+
+  local attemptedLabels = {}
+  for _, attempt in ipairs(attempts) do
+    attemptedLabels[#attemptedLabels + 1] = attempt.label
+    local callOk, result = pcall(attempt.fn)
+    if callOk and result ~= false then
+      return true, ''
+    end
+  end
+
+  if #attemptedLabels > 0 then
+    return false, ('No adapter succeeded (%s)'):format(table.concat(attemptedLabels, ', '))
+  end
+  return false, 'No supported money adapter found (qbx_core/qb-core)'
+end
+
+local function chargeDocumentFee(sourceId, citizenId, account, amount, reason)
+  local fee = math.max(0, math.floor(tonumber(amount) or 0))
+  if fee <= 0 then return true, '' end
+
+  local balance = getDocumentMoneyBalance(sourceId, account)
+  if balance ~= nil and balance < fee then
+    return false, ('Insufficient funds: %s needed in %s account.'):format(formatMoney(fee), tostring(account))
+  end
+
+  return tryDocumentMoneyChange(sourceId, citizenId, account, fee, reason, 'remove')
+end
+
+local function refundDocumentFee(sourceId, citizenId, account, amount, reason)
+  local fee = math.max(0, math.floor(tonumber(amount) or 0))
+  if fee <= 0 then return true, '' end
+  return tryDocumentMoneyChange(sourceId, citizenId, account, fee, reason, 'add')
 end
 
 local function buildEmergencyMessage(report)
@@ -677,14 +869,14 @@ local function submitDriverLicense(src, formData)
     player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
     identifiers = GetPlayerIdentifiers(s),
     citizenid = trim(getCitizenId(s) or defaults.citizenid or ''),
-    full_name = trim(formData.full_name or defaults.full_name),
-    date_of_birth = normalizeDateOnly(formData.date_of_birth or defaults.date_of_birth),
-    gender = trim(formData.gender or defaults.gender),
+    full_name = trim(defaults.full_name ~= '' and defaults.full_name or formData.full_name),
+    date_of_birth = normalizeDateOnly(defaults.date_of_birth ~= '' and defaults.date_of_birth or formData.date_of_birth),
+    gender = trim(defaults.gender ~= '' and defaults.gender or formData.gender),
     license_number = trim(formData.license_number or ''),
     license_classes = formData.license_classes or {},
     conditions = formData.conditions or {},
     mugshot_url = trim(formData.mugshot_url or ''),
-    expiry_days = tonumber(formData.expiry_days or Config.DriverLicenseDefaultExpiryDays or 1095) or (Config.DriverLicenseDefaultExpiryDays or 1095),
+    expiry_days = tonumber(formData.expiry_days or Config.DriverLicenseDefaultExpiryDays or 35) or (Config.DriverLicenseDefaultExpiryDays or 35),
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
@@ -695,6 +887,26 @@ local function submitDriverLicense(src, formData)
     return
   end
 
+  local feeAccount = trim(Config.DocumentFeeAccount or 'bank'):lower()
+  if feeAccount == '' then feeAccount = 'bank' end
+  local feeAmount = resolveDocumentFeeAmount(Config.DriverLicenseFeesByDays or {}, payload.expiry_days)
+  local feeCharged = false
+
+  if feeAmount > 0 then
+    local paid, payErr = chargeDocumentFee(
+      s,
+      payload.citizenid,
+      feeAccount,
+      feeAmount,
+      ('Driver licence issue/renewal (%s days)'):format(tostring(math.floor(tonumber(payload.expiry_days) or 0)))
+    )
+    if not paid then
+      notifyPlayer(s, payErr ~= '' and payErr or ('Unable to charge licence fee %s from %s account.'):format(formatMoney(feeAmount), feeAccount))
+      return
+    end
+    feeCharged = true
+  end
+
   request('POST', '/api/integration/fivem/licenses', payload, function(status, body, responseHeaders)
     if status >= 200 and status < 300 then
       local expiryAt = payload.expiry_at
@@ -702,9 +914,11 @@ local function submitDriverLicense(src, formData)
       if ok and type(parsed) == 'table' and type(parsed.license) == 'table' then
         expiryAt = tostring(parsed.license.expiry_at or expiryAt)
       end
-      notifyPlayer(s, ('Driver license added to CAD. Status: VALID%s%s'):format(
+      notifyPlayer(s, ('Driver licence saved to CAD. Status: VALID%s%s%s%s'):format(
         expiryAt ~= '' and ' | Expires: ' or '',
-        expiryAt ~= '' and expiryAt or ''
+        expiryAt ~= '' and expiryAt or '',
+        feeAmount > 0 and ' | Charged: ' or '',
+        feeAmount > 0 and formatMoney(feeAmount) or ''
       ))
       return
     end
@@ -719,6 +933,22 @@ local function submitDriverLicense(src, formData)
       err = err .. ': ' .. tostring(parsed.error)
     end
     print('[cad_bridge] ' .. err)
+    if feeCharged and feeAmount > 0 then
+      local refunded, refundErr = refundDocumentFee(
+        s,
+        payload.citizenid,
+        feeAccount,
+        feeAmount,
+        'CAD licence refund (save failed)'
+      )
+      if not refunded then
+        print(('[cad_bridge] WARNING: licence fee refund failed for src %s amount %s: %s'):format(
+          tostring(s),
+          tostring(feeAmount),
+          tostring(refundErr)
+        ))
+      end
+    end
     notifyPlayer(s, 'Driver license failed to save to CAD. Check server logs.')
   end)
 end
@@ -738,11 +968,11 @@ local function submitVehicleRegistration(src, formData)
     player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
     identifiers = GetPlayerIdentifiers(s),
     citizenid = trim(getCitizenId(s) or defaults.citizenid or ''),
-    owner_name = trim(formData.owner_name or defaults.full_name),
+    owner_name = trim(defaults.full_name ~= '' and defaults.full_name or formData.owner_name),
     plate = trim(formData.plate or ''),
     vehicle_model = trim(formData.vehicle_model or ''),
     vehicle_colour = trim(formData.vehicle_colour or ''),
-    duration_days = tonumber(formData.duration_days or Config.VehicleRegistrationDefaultDays or 365) or (Config.VehicleRegistrationDefaultDays or 365),
+    duration_days = tonumber(formData.duration_days or Config.VehicleRegistrationDefaultDays or 35) or (Config.VehicleRegistrationDefaultDays or 35),
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
@@ -753,6 +983,26 @@ local function submitVehicleRegistration(src, formData)
     return
   end
 
+  local feeAccount = trim(Config.DocumentFeeAccount or 'bank'):lower()
+  if feeAccount == '' then feeAccount = 'bank' end
+  local feeAmount = resolveDocumentFeeAmount(Config.VehicleRegistrationFeesByDays or {}, payload.duration_days)
+  local feeCharged = false
+
+  if feeAmount > 0 then
+    local paid, payErr = chargeDocumentFee(
+      s,
+      payload.citizenid,
+      feeAccount,
+      feeAmount,
+      ('Vehicle registration issue/renewal (%s days)'):format(tostring(math.floor(tonumber(payload.duration_days) or 0)))
+    )
+    if not paid then
+      notifyPlayer(s, payErr ~= '' and payErr or ('Unable to charge registration fee %s from %s account.'):format(formatMoney(feeAmount), feeAccount))
+      return
+    end
+    feeCharged = true
+  end
+
   request('POST', '/api/integration/fivem/registrations', payload, function(status, body, responseHeaders)
     if status >= 200 and status < 300 then
       local expiryAt = payload.expiry_at
@@ -760,9 +1010,11 @@ local function submitVehicleRegistration(src, formData)
       if ok and type(parsed) == 'table' and type(parsed.registration) == 'table' then
         expiryAt = tostring(parsed.registration.expiry_at or expiryAt)
       end
-      notifyPlayer(s, ('Vehicle registration saved to CAD%s%s'):format(
+      notifyPlayer(s, ('Vehicle registration saved to CAD%s%s%s%s'):format(
         expiryAt ~= '' and ' | Expires: ' or '',
-        expiryAt ~= '' and expiryAt or ''
+        expiryAt ~= '' and expiryAt or '',
+        feeAmount > 0 and ' | Charged: ' or '',
+        feeAmount > 0 and formatMoney(feeAmount) or ''
       ))
       return
     end
@@ -777,6 +1029,22 @@ local function submitVehicleRegistration(src, formData)
       err = err .. ': ' .. tostring(parsed.error)
     end
     print('[cad_bridge] ' .. err)
+    if feeCharged and feeAmount > 0 then
+      local refunded, refundErr = refundDocumentFee(
+        s,
+        payload.citizenid,
+        feeAccount,
+        feeAmount,
+        'CAD registration refund (save failed)'
+      )
+      if not refunded then
+        print(('[cad_bridge] WARNING: registration fee refund failed for src %s amount %s: %s'):format(
+          tostring(s),
+          tostring(feeAmount),
+          tostring(refundErr)
+        ))
+      end
+    end
     notifyPlayer(s, 'Vehicle registration failed to save to CAD. Check server logs.')
   end)
 end
@@ -1133,7 +1401,7 @@ RegisterCommand(trim(Config.DriverLicenseCommand or 'cadlicense'), function(src,
     class_options = Config.DriverLicenseClassOptions or {},
     default_classes = Config.DriverLicenseDefaultClasses or {},
     default_expiry_days = defaultExpiryDays,
-    duration_options = Config.DriverLicenseDurationOptions or { 6, 35, 70 },
+    duration_options = Config.DriverLicenseDurationOptions or { 6, 14, 35, 70 },
   })
 end, false)
 
@@ -1146,8 +1414,8 @@ RegisterCommand(trim(Config.VehicleRegistrationCommand or 'cadrego'), function(s
   local defaults = getCharacterDefaults(src)
   TriggerClientEvent('cad_bridge:promptVehicleRegistration', src, {
     owner_name = defaults.full_name,
-    duration_options = Config.VehicleRegistrationDurationOptions or { 365 },
-    default_duration_days = tonumber(Config.VehicleRegistrationDefaultDays or 365) or 365,
+    duration_options = Config.VehicleRegistrationDurationOptions or { 6, 14, 35, 70 },
+    default_duration_days = tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35,
   })
 end, false)
 

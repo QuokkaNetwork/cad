@@ -373,7 +373,7 @@ local function tryMugshotExport(resourceName, exportName, args)
 
     -- MugShotBase64 returns raw base64 data; convert to a browser-safe data URI.
     if #normalized > 100 and normalized:match('^[A-Za-z0-9+/=]+$') then
-      return ('data:image/jpeg;base64,%s'):format(normalized)
+      return ('data:image/png;base64,%s'):format(normalized)
     end
     return normalized
   end
@@ -396,9 +396,10 @@ local function captureMugshotUrl()
   local playerId = PlayerId()
   local serverId = GetPlayerServerId(playerId)
   local attempts = {
-    { 'GetMugShotBase64', { ped, true } },
+    -- MugShotBase64 transparent mode downsamples to 64x64. Prefer full-res first.
+    { 'GetMugShotBase64', { ped, false } },
     { 'GetMugShotBase64', { ped } },
-    { 'getMugShotBase64', { ped, true } },
+    { 'getMugShotBase64', { ped, false } },
     { 'getMugShotBase64', { ped } },
     { 'GetMugShotUrl', { ped } },
     { 'getMugShotUrl', { ped } },
@@ -411,6 +412,9 @@ local function captureMugshotUrl()
     { 'GetPlayerMugshot', { serverId } },
     { 'getPlayerMugshot', { serverId } },
     { 'GetMugShotUrl', {} },
+    -- Keep transparent capture as low-priority fallback for compatibility.
+    { 'GetMugShotBase64', { ped, true } },
+    { 'getMugShotBase64', { ped, true } },
   }
 
   for _, attempt in ipairs(attempts) do
@@ -422,9 +426,81 @@ local function captureMugshotUrl()
   return ''
 end
 
+local GTA_COLOUR_NAMES = {
+  [0] = 'Black', [1] = 'Graphite', [2] = 'Black Steel', [3] = 'Dark Silver', [4] = 'Silver',
+  [5] = 'Bluish Silver', [6] = 'Rolled Steel', [7] = 'Shadow Silver', [8] = 'Stone Silver', [9] = 'Midnight Silver',
+  [10] = 'Cast Iron Silver', [11] = 'Anthracite Black', [12] = 'Matte Black', [13] = 'Matte Gray', [14] = 'Matte Light Gray',
+  [15] = 'Util Black', [16] = 'Util Black Poly', [17] = 'Util Dark Silver', [18] = 'Util Silver', [19] = 'Util Gun Metal',
+  [20] = 'Util Shadow Silver', [21] = 'Worn Black', [22] = 'Worn Graphite', [23] = 'Worn Silver Grey', [24] = 'Worn Silver',
+  [25] = 'Worn Blue Silver', [26] = 'Worn Shadow Silver', [27] = 'Red', [28] = 'Torino Red', [29] = 'Formula Red',
+  [30] = 'Blaze Red', [31] = 'Graceful Red', [32] = 'Garnet Red', [33] = 'Sunset Red', [34] = 'Cabernet Red',
+  [35] = 'Candy Red', [36] = 'Sunrise Orange', [37] = 'Gold', [38] = 'Orange', [39] = 'Matte Red',
+  [40] = 'Matte Dark Red', [41] = 'Matte Orange', [42] = 'Matte Yellow', [43] = 'Util Red', [44] = 'Util Bright Red',
+  [45] = 'Util Garnet Red', [46] = 'Worn Red', [47] = 'Worn Golden Red', [48] = 'Worn Dark Red', [49] = 'Dark Green',
+  [50] = 'Racing Green', [51] = 'Sea Green', [52] = 'Olive Green', [53] = 'Green', [54] = 'Gasoline Green',
+  [55] = 'Matte Lime Green', [56] = 'Util Dark Green', [57] = 'Util Green', [58] = 'Worn Dark Green', [59] = 'Worn Green',
+  [60] = 'Worn Sea Wash', [61] = 'Midnight Blue', [62] = 'Dark Blue', [63] = 'Saxony Blue', [64] = 'Blue',
+  [65] = 'Mariner Blue', [66] = 'Harbor Blue', [67] = 'Diamond Blue', [68] = 'Surf Blue', [69] = 'Nautical Blue',
+  [70] = 'Racing Blue', [71] = 'Ultra Blue', [72] = 'Light Blue', [73] = 'Chocolate Brown', [74] = 'Bison Brown',
+  [75] = 'Creek Brown', [76] = 'Feltzer Brown', [77] = 'Maple Brown', [78] = 'Beechwood Brown', [79] = 'Sienna Brown',
+  [80] = 'Saddle Brown', [81] = 'Moss Brown', [82] = 'Woodbeech Brown', [83] = 'Straw Brown', [84] = 'Sandy Brown',
+  [85] = 'Bleached Brown', [86] = 'Schafter Purple', [87] = 'Spinnaker Purple', [88] = 'Midnight Purple', [89] = 'Bright Purple',
+  [90] = 'Cream', [91] = 'Ice White', [92] = 'Frost White',
+}
+
+local function resolveVehicleColourName(index)
+  local id = tonumber(index)
+  if id == nil then return 'Unknown' end
+  id = math.floor(id)
+  return GTA_COLOUR_NAMES[id] or ('Colour %s'):format(tostring(id))
+end
+
+local function getVehicleCustomColourLabel(vehicle, primary)
+  local hasCustom = false
+  if primary then
+    if type(GetIsVehiclePrimaryColourCustom) == 'function' then
+      hasCustom = GetIsVehiclePrimaryColourCustom(vehicle) == true
+    end
+  else
+    if type(GetIsVehicleSecondaryColourCustom) == 'function' then
+      hasCustom = GetIsVehicleSecondaryColourCustom(vehicle) == true
+    end
+  end
+  if not hasCustom then return '' end
+
+  local r, g, b = nil, nil, nil
+  if primary then
+    if type(GetVehicleCustomPrimaryColour) == 'function' then
+      r, g, b = GetVehicleCustomPrimaryColour(vehicle)
+    end
+  else
+    if type(GetVehicleCustomSecondaryColour) == 'function' then
+      r, g, b = GetVehicleCustomSecondaryColour(vehicle)
+    end
+  end
+
+  if r and g and b then
+    return ('Custom (%d, %d, %d)'):format(tonumber(r) or 0, tonumber(g) or 0, tonumber(b) or 0)
+  end
+  return 'Custom'
+end
+
 local function getVehicleColourLabel(vehicle)
   local primary, secondary = GetVehicleColours(vehicle)
-  return ('Primary #%s / Secondary #%s'):format(tostring(primary or '?'), tostring(secondary or '?'))
+  local primaryLabel = getVehicleCustomColourLabel(vehicle, true)
+  if primaryLabel == '' then
+    primaryLabel = resolveVehicleColourName(primary)
+  end
+
+  local secondaryLabel = getVehicleCustomColourLabel(vehicle, false)
+  if secondaryLabel == '' then
+    secondaryLabel = resolveVehicleColourName(secondary)
+  end
+
+  if primaryLabel == secondaryLabel then
+    return primaryLabel
+  end
+  return ('%s / %s'):format(primaryLabel, secondaryLabel)
 end
 
 local function getCurrentVehicleRegistrationDefaults()
@@ -644,6 +720,23 @@ local function openVehicleRegistrationPopup(payload)
     nextPayload.vehicle_colour = defaults.vehicle_colour
   end
 
+  if trim(nextPayload.plate or '') == '' or trim(nextPayload.vehicle_model or '') == '' then
+    local message = 'You must be in the driver seat of a vehicle to auto-fill registration details.'
+    if GetResourceState('ox_lib') == 'started' then
+      TriggerEvent('ox_lib:notify', {
+        title = 'CAD Registration',
+        description = message,
+        type = 'warning',
+      })
+    elseif GetResourceState('chat') == 'started' then
+      TriggerEvent('chat:addMessage', {
+        color = { 255, 170, 0 },
+        args = { 'CAD', message },
+      })
+    end
+    return
+  end
+
   vehicleRegistrationUiOpen = true
   SetNuiFocus(true, true)
   SendNUIMessage({
@@ -718,7 +811,7 @@ RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
   local fullName = trim(data and data.full_name or data and data.character_name or '')
   local dateOfBirth = trim(data and data.date_of_birth or data and data.dob or '')
   local gender = trim(data and data.gender or '')
-  local expiryDays = tonumber(data and data.expiry_days or 0) or tonumber(Config.DriverLicenseDefaultExpiryDays or 1095) or 1095
+  local expiryDays = tonumber(data and data.expiry_days or 0) or tonumber(Config.DriverLicenseDefaultExpiryDays or 35) or 35
   if expiryDays < 1 then expiryDays = 1 end
 
   local classes = {}
@@ -764,7 +857,7 @@ RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
   local model = trim(data and data.vehicle_model or data and data.model or '')
   local colour = trim(data and data.vehicle_colour or data and data.colour or data and data.color or '')
   local ownerName = trim(data and data.owner_name or data and data.character_name or '')
-  local durationDays = tonumber(data and data.duration_days or 0) or tonumber(Config.VehicleRegistrationDefaultDays or 365) or 365
+  local durationDays = tonumber(data and data.duration_days or 0) or tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
   if durationDays < 1 then durationDays = 1 end
 
   if plate == '' or model == '' or ownerName == '' then
@@ -779,7 +872,6 @@ RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
     vehicle_colour = colour,
     owner_name = ownerName,
     duration_days = math.floor(durationDays),
-    expiry_at = trim(data and data.expiry_at or ''),
   })
 
   if cb then cb({ ok = true }) end
