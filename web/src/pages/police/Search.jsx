@@ -301,13 +301,13 @@ export default function Search() {
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
                 Person
               </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <p>Citizen ID: <span className="text-cad-ink">{selectedPerson.citizenid || '-'}</span></p>
-                <p>Name: <span className="text-cad-ink">{resolvePersonName(selectedPerson)}</span></p>
-                <p>DOB: <span className="text-cad-ink">{selectedPerson.cad_driver_license?.date_of_birth || '-'}</span></p>
-                <p>Gender: <span className="text-cad-ink">{selectedPerson.cad_driver_license?.gender || '-'}</span></p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <p>Citizen ID: <span className="text-cad-ink">{selectedPerson.citizenid || '-'}</span></p>
+                  <p>Name: <span className="text-cad-ink">{resolvePersonName(selectedPerson)}</span></p>
+                  <p>DOB: <span className="text-cad-ink">{selectedPerson.cad_driver_license?.date_of_birth || selectedPerson.birthdate || '-'}</span></p>
+                  <p>Gender: <span className="text-cad-ink">{selectedPerson.cad_driver_license?.gender || selectedPerson.gender || '-'}</span></p>
+                </div>
               </div>
-            </div>
 
             <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">

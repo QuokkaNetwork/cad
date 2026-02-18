@@ -30,21 +30,9 @@ export default function AdminSystemSettings() {
   const [installingBridge, setInstallingBridge] = useState(false);
   const [loadingBridgeStatus, setLoadingBridgeStatus] = useState(false);
   const [bridgeStatus, setBridgeStatus] = useState(null);
-  const [fineJobResult, setFineJobResult] = useState(null);
-  const [fineJobs, setFineJobs] = useState([]);
-  const [loadingFineJobs, setLoadingFineJobs] = useState(false);
   const [mapTileFiles, setMapTileFiles] = useState(null);
   const [uploadingMapTiles, setUploadingMapTiles] = useState(false);
   const [mapTileUploadResult, setMapTileUploadResult] = useState(null);
-  const [voiceChannels, setVoiceChannels] = useState([]);
-  const [loadingVoiceChannels, setLoadingVoiceChannels] = useState(false);
-  const [voiceChannelError, setVoiceChannelError] = useState('');
-  const [editingChannelId, setEditingChannelId] = useState(null);
-  const [editChannelForm, setEditChannelForm] = useState({ name: '', description: '' });
-  const [savingChannelId, setSavingChannelId] = useState(null);
-  const [newChannelForm, setNewChannelForm] = useState({ channel_number: '', name: '', description: '' });
-  const [addingChannel, setAddingChannel] = useState(false);
-  const [showAddChannel, setShowAddChannel] = useState(false);
   const [purgingLicenses, setPurgingLicenses] = useState(false);
   const [purgingRegistrations, setPurgingRegistrations] = useState(false);
   const [purgeResult, setPurgeResult] = useState(null);
@@ -70,111 +58,9 @@ export default function AdminSystemSettings() {
     }
   }
 
-  async function fetchFineJobs() {
-    setLoadingFineJobs(true);
-    try {
-      const data = await api.get('/api/admin/fivem/fine-jobs?limit=20');
-      setFineJobs(Array.isArray(data) ? data : []);
-    } catch {
-      setFineJobs([]);
-    } finally {
-      setLoadingFineJobs(false);
-    }
-  }
-
-  async function retryFineJob(jobId) {
-    try {
-      await api.post(`/api/admin/fivem/fine-jobs/${jobId}/retry`, {});
-      setFineJobResult({ success: true, message: `Fine job #${jobId} re-queued.` });
-      fetchFineJobs();
-    } catch (err) {
-      setFineJobResult({ success: false, message: formatErr(err) });
-    }
-  }
-
-  async function cancelFineJob(jobId) {
-    try {
-      await api.post(`/api/admin/fivem/fine-jobs/${jobId}/cancel`, {});
-      setFineJobResult({ success: true, message: `Fine job #${jobId} cancelled.` });
-      fetchFineJobs();
-    } catch (err) {
-      setFineJobResult({ success: false, message: formatErr(err) });
-    }
-  }
-
-  async function fetchVoiceChannels() {
-    setLoadingVoiceChannels(true);
-    try {
-      const data = await api.get('/api/voice/channels/admin');
-      setVoiceChannels(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setVoiceChannelError('Failed to load channels: ' + (err?.message || 'Unknown error'));
-    } finally {
-      setLoadingVoiceChannels(false);
-    }
-  }
-
-  function startEditChannel(channel) {
-    setEditingChannelId(channel.id);
-    setEditChannelForm({ name: channel.name, description: channel.description || '' });
-  }
-
-  async function saveChannelEdit(channelId) {
-    const name = String(editChannelForm.name || '').trim();
-    if (!name) return;
-    setSavingChannelId(channelId);
-    try {
-      const updated = await api.put(`/api/voice/channels/${channelId}`, {
-        name,
-        description: String(editChannelForm.description || '').trim(),
-      });
-      setVoiceChannels(prev => prev.map(c => c.id === channelId ? updated : c));
-      setEditingChannelId(null);
-    } catch (err) {
-      setVoiceChannelError('Failed to save: ' + (err?.message || 'Unknown error'));
-    } finally {
-      setSavingChannelId(null);
-    }
-  }
-
-  async function toggleChannelActive(channel) {
-    try {
-      const updated = await api.put(`/api/voice/channels/${channel.id}`, {
-        is_active: channel.is_active ? 0 : 1,
-      });
-      setVoiceChannels(prev => prev.map(c => c.id === channel.id ? updated : c));
-    } catch (err) {
-      setVoiceChannelError('Failed to update: ' + (err?.message || 'Unknown error'));
-    }
-  }
-
-  async function createVoiceChannel(e) {
-    e.preventDefault();
-    const num = parseInt(newChannelForm.channel_number, 10);
-    const name = String(newChannelForm.name || '').trim();
-    if (!num || !name) return;
-    setAddingChannel(true);
-    try {
-      const created = await api.post('/api/voice/channels', {
-        channel_number: num,
-        name,
-        description: String(newChannelForm.description || '').trim(),
-      });
-      setVoiceChannels(prev => [...prev, created].sort((a, b) => a.channel_number - b.channel_number));
-      setNewChannelForm({ channel_number: '', name: '', description: '' });
-      setShowAddChannel(false);
-    } catch (err) {
-      setVoiceChannelError('Failed to create: ' + (err?.message || 'Unknown error'));
-    } finally {
-      setAddingChannel(false);
-    }
-  }
-
   useEffect(() => {
     fetchSettings();
     fetchFiveMStatus();
-    fetchFineJobs();
-    fetchVoiceChannels();
   }, [locationKey]);
 
   function updateSetting(key, value) {
@@ -322,16 +208,16 @@ export default function AdminSystemSettings() {
   }
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-5xl space-y-6">
       <AdminPageHeader
         title="System Settings"
         subtitle="Configure CAD integrations and backend data sources."
       />
 
       {/* FiveM Bridge */}
-      <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-4">
-        <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-4">FiveM CAD Bridge</h3>
-        <div className="grid grid-cols-2 gap-3">
+      <div className="bg-cad-card border border-cad-border rounded-xl p-6">
+        <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-5">FiveM CAD Bridge</h3>
+        <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
             <label className="block text-xs text-cad-muted mb-1">FiveM Resources Directory</label>
             <input
@@ -655,71 +541,7 @@ export default function AdminSystemSettings() {
         )}
       </div>
 
-      {/* Fine Job Status */}
-
-      <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Fine Job Status</h3>
-          <button
-            onClick={fetchFineJobs}
-            disabled={loadingFineJobs}
-            className="px-3 py-1.5 text-xs bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
-          >
-            {loadingFineJobs ? 'Refreshing...' : 'Refresh Jobs'}
-          </button>
-        </div>
-        {fineJobResult && (
-          <p className={`text-xs mb-3 whitespace-pre-wrap ${fineJobResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
-            {fineJobResult.message}
-          </p>
-        )}
-        {fineJobs.length === 0 ? (
-          <p className="text-xs text-cad-muted">No fine jobs recorded yet.</p>
-        ) : (
-          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-            {fineJobs.map(job => (
-              <div key={job.id} className="bg-cad-surface border border-cad-border rounded px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs text-cad-ink">
-                    #{job.id} | CID {job.citizen_id} | ${Number(job.amount || 0).toFixed(0)}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[11px] font-semibold uppercase ${
-                      job.status === 'sent'
-                        ? 'text-emerald-400'
-                        : job.status === 'failed'
-                          ? 'text-red-400'
-                          : 'text-amber-300'
-                    }`}>
-                      {job.status}
-                    </span>
-                    {job.status !== 'sent' && (
-                      <>
-                        <button
-                          onClick={() => retryFineJob(job.id)}
-                          className="px-2 py-0.5 text-[10px] bg-cad-card text-cad-muted hover:text-cad-ink rounded border border-cad-border"
-                        >
-                          Retry
-                        </button>
-                        <button
-                          onClick={() => cancelFineJob(job.id)}
-                          className="px-2 py-0.5 text-[10px] bg-red-500/10 text-red-300 hover:text-red-200 rounded border border-red-500/30"
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <p className="text-[11px] text-cad-muted mt-1">{job.reason || 'No reason'}</p>
-                {!!job.error && <p className="text-[11px] text-red-300 mt-1 whitespace-pre-wrap">{job.error}</p>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="bg-cad-card border border-red-500/30 rounded-lg p-5 mb-4">
+      <div className="bg-cad-card border border-red-500/30 rounded-xl p-6">
         <h3 className="text-sm font-semibold text-red-300 uppercase tracking-wider mb-2">CAD Record Purge</h3>
         <p className="text-xs text-cad-muted mb-3">
           Dangerous actions. This permanently removes CAD licence/rego records from the CAD database.
@@ -749,191 +571,15 @@ export default function AdminSystemSettings() {
         )}
       </div>
 
-      {/* Voice Channels */}
-      <div className="bg-cad-card border border-cad-border rounded-xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold">Voice Channels</h2>
-            <p className="text-xs text-cad-muted mt-0.5">Rename channels and manage which are active. Channel numbers must match your in-game radio frequencies.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={fetchVoiceChannels}
-              disabled={loadingVoiceChannels}
-              className="px-3 py-1.5 text-xs bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
-            >
-              {loadingVoiceChannels ? 'Loading...' : 'Refresh'}
-            </button>
-            <button
-              onClick={() => { setShowAddChannel(v => !v); setVoiceChannelError(''); }}
-              className="px-3 py-1.5 text-xs bg-cad-accent hover:bg-cad-accent-light text-white rounded transition-colors"
-            >
-              + Add Channel
-            </button>
-          </div>
-        </div>
-
-        {voiceChannelError && (
-          <p className="text-xs text-red-400">{voiceChannelError}</p>
-        )}
-
-        {showAddChannel && (
-          <form onSubmit={createVoiceChannel} className="bg-cad-surface border border-cad-border rounded-lg p-4 space-y-3">
-            <p className="text-xs font-semibold text-cad-muted uppercase tracking-wider">New Channel</p>
-            <div className="flex gap-3">
-              <div className="w-28 flex-shrink-0">
-                <label className="block text-xs text-cad-muted mb-1">Channel #</label>
-                <input
-                  type="number"
-                  min="1"
-                  required
-                  value={newChannelForm.channel_number}
-                  onChange={e => setNewChannelForm(f => ({ ...f, channel_number: e.target.value }))}
-                  placeholder="e.g. 1"
-                  className="w-full bg-cad-card border border-cad-border rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-cad-accent"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="block text-xs text-cad-muted mb-1">Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={newChannelForm.name}
-                  onChange={e => setNewChannelForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. Police Primary"
-                  className="w-full bg-cad-card border border-cad-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="block text-xs text-cad-muted mb-1">Description</label>
-                <input
-                  type="text"
-                  value={newChannelForm.description}
-                  onChange={e => setNewChannelForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="Optional"
-                  className="w-full bg-cad-card border border-cad-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
-                />
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={addingChannel}
-                className="px-4 py-1.5 text-xs bg-cad-accent hover:bg-cad-accent-light text-white rounded transition-colors disabled:opacity-50"
-              >
-                {addingChannel ? 'Creating...' : 'Create Channel'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowAddChannel(false); setNewChannelForm({ channel_number: '', name: '', description: '' }); }}
-                className="px-4 py-1.5 text-xs bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-
-        {voiceChannels.length === 0 && !loadingVoiceChannels ? (
-          <p className="text-sm text-cad-muted py-2">No voice channels yet. Use the FiveM CAD bridge to auto-sync channels, or add them manually above.</p>
-        ) : (
-          <div className="space-y-2">
-            {voiceChannels.map(channel => (
-              <div
-                key={channel.id}
-                className={`bg-cad-surface border rounded-lg px-4 py-3 transition-colors ${channel.is_active ? 'border-cad-border' : 'border-cad-border opacity-50'}`}
-              >
-                {editingChannelId === channel.id ? (
-                  <div className="flex gap-3 items-end">
-                    <div className="w-12 flex-shrink-0 text-center">
-                      <p className="text-xs text-cad-muted mb-1">CH</p>
-                      <p className="text-sm font-mono font-semibold">{channel.channel_number}</p>
-                    </div>
-                    <div className="flex-1">
-                      <label className="block text-xs text-cad-muted mb-1">Name *</label>
-                      <input
-                        type="text"
-                        autoFocus
-                        value={editChannelForm.name}
-                        onChange={e => setEditChannelForm(f => ({ ...f, name: e.target.value }))}
-                        className="w-full bg-cad-card border border-cad-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="block text-xs text-cad-muted mb-1">Description</label>
-                      <input
-                        type="text"
-                        value={editChannelForm.description}
-                        onChange={e => setEditChannelForm(f => ({ ...f, description: e.target.value }))}
-                        className="w-full bg-cad-card border border-cad-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
-                      />
-                    </div>
-                    <div className="flex gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => saveChannelEdit(channel.id)}
-                        disabled={savingChannelId === channel.id || !editChannelForm.name.trim()}
-                        className="px-3 py-1.5 text-xs bg-cad-accent hover:bg-cad-accent-light text-white rounded transition-colors disabled:opacity-50"
-                      >
-                        {savingChannelId === channel.id ? 'Saving...' : 'Save'}
-                      </button>
-                      <button
-                        onClick={() => setEditingChannelId(null)}
-                        className="px-3 py-1.5 text-xs bg-cad-surface text-cad-muted hover:text-cad-ink rounded border border-cad-border transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 text-center flex-shrink-0">
-                      <p className="text-xs text-cad-muted">CH</p>
-                      <p className="text-sm font-mono font-semibold">{channel.channel_number}</p>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{channel.name}</p>
-                      {channel.description && (
-                        <p className="text-xs text-cad-muted truncate">{channel.description}</p>
-                      )}
-                    </div>
-                    {channel.department_name && (
-                      <span className="text-xs text-cad-muted bg-cad-card border border-cad-border rounded px-2 py-0.5 flex-shrink-0">
-                        {channel.department_short_name || channel.department_name}
-                      </span>
-                    )}
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => startEditChannel(channel)}
-                        className="px-3 py-1 text-xs text-cad-muted hover:text-cad-ink bg-cad-card border border-cad-border rounded transition-colors"
-                      >
-                        Rename
-                      </button>
-                      <button
-                        onClick={() => toggleChannelActive(channel)}
-                        className={`px-3 py-1 text-xs rounded border transition-colors ${
-                          channel.is_active
-                            ? 'text-amber-400 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20'
-                            : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20'
-                        }`}
-                      >
-                        {channel.is_active ? 'Disable' : 'Enable'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+      <div className="flex justify-end pt-2">
+        <button
+          onClick={saveSettings}
+          disabled={saving}
+          className="px-6 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+        >
+          {saving ? 'Saving...' : 'Save Settings'}
+        </button>
       </div>
-
-      <button
-        onClick={saveSettings}
-        disabled={saving}
-        className="px-6 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-      >
-        {saving ? 'Saving...' : 'Save Settings'}
-      </button>
     </div>
   );
 }

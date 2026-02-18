@@ -1,11 +1,58 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { CriminalRecords, Units, FiveMFineJobs, Settings, OffenceCatalog } = require('../db/sqlite');
+const {
+  CriminalRecords,
+  Units,
+  FiveMFineJobs,
+  FiveMJailJobs,
+  FiveMPlayerLinks,
+  Settings,
+  OffenceCatalog,
+} = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const { processPendingFineJobs } = require('../services/fivemFineProcessor');
 
 const router = express.Router();
 const VALID_RECORD_TYPES = new Set(['charge', 'fine', 'warning']);
+const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
+
+function parseSqliteUtc(value) {
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  const base = text.replace(' ', 'T');
+  const normalized = base.endsWith('Z') ? base : `${base}Z`;
+  return Date.parse(normalized);
+}
+
+function isActiveFiveMLink(link) {
+  const ts = parseSqliteUtc(link?.updated_at);
+  if (Number.isNaN(ts)) return false;
+  return (Date.now() - ts) <= ACTIVE_LINK_MAX_AGE_MS;
+}
+
+function resolveOfficerDisplayName(user) {
+  const fallback = String(user?.steam_name || '').trim() || 'Unknown Officer';
+  if (!user) return fallback;
+
+  const candidates = [];
+  if (user.steam_id) {
+    candidates.push(FiveMPlayerLinks.findBySteamId(user.steam_id));
+  }
+  if (user.discord_id) {
+    candidates.push(FiveMPlayerLinks.findBySteamId(`discord:${user.discord_id}`));
+  }
+  if (user.preferred_citizen_id) {
+    candidates.push(FiveMPlayerLinks.findByCitizenId(String(user.preferred_citizen_id).trim()));
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate || !isActiveFiveMLink(candidate)) continue;
+    const name = String(candidate.player_name || '').trim();
+    if (name) return name;
+  }
+
+  return fallback;
+}
 
 function normalizeRecordType(value, fallback = 'charge') {
   const normalized = String(value || '').trim().toLowerCase();
@@ -103,7 +150,7 @@ router.get('/:id', requireAuth, (req, res) => {
 
 // Create a record
 router.post('/', requireAuth, (req, res) => {
-  const { citizen_id, type, title, description, fine_amount, department_id, offence_items } = req.body || {};
+  const { citizen_id, type, title, description, fine_amount, jail_minutes, department_id, offence_items } = req.body || {};
   if (!citizen_id) {
     return res.status(400).json({ error: 'citizen_id is required' });
   }
@@ -123,6 +170,11 @@ router.post('/', requireAuth, (req, res) => {
   }
   let recordType = normalizeRecordType(type, 'charge');
   let recordFineAmount = 0;
+  const rawJailMinutes = Number(jail_minutes ?? 0);
+  if (jail_minutes !== undefined && (!Number.isFinite(rawJailMinutes) || rawJailMinutes < 0)) {
+    return res.status(400).json({ error: 'jail_minutes must be a non-negative number' });
+  }
+  const recordJailMinutes = Number.isFinite(rawJailMinutes) ? Math.max(0, Math.trunc(rawJailMinutes)) : 0;
   let recordTitle = normalizedTitle;
   const recordDescription = String(description || '');
   let offenceItemsJson = '[]';
@@ -148,9 +200,13 @@ router.post('/', requireAuth, (req, res) => {
     }
   }
 
+  if (recordType === 'warning' && recordJailMinutes > 0) {
+    return res.status(400).json({ error: 'warning records cannot include jail_minutes' });
+  }
+
   // Auto-fill officer info from current unit
   const unit = Units.findByUserId(req.user.id);
-  const officerName = req.user.steam_name;
+  const officerName = resolveOfficerDisplayName(req.user);
   const officerCallsign = unit ? unit.callsign : '';
 
   const record = CriminalRecords.create({
@@ -163,6 +219,7 @@ router.post('/', requireAuth, (req, res) => {
     officer_name: officerName,
     officer_callsign: officerCallsign,
     department_id: department_id || (unit ? unit.department_id : null),
+    jail_minutes: recordJailMinutes,
   });
 
   const fivemFineEnabled = String(Settings.get('fivem_bridge_qbox_fines_enabled') || 'true').toLowerCase() === 'true';
@@ -179,11 +236,22 @@ router.post('/', requireAuth, (req, res) => {
     });
   }
 
+  if (record.type !== 'warning' && Number(record.jail_minutes || 0) > 0) {
+    FiveMJailJobs.create({
+      citizen_id,
+      jail_minutes: Number(record.jail_minutes || 0),
+      reason: record.title,
+      issued_by_user_id: req.user.id,
+      source_record_id: record.id,
+    });
+  }
+
   audit(req.user.id, 'record_created', {
     recordId: record.id,
     citizen_id,
     type: record.type,
     title: record.title,
+    jail_minutes: Number(record.jail_minutes || 0),
     offence_items_count: resolvedOffences?.items?.length || 0,
   });
   res.status(201).json(record);
@@ -195,7 +263,7 @@ router.patch('/:id', requireAuth, (req, res) => {
   const record = CriminalRecords.findById(recordId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  const { type, title, description, fine_amount, offence_items } = req.body || {};
+  const { type, title, description, fine_amount, jail_minutes, offence_items } = req.body || {};
   const updates = {};
   const offenceItemsProvided = Object.prototype.hasOwnProperty.call(req.body || {}, 'offence_items');
 
@@ -236,6 +304,16 @@ router.patch('/:id', requireAuth, (req, res) => {
     } else if (updates.type !== undefined && nextType !== 'fine') {
       updates.fine_amount = 0;
     }
+
+    if (jail_minutes !== undefined) {
+      const minutes = Number(jail_minutes);
+      if (!Number.isFinite(minutes) || minutes < 0) {
+        return res.status(400).json({ error: 'jail_minutes must be a non-negative number' });
+      }
+      updates.jail_minutes = Math.max(0, Math.trunc(minutes));
+    } else if (updates.type !== undefined && nextType === 'warning') {
+      updates.jail_minutes = 0;
+    }
   }
 
   if (title !== undefined) {
@@ -246,6 +324,14 @@ router.patch('/:id', requireAuth, (req, res) => {
 
   if (description !== undefined) {
     updates.description = String(description || '');
+  }
+
+  const effectiveType = updates.type || record.type;
+  const effectiveJailMinutes = updates.jail_minutes !== undefined
+    ? Number(updates.jail_minutes || 0)
+    : Number(record.jail_minutes || 0);
+  if (effectiveType === 'warning' && effectiveJailMinutes > 0) {
+    return res.status(400).json({ error: 'warning records cannot include jail_minutes' });
   }
 
   if (Object.keys(updates).length === 0) {
@@ -266,6 +352,17 @@ router.patch('/:id', requireAuth, (req, res) => {
     FiveMFineJobs.detachSourceRecord(recordId, 'Record updated to non-fine');
   }
 
+  if (updated.type !== 'warning' && Number(updated.jail_minutes || 0) > 0) {
+    FiveMJailJobs.upsertPendingBySourceRecordId(recordId, {
+      citizen_id: updated.citizen_id,
+      jail_minutes: Number(updated.jail_minutes || 0),
+      reason: updated.title || '',
+      issued_by_user_id: req.user.id,
+    });
+  } else {
+    FiveMJailJobs.detachSourceRecord(recordId, 'Record jail sentence removed');
+  }
+
   audit(req.user.id, 'record_updated', { recordId, updates });
   res.json(updated);
 });
@@ -276,7 +373,8 @@ router.delete('/:id', requireAuth, (req, res) => {
   const record = CriminalRecords.findById(recordId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  const detachedJobs = FiveMFineJobs.detachSourceRecord(recordId, 'Record deleted');
+  const detachedFineJobs = FiveMFineJobs.detachSourceRecord(recordId, 'Record deleted');
+  const detachedJailJobs = FiveMJailJobs.detachSourceRecord(recordId, 'Record deleted');
   CriminalRecords.delete(recordId);
 
   audit(req.user.id, 'record_deleted', {
@@ -284,7 +382,8 @@ router.delete('/:id', requireAuth, (req, res) => {
     citizen_id: record.citizen_id,
     type: record.type,
     title: record.title,
-    detachedJobs,
+    detachedFineJobs,
+    detachedJailJobs,
   });
   res.json({ success: true });
 });

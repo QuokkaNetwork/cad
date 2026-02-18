@@ -1,26 +1,136 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+
+const PRESET_STORAGE_PREFIX = 'cad_go_on_duty_presets_v1';
+
+function buildStorageKey(user) {
+  const userKey = String(user?.id || user?.steam_id || user?.discord_id || 'anon').trim() || 'anon';
+  return `${PRESET_STORAGE_PREFIX}:${userKey}`;
+}
+
+function normalizePresetEntry(entry) {
+  const callsign = String(entry?.callsign || '').trim();
+  if (!callsign) return null;
+  const subDepartmentId = String(entry?.subDepartmentId || '').trim();
+  const updatedAtRaw = Number(entry?.updatedAt || Date.now());
+  const updatedAt = Number.isFinite(updatedAtRaw) ? updatedAtRaw : Date.now();
+  return { callsign, subDepartmentId, updatedAt };
+}
+
+function presetKey(entry) {
+  const callsign = String(entry?.callsign || '').trim().toLowerCase();
+  const subDepartmentId = String(entry?.subDepartmentId || '').trim();
+  return `${callsign}::${subDepartmentId}`;
+}
+
+function dedupePresets(items) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(items) ? items : []) {
+    const normalized = normalizePresetEntry(raw);
+    if (!normalized) continue;
+    const key = presetKey(normalized);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function readPresets(storageKey) {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) {
+      return { lastByDepartment: {}, favoritesByDepartment: {} };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      lastByDepartment: parsed?.lastByDepartment && typeof parsed.lastByDepartment === 'object' ? parsed.lastByDepartment : {},
+      favoritesByDepartment: parsed?.favoritesByDepartment && typeof parsed.favoritesByDepartment === 'object'
+        ? parsed.favoritesByDepartment
+        : {},
+    };
+  } catch {
+    return { lastByDepartment: {}, favoritesByDepartment: {} };
+  }
+}
+
+function writePresets(storageKey, nextValue) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(nextValue));
+  } catch {
+    // Ignore storage errors (private mode/quota); modal still works without persistence.
+  }
+}
 
 export default function GoOnDutyModal({ open, onClose, department, onSuccess }) {
+  const { user } = useAuth();
   const overlayRef = useRef(null);
   const [callsign, setCallsign] = useState('');
   const [subDepartments, setSubDepartments] = useState([]);
   const [subDepartmentId, setSubDepartmentId] = useState('');
+  const [lastUsed, setLastUsed] = useState(null);
+  const [favorites, setFavorites] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const isDispatchDepartment = !!department?.is_dispatch;
+  const departmentKey = String(department?.id || '').trim();
+  const storageKey = useMemo(() => buildStorageKey(user), [user]);
+
+  const getSubDepartmentLabel = useCallback((id) => {
+    const target = String(id || '').trim();
+    if (!target) return 'No sub-department';
+    const match = subDepartments.find((sd) => String(sd.id) === target);
+    if (!match) return `Sub-department #${target}`;
+    const short = String(match.short_name || '').trim();
+    return short ? `${match.name} (${short})` : match.name;
+  }, [subDepartments]);
+
+  const persistDepartmentPresets = useCallback((nextLast, nextFavorites) => {
+    if (!departmentKey || isDispatchDepartment) return;
+    const current = readPresets(storageKey);
+    const updated = {
+      ...current,
+      lastByDepartment: { ...(current.lastByDepartment || {}) },
+      favoritesByDepartment: { ...(current.favoritesByDepartment || {}) },
+    };
+    if (nextLast) {
+      updated.lastByDepartment[departmentKey] = nextLast;
+    } else {
+      delete updated.lastByDepartment[departmentKey];
+    }
+    updated.favoritesByDepartment[departmentKey] = dedupePresets(nextFavorites || []);
+    writePresets(storageKey, updated);
+  }, [departmentKey, isDispatchDepartment, storageKey]);
+
+  const loadDepartmentPresets = useCallback(() => {
+    if (!departmentKey || isDispatchDepartment) {
+      setLastUsed(null);
+      setFavorites([]);
+      setCallsign(isDispatchDepartment ? 'DISPATCH' : '');
+      setSubDepartmentId('');
+      return;
+    }
+    const stored = readPresets(storageKey);
+    const storedLast = normalizePresetEntry(stored.lastByDepartment?.[departmentKey]);
+    const storedFavorites = dedupePresets(stored.favoritesByDepartment?.[departmentKey] || []);
+    setLastUsed(storedLast);
+    setFavorites(storedFavorites);
+    setCallsign(storedLast?.callsign || '');
+    setSubDepartmentId(storedLast?.subDepartmentId || '');
+  }, [departmentKey, isDispatchDepartment, storageKey]);
 
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
       setError('');
-      setCallsign(isDispatchDepartment ? 'DISPATCH' : '');
-      setSubDepartmentId('');
+      loadDepartmentPresets();
     } else {
       document.body.style.overflow = '';
     }
     return () => { document.body.style.overflow = ''; };
-  }, [open, isDispatchDepartment]);
+  }, [open, loadDepartmentPresets]);
 
   useEffect(() => {
     async function fetchSubDepartments() {
@@ -39,12 +149,59 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
   }, [open, department?.id]);
 
   useEffect(() => {
+    if (!open || isDispatchDepartment) return;
+    if (!subDepartmentId || subDepartments.length === 0) return;
+    const exists = subDepartments.some((sd) => String(sd.id) === String(subDepartmentId));
+    if (!exists) {
+      setSubDepartmentId('');
+    }
+  }, [open, isDispatchDepartment, subDepartments, subDepartmentId]);
+
+  useEffect(() => {
     function onKey(e) {
       if (e.key === 'Escape' && open) onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  function applyPreset(entry) {
+    const normalized = normalizePresetEntry(entry);
+    if (!normalized) return;
+    setCallsign(normalized.callsign);
+    setSubDepartmentId(normalized.subDepartmentId || '');
+    setError('');
+  }
+
+  function removeFavorite(entry) {
+    const key = presetKey(entry);
+    const nextFavorites = favorites.filter((item) => presetKey(item) !== key);
+    setFavorites(nextFavorites);
+    persistDepartmentPresets(lastUsed, nextFavorites);
+  }
+
+  function addCurrentToFavorites() {
+    if (isDispatchDepartment) return;
+    const nextCallsign = String(callsign || '').trim();
+    if (!nextCallsign) {
+      setError('Enter a callsign before adding a favorite');
+      return;
+    }
+    if (subDepartments.length > 0 && !subDepartmentId) {
+      setError('Select a sub-department before adding a favorite');
+      return;
+    }
+    const nextEntry = normalizePresetEntry({
+      callsign: nextCallsign,
+      subDepartmentId: subDepartmentId ? String(subDepartmentId) : '',
+      updatedAt: Date.now(),
+    });
+    const withoutDuplicate = favorites.filter((item) => presetKey(item) !== presetKey(nextEntry));
+    const nextFavorites = [nextEntry, ...withoutDuplicate].slice(0, 12);
+    setFavorites(nextFavorites);
+    persistDepartmentPresets(lastUsed, nextFavorites);
+    setError('');
+  }
 
   async function submit(e) {
     e.preventDefault();
@@ -63,6 +220,15 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
         department_id: department?.id,
         sub_department_id: subDepartmentId || null,
       });
+      if (!isDispatchDepartment && departmentKey) {
+        const nextLast = normalizePresetEntry({
+          callsign: normalizedCallsign,
+          subDepartmentId: subDepartmentId ? String(subDepartmentId) : '',
+          updatedAt: Date.now(),
+        });
+        setLastUsed(nextLast);
+        persistDepartmentPresets(nextLast, favorites);
+      }
       onSuccess?.();
       onClose();
     } catch (err) {
@@ -127,6 +293,63 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
                 ))}
               </select>
             </>
+          )}
+          {!isDispatchDepartment && (
+            <div className="mt-3 space-y-2">
+              {lastUsed && (
+                <button
+                  type="button"
+                  onClick={() => applyPreset(lastUsed)}
+                  className="w-full text-left text-xs bg-cad-card border border-cad-border rounded px-3 py-2 hover:border-cad-accent/60 transition-colors"
+                >
+                  <span className="text-cad-muted">Last used:</span>{' '}
+                  <span className="font-mono text-cad-ink">{lastUsed.callsign}</span>
+                  {lastUsed.subDepartmentId && (
+                    <span className="text-cad-muted"> - {getSubDepartmentLabel(lastUsed.subDepartmentId)}</span>
+                  )}
+                </button>
+              )}
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">Favorites</p>
+                <button
+                  type="button"
+                  onClick={addCurrentToFavorites}
+                  disabled={!callsign.trim() || (subDepartments.length > 0 && !subDepartmentId)}
+                  className="px-2.5 py-1 text-[11px] bg-cad-card border border-cad-border rounded text-cad-muted hover:text-cad-ink hover:border-cad-accent/50 transition-colors disabled:opacity-50"
+                >
+                  Save Current
+                </button>
+              </div>
+              {favorites.length === 0 ? (
+                <p className="text-xs text-cad-muted">No saved favorites for this department yet.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                  {favorites.map((favorite) => (
+                    <div key={presetKey(favorite)} className="flex items-center gap-2 bg-cad-card border border-cad-border rounded px-2.5 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => applyPreset(favorite)}
+                        className="flex-1 text-left min-w-0"
+                      >
+                        <p className="text-sm font-mono truncate">{favorite.callsign}</p>
+                        {favorite.subDepartmentId && (
+                          <p className="text-[11px] text-cad-muted truncate">
+                            {getSubDepartmentLabel(favorite.subDepartmentId)}
+                          </p>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeFavorite(favorite)}
+                        className="px-2 py-0.5 text-[11px] rounded border border-red-500/30 text-red-300 hover:text-red-200 hover:bg-red-500/10 transition-colors"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
           {error ? <p className="text-xs text-red-400 mt-2">{error}</p> : null}
 

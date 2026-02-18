@@ -259,6 +259,38 @@ local function getCharacterDefaults(src)
   }
 end
 
+local function getCharacterDisplayName(src)
+  local player = Player(src)
+  if player and player.state then
+    local state = player.state
+    local function fromCharInfo(charinfo)
+      if type(charinfo) ~= 'table' then return '' end
+      local first = trim(charinfo.firstname or charinfo.firstName or '')
+      local last = trim(charinfo.lastname or charinfo.lastName or '')
+      local full = trim(first .. ' ' .. last)
+      if full ~= '' then return full end
+      return ''
+    end
+
+    local fromState = fromCharInfo(state.charinfo)
+    if fromState ~= '' then return fromState end
+
+    if type(state.PlayerData) == 'table' then
+      local fromPlayerData = fromCharInfo(state.PlayerData.charinfo)
+      if fromPlayerData ~= '' then return fromPlayerData end
+      local named = trim(state.PlayerData.name or '')
+      if named ~= '' then return named end
+    end
+
+    local stateName = trim(state.name or '')
+    if stateName ~= '' then return stateName end
+  end
+
+  local fallback = trim(GetPlayerName(src) or '')
+  if fallback ~= '' then return fallback end
+  return 'Player ' .. tostring(src)
+end
+
 RegisterNetEvent('cad_bridge:clientPosition', function(position)
   local src = source
   if type(position) ~= 'table' then return end
@@ -296,6 +328,16 @@ local function notifyPlayer(src, message)
   TriggerClientEvent('chat:addMessage', src, {
     color = { 0, 170, 255 },
     args = { 'CAD', tostring(message or '') },
+  })
+end
+
+local function notifyAlert(src, title, message, level)
+  local s = tonumber(src) or 0
+  if s <= 0 then return end
+  TriggerClientEvent('cad_bridge:notifyAlert', s, {
+    title = trim(title) ~= '' and title or 'CAD',
+    description = tostring(message or ''),
+    type = trim(level) ~= '' and tostring(level) or 'inform',
   })
 end
 
@@ -342,9 +384,31 @@ local function triggerNpwdEmergencyHandlerRegistration()
 end
 
 local function getNpwdResourceName()
-  local name = trim(GetConvar('cad_bridge_npwd_resource', 'npwd'))
+  local name = trim(Config.NpwdResource or 'npwd')
   if name == '' then return 'npwd' end
   return name
+end
+
+local lastForcedOxNotifyPosition = ''
+local function forceOxNotifyPosition(logApplied)
+  if Config.ForceOxNotifyPosition ~= true then return end
+
+  local target = trim(Config.OxNotifyPosition or 'center-right')
+  if target == '' then target = 'center-right' end
+
+  local ok, err = pcall(function()
+    SetConvarReplicated('ox:notifyPosition', target)
+  end)
+
+  if not ok then
+    print(('[cad_bridge] Failed to force ox:notifyPosition=%s (%s)'):format(target, tostring(err)))
+    return
+  end
+
+  if logApplied == true or lastForcedOxNotifyPosition ~= target then
+    print(('[cad_bridge] Forced ox:notifyPosition=%s'):format(target))
+  end
+  lastForcedOxNotifyPosition = target
 end
 
 AddEventHandler('onResourceStart', function(resourceName)
@@ -353,6 +417,7 @@ AddEventHandler('onResourceStart', function(resourceName)
     Wait(500)
     registerEmergencySuggestion(-1)
   end)
+  forceOxNotifyPosition(true)
   triggerNpwdEmergencyHandlerRegistration()
 end)
 
@@ -373,6 +438,13 @@ AddEventHandler('playerJoining', function()
     Wait(3000)
     registerEmergencySuggestion(src)
   end)
+end)
+
+CreateThread(function()
+  while true do
+    Wait(math.max(5000, tonumber(Config.OxNotifyForceIntervalMs or 60000) or 60000))
+    forceOxNotifyPosition(false)
+  end
 end)
 
 local function splitByPipe(text)
@@ -807,7 +879,7 @@ local function submitEmergencyCall(src, report)
   local details = buildEmergencyMessage(report)
   local payload = {
     source = s,
-    player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
+    player_name = getCharacterDisplayName(s),
     identifiers = GetPlayerIdentifiers(s),
     title = ('000 %s'):format(report.emergency_type),
     message = details,
@@ -866,7 +938,7 @@ local function submitDriverLicense(src, formData)
   local defaults = getCharacterDefaults(s)
   local payload = {
     source = s,
-    player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
+    player_name = getCharacterDisplayName(s),
     identifiers = GetPlayerIdentifiers(s),
     citizenid = trim(getCitizenId(s) or defaults.citizenid or ''),
     full_name = trim(defaults.full_name ~= '' and defaults.full_name or formData.full_name),
@@ -965,7 +1037,7 @@ local function submitVehicleRegistration(src, formData)
   local defaults = getCharacterDefaults(s)
   local payload = {
     source = s,
-    player_name = GetPlayerName(s) or ('Player ' .. tostring(s)),
+    player_name = getCharacterDisplayName(s),
     identifiers = GetPlayerIdentifiers(s),
     citizenid = trim(getCitizenId(s) or defaults.citizenid or ''),
     owner_name = trim(defaults.full_name ~= '' and defaults.full_name or formData.owner_name),
@@ -1068,7 +1140,7 @@ local function splitByComma(text)
 end
 
 local function getNpwdEmergencyNumbers()
-  local configured = trim(GetConvar('cad_bridge_npwd_emergency_numbers', '000'))
+  local configured = trim(Config.NpwdEmergencyNumbers or '000')
   local parsed = splitByComma(configured)
   if #parsed == 0 then
     return { '000' }
@@ -1086,7 +1158,7 @@ local function submitNpwdEmergencyCall(src, emergencyNumber, incomingCaller)
     return
   end
 
-  local callerName = trim((incomingCaller and incomingCaller.name) or GetPlayerName(s) or ('Player ' .. tostring(s)))
+  local callerName = trim((incomingCaller and incomingCaller.name) or getCharacterDisplayName(s))
   local callerNumber = trim((incomingCaller and incomingCaller.number) or '')
   local pos = PlayerPositions[s]
   local messageParts = {
@@ -1098,10 +1170,10 @@ local function submitNpwdEmergencyCall(src, emergencyNumber, incomingCaller)
 
   local payload = {
     source = s,
-    player_name = callerName ~= '' and callerName or ('Player ' .. tostring(s)),
+    player_name = callerName ~= '' and callerName or getCharacterDisplayName(s),
     identifiers = GetPlayerIdentifiers(s),
     citizenid = getCitizenId(s),
-    title = ('000 Phone Call - %s'):format(callerName ~= '' and callerName or ('Player ' .. tostring(s))),
+    title = ('000 Phone Call - %s'):format(callerName ~= '' and callerName or getCharacterDisplayName(s)),
     message = table.concat(messageParts, ' | '),
     priority = '1',
     job_code = '000',
@@ -1293,7 +1365,7 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
     end
 
     local license = parsed.license
-    local fullName = trim(license.full_name or defaults.full_name or GetPlayerName(src) or '')
+    local fullName = trim(license.full_name or defaults.full_name or getCharacterDisplayName(src) or '')
     local payload = {
       full_name = fullName,
       date_of_birth = trim(license.date_of_birth or defaults.date_of_birth or ''),
@@ -1330,7 +1402,7 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
         status = payload.status,
         expiry_at = payload.expiry_at,
         mugshot_url = payload.mugshot_url,
-        viewer_note = ('Shown by %s'):format(GetPlayerName(src) or ('Player ' .. tostring(src))),
+        viewer_note = ('Shown by %s'):format(getCharacterDisplayName(src)),
       })
       notifyPlayer(src, ('Licence shown to %s.'):format(GetPlayerName(target) or ('Player ' .. tostring(target))))
       return
@@ -1483,7 +1555,7 @@ CreateThread(function()
           }
           payloadPlayers[#payloadPlayers + 1] = {
             source = s,
-            name = GetPlayerName(s) or ('Player ' .. tostring(s)),
+            name = getCharacterDisplayName(s),
             identifiers = identifiers,
             citizenid = getCitizenId(s),
             position = {
@@ -2266,6 +2338,239 @@ CreateThread(function()
   end
 end)
 
+local function applyJail(job)
+  local adapter = trim(Config.JailAdapter or 'wasabi'):lower()
+  if adapter == '' then adapter = 'wasabi' end
+  if adapter == 'none' then
+    return false, 'Jail adapter disabled (Config.JailAdapter=none)', false
+  end
+
+  local citizenId = trim(job.citizen_id or '')
+  local minutes = math.max(0, math.floor(tonumber(job.jail_minutes or job.minutes or 0) or 0))
+  local reason = trim(job.reason or '')
+  if citizenId == '' then
+    return false, 'Jail citizen_id is empty', false
+  end
+  if minutes <= 0 then
+    return false, 'Jail minutes must be greater than 0', false
+  end
+
+  local sourceId = resolveFineSource(job, citizenId)
+  if not sourceId then
+    return false, 'Target character is not currently online', true
+  end
+
+  if adapter == 'wasabi' then
+    if GetResourceState('wasabi_police') ~= 'started' then
+      return false, 'wasabi_police is not started', false
+    end
+
+    local invoked = false
+    local invokeErrors = {}
+    local okServer, serverErr = pcall(function()
+      TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes)
+    end)
+    if okServer then
+      invoked = true
+    else
+      invokeErrors[#invokeErrors + 1] = ('server event failed: %s'):format(tostring(serverErr))
+    end
+
+    if not invoked then
+      local okClient, clientErr = pcall(function()
+        TriggerClientEvent('wasabi_police:jailPlayer', sourceId, minutes)
+      end)
+      if okClient then
+        invoked = true
+      else
+        invokeErrors[#invokeErrors + 1] = ('client event failed: %s'):format(tostring(clientErr))
+      end
+    end
+
+    if not invoked then
+      return false, table.concat(invokeErrors, ' | '), false
+    end
+
+    local message = ('You have been sentenced to %s minute(s)'):format(tostring(minutes))
+    if reason ~= '' then
+      message = message .. (' | %s'):format(reason)
+    end
+    notifyAlert(sourceId, 'CAD Sentence', message, 'error')
+    return true, '', false
+  end
+
+  if adapter == 'command' then
+    local cmdTemplate = tostring(Config.JailCommandTemplate or '')
+    if cmdTemplate == '' then
+      return false, 'Jail command template is empty', false
+    end
+
+    local commandName = cmdTemplate:match('^%s*([^%s]+)') or ''
+    if commandName == '' then
+      return false, 'Jail command template has no command name', false
+    end
+    if not commandExists(commandName) then
+      return false, ('Jail command not registered: %s'):format(commandName), false
+    end
+
+    local cmd = cmdTemplate
+    cmd = cmd:gsub('{source}', shellEscape(sourceId))
+    cmd = cmd:gsub('{citizenid}', shellEscape(citizenId))
+    cmd = cmd:gsub('{minutes}', shellEscape(minutes))
+    cmd = cmd:gsub('{reason}', shellEscape(reason))
+    ExecuteCommand(cmd)
+
+    local message = ('You have been sentenced to %s minute(s)'):format(tostring(minutes))
+    if reason ~= '' then
+      message = message .. (' | %s'):format(reason)
+    end
+    notifyAlert(sourceId, 'CAD Sentence', message, 'error')
+    return true, '', false
+  end
+
+  return false, ('Unknown jail adapter: %s'):format(tostring(adapter)), false
+end
+
+local jailPollInFlight = false
+CreateThread(function()
+  while true do
+    Wait(math.max(2000, Config.JailPollIntervalMs or 7000))
+    if not hasBridgeConfig() then
+      goto continue
+    end
+    if jailPollInFlight or isBridgeBackoffActive('jail_poll') then
+      goto continue
+    end
+
+    jailPollInFlight = true
+    request('GET', '/api/integration/fivem/jail-jobs?limit=25', nil, function(status, body, responseHeaders)
+      jailPollInFlight = false
+      if status == 429 then
+        setBridgeBackoff('jail_poll', responseHeaders, 10000, 'jail poll')
+        return
+      end
+      if status ~= 200 then
+        return
+      end
+
+      local ok, jobs = pcall(json.decode, body)
+      if not ok or type(jobs) ~= 'table' then
+        return
+      end
+
+      for _, job in ipairs(jobs) do
+        local success, err, transient = applyJail(job)
+        if success then
+          request('POST', ('/api/integration/fivem/jail-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+        elseif transient then
+          -- Keep pending and retry when the target character is online.
+        else
+          request('POST', ('/api/integration/fivem/jail-jobs/%s/failed'):format(tostring(job.id)), {
+            error = err or 'Jail adapter failed',
+          }, function() end)
+        end
+      end
+    end)
+
+    ::continue::
+  end
+end)
+
+local wraithLookupCooldownBySource = {}
+
+local function normalizePlateKey(value)
+  return trim(value):upper():gsub('[^A-Z0-9]', '')
+end
+
+local function shouldThrottleWraithLookup(source, plateKey)
+  local src = tonumber(source) or 0
+  if src <= 0 or plateKey == '' then return true end
+  local cooldownMs = math.max(250, math.floor(tonumber(Config.WraithLookupCooldownMs) or 8000))
+  local now = nowMs()
+  local cache = wraithLookupCooldownBySource[src]
+  if type(cache) ~= 'table' then
+    cache = {}
+    wraithLookupCooldownBySource[src] = cache
+  end
+
+  local blockedUntil = tonumber(cache[plateKey] or 0) or 0
+  if blockedUntil > now then
+    return true
+  end
+
+  cache[plateKey] = now + cooldownMs
+  return false
+end
+
+local function lookupWraithPlateStatus(source, camera, plateRaw)
+  if Config.WraithCadLookupEnabled ~= true then return end
+  if not hasBridgeConfig() then return end
+  if isBridgeBackoffActive('wraith_plate_lookup') then return end
+
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+  if not GetPlayerName(src) then return end
+
+  local plateKey = normalizePlateKey(plateRaw)
+  if plateKey == '' then return end
+  if shouldThrottleWraithLookup(src, plateKey) then return end
+
+  request('GET', '/api/integration/fivem/plate-status/' .. urlEncode(plateKey), nil, function(status, body, responseHeaders)
+    if status == 429 then
+      setBridgeBackoff('wraith_plate_lookup', responseHeaders, 5000, 'wraith plate lookup')
+      return
+    end
+    if status ~= 200 then
+      return
+    end
+
+    local ok, payload = pcall(json.decode, body or '{}')
+    if not ok or type(payload) ~= 'table' then
+      return
+    end
+    if payload.alert ~= true then
+      return
+    end
+
+    local cam = trim(camera):lower()
+    local camLabel = cam == 'rear' and 'Rear LPR' or 'Front LPR'
+    local plate = trim(payload.plate or plateKey)
+    local statusText = trim(payload.message or '')
+    local model = trim(payload.vehicle_model or '')
+    local owner = trim(payload.owner_name or '')
+
+    local details = {}
+    if statusText ~= '' then details[#details + 1] = statusText end
+    if model ~= '' then details[#details + 1] = model end
+    if owner ~= '' then details[#details + 1] = owner end
+
+    local message = ('%s hit: %s'):format(camLabel, plate)
+    if #details > 0 then
+      message = message .. ' | ' .. table.concat(details, ' | ')
+    end
+
+    local severity = payload.registration_status == 'unregistered' and 'warning' or 'error'
+    notifyAlert(src, 'CAD Plate Alert', message, severity)
+  end)
+end
+
+RegisterNetEvent('wk:onPlateScanned', function(camera, plate, _index)
+  local src = source
+  if not src or src == 0 then return end
+  lookupWraithPlateStatus(src, camera, plate)
+end)
+
+RegisterNetEvent('wk:onPlateLocked', function(camera, plate, _index)
+  local src = source
+  if not src or src == 0 then return end
+  lookupWraithPlateStatus(src, camera, plate)
+end)
+
+AddEventHandler('playerDropped', function()
+  local src = source
+  wraithLookupCooldownBySource[src] = nil
+end)
+
 -- ============================================================================
 -- Voice Integration (custom CAD radio only)
 --
@@ -2307,7 +2612,7 @@ local function cadRadioGetMemberRows(channelNumber)
   local rows = {}
   for memberSource, _ in pairs(bucket) do
     if GetPlayerName(memberSource) then
-      local displayName = CadRadioDisplayNameBySource[memberSource] or GetPlayerName(memberSource)
+      local displayName = CadRadioDisplayNameBySource[memberSource] or getCharacterDisplayName(memberSource)
       rows[#rows + 1] = {
         source = memberSource,
         name = displayName or ('Player ' .. tostring(memberSource)),
@@ -2554,7 +2859,7 @@ RegisterNetEvent('cad_bridge:radio:uiJoinRequest', function(channelNumber, radio
   if name ~= '' and #name <= 64 then
     CadRadioDisplayNameBySource[src] = name
   elseif not CadRadioDisplayNameBySource[src] then
-    CadRadioDisplayNameBySource[src] = GetPlayerName(src) or ('Player ' .. tostring(src))
+    CadRadioDisplayNameBySource[src] = getCharacterDisplayName(src)
   end
 
   local success, err = cadRadioSetPlayerChannel(src, channel)
@@ -2810,7 +3115,7 @@ CreateThread(function()
     syncRadioChannelsToCad(channels)
   else
     print('[cad_bridge] No radio channel definitions found in Config.RadioNames.')
-    print('[cad_bridge] Define Config.RadioNames in cad_bridge config.lua for CAD channel labels.')
+    print('[cad_bridge] Set cad_bridge_radio_names_json in cad_bridge/config.cfg for CAD channel labels.')
   end
 end)
 

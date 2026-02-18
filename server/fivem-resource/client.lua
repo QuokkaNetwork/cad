@@ -252,6 +252,7 @@ local function notifyRoute(route, hadWaypoint)
       title = 'CAD Dispatch',
       description = message,
       type = hadWaypoint and 'inform' or 'warning',
+      position = 'center-right',
     })
     return
   end
@@ -273,6 +274,7 @@ local function notifyRouteCleared(route)
       title = 'CAD Dispatch',
       description = message,
       type = 'inform',
+      position = 'center-right',
     })
     return
   end
@@ -294,6 +296,7 @@ local function notifyFine(payload)
       title = title,
       description = description,
       type = 'error',
+      position = 'center-right',
     })
     return
   end
@@ -302,6 +305,30 @@ local function notifyFine(payload)
     TriggerEvent('chat:addMessage', {
       color = { 255, 85, 85 },
       args = { 'CAD', description },
+    })
+  end
+end
+
+local function notifyAlert(payload)
+  local title = tostring(payload and payload.title or 'CAD')
+  local description = tostring(payload and payload.description or '')
+  local notifyType = tostring(payload and payload.type or 'inform')
+  if notifyType == '' then notifyType = 'inform' end
+
+  if GetResourceState('ox_lib') == 'started' then
+    TriggerEvent('ox_lib:notify', {
+      title = title,
+      description = description,
+      type = notifyType,
+      position = 'center-right',
+    })
+    return
+  end
+
+  if GetResourceState('chat') == 'started' then
+    TriggerEvent('chat:addMessage', {
+      color = { 255, 170, 0 },
+      args = { 'CAD', description ~= '' and description or title },
     })
   end
 end
@@ -340,9 +367,9 @@ local emergencyUiOpenedAtMs = 0
 local driverLicenseUiOpen = false
 local vehicleRegistrationUiOpen = false
 local idCardUiOpen = false
-local SHOW_ID_COMMAND = trim(GetConvar('cad_bridge_show_id_command', 'showid'))
+local SHOW_ID_COMMAND = trim(Config.ShowIdCommand or 'showid')
 if SHOW_ID_COMMAND == '' then SHOW_ID_COMMAND = 'showid' end
-local SHOW_ID_MAX_DISTANCE = tonumber(GetConvar('cad_bridge_show_id_target_distance', '4.0')) or 4.0
+local SHOW_ID_MAX_DISTANCE = tonumber(Config.ShowIdTargetDistance or 4.0) or 4.0
 
 local function hasAnyCadBridgeModalOpen()
   return emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen
@@ -665,6 +692,7 @@ local function notifyEmergencyUiIssue(message)
       title = 'CAD Dispatch',
       description = text,
       type = 'warning',
+      position = 'center-right',
     })
     return
   end
@@ -850,6 +878,7 @@ local function openVehicleRegistrationPopup(payload)
         title = 'CAD Registration',
         description = message,
         type = 'warning',
+        position = 'center-right',
       })
     elseif GetResourceState('chat') == 'started' then
       TriggerEvent('chat:addMessage', {
@@ -1039,6 +1068,10 @@ RegisterNetEvent('cad_bridge:notifyFine', function(payload)
   notifyFine(payload)
 end)
 
+RegisterNetEvent('cad_bridge:notifyAlert', function(payload)
+  notifyAlert(payload)
+end)
+
 RegisterNetEvent('cad_bridge:prompt000', function(departments)
   openEmergencyPopup(departments)
 end)
@@ -1203,16 +1236,16 @@ end)
 -- This handles radio routing entirely inside cad_bridge.
 -- We use a dedicated voice target slot so we do not fight proximity logic.
 -- ============================================================================
-local CAD_RADIO_ENABLED = tostring(GetConvar('cad_bridge_radio_enabled', 'true')) == 'true'
-local CAD_RADIO_TARGET_ID = tonumber(GetConvar('cad_bridge_radio_target_id', '2')) or 2
-local CAD_PROXIMITY_TARGET_ID = tonumber(GetConvar('cad_bridge_proximity_target_id', '1')) or 1
-local CAD_RADIO_RX_VOLUME = tonumber(GetConvar('cad_bridge_radio_rx_volume', '0.35')) or 0.35
-local CAD_RADIO_PTT_KEY = tostring(GetConvar('cad_bridge_radio_ptt_key', 'LMENU'))
-local CAD_RADIO_FOLLOW_NATIVE_PTT = tostring(GetConvar('cad_bridge_radio_follow_native_ptt', 'true')) == 'true'
-local CAD_RADIO_FORWARD_ROOT = tostring(GetConvar('cad_bridge_radio_forward_root', 'true')) == 'true'
-local CAD_RADIO_UI_ENABLED = tostring(GetConvar('cad_bridge_radio_ui_enabled', 'true')) == 'true'
-local CAD_RADIO_UI_KEY = tostring(GetConvar('cad_bridge_radio_ui_key', 'EQUALS'))
-local CAD_RADIO_MAX_CHANNEL = tonumber(GetConvar('cad_bridge_radio_max_frequency', tostring(Config.RadioMaxFrequency or 500))) or tonumber(Config.RadioMaxFrequency or 500) or 500
+local CAD_RADIO_ENABLED = Config.RadioEnabled ~= false
+local CAD_RADIO_TARGET_ID = tonumber(Config.RadioTargetId or 2) or 2
+local CAD_PROXIMITY_TARGET_ID = tonumber(Config.ProximityTargetId or 1) or 1
+local CAD_RADIO_RX_VOLUME = tonumber(Config.RadioRxVolume or 0.35) or 0.35
+local CAD_RADIO_PTT_KEY = tostring(Config.RadioPttKey or 'LMENU')
+local CAD_RADIO_FOLLOW_NATIVE_PTT = Config.RadioFollowNativePtt ~= false
+local CAD_RADIO_FORWARD_ROOT = Config.RadioForwardRoot ~= false
+local CAD_RADIO_UI_ENABLED = Config.RadioUiEnabled ~= false
+local CAD_RADIO_UI_KEY = tostring(Config.RadioUiKey or 'EQUALS')
+local CAD_RADIO_MAX_CHANNEL = tonumber(Config.RadioMaxFrequency or 500) or 500
 local CAD_RADIO_UI_KVP = 'cad_bridge_radio_ui_settings'
 
 if CAD_RADIO_TARGET_ID < 1 or CAD_RADIO_TARGET_ID > 30 then
@@ -1282,7 +1315,7 @@ local CAD_RADIO_UI_LOCALE = {
 }
 
 local function isCadRadioAdapterActive()
-  local adapter = tostring(GetConvar('cad_bridge_radio_adapter', 'cad-radio') or 'cad-radio'):lower()
+  local adapter = tostring(Config.RadioAdapter or 'cad-radio'):lower()
   return adapter == 'cad-radio' or adapter == 'cad_radio'
 end
 
@@ -1649,12 +1682,14 @@ RegisterNetEvent('cad_bridge:radio:update', function(payload)
           title = 'CAD Radio',
           description = ('Joined channel %s'):format(tostring(cadRadioChannel)),
           type = 'inform',
+          position = 'center-right',
         })
       elseif previousChannel > 0 then
         TriggerEvent('ox_lib:notify', {
           title = 'CAD Radio',
           description = ('Left channel %s'):format(tostring(previousChannel)),
           type = 'inform',
+          position = 'center-right',
         })
       end
     end
@@ -1701,6 +1736,7 @@ local function cadRadioNotify(message, notifyType)
       title = 'CAD Radio',
       description = text,
       type = notifyType or 'inform',
+      position = 'center-right',
     })
   end
 end

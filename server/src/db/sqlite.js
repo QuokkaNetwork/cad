@@ -868,9 +868,10 @@ const CriminalRecords = {
     officer_name,
     officer_callsign,
     department_id,
+    jail_minutes,
   }) {
     const info = db.prepare(
-      'INSERT INTO criminal_records (citizen_id, type, title, description, fine_amount, offence_items_json, officer_name, officer_callsign, department_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO criminal_records (citizen_id, type, title, description, fine_amount, offence_items_json, officer_name, officer_callsign, department_id, jail_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(
       citizen_id,
       type,
@@ -880,12 +881,13 @@ const CriminalRecords = {
       String(offence_items_json || '[]'),
       officer_name || '',
       officer_callsign || '',
-      department_id
+      department_id,
+      Number.isFinite(Number(jail_minutes)) ? Math.max(0, Math.trunc(Number(jail_minutes))) : 0
     );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['type', 'title', 'description', 'fine_amount', 'offence_items_json'];
+    const allowed = ['type', 'title', 'description', 'fine_amount', 'offence_items_json', 'jail_minutes'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -893,6 +895,8 @@ const CriminalRecords = {
         updates.push(`${key} = ?`);
         if (key === 'offence_items_json') {
           values.push(String(fields[key] || '[]'));
+        } else if (key === 'jail_minutes') {
+          values.push(Math.max(0, Math.trunc(Number(fields[key] || 0))));
         } else {
           values.push(fields[key]);
         }
@@ -1432,6 +1436,138 @@ const FiveMFineJobs = {
   },
   listRecent(limit = 100) {
     return db.prepare('SELECT * FROM fivem_fine_jobs ORDER BY created_at DESC LIMIT ?').all(limit);
+  },
+};
+
+// --- FiveM jail jobs ---
+const FiveMJailJobs = {
+  create({ citizen_id, jail_minutes, reason, issued_by_user_id, source_record_id }) {
+    const info = db.prepare(`
+      INSERT INTO fivem_jail_jobs (
+        citizen_id, jail_minutes, reason, issued_by_user_id, source_record_id, status, error, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'pending', '', datetime('now'), datetime('now'))
+    `).run(
+      String(citizen_id || '').trim(),
+      Math.max(0, Math.trunc(Number(jail_minutes || 0))),
+      String(reason || '').trim(),
+      issued_by_user_id || null,
+      source_record_id || null
+    );
+    return this.findById(info.lastInsertRowid);
+  },
+  findById(id) {
+    return db.prepare('SELECT * FROM fivem_jail_jobs WHERE id = ?').get(id);
+  },
+  listPending(limit = 25) {
+    return db.prepare(`
+      SELECT * FROM fivem_jail_jobs
+      WHERE status = 'pending'
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(limit);
+  },
+  findPendingBySourceRecordId(sourceRecordId) {
+    return db.prepare(`
+      SELECT * FROM fivem_jail_jobs
+      WHERE source_record_id = ? AND status = 'pending'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(sourceRecordId);
+  },
+  upsertPendingBySourceRecordId(sourceRecordId, { citizen_id, jail_minutes, reason, issued_by_user_id }) {
+    const pending = this.findPendingBySourceRecordId(sourceRecordId);
+    if (pending) {
+      db.prepare(`
+        UPDATE fivem_jail_jobs
+        SET citizen_id = ?, jail_minutes = ?, reason = ?, issued_by_user_id = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        String(citizen_id || pending.citizen_id || '').trim(),
+        Math.max(0, Math.trunc(Number(jail_minutes || 0))),
+        String(reason || ''),
+        issued_by_user_id || null,
+        pending.id
+      );
+      return this.findById(pending.id);
+    }
+    return this.create({
+      citizen_id,
+      jail_minutes,
+      reason,
+      issued_by_user_id,
+      source_record_id: sourceRecordId,
+    });
+  },
+  markSent(id) {
+    db.prepare(`
+      UPDATE fivem_jail_jobs
+      SET status = 'sent', error = '', sent_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  },
+  markFailed(id, error) {
+    db.prepare(`
+      UPDATE fivem_jail_jobs
+      SET status = 'failed', error = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(String(error || '').slice(0, 500), id);
+  },
+  markPending(id) {
+    db.prepare(`
+      UPDATE fivem_jail_jobs
+      SET status = 'pending', error = '', updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id);
+  },
+  markCancelled(id, error = 'Cancelled by admin') {
+    db.prepare(`
+      UPDATE fivem_jail_jobs
+      SET
+        status = CASE WHEN status = 'pending' OR status = 'failed' THEN 'cancelled' ELSE status END,
+        error = CASE
+          WHEN status = 'pending' OR status = 'failed' THEN ?
+          ELSE error
+        END,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(String(error || 'Cancelled by admin').slice(0, 500), id);
+  },
+  cancelPendingTestJobs(error = 'Cleared queued test jail jobs') {
+    const info = db.prepare(`
+      UPDATE fivem_jail_jobs
+      SET status = 'cancelled', error = ?, updated_at = datetime('now')
+      WHERE source_record_id IS NULL AND status = 'pending'
+    `).run(String(error || 'Cleared queued test jail jobs').slice(0, 500));
+    return info.changes || 0;
+  },
+  updatePendingBySourceRecordId(sourceRecordId, { jail_minutes, reason }) {
+    db.prepare(`
+      UPDATE fivem_jail_jobs
+      SET jail_minutes = ?, reason = ?, updated_at = datetime('now')
+      WHERE source_record_id = ? AND status = 'pending'
+    `).run(
+      Math.max(0, Math.trunc(Number(jail_minutes || 0))),
+      String(reason || ''),
+      sourceRecordId
+    );
+  },
+  detachSourceRecord(sourceRecordId, errorMessage = 'Source record deleted') {
+    const info = db.prepare(`
+      UPDATE fivem_jail_jobs
+      SET
+        status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+        error = CASE
+          WHEN status = 'pending' AND (error IS NULL OR error = '') THEN ?
+          ELSE error
+        END,
+        source_record_id = NULL,
+        updated_at = datetime('now')
+      WHERE source_record_id = ?
+    `).run(String(errorMessage || 'Source record deleted'), sourceRecordId);
+    return info.changes || 0;
+  },
+  listRecent(limit = 100) {
+    return db.prepare('SELECT * FROM fivem_jail_jobs ORDER BY created_at DESC LIMIT ?').all(limit);
   },
 };
 
@@ -2068,6 +2204,7 @@ module.exports = {
   VehicleRegistrations,
   FiveMPlayerLinks,
   FiveMFineJobs,
+  FiveMJailJobs,
   FiveMJobSyncJobs,
   Settings,
   AuditLog,

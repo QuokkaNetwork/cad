@@ -14,6 +14,7 @@ server_script 'server.lua'
 ui_page 'ui/index.html'
 
 files {
+  'config.cfg',
   'ui/index.html',
   'ui/styles.css',
   'ui/app.js',

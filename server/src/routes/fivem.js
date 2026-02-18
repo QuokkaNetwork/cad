@@ -7,6 +7,7 @@ const {
   Departments,
   FiveMPlayerLinks,
   FiveMFineJobs,
+  FiveMJailJobs,
   DriverLicenses,
   VehicleRegistrations,
   VoiceCallSessions,
@@ -346,6 +347,23 @@ function normalizeStatus(value, allowedStatuses, fallback) {
   const normalized = String(value || '').trim().toLowerCase();
   if (allowedStatuses.has(normalized)) return normalized;
   return fallback;
+}
+
+function normalizePlateKey(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function describePlateStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'valid') return 'Registration valid';
+  if (normalized === 'suspended') return 'Registration suspended';
+  if (normalized === 'revoked') return 'Registration revoked';
+  if (normalized === 'expired') return 'Registration expired';
+  if (normalized === 'unregistered') return 'No registration found in CAD';
+  return 'Registration status unknown';
 }
 
 function normalizeDateOnly(value) {
@@ -1296,6 +1314,55 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
   }
 });
 
+// Plate status lookup used by Wraith plate-reader integrations.
+router.get('/plate-status/:plate', requireBridgeAuth, (req, res) => {
+  try {
+    VehicleRegistrations.markExpiredDue();
+
+    const rawPlate = String(req.params.plate || '').trim();
+    if (!rawPlate) {
+      return res.status(400).json({ error: 'plate is required' });
+    }
+
+    const registration = VehicleRegistrations.findByPlate(rawPlate);
+    if (!registration) {
+      const normalizedPlate = normalizePlateKey(rawPlate);
+      return res.json({
+        ok: true,
+        found: false,
+        plate: rawPlate.toUpperCase(),
+        plate_normalized: normalizedPlate,
+        registration_status: 'unregistered',
+        alert: true,
+        message: describePlateStatus('unregistered'),
+      });
+    }
+
+    let status = normalizeStatus(registration.status, VEHICLE_REGISTRATION_STATUSES, 'valid');
+    if (status === 'valid' && isPastOrTodayDateOnly(registration.expiry_at)) {
+      status = 'expired';
+    }
+
+    return res.json({
+      ok: true,
+      found: true,
+      plate: String(registration.plate || rawPlate).toUpperCase(),
+      plate_normalized: String(registration.plate_normalized || normalizePlateKey(rawPlate)),
+      registration_status: status,
+      alert: status !== 'valid',
+      message: describePlateStatus(status),
+      expiry_at: String(registration.expiry_at || ''),
+      owner_name: String(registration.owner_name || ''),
+      citizen_id: String(registration.citizen_id || ''),
+      vehicle_model: String(registration.vehicle_model || ''),
+      vehicle_colour: String(registration.vehicle_colour || ''),
+    });
+  } catch (error) {
+    console.error('[FiveMBridge] Plate status lookup failed:', error);
+    return res.status(500).json({ error: 'Failed to lookup plate status' });
+  }
+});
+
 // FiveM resource polls pending route jobs to set in-game waypoints for assigned calls.
 router.get('/route-jobs', requireBridgeAuth, (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
@@ -1390,6 +1457,36 @@ router.post('/fine-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   if (!id) return res.status(400).json({ error: 'Invalid job id' });
   const error = String(req.body?.error || 'Unknown fine processing error');
   FiveMFineJobs.markFailed(id, error);
+  res.json({ ok: true });
+});
+
+// FiveM resource polls pending jail jobs and applies them through configured jail resource adapters.
+router.get('/jail-jobs', requireBridgeAuth, (req, res) => {
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+  const jobs = FiveMJailJobs.listPending(limit).map((job) => {
+    const activeLink = findActiveLinkByCitizenId(job.citizen_id);
+    return {
+      ...job,
+      game_id: activeLink ? String(activeLink.game_id || '') : '',
+      steam_id: activeLink ? String(activeLink.steam_id || '') : '',
+      player_name: activeLink ? String(activeLink.player_name || '') : '',
+    };
+  });
+  res.json(jobs);
+});
+
+router.post('/jail-jobs/:id/sent', requireBridgeAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid job id' });
+  FiveMJailJobs.markSent(id);
+  res.json({ ok: true });
+});
+
+router.post('/jail-jobs/:id/failed', requireBridgeAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid job id' });
+  const error = String(req.body?.error || 'Unknown jail processing error');
+  FiveMJailJobs.markFailed(id, error);
   res.json({ ok: true });
 });
 

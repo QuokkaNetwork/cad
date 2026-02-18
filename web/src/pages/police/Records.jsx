@@ -21,6 +21,7 @@ const EMPTY_NEW_FORM = {
   person_name: '',
   title: '',
   description: '',
+  jail_minutes: 0,
 };
 
 const EMPTY_MEDICAL_FORM = {
@@ -70,6 +71,7 @@ function mapRecordToEditForm(record) {
   return {
     title: record?.title || '',
     description: record?.description || '',
+    jail_minutes: Math.max(0, Number(record?.jail_minutes || 0)),
   };
 }
 
@@ -693,6 +695,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         payload = {
           title: newForm.title,
           description: newForm.description,
+          jail_minutes: Math.max(0, Math.trunc(Number(newForm.jail_minutes) || 0)),
           offence_items: newOffenceItems,
         };
       } else if (isParamedics) {
@@ -784,6 +787,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         const lawPayload = {
           title: editForm.title,
           description: editForm.description,
+          jail_minutes: Math.max(0, Math.trunc(Number(editForm.jail_minutes) || 0)),
         };
         if (editOffenceItems.length > 0) {
           lawPayload.offence_items = editOffenceItems;
@@ -1029,6 +1033,9 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                     ))}
                   </div>
                   <p className="text-amber-400">Total Fine: ${Number(offenceTotal || 0).toLocaleString()}</p>
+                  {Number(r.jail_minutes || 0) > 0 && (
+                    <p className="text-rose-300">Jail: {Number(r.jail_minutes || 0).toLocaleString()} minute(s)</p>
+                  )}
                   {r.description && (
                     <p className="text-cad-muted">Notes: <span className="text-cad-ink">{r.description}</span></p>
                   )}
@@ -1038,6 +1045,9 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                   {r.description && <p className="text-sm text-cad-muted mb-2">{r.description}</p>}
                   {r.type === 'fine' && Number(r.fine_amount || 0) > 0 && (
                     <p className="text-sm text-amber-400 mb-2">Fine: ${Number(r.fine_amount).toLocaleString()}</p>
+                  )}
+                  {Number(r.jail_minutes || 0) > 0 && (
+                    <p className="text-sm text-rose-300 mb-2">Jail: {Number(r.jail_minutes || 0).toLocaleString()} minute(s)</p>
                   )}
                 </>
               )}
@@ -1089,6 +1099,17 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                   onChange={e => setNewForm(f => ({ ...f, description: e.target.value }))}
                   rows={3}
                   className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-cad-muted mb-1">Jail Minutes</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={newForm.jail_minutes}
+                  onChange={e => setNewForm(f => ({ ...f, jail_minutes: Math.max(0, Number(e.target.value) || 0) }))}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
                 />
               </div>
               <LawOffenceFields
@@ -1146,6 +1167,17 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                   onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
                   rows={3}
                   className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-cad-muted mb-1">Jail Minutes</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={editForm.jail_minutes}
+                  onChange={e => setEditForm(f => ({ ...f, jail_minutes: Math.max(0, Number(e.target.value) || 0) }))}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
                 />
               </div>
               <LawOffenceFields

@@ -125,12 +125,12 @@ cp -r server/fivem-resource [YOUR_FIVEM_SERVER]/resources/cad_bridge
 echo "ensure cad_bridge" >> [YOUR_FIVEM_SERVER]/server.cfg
 ```
 
-Configure `config.lua`:
-```lua
-Config.CadBaseUrl = 'http://localhost:3030'
-Config.SharedToken = 'your-secure-token-here'
-Config.UseNearestPostal = true
-Config.NearestPostalResource = 'nearest-postal'
+Configure `config.cfg` inside the resource folder:
+```ini
+cad_bridge_base_url=http://127.0.0.1:3031
+cad_bridge_token=your-secure-token-here
+cad_bridge_use_nearest_postal=true
+cad_bridge_postal_resource=nearest-postal
 ```
 
 ### 6. Start the Application

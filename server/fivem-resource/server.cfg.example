@@ -48,45 +48,12 @@ setr voice_enableRadios 0
 # =============================================================================
 # STEP 3: Configure the CAD bridge resource
 # =============================================================================
-
-set cad_bridge_base_url "http://127.0.0.1:3031"
-set cad_bridge_token "Ku3xaT6MVe+GgGC9qQu2bMbdqBEPY7cXCyRd3WISCjA="
-
-# NPWD 000 emergency number interception
-set cad_bridge_npwd_emergency_numbers "000"
-set cad_bridge_npwd_resource "npwd"
-
-# Fine + job sync
-set cad_bridge_fine_adapter "auto"
-set cad_bridge_job_sync_adapter "auto"
-
-# Radio adapter for CAD-driven radio channel join/leave events:
-# 'cad-radio' -> CAD custom radio (recommended/default)
-# 'none'      -> disable in-game radio sync
-set cad_bridge_radio_adapter "cad-radio"
-set cad_bridge_radio_ui_enabled "true"
-set cad_bridge_radio_ui_key "EQUALS"
-set cad_bridge_radio_ptt_key "LMENU"
-set cad_bridge_radio_follow_native_ptt "true"
-set cad_bridge_radio_max_frequency "500"
-
-# Driver license + registration commands/forms
-set cad_bridge_license_command "cadlicense"
-set cad_bridge_registration_command "cadrego"
-set cad_bridge_show_id_command "showid"
-set cad_bridge_show_id_target_distance "4.0"
-set cad_bridge_license_default_expiry_days "35"
-set cad_bridge_registration_default_days "35"
-set cad_bridge_document_fee_account "bank"
-# Photo capture provider:
-# screenshot-basic (recommended), mugshotbase64, or auto
-set cad_bridge_mugshot_provider "screenshot-basic"
-set cad_bridge_screenshot_resource "screenshot-basic"
-set cad_bridge_screenshot_encoding "png"
-set cad_bridge_screenshot_quality "1.0"
-set cad_bridge_screenshot_timeout_ms "5000"
-# Legacy fallback resource (optional)
-set cad_bridge_mugshot_resource "MugShotBase64"
+# CAD bridge now uses resource-local config:
+#   [resources]/cad_bridge/config.cfg
+#
+# Configure cad_bridge values there (base URL, token, radio keys, adapters, etc.).
+# CAD auto-sync will also patch cad_bridge_base_url and cad_bridge_token in that file.
+# You no longer need to put cad_bridge_* entries in server.cfg.
 
 # =============================================================================
 # STEP 4: Ensure the resource starts

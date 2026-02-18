@@ -84,6 +84,36 @@ function buildCadPersonResponse(req, citizenId, license, fallbackName = '') {
   };
 }
 
+function buildCadPersonFromSources(req, citizenId, {
+  license = null,
+  fallbackName = '',
+  qboxPerson = null,
+} = {}) {
+  const cid = String(citizenId || '').trim();
+  const qboxFirstName = String(qboxPerson?.firstname || '').trim();
+  const qboxLastName = String(qboxPerson?.lastname || '').trim();
+  const qboxFullName = String(
+    qboxPerson?.full_name
+    || `${qboxFirstName} ${qboxLastName}`.trim()
+    || fallbackName
+    || cid
+  ).trim();
+
+  const base = buildCadPersonResponse(req, cid, license, qboxFullName);
+  return {
+    ...base,
+    firstname: qboxFirstName || base.firstname,
+    lastname: qboxLastName || base.lastname,
+    full_name: qboxFullName || base.full_name,
+    birthdate: String(license?.date_of_birth || qboxPerson?.birthdate || base.birthdate || '').trim(),
+    gender: String(license?.gender || qboxPerson?.gender || base.gender || '').trim(),
+    phone: String(qboxPerson?.phone || '').trim(),
+    nationality: String(qboxPerson?.nationality || '').trim(),
+    custom_fields: (qboxPerson && typeof qboxPerson.custom_fields === 'object') ? qboxPerson.custom_fields : {},
+    lookup_fields: Array.isArray(qboxPerson?.lookup_fields) ? qboxPerson.lookup_fields : [],
+  };
+}
+
 function buildCadVehicleResponse(registration) {
   const reg = registration || {};
   return {
@@ -213,10 +243,10 @@ router.get('/vehicles/:plate', requireAuth, async (req, res) => {
 });
 
 // ============================================================================
-// CAD-native search (driver_licenses + vehicle_registrations only)
+// CAD-native search (licenses/registrations with QBX fallback for people without CAD docs)
 // ============================================================================
 
-router.get('/cad/persons', requireAuth, (req, res) => {
+router.get('/cad/persons', requireAuth, async (req, res) => {
   const q = String(req.query?.q || '').trim();
   if (q.length < 2) {
     return res.status(400).json({ error: 'Search query must be at least 2 characters' });
@@ -229,7 +259,7 @@ router.get('/cad/persons', requireAuth, (req, res) => {
       const citizenId = String(license?.citizen_id || '').trim();
       if (!citizenId) continue;
       byCitizen.set(citizenId, {
-        ...buildCadPersonResponse(req, citizenId, license),
+        ...buildCadPersonFromSources(req, citizenId, { license }),
         cad_driver_license: license,
       });
     }
@@ -239,8 +269,33 @@ router.get('/cad/persons', requireAuth, (req, res) => {
       const citizenId = String(reg?.citizen_id || '').trim();
       if (!citizenId || byCitizen.has(citizenId)) continue;
       byCitizen.set(citizenId, {
-        ...buildCadPersonResponse(req, citizenId, null, reg.owner_name || citizenId),
+        ...buildCadPersonFromSources(req, citizenId, { fallbackName: reg.owner_name || citizenId }),
         cad_driver_license: null,
+      });
+    }
+
+    // QBX fallback: keep people searchable even if they have no CAD licence/rego yet.
+    let qboxMatches = [];
+    try {
+      qboxMatches = await qbox.searchCharacters(q);
+    } catch (err) {
+      console.warn('[Search] QBX person fallback search failed:', err.message);
+    }
+
+    for (const match of qboxMatches) {
+      const citizenId = String(match?.citizenid || '').trim();
+      if (!citizenId) continue;
+
+      const existing = byCitizen.get(citizenId);
+      const existingLicense = existing?.cad_driver_license || DriverLicenses.findByCitizenId(citizenId) || null;
+      const existingFallbackName = existing?.full_name || '';
+      byCitizen.set(citizenId, {
+        ...buildCadPersonFromSources(req, citizenId, {
+          license: existingLicense,
+          fallbackName: existingFallbackName,
+          qboxPerson: match,
+        }),
+        cad_driver_license: existingLicense,
       });
     }
 
@@ -250,19 +305,30 @@ router.get('/cad/persons', requireAuth, (req, res) => {
   }
 });
 
-router.get('/cad/persons/:citizenid', requireAuth, (req, res) => {
+router.get('/cad/persons/:citizenid', requireAuth, async (req, res) => {
   const citizenId = String(req.params.citizenid || '').trim();
   if (!citizenId) return res.status(400).json({ error: 'citizenid is required' });
 
   try {
     const license = DriverLicenses.findByCitizenId(citizenId);
     const registrations = VehicleRegistrations.listByCitizenId(citizenId);
-    if (!license && registrations.length === 0) {
+    let qboxPerson = null;
+    try {
+      qboxPerson = await qbox.getCharacterById(citizenId);
+    } catch (err) {
+      console.warn(`[Search] QBX person lookup failed for ${citizenId}:`, err.message);
+    }
+
+    if (!license && registrations.length === 0 && !qboxPerson) {
       return res.status(404).json({ error: 'Person not found' });
     }
 
     const fallbackName = registrations[0]?.owner_name || citizenId;
-    const person = buildCadPersonResponse(req, citizenId, license, fallbackName);
+    const person = buildCadPersonFromSources(req, citizenId, {
+      license,
+      fallbackName,
+      qboxPerson,
+    });
     res.json({
       ...person,
       cad_driver_license: license || null,

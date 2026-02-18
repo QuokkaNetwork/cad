@@ -16,39 +16,16 @@ This resource links FiveM/QBox to CAD for:
 2. Add to your FiveM `server.cfg` manually:
 - `ensure cad_bridge`
 
-3. Add convars in `server.cfg`:
-- `set cad_bridge_base_url http://127.0.0.1:3031` (use the HTTP bridge port, not the HTTPS 3030 port)
-- `set cad_bridge_token YOUR_SHARED_TOKEN`
+3. Configure the resource-local file:
+- `resources/[...]/cad_bridge/config.cfg`
+- Set `cad_bridge_base_url` to `http://127.0.0.1:3031` unless you changed the bridge port.
+- Set `cad_bridge_token` to your shared bridge token.
+- Configure optional radio/adapters/commands in the same file.
+- Optional notification enforcement:
+  - `cad_bridge_force_ox_notify_position=true`
+  - `cad_bridge_ox_notify_position=center-right`
 
-If those convars are missing, the installed resource now falls back to the CAD values saved in System Settings.
-
-Optional:
-- `set cad_bridge_heartbeat_ms 1500`
-- `set cad_bridge_fine_poll_ms 7000`
-- `set cad_bridge_job_sync_poll_ms 5000`
-- `set cad_bridge_route_poll_ms 4000`
-- `set cad_bridge_fine_adapter auto`
-- `set cad_bridge_fine_command qbx_fine {citizenid} {amount} {reason}`
-- `set cad_bridge_job_sync_adapter auto`
-- `set cad_bridge_job_sync_command qbx_setjob {source} {job} {grade}`
-- `set cad_bridge_use_nearest_postal true`
-- `set cad_bridge_postal_resource nearest-postal`
-- `set cad_bridge_postal_export getPostal`
-- `set cad_bridge_npwd_resource npwd`
-- `set cad_bridge_npwd_emergency_numbers 000`
-- `set cad_bridge_radio_adapter cad-radio`
-- `set cad_bridge_radio_ui_enabled true`
-- `set cad_bridge_radio_ptt_key LMENU`
-- `set cad_bridge_radio_ui_key EQUALS`
-- `set cad_bridge_radio_follow_native_ptt true`
-- `set cad_bridge_radio_target_id 2`
-- `set cad_bridge_radio_rx_volume 0.35`
-- `set cad_bridge_radio_max_frequency 500`
-- `set cad_bridge_license_command cadlicense`
-- `set cad_bridge_registration_command cadrego`
-- `set cad_bridge_license_default_expiry_days 1095`
-- `set cad_bridge_registration_default_days 365`
-- `set cad_bridge_mugshot_resource MugShotBase64`
+The CAD auto-sync now patches `cad_bridge_base_url` and `cad_bridge_token` directly in `config.cfg`.
 
 ## CAD custom radio (built-in UI)
 - `cad-radio` runs radio membership/routing inside `cad_bridge`.
@@ -58,7 +35,7 @@ Optional:
 - Transmit on radio with `cad_bridge_radio_ptt_key` (default `LMENU`).
 - `cad_bridge_radio_follow_native_ptt=true` mirrors normal talk-key press into CAD radio TX while joined.
 - Use `/radio` to open UI, `/radio <channel>` to join, `/radio off` to leave.
-- Restricted channels are optional and configured via `Config.RadioRestrictedChannels` in `config.lua`.
+- Restricted channels are optional and can be set via `cad_bridge_radio_restricted_channels_json` in `config.cfg`.
 
 CAD-side fine delivery options:
 - In Admin > System Settings, `Fine Delivery Mode = Direct QBX DB` applies fines directly in the QBX players table.
