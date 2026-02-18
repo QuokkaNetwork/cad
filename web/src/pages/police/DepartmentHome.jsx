@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
-import Modal from '../../components/Modal';
 import GoOnDutyModal from '../../components/GoOnDutyModal';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
@@ -54,20 +53,6 @@ export default function DepartmentHome() {
   const [showOnDutyModal, setShowOnDutyModal] = useState(false);
   const [onDutyLoading, setOnDutyLoading] = useState(false);
   const [offDutyLoading, setOffDutyLoading] = useState(false);
-  const [showBoloModal, setShowBoloModal] = useState(false);
-  const [savingBolo, setSavingBolo] = useState(false);
-  const [boloForm, setBoloForm] = useState({
-    type: 'person',
-    title: '',
-    description: '',
-  });
-  const [showWarrantModal, setShowWarrantModal] = useState(false);
-  const [savingWarrant, setSavingWarrant] = useState(false);
-  const [warrantForm, setWarrantForm] = useState({
-    citizen_id: '',
-    title: '',
-    description: '',
-  });
   const refreshTimerRef = useRef(null);
   const requestInFlightRef = useRef(false);
 
@@ -234,59 +219,6 @@ export default function DepartmentHome() {
     }
   }
 
-  async function createBolo(e) {
-    e.preventDefault();
-    if (!deptId) return;
-
-    const title = String(boloForm.title || '').trim();
-    if (!title) return;
-
-    setSavingBolo(true);
-    try {
-      await api.post('/api/bolos', {
-        department_id: deptId,
-        type: boloForm.type,
-        title,
-        description: String(boloForm.description || '').trim(),
-        details: {},
-      });
-      setShowBoloModal(false);
-      setBoloForm({ type: 'person', title: '', description: '' });
-      scheduleRefresh();
-    } catch (err) {
-      alert('Failed to create BOLO: ' + err.message);
-    } finally {
-      setSavingBolo(false);
-    }
-  }
-
-  async function createWarrant(e) {
-    e.preventDefault();
-    if (!deptId) return;
-
-    const citizenId = String(warrantForm.citizen_id || '').trim();
-    const title = String(warrantForm.title || '').trim();
-    if (!citizenId || !title) return;
-
-    setSavingWarrant(true);
-    try {
-      await api.post('/api/warrants', {
-        department_id: deptId,
-        citizen_id: citizenId,
-        title,
-        description: String(warrantForm.description || '').trim(),
-        details: {},
-      });
-      setShowWarrantModal(false);
-      setWarrantForm({ citizen_id: '', title: '', description: '' });
-      scheduleRefresh();
-    } catch (err) {
-      alert('Failed to create warrant: ' + err.message);
-    } finally {
-      setSavingWarrant(false);
-    }
-  }
-
   const clockDateLabel = useMemo(() => formatDateAU(now, '-'), [now]);
   const clockTimeLabel = useMemo(() => formatTimeAU(now, '-', true), [now]);
 
@@ -377,7 +309,7 @@ export default function DepartmentHome() {
             <p className="text-3xl font-semibold text-amber-300 mt-2">{loading ? '...' : stats.active_warrants}</p>
             <div className="flex items-center gap-2 mt-3">
               <button
-                onClick={() => setShowWarrantModal(true)}
+                onClick={() => navigate('/warrants?new=1')}
                 className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium transition-colors"
               >
                 + New Warrant
@@ -396,7 +328,7 @@ export default function DepartmentHome() {
             <p className="text-3xl font-semibold text-cad-accent-light mt-2">{loading ? '...' : stats.active_bolos}</p>
             <div className="flex items-center gap-2 mt-3">
               <button
-                onClick={() => setShowBoloModal(true)}
+                onClick={() => navigate('/bolos?new=1')}
                 className="px-3 py-1.5 rounded bg-cad-accent hover:bg-cad-accent-light text-white text-xs font-medium transition-colors"
               >
                 + New BOLO
@@ -415,125 +347,6 @@ export default function DepartmentHome() {
       {error && (
         <p className="text-xs text-red-400 whitespace-pre-wrap">{error}</p>
       )}
-
-      <Modal open={showBoloModal} onClose={() => setShowBoloModal(false)} title="Create BOLO">
-        <form onSubmit={createBolo} className="space-y-3">
-          <div className="flex bg-cad-surface rounded-lg border border-cad-border overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setBoloForm(f => ({ ...f, type: 'person' }))}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                boloForm.type === 'person' ? 'bg-amber-500/20 text-amber-300' : 'text-cad-muted'
-              }`}
-            >
-              Person
-            </button>
-            <button
-              type="button"
-              onClick={() => setBoloForm(f => ({ ...f, type: 'vehicle' }))}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                boloForm.type === 'vehicle' ? 'bg-blue-500/20 text-blue-300' : 'text-cad-muted'
-              }`}
-            >
-              Vehicle
-            </button>
-          </div>
-
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Title *</label>
-            <input
-              type="text"
-              required
-              value={boloForm.title}
-              onChange={(e) => setBoloForm(f => ({ ...f, title: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-              placeholder={boloForm.type === 'person' ? 'e.g. Wanted male in red hoodie' : 'e.g. Stolen black Sultan'}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Description</label>
-            <textarea
-              value={boloForm.description}
-              onChange={(e) => setBoloForm(f => ({ ...f, description: e.target.value }))}
-              className="w-full h-24 bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
-              placeholder="Additional details..."
-            />
-          </div>
-
-          <div className="flex gap-2 pt-2">
-            <button
-              disabled={savingBolo}
-              type="submit"
-              className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              {savingBolo ? 'Saving...' : 'Create BOLO'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowBoloModal(false)}
-              className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal open={showWarrantModal} onClose={() => setShowWarrantModal(false)} title="Create Warrant">
-        <form onSubmit={createWarrant} className="space-y-3">
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Citizen ID *</label>
-            <input
-              type="text"
-              required
-              value={warrantForm.citizen_id}
-              onChange={(e) => setWarrantForm(f => ({ ...f, citizen_id: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="e.g. ABC12345"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Title *</label>
-            <input
-              type="text"
-              required
-              value={warrantForm.title}
-              onChange={(e) => setWarrantForm(f => ({ ...f, title: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-              placeholder="e.g. Warrant for arrest - Armed robbery"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Description</label>
-            <textarea
-              value={warrantForm.description}
-              onChange={(e) => setWarrantForm(f => ({ ...f, description: e.target.value }))}
-              className="w-full h-24 bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
-              placeholder="Additional details..."
-            />
-          </div>
-
-          <div className="flex gap-2 pt-2">
-            <button
-              disabled={savingWarrant}
-              type="submit"
-              className="flex-1 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              {savingWarrant ? 'Saving...' : 'Create Warrant'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowWarrantModal(false)}
-              className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </Modal>
 
       <GoOnDutyModal
         open={showOnDutyModal}

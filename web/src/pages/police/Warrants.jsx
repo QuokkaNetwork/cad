@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
@@ -58,7 +58,9 @@ function WarrantCard({ warrant, onServe, onCancel }) {
 
 export default function Warrants() {
   const { activeDepartment } = useDepartment();
-  const { key: locationKey } = useLocation();
+  const location = useLocation();
+  const { key: locationKey } = location;
+  const [searchParams, setSearchParams] = useSearchParams();
   const [warrants, setWarrants] = useState([]);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ subject_name: '', citizen_id: '', title: '', description: '' });
@@ -66,6 +68,19 @@ export default function Warrants() {
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
+
+  function resetCreateForm() {
+    setForm({ subject_name: '', citizen_id: '', title: '', description: '' });
+  }
+
+  function openCreateModal() {
+    resetCreateForm();
+    setShowNew(true);
+  }
+
+  function closeCreateModal() {
+    setShowNew(false);
+  }
 
   const fetchData = useCallback(async () => {
     if (!deptId || !isLaw) {
@@ -81,6 +96,15 @@ export default function Warrants() {
   }, [deptId, isLaw]);
 
   useEffect(() => { fetchData(); }, [fetchData, locationKey]);
+
+  useEffect(() => {
+    if (!isLaw) return;
+    if (searchParams.get('new') !== '1') return;
+    openCreateModal();
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('new');
+    setSearchParams(nextParams, { replace: true });
+  }, [isLaw, searchParams, setSearchParams]);
 
   useEventSource({
     'warrant:create': () => fetchData(),
@@ -99,8 +123,8 @@ export default function Warrants() {
         description: form.description,
         details: {},
       });
-      setShowNew(false);
-      setForm({ subject_name: '', citizen_id: '', title: '', description: '' });
+      closeCreateModal();
+      resetCreateForm();
       fetchData();
     } catch (err) {
       alert('Failed to create warrant: ' + err.message);
@@ -133,7 +157,7 @@ export default function Warrants() {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-bold">Warrants</h2>
             <button
-              onClick={() => setShowNew(true)}
+              onClick={openCreateModal}
               className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors"
             >
               + New Warrant
@@ -154,7 +178,7 @@ export default function Warrants() {
             )}
           </div>
 
-          <Modal open={showNew} onClose={() => setShowNew(false)} title="Create Warrant">
+          <Modal open={showNew} onClose={closeCreateModal} title="Create Warrant">
             <form onSubmit={createWarrant} className="space-y-3">
               <div>
                 <label className="block text-sm text-cad-muted mb-1">Person Name *</label>
@@ -210,7 +234,7 @@ export default function Warrants() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowNew(false)}
+                  onClick={closeCreateModal}
                   className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
                 >
                   Cancel

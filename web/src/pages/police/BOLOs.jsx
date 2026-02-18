@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
@@ -28,18 +28,52 @@ function normalizeVehicleDetails(details) {
   };
 }
 
+function normalizeVehicleSearchOption(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  return {
+    plate: String(source.plate || '').trim().toUpperCase(),
+    model: String(source.vehicle_model || source.vehicle || source?.cad_registration?.vehicle_model || '').trim(),
+    color: String(source.vehicle_colour || source?.cad_registration?.vehicle_colour || '').trim(),
+  };
+}
+
 export default function BOLOs() {
   const { activeDepartment } = useDepartment();
-  const { key: locationKey } = useLocation();
+  const location = useLocation();
+  const { key: locationKey } = location;
+  const [searchParams, setSearchParams] = useSearchParams();
   const [bolos, setBolos] = useState([]);
   const [showNew, setShowNew] = useState(false);
   const [boloType, setBoloType] = useState('person');
   const [form, setForm] = useState({ title: '', description: '' });
   const [details, setDetails] = useState({ flags: [] });
+  const [vehiclePlateQuery, setVehiclePlateQuery] = useState('');
+  const [vehiclePlateMatches, setVehiclePlateMatches] = useState([]);
+  const [vehiclePlateSearching, setVehiclePlateSearching] = useState(false);
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
+
+  function resetCreateForm(defaultType = 'person') {
+    setBoloType(defaultType);
+    setForm({ title: '', description: '' });
+    setDetails({ flags: [] });
+    setVehiclePlateQuery('');
+    setVehiclePlateMatches([]);
+    setVehiclePlateSearching(false);
+  }
+
+  function openCreateModal() {
+    resetCreateForm('person');
+    setShowNew(true);
+  }
+
+  function closeCreateModal() {
+    setShowNew(false);
+    setVehiclePlateMatches([]);
+    setVehiclePlateSearching(false);
+  }
 
   const fetchData = useCallback(async () => {
     if (!deptId || !isLaw) {
@@ -56,20 +90,74 @@ export default function BOLOs() {
 
   useEffect(() => { fetchData(); }, [fetchData, locationKey]);
 
+  useEffect(() => {
+    if (!isLaw) return;
+    if (searchParams.get('new') !== '1') return;
+    openCreateModal();
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('new');
+    setSearchParams(nextParams, { replace: true });
+  }, [isLaw, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!showNew || boloType !== 'vehicle') {
+      setVehiclePlateMatches([]);
+      setVehiclePlateSearching(false);
+      return;
+    }
+
+    const query = String(vehiclePlateQuery || '').trim();
+    if (query.length < 2) {
+      setVehiclePlateMatches([]);
+      setVehiclePlateSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setVehiclePlateSearching(true);
+      try {
+        const payload = await api.get(`/api/search/cad/vehicles?q=${encodeURIComponent(query)}`);
+        if (cancelled) return;
+        const matches = Array.isArray(payload)
+          ? payload.map(normalizeVehicleSearchOption).filter((entry) => entry.plate).slice(0, 8)
+          : [];
+        setVehiclePlateMatches(matches);
+      } catch (err) {
+        if (!cancelled) setVehiclePlateMatches([]);
+      } finally {
+        if (!cancelled) setVehiclePlateSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [showNew, boloType, vehiclePlateQuery]);
+
   useEventSource({
     'bolo:create': () => fetchData(),
     'bolo:resolve': () => fetchData(),
     'bolo:cancel': () => fetchData(),
   });
 
+  function selectVehiclePlateMatch(match) {
+    const normalized = normalizeVehicleSearchOption(match);
+    if (!normalized.plate) return;
+    setVehiclePlateQuery(normalized.plate);
+    setVehiclePlateMatches([]);
+    setDetails((current) => ({
+      ...current,
+      plate: normalized.plate,
+      model: normalized.model || String(current.model || '').trim(),
+      color: normalized.color || String(current.color || '').trim(),
+    }));
+  }
+
   async function createBolo(e) {
     e.preventDefault();
     const payloadDetails = boloType === 'vehicle' ? normalizeVehicleDetails(details) : details;
-    if (boloType === 'vehicle' && !payloadDetails.plate) {
-      alert('Vehicle BOLOs require a registration plate.');
-      return;
-    }
-
     try {
       await api.post('/api/bolos', {
         department_id: deptId,
@@ -78,9 +166,8 @@ export default function BOLOs() {
         description: form.description,
         details: payloadDetails,
       });
-      setShowNew(false);
-      setForm({ title: '', description: '' });
-      setDetails({ flags: [] });
+      closeCreateModal();
+      resetCreateForm();
       fetchData();
     } catch (err) {
       alert('Failed to create BOLO: ' + err.message);
@@ -113,7 +200,7 @@ export default function BOLOs() {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-bold">Be On the Lookout</h2>
             <button
-              onClick={() => setShowNew(true)}
+              onClick={openCreateModal}
               className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
             >
               + New BOLO
@@ -135,13 +222,18 @@ export default function BOLOs() {
           </div>
 
           {/* New BOLO Modal */}
-          <Modal open={showNew} onClose={() => setShowNew(false)} title="Create BOLO">
+          <Modal open={showNew} onClose={closeCreateModal} title="Create BOLO">
             <form onSubmit={createBolo} className="space-y-3">
               {/* Type toggle */}
               <div className="flex bg-cad-surface rounded border border-cad-border overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => { setBoloType('person'); setDetails({ flags: [] }); }}
+                  onClick={() => {
+                    setBoloType('person');
+                    setDetails({ flags: [] });
+                    setVehiclePlateQuery('');
+                    setVehiclePlateMatches([]);
+                  }}
                   className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                     boloType === 'person' ? 'bg-amber-500/20 text-amber-400' : 'text-cad-muted'
                   }`}
@@ -150,7 +242,12 @@ export default function BOLOs() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setBoloType('vehicle'); setDetails({ flags: [] }); }}
+                  onClick={() => {
+                    setBoloType('vehicle');
+                    setDetails({ flags: [] });
+                    setVehiclePlateQuery('');
+                    setVehiclePlateMatches([]);
+                  }}
                   className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                     boloType === 'vehicle' ? 'bg-blue-500/20 text-blue-400' : 'text-cad-muted'
                   }`}
@@ -214,14 +311,40 @@ export default function BOLOs() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-cad-muted mb-1">Registration Plate *</label>
+                  <div className="relative">
+                    <label className="block text-xs text-cad-muted mb-1">Registration Plate (optional)</label>
                     <input
                       type="text"
-                      value={details.plate || ''}
-                      onChange={e => setDetails(d => ({ ...d, plate: String(e.target.value || '').toUpperCase() }))}
+                      value={vehiclePlateQuery}
+                      onChange={(e) => {
+                        const next = String(e.target.value || '').toUpperCase();
+                        setVehiclePlateQuery(next);
+                        setDetails((d) => ({ ...d, plate: next }));
+                      }}
                       className="w-full bg-cad-card border border-cad-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-cad-accent"
+                      placeholder="Search full or partial plate"
                     />
+                    {vehiclePlateSearching ? (
+                      <p className="mt-1 text-[11px] text-cad-muted">Searching registrations...</p>
+                    ) : null}
+                    {vehiclePlateMatches.length > 0 ? (
+                      <div className="mt-1 rounded border border-cad-border bg-cad-surface max-h-40 overflow-y-auto">
+                        {vehiclePlateMatches.map((match) => (
+                          <button
+                            key={`${match.plate}-${match.model}-${match.color}`}
+                            type="button"
+                            onClick={() => selectVehiclePlateMatch(match)}
+                            className="w-full text-left px-2 py-1.5 text-xs hover:bg-cad-card transition-colors"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-mono text-cad-ink">{match.plate}</span>
+                              <span className="text-cad-muted truncate">{match.model || '-'}</span>
+                            </div>
+                            <div className="text-[11px] text-cad-muted truncate">{match.color || '-'}</div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <div>
                     <label className="block text-xs text-cad-muted mb-1">Model</label>
@@ -287,7 +410,7 @@ export default function BOLOs() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowNew(false)}
+                  onClick={closeCreateModal}
                   className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
                 >
                   Cancel

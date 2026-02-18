@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Bolos } = require('../db/sqlite');
+const { Bolos, VehicleRegistrations } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -23,11 +23,21 @@ function normalizePlateKey(value) {
     .replace(/[^A-Z0-9]/g, '');
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value || '').trim();
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
 function normalizeVehicleBoloDetails(detailsRaw) {
   const details = detailsRaw && typeof detailsRaw === 'object' && !Array.isArray(detailsRaw)
     ? { ...detailsRaw }
     : {};
   const plate = normalizePlateKey(details.plate || details.registration_plate || details.rego || '');
+  const model = firstNonEmpty(details.model, details.vehicle_model);
+  const color = firstNonEmpty(details.color, details.colour, details.vehicle_colour);
   const flagsRaw = Array.isArray(details.flags) ? details.flags : [];
   const flags = Array.from(new Set(
     flagsRaw
@@ -38,7 +48,27 @@ function normalizeVehicleBoloDetails(detailsRaw) {
   return {
     ...details,
     plate,
+    model,
+    color,
     flags,
+  };
+}
+
+function applyRegistrationFallback(detailsRaw) {
+  const details = detailsRaw && typeof detailsRaw === 'object' && !Array.isArray(detailsRaw)
+    ? { ...detailsRaw }
+    : {};
+  const plate = normalizePlateKey(details.plate || details.registration_plate || details.rego || '');
+  if (!plate) return details;
+
+  const registration = VehicleRegistrations.findByPlate(plate);
+  if (!registration) return details;
+
+  return {
+    ...details,
+    plate: firstNonEmpty(registration.plate, details.plate, plate).toUpperCase(),
+    model: firstNonEmpty(details.model, details.vehicle_model, registration.vehicle_model),
+    color: firstNonEmpty(details.color, details.colour, details.vehicle_colour, registration.vehicle_colour),
   };
 }
 
@@ -68,10 +98,7 @@ router.post('/', requireAuth, (req, res) => {
 
   let normalizedDetails = details && typeof details === 'object' ? { ...details } : {};
   if (normalizedType === 'vehicle') {
-    normalizedDetails = normalizeVehicleBoloDetails(details);
-    if (!normalizedDetails.plate) {
-      return res.status(400).json({ error: 'vehicle BOLOs require details.plate (registration plate)' });
-    }
+    normalizedDetails = applyRegistrationFallback(normalizeVehicleBoloDetails(details));
   }
 
   const deptId = parseInt(department_id, 10);
