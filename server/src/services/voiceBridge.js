@@ -234,6 +234,10 @@ class VoiceBridgeServer {
       // to allow forced TCP-only for local bridge clients.
       mumbleDisableUdp: effectiveDisableUdp,
       dispatcherNamePrefix: String(process.env.MUMBLE_DISPATCHER_NAME_PREFIX || 'CAD_Dispatcher').trim() || 'CAD_Dispatcher',
+      // Keep UDP enabled for inbound audio, but optionally force outbound
+      // dispatcher voice packets through TCP UDPTunnel to avoid rust-mumble
+      // UDP repeat/mac decrypt loops seen on some hosts.
+      forceTcpAudioOut: parseBool(process.env.MUMBLE_FORCE_TCP_AUDIO_OUT, true),
       sampleRate: 48000,
       channels: 1,
       bitsPerSample: 16,
@@ -248,6 +252,11 @@ class VoiceBridgeServer {
     }
     if (requestedDisableUdp && isLocalBridgeHost && forceTcpOnLocalhost) {
       console.warn('[VoiceBridge] MUMBLE_FORCE_TCP_LOCALHOST=true active: dispatcher bridge will use TCP-only');
+    }
+    if (this.config.forceTcpAudioOut) {
+      console.warn(
+        '[VoiceBridge] MUMBLE_FORCE_TCP_AUDIO_OUT=true active: dispatcher mic audio will be sent via TCP tunnel'
+      );
     }
 
     const hostSource = envHost ? '.env' : (dbHost ? 'auto-detect' : 'default');
