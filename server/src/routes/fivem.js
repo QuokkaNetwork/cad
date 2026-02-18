@@ -22,6 +22,12 @@ const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const pendingRouteJobs = new Map();
 const pendingVoiceEvents = new Map();
 let nextVoiceEventId = 1;
+const VOICE_EVENT_RETRY_LIMIT = 5;
+const VOICE_HEARTBEAT_LOG_INTERVAL_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.FIVEM_VOICE_LOG_INTERVAL_MS || '15000', 10) || 15_000
+);
+let lastVoiceHeartbeatLogAt = 0;
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
@@ -567,7 +573,15 @@ function queueVoiceEvent(eventType, options = {}) {
   const channelNumber = Number.isInteger(channelNumberRaw) && channelNumberRaw >= 0
     ? channelNumberRaw
     : 0;
-  if (!normalizedEventType || !gameId) return null;
+  if (!normalizedEventType || !gameId) {
+    if (normalizedEventType.includes('call')) {
+      console.warn(
+        `[VoiceEventQueue] Dropped ${normalizedEventType} event: missing game_id ` +
+        `(channel=${channelNumber || 0}, citizen=${String(options.citizen_id || '').trim() || 'none'})`
+      );
+    }
+    return null;
+  }
 
   const id = nextVoiceEventId++;
   const now = Date.now();
@@ -582,6 +596,10 @@ function queueVoiceEvent(eventType, options = {}) {
     last_error: '',
   };
   pendingVoiceEvents.set(id, entry);
+  console.log(
+    `[VoiceEventQueue] Queued id=${id} type=${normalizedEventType} game=${gameId} ` +
+    `channel=${channelNumber} pending=${pendingVoiceEvents.size}`
+  );
   return entry;
 }
 
@@ -593,7 +611,15 @@ function listPendingVoiceEvents(limit = 50) {
 }
 
 function markVoiceEventProcessed(id) {
-  pendingVoiceEvents.delete(Number(id || 0));
+  const targetId = Number(id || 0);
+  const existing = pendingVoiceEvents.get(targetId);
+  pendingVoiceEvents.delete(targetId);
+  if (existing) {
+    console.log(
+      `[VoiceEventQueue] Processed id=${targetId} type=${existing.event_type} ` +
+      `game=${existing.game_id} pending=${pendingVoiceEvents.size}`
+    );
+  }
 }
 
 function markVoiceEventFailed(id, errorText = '') {
@@ -603,10 +629,18 @@ function markVoiceEventFailed(id, errorText = '') {
 
   existing.attempts = Number(existing.attempts || 0) + 1;
   existing.last_error = String(errorText || '').trim().slice(0, 500);
-  if (existing.attempts >= 5) {
+  if (existing.attempts >= VOICE_EVENT_RETRY_LIMIT) {
+    console.warn(
+      `[VoiceEventQueue] Dropping id=${targetId} type=${existing.event_type} after ${existing.attempts} attempts. ` +
+      `Last error: ${existing.last_error || 'unknown'}`
+    );
     pendingVoiceEvents.delete(targetId);
     return;
   }
+  console.warn(
+    `[VoiceEventQueue] Retry id=${targetId} type=${existing.event_type} attempt=${existing.attempts} ` +
+    `error=${existing.last_error || 'unknown'}`
+  );
   pendingVoiceEvents.set(targetId, existing);
 }
 
@@ -1062,7 +1096,14 @@ router.post('/route-jobs/:id/failed', requireBridgeAuth, (req, res) => {
 // FiveM resource polls pending voice jobs and applies them via pma-voice exports.
 router.get('/voice-events', requireBridgeAuth, (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
-  res.json(listPendingVoiceEvents(limit));
+  const events = listPendingVoiceEvents(limit);
+  if (events.length > 0) {
+    console.log(
+      `[VoiceEventQueue] Delivering ${events.length} event(s) to bridge poller ` +
+      `(pending=${pendingVoiceEvents.size})`
+    );
+  }
+  res.json(events);
 });
 
 router.post('/voice-events/:id/processed', requireBridgeAuth, (req, res) => {
@@ -1368,6 +1409,20 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
       if (channelNum > 0) {
         handleParticipantJoin(channelNum); // triggers a full route sync
       }
+    }
+
+    const now = Date.now();
+    if (changedChannels.size > 0 || (now - lastVoiceHeartbeatLogAt) >= VOICE_HEARTBEAT_LOG_INTERVAL_MS) {
+      const changedList = Array.from(changedChannels.values())
+        .map(value => Number(value || 0))
+        .filter(value => value > 0)
+        .sort((a, b) => a - b);
+      lastVoiceHeartbeatLogAt = now;
+      console.log(
+        `[VoiceHeartbeat] processed=${incoming.length} incomingGameIds=${incomingGameIds.size} ` +
+        `changedChannels=${changedList.length ? changedList.join(',') : 'none'} ` +
+        `trackedParticipants=${VoiceParticipants.listAllGameParticipants().length}`
+      );
     }
 
     res.json({ ok: true, processed: incoming.length });

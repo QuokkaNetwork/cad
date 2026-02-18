@@ -19,6 +19,10 @@ const OPUS_FRAME_SIZE = 960; // 20ms @ 48kHz mono
 const OPUS_FRAME_BYTES = OPUS_FRAME_SIZE * 2;
 const MAX_WHISPER_TARGETS = 30;
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
+const DIAG_LOG_INTERVAL_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.VOICE_BRIDGE_LOG_INTERVAL_MS || '15000', 10) || 15_000
+);
 
 function parseBool(value, fallback = false) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -69,6 +73,32 @@ function isActiveFiveMLink(link) {
   const ts = parseSqliteUtc(link?.updated_at);
   if (Number.isNaN(ts)) return false;
   return (Date.now() - ts) <= ACTIVE_LINK_MAX_AGE_MS;
+}
+
+function toSafeErrorMessage(error) {
+  const text = String(error?.message || error || '').trim();
+  return text || 'Unknown error';
+}
+
+function sanitizeClientOptions(options = {}) {
+  return {
+    host: options.host,
+    port: options.port,
+    username: options.username,
+    rejectUnauthorized: !!options.rejectUnauthorized,
+    disableUdp: !!options.disableUdp,
+    hasPassword: !!options.password,
+    tokenCount: Array.isArray(options.tokens) ? options.tokens.length : 0,
+  };
+}
+
+function formatIso(ms) {
+  if (!ms) return 'never';
+  try {
+    return new Date(ms).toISOString();
+  } catch {
+    return 'invalid';
+  }
 }
 
 function normalizeRouteMembersByChannel(rawValue) {
@@ -158,6 +188,8 @@ class VoiceBridgeServer {
     this.dispatcherDecoders = new Map();        // dispatcherId -> Map<sessionId, Opus decoder>
     this.routeMembersByChannel = new Map();     // channelNumber -> Array<gameId/channelId>
     this.dispatcherWhisperTargets = new Map();  // dispatcherId -> { signature, targets }
+    this.dispatcherAudioStats = new Map();      // dispatcherId -> diagnostics counters
+    this.noRouteLogAtByDispatcher = new Map();  // dispatcherId -> timestamp
     this.clientAudioHandlers = new Map();       // dispatcherId -> fn
     this.clientDisconnectHandlers = new Map();  // dispatcherId -> fn
     this.clientErrorHandlers = new Map();       // dispatcherId -> fn
@@ -252,9 +284,69 @@ class VoiceBridgeServer {
     return new OpusScript(this.config.sampleRate, this.config.channels, OpusScript.Application.VOIP);
   }
 
+  getOrCreateDispatcherStats(dispatcherId) {
+    let stats = this.dispatcherAudioStats.get(dispatcherId);
+    if (stats) return stats;
+
+    stats = {
+      connected: false,
+      connectedAtMs: 0,
+      lastConnectedAtMs: 0,
+      lastDisconnectedAtMs: 0,
+      connectAttempts: 0,
+      connectFailures: 0,
+      channelNumber: null,
+      channelName: '',
+      routeTargetCount: 0,
+      lastRouteSignature: '',
+      lastRouteUpdateAtMs: 0,
+      micPackets: 0,
+      micBytes: 0,
+      opusFramesEncoded: 0,
+      opusFramesSent: 0,
+      opusFramesDropped: 0,
+      noRouteFrames: 0,
+      inboundOpusPackets: 0,
+      inboundOpusBytes: 0,
+      inboundPcmPackets: 0,
+      inboundPcmBytes: 0,
+      lastMicAtMs: 0,
+      lastInboundAtMs: 0,
+      lastError: '',
+      lastLogAtMs: 0,
+    };
+    this.dispatcherAudioStats.set(dispatcherId, stats);
+    return stats;
+  }
+
+  logDispatcherDiagnostics(dispatcherId, reason = 'periodic') {
+    const stats = this.dispatcherAudioStats.get(dispatcherId);
+    if (!stats) return;
+
+    const now = Date.now();
+    if (reason === 'periodic' && (now - Number(stats.lastLogAtMs || 0)) < DIAG_LOG_INTERVAL_MS) {
+      return;
+    }
+    stats.lastLogAtMs = now;
+
+    console.log(
+      `[VoiceBridge][Diag] dispatcher=${dispatcherId} reason=${reason} ` +
+      `connected=${stats.connected ? 'yes' : 'no'} channel=${stats.channelNumber || 'none'} ` +
+      `targets=${stats.routeTargetCount || 0} micPackets=${stats.micPackets} ` +
+      `opusSent=${stats.opusFramesSent} opusDropped=${stats.opusFramesDropped} ` +
+      `noRoute=${stats.noRouteFrames} inboundOpus=${stats.inboundOpusPackets} ` +
+      `inboundPcm=${stats.inboundPcmPackets} lastMic=${formatIso(stats.lastMicAtMs)} ` +
+      `lastInbound=${formatIso(stats.lastInboundAtMs)} lastError=${stats.lastError || 'none'}`
+    );
+  }
+
   decodeIncomingAudio(dispatcherId, sessionId, opusChunk) {
     const rawChunk = toBuffer(opusChunk);
     if (!rawChunk.length) return;
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
+    stats.inboundOpusPackets += 1;
+    stats.inboundOpusBytes += rawChunk.length;
+    stats.lastInboundAtMs = Date.now();
 
     let decoderMap = this.dispatcherDecoders.get(dispatcherId);
     if (!decoderMap) {
@@ -273,7 +365,12 @@ class VoiceBridgeServer {
       const decoded = decoder.decode(rawChunk, OPUS_FRAME_SIZE);
       const pcm = toBuffer(decoded);
       if (!pcm.length) return;
+      stats.inboundPcmPackets += 1;
+      stats.inboundPcmBytes += pcm.length;
       this.emitAudio(dispatcherId, pcm);
+      if (stats.inboundPcmPackets % 200 === 0) {
+        this.logDispatcherDiagnostics(dispatcherId, 'periodic');
+      }
     } catch {
       // Corrupt or partial Opus packets should be ignored.
     }
@@ -281,9 +378,15 @@ class VoiceBridgeServer {
 
   async connectDispatcherToMumble(dispatcherId, userName = null) {
     this.assertAvailable();
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
+    stats.connectAttempts += 1;
 
     const existing = this.mumbleClients.get(dispatcherId);
     if (existing?.isReady) {
+      if (!stats.connected) {
+        stats.connected = true;
+        stats.lastConnectedAtMs = Date.now();
+      }
       return existing;
     }
     if (existing && !existing.isReady) {
@@ -291,7 +394,12 @@ class VoiceBridgeServer {
       this.handleMumbleDisconnect(dispatcherId);
     }
 
-    const client = new MumbleClientCtor(this.buildClientOptions(dispatcherId, userName));
+    const options = this.buildClientOptions(dispatcherId, userName);
+    console.log(
+      `[VoiceBridge] Connecting dispatcher ${dispatcherId} to Mumble ` +
+      `${this.config.mumbleHost}:${this.config.mumblePort} ${JSON.stringify(sanitizeClientOptions(options))}`
+    );
+    const client = new MumbleClientCtor(options);
     const audioHandler = (sessionId, opusData) => {
       this.decodeIncomingAudio(dispatcherId, sessionId, opusData);
     };
@@ -299,7 +407,10 @@ class VoiceBridgeServer {
       this.handleMumbleDisconnect(dispatcherId);
     };
     const errorHandler = (err) => {
-      console.warn('[VoiceBridge] Mumble client error:', err?.message || err);
+      const message = toSafeErrorMessage(err);
+      stats.lastError = message;
+      console.warn(`[VoiceBridge] Mumble client error for dispatcher ${dispatcherId}: ${message}`);
+      this.logDispatcherDiagnostics(dispatcherId, 'client_error');
     };
 
     client.on('audio', audioHandler);
@@ -317,6 +428,12 @@ class VoiceBridgeServer {
         client.removeListener('disconnected', disconnectHandler);
         client.removeListener('error', errorHandler);
       } catch {}
+      stats.connectFailures += 1;
+      stats.lastError = toSafeErrorMessage(error);
+      console.warn(
+        `[VoiceBridge] Dispatcher ${dispatcherId} failed to connect to Mumble: ${stats.lastError}`
+      );
+      this.logDispatcherDiagnostics(dispatcherId, 'connect_failed');
       throw error;
     }
 
@@ -327,6 +444,16 @@ class VoiceBridgeServer {
     this.dispatcherEncoders.set(dispatcherId, this.createEncoder());
     this.dispatcherPcmBuffers.set(dispatcherId, Buffer.alloc(0));
     this.dispatcherDecoders.set(dispatcherId, new Map());
+    stats.connected = true;
+    const now = Date.now();
+    stats.connectedAtMs = stats.connectedAtMs || now;
+    stats.lastConnectedAtMs = now;
+    stats.lastError = '';
+    console.log(
+      `[VoiceBridge] Dispatcher ${dispatcherId} connected to Mumble ` +
+      `(session=${Number(client.session || 0) || 'n/a'}, channels=${Number(client.channels?.size || 0)})`
+    );
+    this.logDispatcherDiagnostics(dispatcherId, 'connected');
     return client;
   }
 
@@ -363,6 +490,7 @@ class VoiceBridgeServer {
     const client = this.mumbleClients.get(dispatcherId);
     if (!client) throw new Error('Dispatcher not connected to voice backend');
     if (!client.isReady) throw new Error('Voice backend is still initializing for this dispatcher');
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
 
     const numericChannel = Number(channelNumber || 0);
 
@@ -390,11 +518,28 @@ class VoiceBridgeServer {
       channelName: String(rootChannel.name || 'Root'),
     });
     this.dispatcherWhisperTargets.delete(dispatcherId);
+    stats.channelNumber = Number.isInteger(numericChannel) && numericChannel > 0 ? numericChannel : null;
+    stats.channelName = String(rootChannel.name || 'Root');
+    stats.routeTargetCount = 0;
+    stats.lastRouteSignature = '';
+    stats.lastRouteUpdateAtMs = Date.now();
+    console.log(
+      `[VoiceBridge] Dispatcher ${dispatcherId} joined channel request=${numericChannel || 0} ` +
+      `via root channel ${Number(rootChannel.channelId || 0)} (${String(rootChannel.name || 'Root')})`
+    );
+    this.logDispatcherDiagnostics(dispatcherId, 'join_channel');
   }
 
   setRouteMembersByChannel(rawValue) {
     this.routeMembersByChannel = normalizeRouteMembersByChannel(rawValue);
     this.dispatcherWhisperTargets.clear();
+    let totalMembers = 0;
+    for (const members of this.routeMembersByChannel.values()) {
+      totalMembers += members.length;
+    }
+    console.log(
+      `[VoiceBridge] Route table updated: channels=${this.routeMembersByChannel.size}, members=${totalMembers}`
+    );
   }
 
   getDispatcherSessionsByChannel() {
@@ -479,6 +624,7 @@ class VoiceBridgeServer {
   refreshDispatcherWhisperTargets(dispatcherId) {
     const client = this.mumbleClients.get(dispatcherId);
     if (!client || !client.isReady) return [];
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
 
     const members = this.getRouteMembersForDispatcher(dispatcherId)
       .map(m => normalizePositiveInt(m))
@@ -509,13 +655,27 @@ class VoiceBridgeServer {
         `[VoiceBridge] Dispatcher ${dispatcherId} -> ${targets.length} radio targets: ` +
         targets.map(t => `src${t.sourceId}(slot${t.targetId})`).join(', ')
       );
+    } else if (channelNumber > 0) {
+      const lastLogAt = Number(this.noRouteLogAtByDispatcher.get(dispatcherId) || 0);
+      const now = Date.now();
+      if ((now - lastLogAt) >= DIAG_LOG_INTERVAL_MS) {
+        console.warn(
+          `[VoiceBridge] Dispatcher ${dispatcherId} has no known route targets for channel ${channelNumber}. ` +
+          'Waiting for FiveM participant heartbeat.'
+        );
+        this.noRouteLogAtByDispatcher.set(dispatcherId, now);
+      }
     }
 
     this.dispatcherWhisperTargets.set(dispatcherId, { signature, targets });
+    stats.routeTargetCount = targets.length;
+    stats.lastRouteSignature = signature;
+    stats.lastRouteUpdateAtMs = Date.now();
     return targets;
   }
 
   sendAudioToDispatcherTargets(dispatcherId, client, opusData, isLastFrame = false) {
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
     const targets = this.refreshDispatcherWhisperTargets(dispatcherId);
 
     // No route members known yet → fall back to normal talk (target 0).
@@ -524,8 +684,11 @@ class VoiceBridgeServer {
     if (!targets || targets.length === 0) {
       try {
         client.sendAudio(Buffer.from(opusData), isLastFrame, 0);
+        stats.noRouteFrames += 1;
+        stats.opusFramesSent += 1;
         return true;
       } catch {
+        stats.opusFramesDropped += 1;
         return false;
       }
     }
@@ -537,7 +700,9 @@ class VoiceBridgeServer {
       try {
         client.sendAudio(Buffer.from(opusData), isLastFrame, Number(target.targetId));
         sent = true;
+        stats.opusFramesSent += 1;
       } catch {
+        stats.opusFramesDropped += 1;
         // Continue trying remaining targets even if one fails.
       }
     }
@@ -563,6 +728,7 @@ class VoiceBridgeServer {
   async leaveChannel(dispatcherId) {
     const client = this.mumbleClients.get(dispatcherId);
     if (!client) return;
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
 
     this.sendTerminatorFrame(dispatcherId);
     this.dispatcherPcmBuffers.set(dispatcherId, Buffer.alloc(0));
@@ -578,12 +744,23 @@ class VoiceBridgeServer {
 
     this.activeChannels.delete(dispatcherId);
     this.dispatcherWhisperTargets.delete(dispatcherId);
+    stats.channelNumber = null;
+    stats.channelName = '';
+    stats.routeTargetCount = 0;
+    stats.lastRouteSignature = '';
+    stats.lastRouteUpdateAtMs = Date.now();
+    console.log(`[VoiceBridge] Dispatcher ${dispatcherId} left active channel and returned to root.`);
+    this.logDispatcherDiagnostics(dispatcherId, 'leave_channel');
   }
 
   sendDispatcherAudio(dispatcherId, pcmChunk) {
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
     const client = this.mumbleClients.get(dispatcherId);
     const encoder = this.dispatcherEncoders.get(dispatcherId);
-    if (!client || !encoder || !client.isReady) return false;
+    if (!client || !encoder || !client.isReady) {
+      stats.lastError = 'Dispatcher not ready for outbound audio';
+      return false;
+    }
 
     let chunk = toBuffer(pcmChunk);
     if (!chunk.length) return false;
@@ -595,6 +772,9 @@ class VoiceBridgeServer {
     const previous = this.dispatcherPcmBuffers.get(dispatcherId) || Buffer.alloc(0);
     let pending = previous.length ? Buffer.concat([previous, chunk]) : chunk;
     let sentAny = false;
+    stats.micPackets += 1;
+    stats.micBytes += chunk.length;
+    stats.lastMicAtMs = Date.now();
 
     while (pending.length >= OPUS_FRAME_BYTES) {
       const frame = pending.subarray(0, OPUS_FRAME_BYTES);
@@ -603,13 +783,18 @@ class VoiceBridgeServer {
       try {
         const opus = encoder.encode(frame, OPUS_FRAME_SIZE);
         if (!opus || !opus.length) continue;
+        stats.opusFramesEncoded += 1;
         sentAny = this.sendAudioToDispatcherTargets(dispatcherId, client, Buffer.from(opus), false) || sentAny;
       } catch {
+        stats.opusFramesDropped += 1;
         // Skip malformed frame, continue.
       }
     }
 
     this.dispatcherPcmBuffers.set(dispatcherId, Buffer.from(pending));
+    if (stats.micPackets % 200 === 0) {
+      this.logDispatcherDiagnostics(dispatcherId, 'periodic');
+    }
     return sentAny || pending.length > 0;
   }
 
@@ -647,6 +832,10 @@ class VoiceBridgeServer {
   }
 
   handleMumbleDisconnect(dispatcherId) {
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
+    stats.connected = false;
+    stats.lastDisconnectedAtMs = Date.now();
+
     const client = this.mumbleClients.get(dispatcherId);
     if (client) {
       const audioHandler = this.clientAudioHandlers.get(dispatcherId);
@@ -666,10 +855,14 @@ class VoiceBridgeServer {
     this.dispatcherDecoders.delete(dispatcherId);
     this.activeChannels.delete(dispatcherId);
     this.dispatcherWhisperTargets.delete(dispatcherId);
+    this.noRouteLogAtByDispatcher.delete(dispatcherId);
     this.audioListeners.delete(dispatcherId);
+    console.warn(`[VoiceBridge] Dispatcher ${dispatcherId} disconnected from Mumble backend.`);
+    this.logDispatcherDiagnostics(dispatcherId, 'disconnect');
   }
 
   async disconnectDispatcher(dispatcherId) {
+    const stats = this.getOrCreateDispatcherStats(dispatcherId);
     this.sendTerminatorFrame(dispatcherId);
     this.removeAudioListeners(dispatcherId);
     this.activeChannels.delete(dispatcherId);
@@ -693,17 +886,81 @@ class VoiceBridgeServer {
     this.dispatcherPcmBuffers.delete(dispatcherId);
     this.dispatcherDecoders.delete(dispatcherId);
     this.dispatcherWhisperTargets.delete(dispatcherId);
+    this.noRouteLogAtByDispatcher.delete(dispatcherId);
+    stats.connected = false;
+    stats.lastDisconnectedAtMs = Date.now();
+    console.log(`[VoiceBridge] Dispatcher ${dispatcherId} fully disconnected from voice bridge.`);
+    this.logDispatcherDiagnostics(dispatcherId, 'disconnect');
   }
 
   getStatus() {
+    let totalRouteMembers = 0;
+    for (const members of this.routeMembersByChannel.values()) {
+      totalRouteMembers += members.length;
+    }
+
+    const connectedDispatchers = Array.from(this.mumbleClients.keys()).map((id) => {
+      const stats = this.dispatcherAudioStats.get(id) || {};
+      const client = this.mumbleClients.get(id);
+      return {
+        dispatcherId: id,
+        session: Number(client?.session || 0) || null,
+        channel: this.activeChannels.get(id)?.channelNumber ?? null,
+        channelName: this.activeChannels.get(id)?.channelName || '',
+        routeTargets: Number(stats.routeTargetCount || 0),
+        micPackets: Number(stats.micPackets || 0),
+        micBytes: Number(stats.micBytes || 0),
+        opusFramesEncoded: Number(stats.opusFramesEncoded || 0),
+        opusFramesSent: Number(stats.opusFramesSent || 0),
+        opusFramesDropped: Number(stats.opusFramesDropped || 0),
+        inboundOpusPackets: Number(stats.inboundOpusPackets || 0),
+        inboundPcmPackets: Number(stats.inboundPcmPackets || 0),
+        lastMicAt: formatIso(stats.lastMicAtMs),
+        lastInboundAt: formatIso(stats.lastInboundAtMs),
+        lastConnectedAt: formatIso(stats.lastConnectedAtMs),
+        lastDisconnectedAt: formatIso(stats.lastDisconnectedAtMs),
+        lastError: stats.lastError || '',
+      };
+    });
+
+    const recentDisconnected = Array.from(this.dispatcherAudioStats.entries())
+      .filter(([dispatcherId]) => !this.mumbleClients.has(dispatcherId))
+      .sort((a, b) => {
+        const aTs = Number(a[1]?.lastDisconnectedAtMs || a[1]?.lastConnectedAtMs || 0);
+        const bTs = Number(b[1]?.lastDisconnectedAtMs || b[1]?.lastConnectedAtMs || 0);
+        return bTs - aTs;
+      })
+      .slice(0, 10)
+      .map(([dispatcherId, stats]) => ({
+        dispatcherId,
+        lastConnectedAt: formatIso(stats.lastConnectedAtMs),
+        lastDisconnectedAt: formatIso(stats.lastDisconnectedAtMs),
+        lastMicAt: formatIso(stats.lastMicAtMs),
+        lastInboundAt: formatIso(stats.lastInboundAtMs),
+        micPackets: Number(stats.micPackets || 0),
+        opusFramesSent: Number(stats.opusFramesSent || 0),
+        inboundPcmPackets: Number(stats.inboundPcmPackets || 0),
+        lastError: stats.lastError || '',
+      }));
+
     return {
       available: this.available,
       backend: this.available ? 'mumble-node' : null,
       connectedDispatchers: this.mumbleClients.size,
-      dispatchers: Array.from(this.mumbleClients.keys()).map((id) => ({
-        dispatcherId: id,
-        channel: this.activeChannels.get(id)?.channelNumber ?? null,
-      })),
+      dispatchers: connectedDispatchers,
+      recentDisconnected,
+      routing: {
+        channelCount: this.routeMembersByChannel.size,
+        targetCount: totalRouteMembers,
+      },
+      config: {
+        mumbleHost: this.config.mumbleHost,
+        mumblePort: this.config.mumblePort,
+        disableUdp: !!this.config.mumbleDisableUdp,
+        rejectUnauthorized: !!this.config.mumbleRejectUnauthorized,
+        tokenCount: this.config.mumbleTokens.length,
+        dispatcherNamePrefix: this.config.dispatcherNamePrefix,
+      },
       dependency_missing: this.available ? null : this.missingDependencies.join(', '),
     };
   }

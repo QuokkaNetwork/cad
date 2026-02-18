@@ -21,7 +21,11 @@ router.get('/bridge/status', requireAuth, (req, res) => {
   try {
     const voiceBridge = getVoiceBridge();
     const status = voiceBridge.getStatus();
-    res.json(status);
+    const signalingStatus = req.app?.locals?.voiceSignalingServer?.getStatus?.() || null;
+    res.json({
+      ...status,
+      signaling: signalingStatus,
+    });
   } catch (error) {
     res.json({
       available: false,

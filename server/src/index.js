@@ -291,6 +291,7 @@ bridgeHttpServer.on('error', (err) => {
     const voiceBridge = getVoiceBridge();
     if (voiceBridge?.getStatus?.().available) {
       const voiceSignalingServer = new VoiceSignalingServer(httpServer, voiceBridge);
+      app.locals.voiceSignalingServer = voiceSignalingServer;
       // Mirror /voice-bridge upgrades on the plain HTTP bridge listener too.
       // This keeps dispatcher voice available when operators access CAD via :3031.
       bridgeHttpServer.on('upgrade', (request, socket, head) => {
