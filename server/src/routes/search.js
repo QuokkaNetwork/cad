@@ -46,6 +46,30 @@ function splitFullName(fullName) {
   };
 }
 
+function normalizeGender(value) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw === '0' || raw === 'm' || raw === 'male' || raw === 'man') return 'male';
+  if (raw === '1' || raw === 'f' || raw === 'female' || raw === 'woman') return 'female';
+  return raw;
+}
+
+function normalizeLicenseForResponse(license) {
+  if (!license || typeof license !== 'object') return license;
+  return {
+    ...license,
+    gender: normalizeGender(license.gender),
+  };
+}
+
+function normalizePersonForResponse(person) {
+  if (!person || typeof person !== 'object') return person;
+  return {
+    ...person,
+    gender: normalizeGender(person.gender),
+  };
+}
+
 function findActivePersonBolos(req, citizenId, fullName) {
   const departmentId = req.user?.departments?.[0]?.id || 0;
   if (!departmentId) return [];
@@ -74,7 +98,7 @@ function buildCadPersonResponse(req, citizenId, license, fallbackName = '') {
     lastname: names.lastname,
     full_name: fullName,
     birthdate: String(license?.date_of_birth || '').trim(),
-    gender: String(license?.gender || '').trim(),
+    gender: normalizeGender(license?.gender),
     has_warrant: warrants.length > 0,
     has_bolo: bolos.length > 0,
     warrant_count: warrants.length,
@@ -106,7 +130,7 @@ function buildCadPersonFromSources(req, citizenId, {
     lastname: qboxLastName || base.lastname,
     full_name: qboxFullName || base.full_name,
     birthdate: String(license?.date_of_birth || qboxPerson?.birthdate || base.birthdate || '').trim(),
-    gender: String(license?.gender || qboxPerson?.gender || base.gender || '').trim(),
+    gender: normalizeGender(license?.gender ?? qboxPerson?.gender ?? base.gender),
     phone: String(qboxPerson?.phone || '').trim(),
     nationality: String(qboxPerson?.nationality || '').trim(),
     custom_fields: (qboxPerson && typeof qboxPerson.custom_fields === 'object') ? qboxPerson.custom_fields : {},
@@ -138,14 +162,15 @@ router.get('/persons', requireAuth, async (req, res) => {
 
     // Add warrant and BOLO flags to each result
     const enrichedResults = results.map(person => {
-      const warrants = Warrants.findByCitizenId(person.citizenid, 'active');
+      const normalizedPerson = normalizePersonForResponse(person);
+      const warrants = Warrants.findByCitizenId(normalizedPerson.citizenid, 'active');
       const personBolos = Bolos.listByDepartment(req.user.departments[0]?.id || 0, 'active')
         .filter(bolo => bolo.type === 'person'
-          && (bolo.title.toLowerCase().includes(`${person.firstname} ${person.lastname}`.toLowerCase())
-            || String(bolo.details_json || '').includes(person.citizenid)));
+          && (bolo.title.toLowerCase().includes(`${normalizedPerson.firstname} ${normalizedPerson.lastname}`.toLowerCase())
+            || String(bolo.details_json || '').includes(normalizedPerson.citizenid)));
 
       return {
-        ...person,
+        ...normalizedPerson,
         has_warrant: warrants.length > 0,
         has_bolo: personBolos.length > 0,
         warrant_count: warrants.length,
@@ -164,24 +189,25 @@ router.get('/persons/:citizenid', requireAuth, async (req, res) => {
   try {
     const person = await qbox.getCharacterById(req.params.citizenid);
     if (!person) return res.status(404).json({ error: 'Person not found' });
+    const normalizedPerson = normalizePersonForResponse(person);
 
     // Add warrant and BOLO flags
-    const warrants = Warrants.findByCitizenId(person.citizenid, 'active');
+    const warrants = Warrants.findByCitizenId(normalizedPerson.citizenid, 'active');
     const personBolos = Bolos.listByDepartment(req.user.departments[0]?.id || 0, 'active')
       .filter(bolo => bolo.type === 'person'
-        && (bolo.title.toLowerCase().includes(`${person.firstname} ${person.lastname}`.toLowerCase())
-          || String(bolo.details_json || '').includes(person.citizenid)));
+        && (bolo.title.toLowerCase().includes(`${normalizedPerson.firstname} ${normalizedPerson.lastname}`.toLowerCase())
+          || String(bolo.details_json || '').includes(normalizedPerson.citizenid)));
 
     const enrichedPerson = {
-      ...person,
+      ...normalizedPerson,
       has_warrant: warrants.length > 0,
       has_bolo: personBolos.length > 0,
       warrant_count: warrants.length,
       bolo_count: personBolos.length,
       warrants,
       bolos: personBolos,
-      cad_driver_license: DriverLicenses.findByCitizenId(person.citizenid),
-      cad_vehicle_registrations: VehicleRegistrations.listByCitizenId(person.citizenid),
+      cad_driver_license: normalizeLicenseForResponse(DriverLicenses.findByCitizenId(normalizedPerson.citizenid)),
+      cad_vehicle_registrations: VehicleRegistrations.listByCitizenId(normalizedPerson.citizenid),
     };
 
     res.json(enrichedPerson);
@@ -256,11 +282,12 @@ router.get('/cad/persons', requireAuth, async (req, res) => {
     const byCitizen = new Map();
 
     for (const license of DriverLicenses.search(q, 100)) {
-      const citizenId = String(license?.citizen_id || '').trim();
+      const normalizedLicense = normalizeLicenseForResponse(license);
+      const citizenId = String(normalizedLicense?.citizen_id || '').trim();
       if (!citizenId) continue;
       byCitizen.set(citizenId, {
-        ...buildCadPersonFromSources(req, citizenId, { license }),
-        cad_driver_license: license,
+        ...buildCadPersonFromSources(req, citizenId, { license: normalizedLicense }),
+        cad_driver_license: normalizedLicense,
       });
     }
 
@@ -287,7 +314,7 @@ router.get('/cad/persons', requireAuth, async (req, res) => {
       if (!citizenId) continue;
 
       const existing = byCitizen.get(citizenId);
-      const existingLicense = existing?.cad_driver_license || DriverLicenses.findByCitizenId(citizenId) || null;
+      const existingLicense = existing?.cad_driver_license || normalizeLicenseForResponse(DriverLicenses.findByCitizenId(citizenId)) || null;
       const existingFallbackName = existing?.full_name || '';
       byCitizen.set(citizenId, {
         ...buildCadPersonFromSources(req, citizenId, {
@@ -310,7 +337,7 @@ router.get('/cad/persons/:citizenid', requireAuth, async (req, res) => {
   if (!citizenId) return res.status(400).json({ error: 'citizenid is required' });
 
   try {
-    const license = DriverLicenses.findByCitizenId(citizenId);
+    const license = normalizeLicenseForResponse(DriverLicenses.findByCitizenId(citizenId));
     const registrations = VehicleRegistrations.listByCitizenId(citizenId);
     let qboxPerson = null;
     try {

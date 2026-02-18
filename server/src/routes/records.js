@@ -80,7 +80,7 @@ function resolveOffenceItems(input) {
   const normalized = normalizeOffenceSelections(input);
   if (normalized.error) return normalized;
   if (!normalized.selections.length) {
-    return { items: [], totalFine: 0 };
+    return { items: [], totalFine: 0, totalJailMinutes: 0 };
   }
 
   const ids = normalized.selections.map(s => s.offence_id);
@@ -92,23 +92,29 @@ function resolveOffenceItems(input) {
   }
 
   let totalFine = 0;
+  let totalJailMinutes = 0;
   const items = normalized.selections.map((selection) => {
     const offence = byId.get(selection.offence_id);
     const fineAmount = Math.max(0, Number(offence.fine_amount || 0));
     const lineTotal = fineAmount * selection.quantity;
+    const jailMinutes = Math.max(0, Math.trunc(Number(offence.jail_minutes || 0)));
+    const lineJailMinutes = jailMinutes * selection.quantity;
     totalFine += lineTotal;
+    totalJailMinutes += lineJailMinutes;
     return {
       offence_id: offence.id,
       category: offence.category,
       code: String(offence.code || ''),
       title: String(offence.title || ''),
       fine_amount: fineAmount,
+      jail_minutes: jailMinutes,
       quantity: selection.quantity,
       line_total: lineTotal,
+      line_jail_minutes: lineJailMinutes,
     };
   });
 
-  return { items, totalFine };
+  return { items, totalFine, totalJailMinutes };
 }
 
 function buildDefaultOffenceTitle(items) {
@@ -174,7 +180,7 @@ router.post('/', requireAuth, (req, res) => {
   if (jail_minutes !== undefined && (!Number.isFinite(rawJailMinutes) || rawJailMinutes < 0)) {
     return res.status(400).json({ error: 'jail_minutes must be a non-negative number' });
   }
-  const recordJailMinutes = Number.isFinite(rawJailMinutes) ? Math.max(0, Math.trunc(rawJailMinutes)) : 0;
+  let recordJailMinutes = Number.isFinite(rawJailMinutes) ? Math.max(0, Math.trunc(rawJailMinutes)) : 0;
   let recordTitle = normalizedTitle;
   const recordDescription = String(description || '');
   let offenceItemsJson = '[]';
@@ -182,6 +188,7 @@ router.post('/', requireAuth, (req, res) => {
   if (resolvedOffences && resolvedOffences.items.length > 0) {
     recordType = resolvedOffences.totalFine > 0 ? 'fine' : 'charge';
     recordFineAmount = resolvedOffences.totalFine;
+    recordJailMinutes = Math.max(recordJailMinutes, Math.max(0, Math.trunc(Number(resolvedOffences.totalJailMinutes || 0))));
     recordTitle = normalizedTitle || buildDefaultOffenceTitle(resolvedOffences.items);
     offenceItemsJson = JSON.stringify(resolvedOffences.items);
   } else {
@@ -276,6 +283,16 @@ router.patch('/:id', requireAuth, (req, res) => {
     if (resolved.items.length > 0) {
       updates.type = resolved.totalFine > 0 ? 'fine' : 'charge';
       updates.fine_amount = resolved.totalFine;
+      const offenceJailMinutes = Math.max(0, Math.trunc(Number(resolved.totalJailMinutes || 0)));
+      if (jail_minutes === undefined) {
+        updates.jail_minutes = offenceJailMinutes;
+      } else {
+        const requestedMinutes = Number(jail_minutes);
+        if (!Number.isFinite(requestedMinutes) || requestedMinutes < 0) {
+          return res.status(400).json({ error: 'jail_minutes must be a non-negative number' });
+        }
+        updates.jail_minutes = Math.max(Math.trunc(requestedMinutes), offenceJailMinutes);
+      }
       if (title === undefined) {
         updates.title = buildDefaultOffenceTitle(resolved.items);
       }

@@ -1,3 +1,5 @@
+import { formatTimeAU } from '../utils/dateTime';
+
 export default function BOLOCard({ bolo, onResolve, onCancel }) {
   const isVehicle = bolo.type === 'vehicle';
   let details = {};
@@ -55,7 +57,7 @@ export default function BOLOCard({ bolo, onResolve, onCancel }) {
 
       <div className="flex items-center justify-between mt-3 text-xs text-cad-muted">
         <span>{bolo.creator_name && `by ${bolo.creator_name}`}</span>
-        <span>{new Date(bolo.created_at + 'Z').toLocaleTimeString()}</span>
+        <span>{formatTimeAU(bolo.created_at ? `${bolo.created_at}Z` : '', '-')}</span>
       </div>
     </div>
   );

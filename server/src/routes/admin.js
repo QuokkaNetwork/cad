@@ -669,6 +669,7 @@ router.post('/offence-catalog', (req, res) => {
     title,
     description,
     fine_amount,
+    jail_minutes,
     sort_order,
     is_active,
   } = req.body || {};
@@ -682,6 +683,10 @@ router.post('/offence-catalog', (req, res) => {
   if (!Number.isFinite(fineAmount) || fineAmount < 0) {
     return res.status(400).json({ error: 'fine_amount must be a non-negative number' });
   }
+  const jailMinutes = Number(jail_minutes || 0);
+  if (!Number.isFinite(jailMinutes) || jailMinutes < 0) {
+    return res.status(400).json({ error: 'jail_minutes must be a non-negative number' });
+  }
 
   try {
     const offence = OffenceCatalog.create({
@@ -690,6 +695,7 @@ router.post('/offence-catalog', (req, res) => {
       title: normalizedTitle,
       description: String(description || '').trim(),
       fine_amount: fineAmount,
+      jail_minutes: jailMinutes,
       sort_order: Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0,
       is_active: is_active === undefined ? 1 : (is_active ? 1 : 0),
     });
@@ -728,6 +734,10 @@ router.post('/offence-catalog/import', (req, res) => {
       if (!Number.isFinite(fineAmount) || fineAmount < 0) {
         throw new Error('fine_amount must be a non-negative number');
       }
+      const jailMinutes = Number(row.jail_minutes ?? 0);
+      if (!Number.isFinite(jailMinutes) || jailMinutes < 0) {
+        throw new Error('jail_minutes must be a non-negative number');
+      }
 
       const offence = OffenceCatalog.create({
         category: normalizeOffenceCategory(row.category),
@@ -735,6 +745,7 @@ router.post('/offence-catalog/import', (req, res) => {
         title: normalizedTitle,
         description: String(row.description || '').trim(),
         fine_amount: fineAmount,
+        jail_minutes: jailMinutes,
         sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
         is_active: parseOffenceIsActive(row.is_active),
       });
@@ -788,6 +799,13 @@ router.patch('/offence-catalog/:id', (req, res) => {
       return res.status(400).json({ error: 'fine_amount must be a non-negative number' });
     }
     updates.fine_amount = fineAmount;
+  }
+  if (req.body?.jail_minutes !== undefined) {
+    const jailMinutes = Number(req.body.jail_minutes);
+    if (!Number.isFinite(jailMinutes) || jailMinutes < 0) {
+      return res.status(400).json({ error: 'jail_minutes must be a non-negative number' });
+    }
+    updates.jail_minutes = Math.trunc(jailMinutes);
   }
 
   if (Object.keys(updates).length === 0) {

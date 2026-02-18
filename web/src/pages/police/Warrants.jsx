@@ -5,9 +5,10 @@ import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
 import Modal from '../../components/Modal';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
+import { formatDateTimeAU } from '../../utils/dateTime';
 
 function WarrantCard({ warrant, onServe, onCancel }) {
-  const createdAt = warrant.created_at ? new Date(warrant.created_at).toLocaleString() : '';
+  const createdAt = formatDateTimeAU(warrant.created_at ? `${warrant.created_at}Z` : '', '');
 
   return (
     <div className="bg-cad-card border border-amber-500/30 rounded-lg p-4">

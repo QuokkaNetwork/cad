@@ -1,4 +1,5 @@
 import StatusBadge from './StatusBadge';
+import { formatTimeAU } from '../utils/dateTime';
 
 const PRIORITY_LABELS = {
   '1': 'P1',
@@ -101,7 +102,7 @@ export default function CallCard({ call, onClick, onAssign, onClose, units = [],
             {call.creator_name && `by ${call.creator_name}`}
           </span>
           <span className="text-xs text-cad-muted">
-            {new Date(call.created_at + 'Z').toLocaleTimeString()}
+            {formatTimeAU(call.created_at ? `${call.created_at}Z` : '', '-')}
           </span>
         </div>
       </div>

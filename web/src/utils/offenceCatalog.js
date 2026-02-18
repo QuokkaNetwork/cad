@@ -39,8 +39,10 @@ export function parseRecordOffenceItems(record) {
         code: String(item?.code || '').trim(),
         title: String(item?.title || '').trim(),
         fine_amount: Number.isFinite(Number(item?.fine_amount)) ? Number(item.fine_amount) : 0,
+        jail_minutes: Number.isFinite(Number(item?.jail_minutes)) ? Math.max(0, Math.trunc(Number(item.jail_minutes))) : 0,
         quantity: Number.isFinite(Number(item?.quantity)) ? Math.max(1, Math.trunc(Number(item.quantity))) : 1,
         line_total: Number.isFinite(Number(item?.line_total)) ? Number(item.line_total) : 0,
+        line_jail_minutes: Number.isFinite(Number(item?.line_jail_minutes)) ? Math.max(0, Math.trunc(Number(item.line_jail_minutes))) : 0,
       }))
       .filter(item => item.offence_id > 0 && item.title);
   } catch {
@@ -64,6 +66,16 @@ export function calculateSelectionTotal(catalog, selectionById) {
     if (!offence) return sum;
     const fine = Math.max(0, Number(offence.fine_amount || 0));
     return sum + (fine * row.quantity);
+  }, 0);
+}
+
+export function calculateSelectionJailTotal(catalog, selectionById) {
+  const byId = new Map((catalog || []).map(item => [Number(item.id), item]));
+  return normalizeOffenceSelections(selectionById).reduce((sum, row) => {
+    const offence = byId.get(row.offence_id);
+    if (!offence) return sum;
+    const jailMinutes = Math.max(0, Math.trunc(Number(offence.jail_minutes || 0)));
+    return sum + (jailMinutes * row.quantity);
   }, 0);
 }
 

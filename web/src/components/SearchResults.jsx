@@ -1,3 +1,5 @@
+import { formatDateAU } from '../utils/dateTime';
+
 function primaryTitle(type, item) {
   if (type === 'person') {
     const full = String(item?.full_name || '').trim();
@@ -61,7 +63,7 @@ export default function SearchResults({ type, results, onSelect }) {
             </div>
 
             <p className="text-xs text-cad-muted">
-              {expiry ? `Expiry: ${expiry}` : 'No expiry recorded'}
+              {expiry ? `Expiry: ${formatDateAU(expiry, '-')}` : 'No expiry recorded'}
             </p>
           </button>
         );

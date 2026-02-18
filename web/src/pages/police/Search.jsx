@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/client';
 import SearchResults from '../../components/SearchResults';
 import Modal from '../../components/Modal';
+import Records from './Records';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { useDepartment } from '../../context/DepartmentContext';
+import { formatDateAU } from '../../utils/dateTime';
 
 const LICENSE_STATUS_OPTIONS = ['valid', 'suspended', 'disqualified', 'expired'];
 const REGISTRATION_STATUS_OPTIONS = ['valid', 'suspended', 'revoked', 'expired'];
@@ -32,6 +34,30 @@ function resolvePersonName(person) {
   const fallback = `${String(person?.firstname || '').trim()} ${String(person?.lastname || '').trim()}`.trim();
   if (fallback) return fallback;
   return String(person?.citizenid || 'Unknown Person');
+}
+
+function formatGenderLabel(value) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return '-';
+  if (raw === '0' || raw === 'm' || raw === 'male' || raw === 'man') return 'Male';
+  if (raw === '1' || raw === 'f' || raw === 'female' || raw === 'woman') return 'Female';
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function buildRecordsPerson(person) {
+  if (!person) return null;
+  const citizenid = String(person.citizenid || '').trim();
+  if (!citizenid) return null;
+  const fullName = resolvePersonName(person);
+  const pieces = fullName.split(/\s+/).filter(Boolean);
+  return {
+    citizenid,
+    firstname: String(person.firstname || pieces[0] || '').trim(),
+    lastname: String(person.lastname || pieces.slice(1).join(' ') || '').trim(),
+    full_name: fullName,
+    birthdate: String(person.birthdate || person?.cad_driver_license?.date_of_birth || '').trim(),
+    gender: String(person.gender || person?.cad_driver_license?.gender || '').trim(),
+  };
 }
 
 function MugshotPreview({ url }) {
@@ -65,6 +91,7 @@ export default function Search() {
   const [selectedPerson, setSelectedPerson] = useState(null);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [vehicleOwner, setVehicleOwner] = useState(null);
+  const [showRecordsModal, setShowRecordsModal] = useState(false);
 
   const [licenseStatusDraft, setLicenseStatusDraft] = useState('valid');
   const [registrationStatusDraft, setRegistrationStatusDraft] = useState('valid');
@@ -187,6 +214,7 @@ export default function Search() {
   const personRegistrations = Array.isArray(selectedPerson?.cad_vehicle_registrations)
     ? selectedPerson.cad_vehicle_registrations
     : [];
+  const recordsEmbeddedPerson = useMemo(() => buildRecordsPerson(selectedPerson), [selectedPerson]);
 
   return (
     <div>
@@ -290,6 +318,7 @@ export default function Search() {
         open={!!selectedPerson}
         onClose={() => {
           setSelectedPerson(null);
+          setShowRecordsModal(false);
           setLicenseStatusDraft('valid');
         }}
         title={selectedPerson ? resolvePersonName(selectedPerson) : ''}
@@ -301,11 +330,20 @@ export default function Search() {
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
                 Person
               </h4>
+                <div className="mb-2 flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowRecordsModal(true)}
+                    className="px-3 py-1.5 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-xs font-medium transition-colors"
+                  >
+                    Add / Manage Records
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <p>Citizen ID: <span className="text-cad-ink">{selectedPerson.citizenid || '-'}</span></p>
                   <p>Name: <span className="text-cad-ink">{resolvePersonName(selectedPerson)}</span></p>
-                  <p>DOB: <span className="text-cad-ink">{selectedPerson.cad_driver_license?.date_of_birth || selectedPerson.birthdate || '-'}</span></p>
-                  <p>Gender: <span className="text-cad-ink">{selectedPerson.cad_driver_license?.gender || selectedPerson.gender || '-'}</span></p>
+                  <p>DOB: <span className="text-cad-ink">{formatDateAU(selectedPerson.cad_driver_license?.date_of_birth || selectedPerson.birthdate || '', '-')}</span></p>
+                  <p>Gender: <span className="text-cad-ink">{formatGenderLabel(selectedPerson.cad_driver_license?.gender || selectedPerson.gender || '')}</span></p>
                 </div>
               </div>
 
@@ -319,7 +357,7 @@ export default function Search() {
                     <MugshotPreview url={selectedPerson.cad_driver_license.mugshot_url} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm flex-1">
                       <p>Licence No: <span className="text-cad-ink">{selectedPerson.cad_driver_license.license_number || '-'}</span></p>
-                      <p>Expiry: <span className="text-cad-ink">{selectedPerson.cad_driver_license.expiry_at || '-'}</span></p>
+                      <p>Expiry: <span className="text-cad-ink">{formatDateAU(selectedPerson.cad_driver_license.expiry_at || '', '-')}</span></p>
                       <p>Status: <span className="text-cad-ink">{formatStatusLabel(selectedPerson.cad_driver_license.status)}</span></p>
                       <p>Classes: <span className="text-cad-ink">{Array.isArray(selectedPerson.cad_driver_license.license_classes) && selectedPerson.cad_driver_license.license_classes.length > 0 ? selectedPerson.cad_driver_license.license_classes.join(', ') : '-'}</span></p>
                     </div>
@@ -371,7 +409,7 @@ export default function Search() {
                           <span className="text-cad-muted">{reg.vehicle_colour || '-'}</span>
                         </div>
                         <div className="mt-1 text-xs text-cad-muted">
-                          Status: {formatStatusLabel(reg.status)} | Expiry: {reg.expiry_at || '-'}
+                          Status: {formatStatusLabel(reg.status)} | Expiry: {formatDateAU(reg.expiry_at || '', '-')}
                         </div>
                       </button>
                     ))}
@@ -408,7 +446,7 @@ export default function Search() {
                     <p>Owner: <span className="text-cad-ink">{selectedVehicle.cad_registration.owner_name || '-'}</span></p>
                     <p>Model: <span className="text-cad-ink">{selectedVehicle.cad_registration.vehicle_model || '-'}</span></p>
                     <p>Colour: <span className="text-cad-ink">{selectedVehicle.cad_registration.vehicle_colour || '-'}</span></p>
-                    <p>Expiry: <span className="text-cad-ink">{selectedVehicle.cad_registration.expiry_at || '-'}</span></p>
+                    <p>Expiry: <span className="text-cad-ink">{formatDateAU(selectedVehicle.cad_registration.expiry_at || '', '-')}</span></p>
                     <p>Status: <span className="text-cad-ink">{formatStatusLabel(selectedVehicle.cad_registration.status)}</span></p>
                   </div>
                   <div className="flex flex-col md:flex-row gap-2 md:items-center">
@@ -449,6 +487,21 @@ export default function Search() {
               </div>
             )}
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={showRecordsModal && !!recordsEmbeddedPerson}
+        onClose={() => setShowRecordsModal(false)}
+        title={selectedPerson ? `Records - ${resolvePersonName(selectedPerson)}` : 'Records'}
+        wide
+      >
+        {recordsEmbeddedPerson && (
+          <Records
+            embeddedPerson={recordsEmbeddedPerson}
+            embeddedDepartmentId={activeDepartment?.id || null}
+            hideHeader
+          />
         )}
       </Modal>
     </div>

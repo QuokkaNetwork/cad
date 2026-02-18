@@ -16,6 +16,7 @@ const EMPTY_FORM = {
   title: '',
   description: '',
   fine_amount: 0,
+  jail_minutes: 0,
   sort_order: 0,
   is_active: 1,
 };
@@ -62,6 +63,7 @@ function buildJsonTemplate() {
       title: 'Example offence title',
       description: 'Optional offence description',
       fine_amount: 250,
+      jail_minutes: 0,
       sort_order: 0,
       is_active: 1,
     },
@@ -69,7 +71,7 @@ function buildJsonTemplate() {
 }
 
 function buildCsvTemplate() {
-  return 'category,code,title,description,fine_amount,sort_order,is_active\n';
+  return 'category,code,title,description,fine_amount,jail_minutes,sort_order,is_active\n';
 }
 
 function parseCsvRows(text) {
@@ -194,6 +196,7 @@ export default function AdminOffenceCatalog() {
         title: String(form.title || '').trim(),
         description: String(form.description || '').trim(),
         fine_amount: Number(form.fine_amount || 0),
+        jail_minutes: Math.max(0, Math.trunc(Number(form.jail_minutes || 0))),
         sort_order: Number(form.sort_order || 0),
         is_active: form.is_active ? 1 : 0,
       });
@@ -215,6 +218,7 @@ export default function AdminOffenceCatalog() {
       title: offence.title || '',
       description: offence.description || '',
       fine_amount: Number(offence.fine_amount || 0),
+      jail_minutes: Number(offence.jail_minutes || 0),
       sort_order: Number(offence.sort_order || 0),
       is_active: offence.is_active ? 1 : 0,
     });
@@ -232,6 +236,7 @@ export default function AdminOffenceCatalog() {
         title: String(editForm.title || '').trim(),
         description: String(editForm.description || '').trim(),
         fine_amount: Number(editForm.fine_amount || 0),
+        jail_minutes: Math.max(0, Math.trunc(Number(editForm.jail_minutes || 0))),
         sort_order: Number(editForm.sort_order || 0),
         is_active: editForm.is_active ? 1 : 0,
       });
@@ -393,7 +398,7 @@ export default function AdminOffenceCatalog() {
             </button>
           </div>
           <p className="text-xs text-cad-muted mt-2">
-            Import columns: <span className="font-mono">category, code, title, description, fine_amount, sort_order, is_active</span>
+            Import columns: <span className="font-mono">category, code, title, description, fine_amount, jail_minutes, sort_order, is_active</span>
           </p>
         </div>
         <input
@@ -433,6 +438,9 @@ export default function AdminOffenceCatalog() {
                         )}
                         <span className="font-medium">{offence.title}</span>
                         <span className="text-xs text-amber-400">{fmtMoney(offence.fine_amount)}</span>
+                        {Number(offence.jail_minutes || 0) > 0 && (
+                          <span className="text-xs text-rose-300">{Number(offence.jail_minutes || 0)} min jail</span>
+                        )}
                         {!offence.is_active && (
                           <span className="text-xs px-2 py-0.5 rounded bg-gray-500/20 text-gray-300 border border-gray-500/30">
                             Inactive
@@ -539,6 +547,17 @@ function OffenceFormFields({ form, setForm }) {
             className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
           />
         </div>
+      </div>
+      <div>
+        <label className="block text-sm text-cad-muted mb-1">Default Jail Minutes</label>
+        <input
+          type="number"
+          min="0"
+          step="1"
+          value={form.jail_minutes}
+          onChange={e => setForm(prev => ({ ...prev, jail_minutes: Math.max(0, Math.trunc(Number(e.target.value) || 0)) }))}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+        />
       </div>
       <div>
         <label className="block text-sm text-cad-muted mb-1">Title *</label>

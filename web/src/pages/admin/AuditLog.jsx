@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
+import { formatDateTimeAU } from '../../utils/dateTime';
 
 export default function AdminAuditLog() {
   const { key: locationKey } = useLocation();
@@ -41,7 +42,7 @@ export default function AdminAuditLog() {
             {entries.map(entry => (
               <tr key={entry.id} className="border-b border-cad-border/50">
                 <td className="px-3 py-2 text-xs text-cad-muted whitespace-nowrap">
-                  {new Date(entry.created_at + 'Z').toLocaleString()}
+                  {formatDateTimeAU(entry.created_at ? `${entry.created_at}Z` : '', '-')}
                 </td>
                 <td className="px-3 py-2">{entry.user_name || '-'}</td>
                 <td className="px-3 py-2 font-mono text-xs">{entry.action}</td>

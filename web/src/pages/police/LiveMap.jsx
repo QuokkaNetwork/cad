@@ -5,6 +5,7 @@ import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-le
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useDepartment } from '../../context/DepartmentContext';
+import { formatTimeAU } from '../../utils/dateTime';
 
 const MAP_POLL_INTERVAL_MS = 1500;
 const MAP_ACTIVE_MAX_AGE_MS = 30_000;
@@ -544,7 +545,7 @@ export default function LiveMap() {
               </span>
             ) : null}
             <span>
-              {loading ? 'Loading...' : `Updated ${lastRefreshAt ? new Date(lastRefreshAt).toLocaleTimeString() : 'never'}`}
+              {loading ? 'Loading...' : `Updated ${lastRefreshAt ? formatTimeAU(lastRefreshAt, '-') : 'never'}`}
             </span>
           </div>
         </div>

@@ -787,25 +787,26 @@ const OffenceCatalog = {
     const placeholders = numericIds.map(() => '?').join(', ');
     return db.prepare(`SELECT * FROM offence_catalog WHERE id IN (${placeholders})`).all(...numericIds);
   },
-  create({ category, code, title, description, fine_amount, sort_order, is_active }) {
+  create({ category, code, title, description, fine_amount, jail_minutes, sort_order, is_active }) {
     const normalizedCode = String(code || '').trim().toUpperCase();
     const info = db.prepare(`
       INSERT INTO offence_catalog (
-        category, code, title, description, fine_amount, sort_order, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        category, code, title, description, fine_amount, jail_minutes, sort_order, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(
       normalizeOffenceCategory(category),
       normalizedCode,
       String(title || '').trim(),
       String(description || '').trim(),
       Math.max(0, Number(fine_amount || 0)),
+      Number.isFinite(Number(jail_minutes)) ? Math.max(0, Math.trunc(Number(jail_minutes))) : 0,
       Number.isFinite(Number(sort_order)) ? Math.trunc(Number(sort_order)) : 0,
       is_active === undefined ? 1 : (is_active ? 1 : 0)
     );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['category', 'code', 'title', 'description', 'fine_amount', 'sort_order', 'is_active'];
+    const allowed = ['category', 'code', 'title', 'description', 'fine_amount', 'jail_minutes', 'sort_order', 'is_active'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -821,6 +822,8 @@ const OffenceCatalog = {
           values.push(String(fields[key] || '').trim());
         } else if (key === 'fine_amount') {
           values.push(Math.max(0, Number(fields[key] || 0)));
+        } else if (key === 'jail_minutes') {
+          values.push(Number.isFinite(Number(fields[key])) ? Math.max(0, Math.trunc(Number(fields[key]))) : 0);
         } else if (key === 'sort_order') {
           values.push(Number.isFinite(Number(fields[key])) ? Math.trunc(Number(fields[key])) : 0);
         } else if (key === 'is_active') {

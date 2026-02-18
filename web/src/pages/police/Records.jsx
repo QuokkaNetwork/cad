@@ -13,9 +13,11 @@ import {
 } from '../../utils/incidentRecordFormat';
 import {
   calculateSelectionTotal,
+  calculateSelectionJailTotal,
   normalizeOffenceSelections,
   parseRecordOffenceItems,
 } from '../../utils/offenceCatalog';
+import { formatDateAU, formatDateTimeAU } from '../../utils/dateTime';
 
 const EMPTY_NEW_FORM = {
   person_name: '',
@@ -360,7 +362,7 @@ function compareOffenceCodes(aCode, bCode) {
   return 0;
 }
 
-function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine }) {
+function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine, totalJailMinutes }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -398,6 +400,7 @@ function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine
           <p className="text-sm font-medium">Preset Offences</p>
           <div className="flex items-center gap-3">
             <p className="text-sm text-amber-300">Total Fine: ${Number(totalFine || 0).toLocaleString()}</p>
+            <p className="text-sm text-rose-300">Total Jail: {Number(totalJailMinutes || 0).toLocaleString()} min</p>
             <button
               type="button"
               onClick={() => setPickerOpen(prev => !prev)}
@@ -463,6 +466,9 @@ function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine
                           </label>
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-amber-300">${Number(offence.fine_amount || 0).toLocaleString()}</span>
+                            {Number(offence.jail_minutes || 0) > 0 && (
+                              <span className="text-xs text-rose-300">{Number(offence.jail_minutes || 0)}m</span>
+                            )}
                             {checked && (
                               <input
                                 type="number"
@@ -567,6 +573,14 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
   );
   const editFineTotal = useMemo(
     () => calculateSelectionTotal(offenceCatalog, editOffenceSelection),
+    [offenceCatalog, editOffenceSelection]
+  );
+  const newJailTotal = useMemo(
+    () => calculateSelectionJailTotal(offenceCatalog, newOffenceSelection),
+    [offenceCatalog, newOffenceSelection]
+  );
+  const editJailTotal = useMemo(
+    () => calculateSelectionJailTotal(offenceCatalog, editOffenceSelection),
     [offenceCatalog, editOffenceSelection]
   );
 
@@ -695,7 +709,10 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         payload = {
           title: newForm.title,
           description: newForm.description,
-          jail_minutes: Math.max(0, Math.trunc(Number(newForm.jail_minutes) || 0)),
+          jail_minutes: Math.max(
+            Math.max(0, Math.trunc(Number(newForm.jail_minutes) || 0)),
+            Math.max(0, Math.trunc(Number(newJailTotal) || 0))
+          ),
           offence_items: newOffenceItems,
         };
       } else if (isParamedics) {
@@ -787,7 +804,10 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         const lawPayload = {
           title: editForm.title,
           description: editForm.description,
-          jail_minutes: Math.max(0, Math.trunc(Number(editForm.jail_minutes) || 0)),
+          jail_minutes: Math.max(
+            Math.max(0, Math.trunc(Number(editForm.jail_minutes) || 0)),
+            Math.max(0, Math.trunc(Number(editJailTotal) || 0))
+          ),
         };
         if (editOffenceItems.length > 0) {
           lawPayload.offence_items = editOffenceItems;
@@ -896,7 +916,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                   className="w-full text-left px-3 py-2 bg-cad-surface hover:bg-cad-card transition-colors border-b border-cad-border/60 last:border-b-0"
                 >
                   <span className="font-medium">{p.firstname} {p.lastname}</span>
-                  <span className="text-xs text-cad-muted ml-2">{p.birthdate || 'Unknown DOB'}</span>
+                  <span className="text-xs text-cad-muted ml-2">{formatDateAU(p.birthdate, 'Unknown DOB')}</span>
                 </button>
               ))}
             </div>
@@ -952,6 +972,10 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
             const offenceItems = parseRecordOffenceItems(r);
             const offenceTotal = offenceItems.reduce(
               (sum, item) => sum + (Number(item.line_total || (item.fine_amount * item.quantity)) || 0),
+              0
+            );
+            const offenceJailTotal = offenceItems.reduce(
+              (sum, item) => sum + (Number(item.line_jail_minutes || (item.jail_minutes * item.quantity)) || 0),
               0
             );
             return (
@@ -1029,10 +1053,16 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                         {Number(item.fine_amount || 0) > 0 && (
                           <span className="text-amber-300"> (${Number(item.fine_amount).toLocaleString()} each)</span>
                         )}
+                        {Number(item.jail_minutes || 0) > 0 && (
+                          <span className="text-rose-300"> ({Number(item.jail_minutes || 0)} min each)</span>
+                        )}
                       </p>
                     ))}
                   </div>
                   <p className="text-amber-400">Total Fine: ${Number(offenceTotal || 0).toLocaleString()}</p>
+                  {Number(offenceJailTotal || 0) > 0 && (
+                    <p className="text-rose-300">Offence Jail Total: {Number(offenceJailTotal || 0).toLocaleString()} minute(s)</p>
+                  )}
                   {Number(r.jail_minutes || 0) > 0 && (
                     <p className="text-rose-300">Jail: {Number(r.jail_minutes || 0).toLocaleString()} minute(s)</p>
                   )}
@@ -1055,7 +1085,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 <span>
                   {r.officer_callsign && `${r.officer_callsign} - `}{r.officer_name}
                 </span>
-                <span>{new Date(r.created_at + 'Z').toLocaleString()}</span>
+                <span>{formatDateTimeAU(r.created_at ? `${r.created_at}Z` : '', '-')}</span>
               </div>
             </div>
             );
@@ -1111,6 +1141,11 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                   onChange={e => setNewForm(f => ({ ...f, jail_minutes: Math.max(0, Number(e.target.value) || 0) }))}
                   className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
                 />
+                {newJailTotal > 0 && (
+                  <p className="mt-1 text-xs text-rose-300">
+                    Selected offences include {Number(newJailTotal || 0).toLocaleString()} minute(s) minimum.
+                  </p>
+                )}
               </div>
               <LawOffenceFields
                 catalog={offenceCatalog}
@@ -1118,6 +1153,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 setSelection={setNewOffenceSelection}
                 loading={loadingOffenceCatalog}
                 totalFine={newFineTotal}
+                totalJailMinutes={newJailTotal}
               />
             </>
           ) : isParamedics ? (
@@ -1179,6 +1215,11 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                   onChange={e => setEditForm(f => ({ ...f, jail_minutes: Math.max(0, Number(e.target.value) || 0) }))}
                   className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
                 />
+                {editJailTotal > 0 && (
+                  <p className="mt-1 text-xs text-rose-300">
+                    Selected offences include {Number(editJailTotal || 0).toLocaleString()} minute(s) minimum.
+                  </p>
+                )}
               </div>
               <LawOffenceFields
                 catalog={offenceCatalog}
@@ -1186,6 +1227,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 setSelection={setEditOffenceSelection}
                 loading={loadingOffenceCatalog}
                 totalFine={editFineTotal}
+                totalJailMinutes={editJailTotal}
               />
             </>
           ) : isParamedics ? (

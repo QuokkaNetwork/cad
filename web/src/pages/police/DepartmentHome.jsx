@@ -6,6 +6,7 @@ import GoOnDutyModal from '../../components/GoOnDutyModal';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
+import { formatDateAU, formatTimeAU } from '../../utils/dateTime';
 
 const DEFAULT_STATS = Object.freeze({
   active_calls: 0,
@@ -286,17 +287,8 @@ export default function DepartmentHome() {
     }
   }
 
-  const clockDateLabel = useMemo(() => now.toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  }), [now]);
-  const clockTimeLabel = useMemo(() => now.toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }), [now]);
+  const clockDateLabel = useMemo(() => formatDateAU(now, '-'), [now]);
+  const clockTimeLabel = useMemo(() => formatTimeAU(now, '-', true), [now]);
 
   const statCards = [
     { label: 'Active Calls', value: stats.active_calls, tone: 'text-cad-accent-light' },
