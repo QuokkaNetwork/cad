@@ -424,7 +424,10 @@ router.get('/live-map/players', requireAuth, (req, res) => {
     const livePlayer = resolveLiveMapPlayerForUnit(unit, user, indexes);
     const link = chooseActiveLinkForUser(user);
     const linkTs = parseSqliteUtc(link?.updated_at);
-    const hasFreshLink = !!link && !Number.isNaN(linkTs) && (now - linkTs) <= maxAgeMs;
+    // Use ACTIVE_LINK_MAX_AGE_MS (5 min) for the FiveMPlayerLinks fallback — not the
+    // tighter liveMapStore maxAgeMs — so on-duty units whose live-map entry has just
+    // expired still appear on the map while their bridge connection recovers.
+    const hasFreshLink = !!link && !Number.isNaN(linkTs) && (now - linkTs) <= ACTIVE_LINK_MAX_AGE_MS;
 
     const positionX = livePlayer
       ? Number(livePlayer?.pos?.x)

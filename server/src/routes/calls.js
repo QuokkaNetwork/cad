@@ -122,10 +122,13 @@ router.post('/', requireAuth, (req, res) => {
   }
   const requestedDepartmentIds = resolveRequestedDepartmentIdsForCreate(req.user, deptId, requested_department_ids);
 
+  const normalizedPriority = ['1', '2', '3', '4'].includes(String(priority || '').trim())
+    ? String(priority).trim()
+    : '3';
   const call = Calls.create({
     department_id: deptId,
     title,
-    priority: priority || '3',
+    priority: normalizedPriority,
     location: location || '',
     description: description || '',
     job_code: job_code || '',

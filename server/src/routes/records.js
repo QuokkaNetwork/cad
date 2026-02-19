@@ -231,26 +231,34 @@ router.post('/', requireAuth, (req, res) => {
 
   const fivemFineEnabled = String(Settings.get('fivem_bridge_qbox_fines_enabled') || 'true').toLowerCase() === 'true';
   if (record.type === 'fine' && Number(record.fine_amount || 0) > 0 && fivemFineEnabled) {
-    FiveMFineJobs.create({
-      citizen_id,
-      amount: Number(record.fine_amount || 0),
-      reason: record.title,
-      issued_by_user_id: req.user.id,
-      source_record_id: record.id,
-    });
-    processPendingFineJobs().catch((err) => {
-      console.error('[FineProcessor] Immediate record fine run failed:', err?.message || err);
-    });
+    try {
+      FiveMFineJobs.create({
+        citizen_id,
+        amount: Number(record.fine_amount || 0),
+        reason: record.title,
+        issued_by_user_id: req.user.id,
+        source_record_id: record.id,
+      });
+      processPendingFineJobs().catch((err) => {
+        console.error('[FineProcessor] Immediate record fine run failed:', err?.message || err);
+      });
+    } catch (err) {
+      console.error('[Records] Failed to queue fine job for record', record.id, ':', err?.message || err);
+    }
   }
 
   if (record.type !== 'warning' && Number(record.jail_minutes || 0) > 0) {
-    FiveMJailJobs.create({
-      citizen_id,
-      jail_minutes: Number(record.jail_minutes || 0),
-      reason: record.title,
-      issued_by_user_id: req.user.id,
-      source_record_id: record.id,
-    });
+    try {
+      FiveMJailJobs.create({
+        citizen_id,
+        jail_minutes: Number(record.jail_minutes || 0),
+        reason: record.title,
+        issued_by_user_id: req.user.id,
+        source_record_id: record.id,
+      });
+    } catch (err) {
+      console.error('[Records] Failed to queue jail job for record', record.id, ':', err?.message || err);
+    }
   }
 
   audit(req.user.id, 'record_created', {
