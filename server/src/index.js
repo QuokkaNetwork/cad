@@ -17,7 +17,6 @@ const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
 const { ensureLiveMapTilesDir } = require('./services/liveMapTiles');
-const { startMumbleServer, getMurmurStatus } = require('./services/mumbleServer');
 
 function parseBool(value, fallback = false) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -80,7 +79,7 @@ try {
 } catch {}
 app.use(cors({
   origin: (origin, cb) => {
-    // No origin = same-origin / server-to-server — always allow
+    // No origin = same-origin / server-to-server - always allow
     if (!origin || allowedOrigins.has(origin)) return cb(null, true);
     cb(null, false);
   },
@@ -241,7 +240,7 @@ function ensureSelfSignedCert(keyPath, certPath) {
     console.warn('[TLS] Could not auto-generate cert (openssl not found). Install openssl or generate manually.');
     return false;
   }
-  console.log(`[TLS] Self-signed cert generated for IP ${ip} — cert: ${certPath}`);
+  console.log(`[TLS] Self-signed cert generated for IP ${ip} - cert: ${certPath}`);
   return true;
 }
 
@@ -261,7 +260,7 @@ function createServer(expressApp) {
 
   // Auto-generate cert if files don't exist yet (e.g. fresh clone / first run)
   if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-    console.log('[TLS] Cert files not found — auto-generating self-signed certificate...');
+    console.log('[TLS] Cert files not found - auto-generating self-signed certificate...');
     ensureSelfSignedCert(keyPath, certPath);
   }
   try {
@@ -269,10 +268,10 @@ function createServer(expressApp) {
       cert: fs.readFileSync(certPath),
       key:  fs.readFileSync(keyPath),
     };
-    console.log(`[TLS] HTTPS enabled — cert: ${certPath}`);
+    console.log(`[TLS] HTTPS enabled - cert: ${certPath}`);
     return { server: https.createServer(tlsOptions, expressApp), protocol: 'https' };
   } catch (err) {
-    console.warn(`[TLS] Failed to load TLS cert/key (${err.message}) — falling back to HTTP`);
+    console.warn(`[TLS] Failed to load TLS cert/key (${err.message}) - falling back to HTTP`);
   }
   return { server: http.createServer(expressApp), protocol: 'http' };
 }
@@ -283,10 +282,11 @@ if (serverProtocol === 'http') {
 
 // Secondary plain-HTTP server on BRIDGE_HTTP_PORT (default 3031).
 // Serves two purposes:
-//   1. FiveM bridge — PerformHttpRequest cannot verify self-signed TLS certs,
+//   1. FiveM bridge - PerformHttpRequest cannot verify self-signed TLS certs,
 //      so the bridge resource must reach the CAD over plain HTTP.
-//      In voice.cfg: set cad_bridge_base_url "http://127.0.0.1:3031"
-//   2. Steam OpenID callback — Steam redirects the browser back to returnURL.
+//      In resources/[...]/cad_bridge/config.cfg set:
+//      cad_bridge_base_url "http://127.0.0.1:3031"
+//   2. Steam OpenID callback - Steam redirects the browser back to returnURL.
 //      If returnURL is HTTPS with a self-signed cert, the browser blocks it.
 //      Set STEAM_REALM=http://103.203.241.35:3031 in .env so the callback
 //      arrives over plain HTTP (no cert warning, no ERR_EMPTY_RESPONSE).
@@ -300,20 +300,14 @@ bridgeHttpServer.on('error', (err) => {
   console.warn(`[BridgeHTTP] Could not start HTTP listener on port ${bridgeHttpPort}: ${err.message}`);
 });
 
-// Async startup — start Murmur first so the voice bridge can connect to it
+// Async startup
 (async () => {
-  const radioBehavior = String(config?.radio?.behavior || 'legacy');
+  const radioBehavior = String(config?.radio?.behavior || 'sonoran');
   const sonoranBehavior = radioBehavior === 'sonoran';
-
-  // Start managed Murmur server if MUMBLE_MANAGE=true in .env
-  if (!sonoranBehavior) {
-    await startMumbleServer();
-  } else {
-    console.warn('[Radio] Sonoran behavior mode active: skipping managed Mumble startup');
-  }
+  const voiceBridgeEnabled = !sonoranBehavior && parseBool(process.env.VOICE_BRIDGE_ENABLED, false);
 
   // Initialize Voice Bridge (optional - only if dependencies are installed)
-  if (!sonoranBehavior && parseBool(process.env.VOICE_BRIDGE_ENABLED, true)) {
+  if (voiceBridgeEnabled) {
     try {
       const { getVoiceBridge } = require('./services/voiceBridge');
       const VoiceSignalingServer = require('./services/voiceSignaling');
@@ -358,40 +352,19 @@ bridgeHttpServer.on('error', (err) => {
       console.log('[VoiceBridge] WebSocket signaling disabled in sonoran behavior mode');
     }
 
-    // Print voice/Mumble status summary
-    const murmur = getMurmurStatus();
-    const voiceServerLabel = murmur.isRustMumble ? 'rust-mumble' : 'Murmur    ';
+    // Print voice status summary
     console.log('');
     console.log('=== Voice Status ===');
     if (sonoranBehavior) {
-      console.log('[RadioMode]  Sonoran behavior active (external radio stack expected)');
-      console.log('[VoiceBridge] Legacy CAD<->Mumble bridge is intentionally disabled');
-    } else if (murmur.managed) {
-      if (murmur.running) {
-        console.log(`[${voiceServerLabel}] ✓ Running  — ${murmur.host}:${murmur.port}`);
-        console.log(`[${voiceServerLabel}] Binary: ${murmur.binary}`);
-      } else if (murmur.binary) {
-        console.log(`[${voiceServerLabel}] ✗ Not running (binary found but process not started yet)`);
-      } else {
-        console.log(`[VoiceServer] ✗ Binary not found — place rust-mumble.exe in server/murmur/`);
-        console.log(`[VoiceServer]   Download: https://github.com/AvarianKnight/rust-mumble/releases`);
-      }
+      console.log('[VoiceMode]  Native FiveM/pma-voice mode active');
+      console.log('[VoiceCfg]   Auto-deploy disabled');
+      console.log('[VoiceBridge] Disabled by RADIO_BEHAVIOR=sonoran');
+    } else if (voiceBridgeEnabled) {
+      console.log('[VoiceMode]  Legacy CAD voice bridge mode active');
+      console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
     } else {
-      console.log('[VoiceServer] — Not managed (MUMBLE_MANAGE not set)');
-    }
-    const fivemPath = String(process.env.FIVEM_SERVER_PATH || '').trim();
-    const publicIp  = String(process.env.MUMBLE_PUBLIC_IP  || '').trim();
-    if (sonoranBehavior) {
-      console.log('[VoiceCfg]    Skipped (RADIO_BEHAVIOR=sonoran)');
-    } else if (fivemPath) {
-      console.log(`[VoiceCfg]    voice.cfg auto-deploy -> ${fivemPath}`);
-      if (!publicIp) console.log('[VoiceCfg]    WARNING: Set MUMBLE_PUBLIC_IP in .env so players can connect');
-    } else {
-      console.log('[VoiceCfg]    Set FIVEM_SERVER_PATH in .env for automatic voice.cfg deploy');
-    }
-    if (!sonoranBehavior) {
-      console.log('[FiveMVoice]  Players connect via voice_externalAddress in voice.cfg');
-      console.log(`[FiveMVoice]  External Mumble: ${publicIp || process.env.MUMBLE_HOST || '127.0.0.1'}:${process.env.MUMBLE_PORT || '64738'}`);
+      console.log('[VoiceMode]  Legacy mode selected but VOICE_BRIDGE_ENABLED=false');
+      console.log('[VoiceBridge] Disabled by VOICE_BRIDGE_ENABLED=false');
     }
     console.log('====================');
     console.log('');

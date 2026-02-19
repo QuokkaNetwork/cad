@@ -32,7 +32,7 @@ The CAD auto-sync now patches `cad_bridge_base_url` and `cad_bridge_token` direc
 - `cad-radio` runs radio membership/routing inside `cad_bridge`.
 - `mm_radio` is not used by this setup.
 - Set `RADIO_BEHAVIOR=sonoran` in CAD `.env` to disable legacy CAD websocket/mumble bridge handling.
-- In `voice.cfg`, keep `setr voice_enableRadios 0` so only `cad_bridge` handles radio keys/routing.
+- In your FiveM `server.cfg`, keep `setr voice_enableRadios 0` so only `cad_bridge` handles radio keys/routing.
 - Open radio UI with `cad_bridge_radio_ui_key` (default `EQUALS`).
 - Transmit on radio with `cad_bridge_radio_ptt_key` (default `LMENU`).
 - `cad_bridge_radio_follow_native_ptt=true` mirrors normal talk-key press into CAD radio TX while joined.

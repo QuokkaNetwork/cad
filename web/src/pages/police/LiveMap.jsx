@@ -107,12 +107,15 @@ function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration, gameBounds
 
   const width = tileConfig.tileSize * tileConfig.tileColumns;
   const height = tileConfig.tileSize * tileConfig.tileRows;
+  const gameWidth = Number(gameBounds.x2) - Number(gameBounds.x1);
+  const gameHeight = Number(gameBounds.y1) - Number(gameBounds.y2);
+  if (!Number.isFinite(gameWidth) || !Number.isFinite(gameHeight)) return null;
+  if (Math.abs(gameWidth) < 0.0001 || Math.abs(gameHeight) < 0.0001) return null;
 
-  const latLng1 = map.unproject([0, 0], 0);
-  const latLng2 = map.unproject([width / 2, height - tileConfig.tileSize], 0);
-
-  let lng = latLng1.lng + ((x - gameBounds.x1) * (latLng1.lng - latLng2.lng)) / (gameBounds.x1 - gameBounds.x2);
-  let lat = latLng1.lat + ((y - gameBounds.y1) * (latLng1.lat - latLng2.lat)) / (gameBounds.y1 - gameBounds.y2);
+  // Map full GTA coordinate extents to full tile pixel extents.
+  // This avoids location-dependent drift caused by partial anchor mapping.
+  let projectedX = ((x - Number(gameBounds.x1)) / gameWidth) * width;
+  let projectedY = ((Number(gameBounds.y1) - y) / gameHeight) * height;
 
   const hasCalibration = calibration.scaleX !== 1
     || calibration.scaleY !== 1
@@ -120,15 +123,12 @@ function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration, gameBounds
     || calibration.offsetY !== 0;
 
   if (hasCalibration) {
-    const projected = map.project([lat, lng], 0);
-    const adjustedX = (projected.x * calibration.scaleX) + calibration.offsetX;
-    const adjustedY = (projected.y * calibration.scaleY) + calibration.offsetY;
-    const adjustedLatLng = map.unproject([adjustedX, adjustedY], 0);
-    lat = adjustedLatLng.lat;
-    lng = adjustedLatLng.lng;
+    projectedX = (projectedX * calibration.scaleX) + calibration.offsetX;
+    projectedY = (projectedY * calibration.scaleY) + calibration.offsetY;
   }
 
-  return { lat, lng };
+  const adjustedLatLng = map.unproject([projectedX, projectedY], 0);
+  return { lat: adjustedLatLng.lat, lng: adjustedLatLng.lng };
 }
 
 function markerColor(player) {
@@ -165,7 +165,7 @@ function MapBoundsController({ tileConfig, resetSignal, onMapReady }) {
   return null;
 }
 
-export default function LiveMap() {
+export default function LiveMap({ isPopout = false }) {
   const { key: locationKey } = useLocation();
   const { isAdmin } = useAuth();
   const { activeDepartment } = useDepartment();
@@ -434,6 +434,24 @@ export default function LiveMap() {
   const staleFeedAgeSeconds = staleSinceAt
     ? Math.max(0, Math.floor((Date.now() - Math.max(1, latestFeedUpdateMsRef.current)) / 1000))
     : 0;
+  const mapViewportClass = isPopout
+    ? 'relative h-[calc(100vh-180px)] min-h-[420px] bg-[#0b1525]'
+    : 'relative h-[72vh] min-h-[500px] bg-[#0b1525]';
+
+  const openMapPopout = useCallback(() => {
+    const next = window.open(
+      '/map/popout',
+      'cad_live_map_popout',
+      'popup=yes,width=1400,height=900,resizable=yes,scrollbars=yes'
+    );
+    if (next && typeof next.focus === 'function') {
+      next.focus();
+    }
+  }, []);
+
+  const openMainMap = useCallback(() => {
+    window.location.assign('/map');
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -442,6 +460,22 @@ export default function LiveMap() {
           <h2 className="text-xl font-bold">Live Unit Map</h2>
         </div>
         <div className="flex items-center gap-2">
+          {!isPopout && (
+            <button
+              onClick={openMapPopout}
+              className="px-3 py-1.5 text-xs bg-cad-accent text-white border border-cad-accent/40 rounded hover:bg-cad-accent-light transition-colors"
+            >
+              Popout Map
+            </button>
+          )}
+          {isPopout && (
+            <button
+              onClick={openMainMap}
+              className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Open In CAD
+            </button>
+          )}
           <button
             onClick={() => setResetSignal((prev) => prev + 1)}
             className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
@@ -550,7 +584,7 @@ export default function LiveMap() {
           </div>
         </div>
 
-        <div className="relative h-[72vh] min-h-[500px] bg-[#0b1525]">
+        <div className={mapViewportClass}>
           <MapContainer
             key={mapKey}
             crs={CRS.Simple}

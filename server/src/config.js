@@ -35,8 +35,8 @@ function parseTrustProxyEnv(value, fallback = false) {
 
 function parseRadioBehavior(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'sonoran') return 'sonoran';
-  return 'legacy';
+  if (normalized === 'legacy') return 'legacy';
+  return 'sonoran';
 }
 
 const nodeEnv = process.env.NODE_ENV || 'development';
@@ -119,6 +119,6 @@ module.exports = {
     database: process.env.QBOX_DB_NAME || 'qbox',
   },
   radio: {
-    behavior: parseRadioBehavior(process.env.RADIO_BEHAVIOR || process.env.CAD_RADIO_BEHAVIOR || 'legacy'),
+    behavior: parseRadioBehavior(process.env.RADIO_BEHAVIOR || process.env.CAD_RADIO_BEHAVIOR || 'sonoran'),
   },
 };

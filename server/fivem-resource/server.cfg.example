@@ -1,37 +1,14 @@
 # =============================================================================
-# CAD Bridge Voice Configuration
+# CAD Bridge Voice Configuration (Native FiveM/pma-voice)
 # =============================================================================
 # Add these lines to your FiveM server.cfg.
 #
-# SETUP OVERVIEW (everything on one Windows VPS):
-#
-#   rust-mumble.exe  <-- managed by CAD (starts automatically, no manual setup)
-#       |
-#       +-- 127.0.0.1:64738  <-- CAD voice bridge (mumble-node) connects here
-#       |
-#       +-- 0.0.0.0:64738    <-- FiveM in-game players connect here
-#                                via voice_externalAddress in server.cfg
-#
-# The CAD auto-starts rust-mumble.exe from server/murmur/rust-mumble.exe when
-# MUMBLE_MANAGE=true is set in .env. Port 64738 TCP+UDP must be open
-# in Windows Firewall and your VPS provider's security group.
-#
-# TIP: Set FIVEM_SERVER_PATH in .env to have the CAD automatically write
-# voice.cfg to your FiveM server folder and keep it up to date on restart.
+# CAD no longer writes voice.cfg and no longer requires CAD-managed Mumble.
+# Configure native FiveM voice directly in your server.cfg.
 # =============================================================================
-# STEP 1: Open port 64738 in Windows Firewall (run in PowerShell as Admin):
-#
-#   netsh advfirewall firewall add rule name="Mumble Voice" protocol=TCP dir=in localport=64738 action=allow
-#   netsh advfirewall firewall add rule name="Mumble Voice UDP" protocol=UDP dir=in localport=64738 action=allow
-#
-# Also open port 64738 in your VPS provider's security group / network firewall.
+# STEP 1: Configure FiveM voice settings
 # =============================================================================
-
-# =============================================================================
-# STEP 2: Configure FiveM voice to use the managed Mumble server
-# =============================================================================
-# Replace 103.203.241.35 with your VPS public IP.
-# voice_externalPort must match MUMBLE_PORT in your CAD .env (default 64738).
+# Replace 103.203.241.35 with your VPS public IP (or your voice endpoint).
 
 setr voice_externalAddress "103.203.241.35"
 setr voice_externalPort 64738
@@ -46,7 +23,7 @@ setr voice_defaultRadioVolume 100
 setr voice_enableRadios 0
 
 # =============================================================================
-# STEP 3: Configure the CAD bridge resource
+# STEP 2: Configure the CAD bridge resource
 # =============================================================================
 # CAD bridge now uses resource-local config:
 #   [resources]/cad_bridge/config.cfg
@@ -56,7 +33,7 @@ setr voice_enableRadios 0
 # You no longer need to put cad_bridge_* entries in server.cfg.
 
 # =============================================================================
-# STEP 4: Ensure the resource starts
+# STEP 3: Ensure the resource starts
 # =============================================================================
 
 ensure screenshot-basic

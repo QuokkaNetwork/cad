@@ -231,46 +231,16 @@ if "!UPDATED!"=="1" (
   )
 )
 
-REM --- Always re-apply mumble-node patches on startup ---
-REM npm postinstall only runs during install/update. On normal restarts we still
-REM want to guarantee the patched mumble-node client is in place.
-if exist "scripts\patch-mumble-node.js" (
-  echo [CAD] Re-applying mumble-node startup patch...
-  node "scripts\patch-mumble-node.js"
-  if errorlevel 1 (
-    echo [CAD] WARNING: Root mumble-node patch failed. Voice bridge stability may be impacted.
-  )
-)
-if exist "server\scripts\fix-mumble-node.js" (
-  echo [CAD] Re-applying server mumble-node proto patch...
-  node "server\scripts\fix-mumble-node.js"
-  if errorlevel 1 (
-    echo [CAD] WARNING: Server mumble-node proto patch failed. Voice bridge may not load correctly.
-  )
-)
-
-REM --- Mumble firewall setup (runs once, tracked by sentinel file) ---
-REM murmur.exe ships with the repo — no download needed.
-REM The PS1 just opens the firewall port the first time.
-if not exist "%APP_DIR%\server\data\mumble-setup-done.txt" (
-  echo [CAD] Running one-time Mumble firewall setup...
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%APP_DIR%\server\scripts\setup-mumble.ps1"
-  if errorlevel 1 (
-    echo [CAD] WARNING: Mumble setup encountered an error. Voice features may not work.
-    echo [CAD] Continuing startup in 5 seconds...
-    timeout /t 5 /nobreak >nul
-  ) else (
-    echo mumble-setup-done > "%APP_DIR%\server\data\mumble-setup-done.txt"
-  )
-) else (
-  echo [CAD] Mumble already configured - skipping setup.
-)
+echo [CAD] Native FiveM voice mode enabled (no CAD-managed Mumble/voice.cfg).
 
 echo [CAD] Launching server...
 set NODE_ENV=production
 set AUTO_UPDATE_ENABLED=true
 set AUTO_UPDATE_SELF_RESTART=false
 set AUTO_UPDATE_EXIT_ON_UPDATE=true
+set RADIO_BEHAVIOR=sonoran
+set VOICE_BRIDGE_ENABLED=false
+set MUMBLE_MANAGE=false
 echo [CAD] Running: %NPM_BIN% run start
 echo.
 call %NPM_BIN% run start

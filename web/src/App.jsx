@@ -36,6 +36,16 @@ export default function App() {
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route
+            path="/map/popout"
+            element={
+              <ProtectedRoute>
+                <RequireDepartment>
+                  <LiveMap isPopout />
+                </RequireDepartment>
+              </ProtectedRoute>
+            }
+          />
 
           <Route
             element={
