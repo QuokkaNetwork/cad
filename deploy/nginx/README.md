@@ -59,6 +59,9 @@ STEAM_REALM=https://cad.quokkanetworks.net
 STEAM_RETURN_URL=https://cad.quokkanetworks.net/api/auth/steam/callback
 AUTH_COOKIE_SECURE=true
 TRUST_PROXY=1
+FIVEM_BRIDGE_LICENSE_LOG_TO_FILE=true
+# Optional override to store logs at a specific node path:
+# FIVEM_BRIDGE_LICENSE_LOG_FILE=/var/log/cad/fivem-license.log
 ```
 
 ## Notes
@@ -68,6 +71,7 @@ TRUST_PROXY=1
 - The nginx config disables proxy buffering for `/api/events` (SSE live events).
 - Cloud/VPS network firewalls/security groups must also allow inbound `80` and `443`.
 - Canonical host redirect is enforced so IP-host requests are redirected to `https://cad.quokkanetworks.net`.
+- License bridge events are persisted by default at `server/data/logs/fivem-license.log` (or `FIVEM_BRIDGE_LICENSE_LOG_FILE` if set).
 
 ## If Browser Still Shows "Not Secure" (Windows VPS)
 

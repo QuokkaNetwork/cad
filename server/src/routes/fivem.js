@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const {
   Settings,
@@ -36,11 +38,19 @@ const BRIDGE_MUGSHOT_MAX_CHARS = Math.max(
 const BRIDGE_DOCUMENT_DEBUG_LOGS = String(process.env.FIVEM_BRIDGE_DOCUMENT_DEBUG_LOGS || 'true')
   .trim()
   .toLowerCase() !== 'false';
+const BRIDGE_LICENSE_LOG_TO_FILE = String(process.env.FIVEM_BRIDGE_LICENSE_LOG_TO_FILE || 'true')
+  .trim()
+  .toLowerCase() !== 'false';
+const BRIDGE_LICENSE_LOG_FILE = String(
+  process.env.FIVEM_BRIDGE_LICENSE_LOG_FILE || path.resolve(__dirname, '../../data/logs/fivem-license.log')
+).trim();
 const VOICE_HEARTBEAT_LOG_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.FIVEM_VOICE_LOG_INTERVAL_MS || '15000', 10) || 15_000
 );
 let lastVoiceHeartbeatLogAt = 0;
+let bridgeLicenseLogStream = null;
+let bridgeLicenseLogInitFailed = false;
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
@@ -510,7 +520,66 @@ function summarizeBridgeRegistrationPayload(payload = {}) {
   };
 }
 
+function getBridgeLicenseLogStream() {
+  if (!BRIDGE_LICENSE_LOG_TO_FILE || !BRIDGE_LICENSE_LOG_FILE) return null;
+  if (bridgeLicenseLogStream) return bridgeLicenseLogStream;
+  if (bridgeLicenseLogInitFailed) return null;
+
+  try {
+    fs.mkdirSync(path.dirname(BRIDGE_LICENSE_LOG_FILE), { recursive: true });
+    bridgeLicenseLogStream = fs.createWriteStream(BRIDGE_LICENSE_LOG_FILE, { flags: 'a', encoding: 'utf8' });
+    bridgeLicenseLogStream.on('error', (error) => {
+      bridgeLicenseLogInitFailed = true;
+      bridgeLicenseLogStream = null;
+      console.error('[FiveMBridge] License log file stream error:', {
+        path: BRIDGE_LICENSE_LOG_FILE,
+        error: error?.message || String(error),
+      });
+    });
+    return bridgeLicenseLogStream;
+  } catch (error) {
+    bridgeLicenseLogInitFailed = true;
+    console.error('[FiveMBridge] Failed to initialize license log file:', {
+      path: BRIDGE_LICENSE_LOG_FILE,
+      error: error?.message || String(error),
+    });
+    return null;
+  }
+}
+
+function writeBridgeLicenseLog(event, details = {}, level = 'info') {
+  const stream = getBridgeLicenseLogStream();
+  if (!stream) return;
+
+  try {
+    const payload = details && typeof details === 'object'
+      ? details
+      : { value: details };
+
+    stream.write(`${JSON.stringify({
+      ts: new Date().toISOString(),
+      level,
+      event: String(event || '').trim() || 'license_event',
+      details: payload,
+    })}\n`);
+  } catch (error) {
+    console.error('[FiveMBridge] Failed to write license log entry:', {
+      path: BRIDGE_LICENSE_LOG_FILE,
+      error: error?.message || String(error),
+    });
+  }
+}
+
 function logBridgeDocumentReject(kind, statusCode, reason, payloadSummary, extra = {}) {
+  if (String(kind || '').toLowerCase() === 'license') {
+    writeBridgeLicenseLog('license_rejected', {
+      status_code: statusCode,
+      reason,
+      ...payloadSummary,
+      ...extra,
+    }, 'warn');
+  }
+
   console.warn(`[FiveMBridge] ${kind} rejected (${statusCode}): ${reason}`, {
     ...payloadSummary,
     ...extra,
@@ -518,6 +587,10 @@ function logBridgeDocumentReject(kind, statusCode, reason, payloadSummary, extra
 }
 
 function logBridgeDocumentTrace(kind, data, force = false) {
+  if (String(kind || '').toLowerCase().startsWith('license')) {
+    writeBridgeLicenseLog(kind, data || {}, 'info');
+  }
+
   if (!force && !BRIDGE_DOCUMENT_DEBUG_LOGS) return;
   console.log(`[FiveMBridge] ${kind}`, data || {});
 }
@@ -1368,11 +1441,13 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
 
     res.status(201).json({ ok: true, license: record });
   } catch (error) {
-    console.error('[FiveMBridge] Failed to upsert driver license:', {
+    const logPayload = {
       error: error?.message || String(error),
       stack: error?.stack || null,
       payload: summarizeBridgeLicensePayload(req.body || {}),
-    });
+    };
+    writeBridgeLicenseLog('license_upsert_failed', logPayload, 'error');
+    console.error('[FiveMBridge] Failed to upsert driver license:', logPayload);
     res.status(500).json({ error: 'Failed to create driver license record' });
   }
 });
@@ -1394,6 +1469,11 @@ router.get('/licenses/:citizenid', requireBridgeAuth, (req, res) => {
 
     return res.json({ ok: true, license: record });
   } catch (error) {
+    writeBridgeLicenseLog('license_read_failed', {
+      citizenid: String(req.params.citizenid || '').trim(),
+      error: error?.message || String(error),
+      stack: error?.stack || null,
+    }, 'error');
     console.error('[FiveMBridge] Failed to read driver license:', error);
     return res.status(500).json({ error: 'Failed to read driver license record' });
   }
