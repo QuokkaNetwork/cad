@@ -2365,30 +2365,102 @@ local function applyJail(job)
       return false, 'wasabi_police is not started', false
     end
 
-    local invoked = false
-    local invokeErrors = {}
-    local okServer, serverErr = pcall(function()
-      TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes)
-    end)
-    if okServer then
-      invoked = true
-    else
-      invokeErrors[#invokeErrors + 1] = ('server event failed: %s'):format(tostring(serverErr))
+    local attempts = {}
+    local function recordAttempt(label, ok, err)
+      if ok then
+        attempts[#attempts + 1] = ('%s -> ok'):format(label)
+      else
+        attempts[#attempts + 1] = ('%s -> %s'):format(label, tostring(err or 'failed'))
+      end
+      return ok
     end
 
-    if not invoked then
-      local okClient, clientErr = pcall(function()
-        TriggerClientEvent('wasabi_police:jailPlayer', sourceId, minutes)
-      end)
-      if okClient then
+    local function invoke(label, fn)
+      local ok, result = pcall(fn)
+      if not ok then
+        return recordAttempt(label, false, result)
+      end
+      if result == false then
+        return recordAttempt(label, false, 'returned false')
+      end
+      return recordAttempt(label, true)
+    end
+
+    local invoked = false
+
+    -- Try wasabi export variants first as these do not rely on event "source" context.
+    local exportAttempts = {
+      {
+        label = 'exports.wasabi_police:sendToJail(source, minutes, reason)',
+        fn = function()
+          return exports.wasabi_police:sendToJail(sourceId, minutes, reason)
+        end,
+      },
+      {
+        label = 'exports.wasabi_police:sendToJail(source, minutes)',
+        fn = function()
+          return exports.wasabi_police:sendToJail(sourceId, minutes)
+        end,
+      },
+      {
+        label = 'exports.wasabi_police:SendToJail(source, minutes, reason)',
+        fn = function()
+          return exports.wasabi_police:SendToJail(sourceId, minutes, reason)
+        end,
+      },
+      {
+        label = 'exports.wasabi_police:SendToJail(source, minutes)',
+        fn = function()
+          return exports.wasabi_police:SendToJail(sourceId, minutes)
+        end,
+      },
+    }
+
+    for _, adapterTry in ipairs(exportAttempts) do
+      if invoke(adapterTry.label, adapterTry.fn) then
         invoked = true
-      else
-        invokeErrors[#invokeErrors + 1] = ('client event failed: %s'):format(tostring(clientErr))
+        break
       end
     end
 
     if not invoked then
-      return false, table.concat(invokeErrors, ' | '), false
+      local eventAttempts = {
+        {
+          label = 'TriggerEvent wasabi_police:server:sendToJail(source, minutes, reason)',
+          fn = function()
+            TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes, reason)
+          end,
+        },
+        {
+          label = 'TriggerEvent wasabi_police:server:sendToJail(source, minutes)',
+          fn = function()
+            TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes)
+          end,
+        },
+        {
+          label = 'TriggerClientEvent wasabi_police:jailPlayer(source, minutes, reason)',
+          fn = function()
+            TriggerClientEvent('wasabi_police:jailPlayer', sourceId, minutes, reason)
+          end,
+        },
+        {
+          label = 'TriggerClientEvent wasabi_police:jailPlayer(source, minutes)',
+          fn = function()
+            TriggerClientEvent('wasabi_police:jailPlayer', sourceId, minutes)
+          end,
+        },
+      }
+
+      for _, eventTry in ipairs(eventAttempts) do
+        if invoke(eventTry.label, eventTry.fn) then
+          invoked = true
+          break
+        end
+      end
+    end
+
+    if not invoked then
+      return false, table.concat(attempts, ' | '), false
     end
 
     local message = ('You have been sentenced to %s minute(s)'):format(tostring(minutes))
