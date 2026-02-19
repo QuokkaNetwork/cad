@@ -563,6 +563,7 @@ export default function LiveMap({ isPopout = false }) {
           </div>
           <p className="mt-1 text-[11px] text-cad-muted">
             If markers appear low compared to in-game, use Up. If markers appear high, use Down.
+            If alignment is correct in one area but drifts in another, adjust map scale in Admin &gt; System Settings.
           </p>
         </div>
       )}
