@@ -521,17 +521,21 @@ local function captureMugshotViaScreenshot()
   if not headPos then return '' end
 
   local forward = GetEntityForwardVector(ped)
-  local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.65
-  local camY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.65
-  local camZ = (headPos.z or 0.0) + 0.04
+  -- Position camera in front of the ped's face for a tight portrait-style headshot.
+  -- 0.75 units forward, slightly above eye level for a flattering angle.
+  local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.75
+  local camY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.75
+  local camZ = (headPos.z or 0.0) + 0.06
+  -- Look point centred on the face, slightly below head bone for a natural framing.
   local lookX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.02
   local lookY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.02
-  local lookZ = (headPos.z or 0.0) + 0.02
+  local lookZ = (headPos.z or 0.0) - 0.02
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
   PointCamAtCoord(cam, lookX, lookY, lookZ)
-  SetCamFov(cam, 34.0)
+  -- Tight FOV (28) gives a telephoto look — less barrel distortion, more flattering face.
+  SetCamFov(cam, 28.0)
   RenderScriptCams(true, false, 0, true, true)
 
   local pedWasFrozen = false
@@ -549,7 +553,8 @@ local function captureMugshotViaScreenshot()
   if type(TaskLookAtCoord) == 'function' then
     TaskLookAtCoord(ped, camX, camY, camZ, 2200, 0, 2)
   end
-  Wait(200)
+  -- Allow time for the ped to turn and settle into position before capturing.
+  Wait(350)
 
   local done = false
   local raw = ''
@@ -557,13 +562,21 @@ local function captureMugshotViaScreenshot()
   CreateThread(function()
     while hideUi do
       HideHudAndRadarThisFrame()
+      HideHudComponentThisFrame(1)  -- Wanted stars
+      HideHudComponentThisFrame(2)  -- Weapon icon
+      HideHudComponentThisFrame(3)  -- Cash
+      HideHudComponentThisFrame(6)  -- Vehicle name
+      HideHudComponentThisFrame(7)  -- Area name
+      HideHudComponentThisFrame(8)  -- Vehicle class
+      HideHudComponentThisFrame(9)  -- Street name
+      HideHudComponentThisFrame(13) -- Cash change
       Wait(0)
     end
   end)
 
   local screenshotOptions = {
-    encoding = trim(Config.ScreenshotEncoding or 'png'):lower(),
-    quality = tonumber(Config.ScreenshotQuality or 1.0) or 1.0,
+    encoding = trim(Config.ScreenshotEncoding or 'jpg'):lower(),
+    quality = tonumber(Config.ScreenshotQuality or 0.95) or 0.95,
   }
 
   local ok = pcall(function()
@@ -574,7 +587,7 @@ local function captureMugshotViaScreenshot()
   end)
 
   if ok then
-    local timeoutMs = tonumber(Config.ScreenshotTimeoutMs or 5000) or 5000
+    local timeoutMs = tonumber(Config.ScreenshotTimeoutMs or 8000) or 8000
     if timeoutMs < 1000 then timeoutMs = 1000 end
     local deadline = GetGameTimer() + timeoutMs
     while not done and GetGameTimer() < deadline do
