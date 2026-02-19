@@ -1547,7 +1547,7 @@ end
 
 CreateThread(function()
   while true do
-    Wait(math.max(1000, Config.HeartbeatIntervalMs))
+    Wait(math.max(1000, tonumber(Config.HeartbeatIntervalMs) or 1500))
     if not hasBridgeConfig() then
       goto continue
     end
@@ -1907,7 +1907,7 @@ end
 local jobPollInFlight = false
 CreateThread(function()
   while true do
-    Wait(math.max(2000, Config.JobSyncPollIntervalMs))
+    Wait(math.max(2000, tonumber(Config.JobSyncPollIntervalMs) or 5000))
     if Config.JobSyncAdapter == 'none' then
       goto continue
     end
@@ -1991,7 +1991,7 @@ end
 local routePollInFlight = false
 CreateThread(function()
   while true do
-    Wait(math.max(2000, Config.RoutePollIntervalMs))
+    Wait(math.max(2000, tonumber(Config.RoutePollIntervalMs) or 5000))
     if not hasBridgeConfig() then
       goto continue
     end
@@ -2323,7 +2323,7 @@ end
 local finePollInFlight = false
 CreateThread(function()
   while true do
-    Wait(math.max(2000, Config.FinePollIntervalMs))
+    Wait(math.max(2000, tonumber(Config.FinePollIntervalMs) or 7000))
     if not hasBridgeConfig() then
       goto continue
     end
