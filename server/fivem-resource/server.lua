@@ -400,15 +400,11 @@ local function forceOxNotifyPosition(logApplied)
   local okReplicated, errReplicated = pcall(function()
     SetConvarReplicated('ox:notifyPosition', target)
   end)
-  local okSetr, errSetr = pcall(function()
-    ExecuteCommand(('setr ox:notifyPosition %s'):format(target))
-  end)
 
-  if not okReplicated and not okSetr then
-    print(('[cad_bridge] Failed to force ox:notifyPosition=%s (SetConvarReplicated=%s, setr=%s)'):format(
+  if not okReplicated then
+    print(('[cad_bridge] Failed to force ox:notifyPosition=%s (SetConvarReplicated=%s)'):format(
       target,
-      tostring(errReplicated),
-      tostring(errSetr)
+      tostring(errReplicated)
     ))
     return
   end
@@ -3407,6 +3403,7 @@ local function buildChannelsFromConfigNames()
 end
 
 local function syncRadioChannelsToCad(channels)
+  if Config.RadioChannelSyncEnabled ~= true then return end
   if not channels or #channels == 0 then return end
   if not hasBridgeConfig() then return end
 
@@ -3427,6 +3424,10 @@ end
 CreateThread(function()
   Wait(4000)
   if not hasBridgeConfig() then return end
+  if Config.RadioChannelSyncEnabled ~= true then
+    print('[cad_bridge] Radio channel sync disabled (cad_bridge_radio_channel_sync_enabled=false).')
+    return
+  end
 
   local channels = buildChannelsFromConfigNames()
 
@@ -3503,6 +3504,10 @@ end)
 CreateThread(function()
   -- Wait for bridge config to be ready
   Wait(10000)
+  if Config.VoiceParticipantHeartbeatEnabled ~= true then
+    print('[cad_bridge] Voice participant heartbeat disabled (cad_bridge_voice_participant_heartbeat_enabled=false).')
+    return
+  end
 
   while true do
     Wait(VOICE_HEARTBEAT_INTERVAL_MS)

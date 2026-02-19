@@ -275,6 +275,8 @@ if Config.RadioUiKey == '' then Config.RadioUiKey = 'EQUALS' end
 Config.RadioMaxFrequency = math.max(1, math.floor(getNumber('cad_bridge_radio_max_frequency', 500)))
 Config.RadioOverlayMode = trim(getString('cad_bridge_radio_overlay', 'default'))
 if Config.RadioOverlayMode == '' then Config.RadioOverlayMode = 'default' end
+Config.RadioChannelSyncEnabled = getBoolean('cad_bridge_radio_channel_sync_enabled', true)
+Config.VoiceParticipantHeartbeatEnabled = getBoolean('cad_bridge_voice_participant_heartbeat_enabled', true)
 
 Config.RadioNames = DEFAULT_RADIO_NAMES
 local radioNamesOverride = getJsonTable('cad_bridge_radio_names_json')
