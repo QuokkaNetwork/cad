@@ -31,14 +31,16 @@ The CAD auto-sync now patches `cad_bridge_base_url` and `cad_bridge_token` direc
 ## CAD custom radio (built-in UI)
 - `cad-radio` runs radio membership/routing inside `cad_bridge`.
 - `mm_radio` is not used by this setup.
-- Set `RADIO_BEHAVIOR=sonoran` in CAD `.env` to disable legacy CAD websocket/mumble bridge handling.
+- Set `RADIO_BEHAVIOR=external` in CAD `.env` for external radio behavior.
+- Keep `VOICE_BRIDGE_ENABLED=false` in external mode (legacy CAD-managed Mumble bridge is disabled in this mode).
+- Only set `VOICE_BRIDGE_ENABLED=true` when `RADIO_BEHAVIOR=legacy`.
 - In your FiveM `server.cfg`, keep `setr voice_enableRadios 0` so only `cad_bridge` handles radio keys/routing.
 - Open radio UI with `cad_bridge_radio_ui_key` (default `EQUALS`).
 - Transmit on radio with `cad_bridge_radio_ptt_key` (default `LMENU`).
 - `cad_bridge_radio_follow_native_ptt=true` mirrors normal talk-key press into CAD radio TX while joined.
 - Keep `cad_bridge_radio_channel_sync_enabled=true` so CAD channel labels stay in sync with in-game config.
 - Keep `cad_bridge_voice_participant_heartbeat_enabled=true` so CAD sees live in-game channel participants.
-- Keep `cad_bridge_voice_event_poll_enabled=false` for Sonoran-style one-way membership flow (in-game radio state -> CAD heartbeat).
+- Keep `cad_bridge_voice_event_poll_enabled=false` for one-way membership flow (in-game radio state -> CAD heartbeat).
 - Use `/radio` to open UI, `/radio <channel>` to join, `/radio off` to leave.
 - Restricted channels are optional and can be set via `cad_bridge_radio_restricted_channels_json` in `config.cfg`.
 

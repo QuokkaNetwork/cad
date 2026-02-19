@@ -238,7 +238,7 @@ set NODE_ENV=production
 set AUTO_UPDATE_ENABLED=true
 set AUTO_UPDATE_SELF_RESTART=false
 set AUTO_UPDATE_EXIT_ON_UPDATE=true
-set RADIO_BEHAVIOR=sonoran
+set RADIO_BEHAVIOR=external
 set VOICE_BRIDGE_ENABLED=false
 set MUMBLE_MANAGE=false
 echo [CAD] Running: %NPM_BIN% run start

@@ -17,15 +17,33 @@ const { handleParticipantJoin, handleParticipantLeave, getRoutingStatus } = requ
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 
+function isLegacyVoiceBridgeEnabled(behavior) {
+  const bridgeRequested = String(process.env.VOICE_BRIDGE_ENABLED || '').trim().toLowerCase() === 'true';
+  return behavior === 'legacy' && bridgeRequested;
+}
+
 // Get voice bridge status
 router.get('/bridge/status', requireAuth, (req, res) => {
-  const behavior = String(config?.radio?.behavior || 'legacy');
-  if (behavior === 'sonoran') {
+  const behavior = String(config?.radio?.behavior || 'external');
+  const externalMode = behavior === 'external';
+  const bridgeEnabled = isLegacyVoiceBridgeEnabled(behavior);
+
+  if (externalMode) {
     return res.json({
-      mode: 'sonoran',
+      mode: 'external',
       available: false,
       intentionally_disabled: true,
-      message: 'Sonoran behavior mode enabled; legacy CAD Mumble bridge is bypassed.',
+      message: 'External radio behavior mode enabled; CAD legacy voice bridge is intentionally disabled.',
+      signaling: null,
+    });
+  }
+
+  if (!bridgeEnabled) {
+    return res.json({
+      mode: behavior,
+      available: false,
+      intentionally_disabled: true,
+      message: 'Legacy voice bridge is disabled by VOICE_BRIDGE_ENABLED=false.',
       signaling: null,
     });
   }
@@ -36,6 +54,7 @@ router.get('/bridge/status', requireAuth, (req, res) => {
     const signalingStatus = req.app?.locals?.voiceSignalingServer?.getStatus?.() || null;
     res.json({
       mode: behavior,
+      intentionally_disabled: false,
       ...status,
       signaling: signalingStatus,
     });
@@ -43,6 +62,7 @@ router.get('/bridge/status', requireAuth, (req, res) => {
     res.json({
       mode: behavior,
       available: false,
+      intentionally_disabled: false,
       error: 'Voice bridge not initialized',
     });
   }
@@ -212,8 +232,9 @@ router.post('/channels/:id/join', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Dispatch access required' });
   }
 
-  const behavior = String(config?.radio?.behavior || 'legacy');
-  if (behavior !== 'sonoran') {
+  const behavior = String(config?.radio?.behavior || 'external');
+  const bridgeEnabled = isLegacyVoiceBridgeEnabled(behavior);
+  if (bridgeEnabled) {
     const bridgeStatus = getVoiceBridge().getStatus();
     if (!bridgeStatus.available) {
       return res.status(503).json({ error: 'Voice bridge is not available on this server' });

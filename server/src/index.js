@@ -309,12 +309,17 @@ bridgeHttpServer.on('error', (err) => {
 
 // Async startup
 (async () => {
-  const radioBehavior = String(config?.radio?.behavior || 'sonoran');
-  const sonoranBehavior = radioBehavior === 'sonoran';
-  const voiceBridgeEnabled = !sonoranBehavior && parseBool(process.env.VOICE_BRIDGE_ENABLED, false);
+  const radioBehavior = String(config?.radio?.behavior || 'external');
+  const externalBehavior = radioBehavior === 'external';
+  const voiceBridgeRequested = parseBool(process.env.VOICE_BRIDGE_ENABLED, false);
+  const legacyBridgeEnabled = !externalBehavior && voiceBridgeRequested;
+
+  if (externalBehavior && voiceBridgeRequested) {
+    console.warn('[VoiceBridge] VOICE_BRIDGE_ENABLED=true ignored in external mode (no CAD-managed Mumble bridge).');
+  }
 
   // Initialize Voice Bridge (optional - only if dependencies are installed)
-  if (voiceBridgeEnabled) {
+  if (legacyBridgeEnabled) {
     try {
       const { getVoiceBridge } = require('./services/voiceBridge');
       const VoiceSignalingServer = require('./services/voiceSignaling');
@@ -342,8 +347,8 @@ bridgeHttpServer.on('error', (err) => {
       console.warn('[VoiceBridge] Voice bridge not available:', error.message);
       console.warn('[VoiceBridge] CAD will run without voice bridge support');
     }
-  } else if (sonoranBehavior) {
-    console.warn('[VoiceBridge] Disabled by RADIO_BEHAVIOR=sonoran (external radio behavior mode)');
+  } else if (externalBehavior) {
+    console.warn('[VoiceBridge] Disabled in external radio behavior mode (no CAD-managed Mumble bridge).');
   } else {
     console.warn('[VoiceBridge] Disabled by VOICE_BRIDGE_ENABLED=false');
   }
@@ -353,20 +358,20 @@ bridgeHttpServer.on('error', (err) => {
     console.log(`CAD server running on port ${config.port}`);
     console.log(`Environment: ${config.nodeEnv}`);
     console.log(`Radio behavior: ${radioBehavior}`);
-    if (!sonoranBehavior) {
+    if (legacyBridgeEnabled) {
       console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
     } else {
-      console.log('[VoiceBridge] WebSocket signaling disabled in sonoran behavior mode');
+      console.log('[VoiceBridge] WebSocket signaling disabled');
     }
 
     // Print voice status summary
     console.log('');
     console.log('=== Voice Status ===');
-    if (sonoranBehavior) {
+    if (externalBehavior) {
       console.log('[VoiceMode]  Native FiveM/pma-voice mode active');
       console.log('[VoiceCfg]   Auto-deploy disabled');
-      console.log('[VoiceBridge] Disabled by RADIO_BEHAVIOR=sonoran');
-    } else if (voiceBridgeEnabled) {
+      console.log('[VoiceBridge] Disabled in external mode (no CAD-managed Mumble bridge)');
+    } else if (legacyBridgeEnabled) {
       console.log('[VoiceMode]  Legacy CAD voice bridge mode active');
       console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
     } else {

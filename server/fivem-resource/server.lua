@@ -3717,7 +3717,7 @@ AddEventHandler('playerDropped', function(reason)
 end)
 
 -- Poll CAD for voice events and sync with cad-radio.
--- Sonoran-style deployments should keep this disabled to avoid duplicate
+-- External-radio deployments should keep this disabled to avoid duplicate
 -- channel membership writers (in-game radio state -> CAD heartbeat is canonical).
 local voicePollInFlight = false
 CreateThread(function()

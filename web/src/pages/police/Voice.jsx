@@ -32,8 +32,10 @@ export default function Voice() {
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
-  const isSonoranMode = voiceMode === 'sonoran' || bridgeIntentionallyDisabled;
-  const canUseLegacyBridge = isDispatch && bridgeStatusLoaded && !isSonoranMode;
+  const isExternalBehavior = voiceMode === 'external';
+  const isExternalRadioOnlyMode = isExternalBehavior && bridgeIntentionallyDisabled === true;
+  const isLegacyBridgeDisabled = !isExternalBehavior && bridgeIntentionallyDisabled === true;
+  const canUseLegacyBridge = isDispatch && bridgeStatusLoaded && !isExternalBehavior && bridgeIntentionallyDisabled !== true;
   const currentChannelData = useMemo(() => (
     Number(currentChannel || 0) > 0
       ? (channels.find((channel) => Number(channel?.channel_number || 0) === Number(currentChannel || 0)) || null)
@@ -43,7 +45,7 @@ export default function Voice() {
     const participants = Array.isArray(currentChannelData?.participants) ? currentChannelData.participants : [];
     return participants.filter((participant) => String(participant?.game_id || '').trim() !== '').length;
   }, [currentChannelData]);
-  const connectionState = isSonoranMode
+  const connectionState = isExternalRadioOnlyMode
     ? 'external'
     : (isConnected ? 'connected' : 'disconnected');
   const joinedState = Number(currentChannel || 0) > 0 ? 'joined' : 'not joined';
@@ -118,7 +120,7 @@ export default function Voice() {
       setVoiceMode(mode);
       setBridgeIntentionallyDisabled(intentionallyDisabled);
 
-      if (!intentionallyDisabled && mode !== 'sonoran') {
+      if (!intentionallyDisabled) {
         setIsConnected(!!status?.available);
       } else {
         setIsConnected(false);
@@ -199,20 +201,20 @@ export default function Voice() {
   }, [canUseLegacyBridge, voiceClient]);
 
   useEffect(() => {
-    if (!isSonoranMode || !voiceClient) return;
+    if (!bridgeIntentionallyDisabled || !voiceClient) return;
     try {
       voiceClient.disconnect();
     } catch (err) {
-      console.error('Error disconnecting voice client for sonoran mode:', err);
+      console.error('Error disconnecting voice client for intentionally-disabled bridge mode:', err);
     }
     setIsConnected(false);
     setCurrentChannel(null);
     setIsPTTActive(false);
-  }, [isSonoranMode, voiceClient]);
+  }, [bridgeIntentionallyDisabled, voiceClient]);
 
   // PTT keyboard shortcut
   useEffect(() => {
-    if (!currentChannel || !voiceClient || isSonoranMode) return;
+    if (!currentChannel || !voiceClient || bridgeIntentionallyDisabled) return;
 
     const handleKeyDown = (e) => {
       // Space bar for PTT
@@ -248,7 +250,7 @@ export default function Voice() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [currentChannel, isSonoranMode, voiceClient]);
+  }, [currentChannel, bridgeIntentionallyDisabled, voiceClient]);
 
   // Join channel
   async function joinChannel(channelId, channelNumber) {
@@ -378,9 +380,9 @@ export default function Voice() {
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold">Voice Radio</h2>
           <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-cad-card border border-cad-border">
-            <div className={`w-2 h-2 rounded-full ${isSonoranMode ? 'bg-blue-500' : (isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500')}`} />
+            <div className={`w-2 h-2 rounded-full ${isExternalRadioOnlyMode ? 'bg-blue-500' : (isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500')}`} />
             <span className="text-xs font-medium">
-              {isSonoranMode
+              {isExternalRadioOnlyMode
                 ? 'External Radio Mode'
                 : (isConnected ? 'Voice Bridge Connected' : 'Voice Bridge Disconnected')}
             </span>
@@ -428,19 +430,27 @@ export default function Voice() {
       )}
 
       {/* Connection help banner */}
-      {isSonoranMode && !error && (
+      {isExternalRadioOnlyMode && !error && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-200 text-sm">
-          <p className="font-medium mb-1">Sonoran behavior mode enabled</p>
+          <p className="font-medium mb-1">External radio behavior mode enabled</p>
           <p className="text-xs">
             CAD channel membership is active, but live radio audio is expected to be handled by your in-game radio stack.
           </p>
         </div>
       )}
-      {!isSonoranMode && !isConnected && !error && (
+      {!isExternalRadioOnlyMode && !isConnected && !error && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm">
           <p className="font-medium mb-1">Voice bridge not connected</p>
           <p className="text-xs">
             The voice bridge allows you to communicate with in-game units. Select a channel below to join when the connection is established.
+          </p>
+        </div>
+      )}
+      {isLegacyBridgeDisabled && !error && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm">
+          <p className="font-medium mb-1">Legacy voice bridge disabled</p>
+          <p className="text-xs">
+            `VOICE_BRIDGE_ENABLED=false` in legacy mode. CAD will not transmit/receive dispatcher audio until the legacy bridge is enabled.
           </p>
         </div>
       )}
@@ -526,7 +536,7 @@ export default function Voice() {
                     ) : (
                       <button
                         onClick={() => joinChannel(channel.id, channel.channel_number)}
-                        disabled={!isConnected && !isSonoranMode}
+                        disabled={!isConnected && !bridgeIntentionallyDisabled}
                         className="px-3 py-1 text-xs bg-cad-accent/10 text-cad-accent border border-cad-accent/30 rounded hover:bg-cad-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {currentChannel ? 'Switch' : 'Join'}
@@ -697,7 +707,7 @@ export default function Voice() {
           </div>
 
           {/* PTT Instructions */}
-          {currentChannel && !isSonoranMode && (
+          {currentChannel && !bridgeIntentionallyDisabled && (
             <div className="px-3 py-2 rounded-lg bg-cad-card border border-cad-border">
               <p className="text-xs text-cad-muted mb-1">Push-to-Talk Controls:</p>
               <div className="flex items-center gap-2">
