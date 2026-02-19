@@ -1389,6 +1389,35 @@ local cadRadioUiVisible = false
 local cadExternalVoiceSession = nil
 local cadExternalVoiceLastLogAt = 0
 
+local function isCadExternalVoiceSessionActive()
+  if Config.ExternalVoiceTokenEnabled ~= true then
+    return false
+  end
+  if type(cadExternalVoiceSession) ~= 'table' then
+    return false
+  end
+  if cadExternalVoiceSession.ok ~= true then
+    return false
+  end
+  local provider = tostring(cadExternalVoiceSession.provider or ''):lower()
+  local token = tostring(cadExternalVoiceSession.token or '')
+  if provider ~= 'livekit' or token == '' then
+    return false
+  end
+  local expiresAtMs = tonumber(cadExternalVoiceSession.expires_at_ms or 0) or 0
+  if expiresAtMs > 0 then
+    local now = tonumber(GetGameTimer() or 0) or 0
+    if expiresAtMs <= (now + 1000) then
+      return false
+    end
+  end
+  return true
+end
+
+local function shouldUseCadExternalVoiceTransport()
+  return isCadExternalVoiceSessionActive()
+end
+
 local cadRadioUiSettings = {
   name = '',
   favourite = {},
@@ -1689,6 +1718,13 @@ local function setRemoteCadRadioTalking(sourceId, enabled)
 
   cadRadioTalkingStateBySource[src] = enabled == true
 
+  if shouldUseCadExternalVoiceTransport() then
+    -- External transport carries remote audio; ensure local Mumble overrides are removed.
+    MumbleSetVolumeOverrideByServerId(src, -1.0)
+    MumbleSetSubmixForServerId(src, -1)
+    return
+  end
+
   if enabled and cadRadioMutedBySource[src] ~= true then
     MumbleSetVolumeOverrideByServerId(src, cadRadioRxVolume)
     local submix = getCadRadioSubmixId()
@@ -1715,6 +1751,17 @@ local function cadRadioReapplyRemoteAudio()
 end
 
 local function rebuildCadRadioTarget()
+  if shouldUseCadExternalVoiceTransport() then
+    MumbleClearVoiceTargetPlayers(CAD_RADIO_TARGET_ID)
+    MumbleSetVoiceTarget(CAD_PROXIMITY_TARGET_ID)
+    return {
+      peerTargets = 0,
+      rootTargets = 0,
+      totalTargets = 0,
+      external = true,
+    }
+  end
+
   MumbleClearVoiceTarget(CAD_RADIO_TARGET_ID)
   MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
   MumbleClearVoiceTargetPlayers(CAD_RADIO_TARGET_ID)
@@ -1751,15 +1798,26 @@ local function setCadRadioPttState(enabled)
     if cadRadioChannel <= 0 then return end
     if isPlayerDeadForCadRadio() then return end
     cadRadioPttPressed = true
-    local routeStats = rebuildCadRadioTarget()
-    cadRadioLastTargetBuildAt = tonumber(GetGameTimer() or 0) or 0
-    MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
+    local usingExternalTransport = shouldUseCadExternalVoiceTransport()
+    local routeStats = {
+      peerTargets = 0,
+      rootTargets = 0,
+      totalTargets = 0,
+      external = usingExternalTransport,
+    }
+    if not usingExternalTransport then
+      routeStats = rebuildCadRadioTarget()
+      cadRadioLastTargetBuildAt = tonumber(GetGameTimer() or 0) or 0
+      MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
+    else
+      cadRadioLastTargetBuildAt = 0
+    end
     TriggerServerEvent('cad_bridge:radio:setTalking', true)
     cadRadioSendNui('updateRadioTalking', {
       radioId = tostring(getLocalServerId()),
       radioTalking = true,
     })
-    if routeStats and routeStats.totalTargets <= 0 then
+    if not usingExternalTransport and routeStats and routeStats.totalTargets <= 0 then
       local nowMs = tonumber(GetGameTimer() or 0) or 0
       if (nowMs - cadRadioLastNoRouteLogAt) >= 5000 then
         cadRadioLastNoRouteLogAt = nowMs
@@ -1770,12 +1828,17 @@ local function setCadRadioPttState(enabled)
           tostring(routeStats.totalTargets or 0)
         ))
       end
-    else
+    elseif not usingExternalTransport then
       print(('[cad_bridge][radio] tx-start channel=%s peer_targets=%s root_targets=%s total_targets=%s'):format(
         tostring(cadRadioChannel),
         tostring(routeStats and routeStats.peerTargets or 0),
         tostring(routeStats and routeStats.rootTargets or 0),
         tostring(routeStats and routeStats.totalTargets or 0)
+      ))
+    else
+      print(('[cad_bridge][radio] tx-start channel=%s transport=external provider=%s'):format(
+        tostring(cadRadioChannel),
+        tostring(cadExternalVoiceSession and cadExternalVoiceSession.provider or 'unknown')
       ))
     end
     playCadRadioMicClick(true)
@@ -1835,7 +1898,9 @@ RegisterNetEvent('cad_bridge:radio:update', function(payload)
   if cadRadioPttPressed and cadRadioChannel <= 0 then
     setCadRadioPttState(false)
   elseif cadRadioPttPressed then
-    rebuildCadRadioTarget()
+    if not shouldUseCadExternalVoiceTransport() then
+      rebuildCadRadioTarget()
+    end
   end
 
   if previousChannel ~= cadRadioChannel then
@@ -1881,11 +1946,20 @@ RegisterNetEvent('cad_bridge:external_voice:session', function(payload)
     }
 
     cadRadioPushExternalVoiceSession()
+    cadRadioReapplyRemoteAudio()
+    if cadRadioPttPressed then
+      cadRadioLastTargetBuildAt = 0
+      rebuildCadRadioTarget()
+    end
     return
   end
 
   cadExternalVoiceSession = nil
   cadRadioPushExternalVoiceSession()
+  cadRadioReapplyRemoteAudio()
+  if cadRadioPttPressed then
+    rebuildCadRadioTarget()
+  end
 
   local nowMs = tonumber(GetGameTimer() or 0) or 0
   if (nowMs - cadExternalVoiceLastLogAt) >= 5000 then
@@ -2218,14 +2292,16 @@ CreateThread(function()
     if cadRadioPttPressed ~= shouldTransmit then
       setCadRadioPttState(shouldTransmit)
     elseif cadRadioPttPressed then
-      -- pma/proximity scripts can reset the active target every tick.
-      -- Reassert CAD radio target while transmitting.
-      MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
+      if not shouldUseCadExternalVoiceTransport() then
+        -- pma/proximity scripts can reset the active target every tick.
+        -- Reassert CAD radio target while transmitting.
+        MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
 
-      local nowMs = tonumber(GetGameTimer() or 0) or 0
-      if (nowMs - cadRadioLastTargetBuildAt) >= 250 then
-        rebuildCadRadioTarget()
-        cadRadioLastTargetBuildAt = nowMs
+        local nowMs = tonumber(GetGameTimer() or 0) or 0
+        if (nowMs - cadRadioLastTargetBuildAt) >= 250 then
+          rebuildCadRadioTarget()
+          cadRadioLastTargetBuildAt = nowMs
+        end
       end
     end
 

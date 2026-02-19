@@ -20,6 +20,7 @@ files {
   'ui/app.js',
   'ui/cad_radio.css',
   'ui/cad_radio.js',
+  'ui/external_voice_bridge.js',
   'ui/overlay.webp',
   'ui/vicroads-logo.jpg',
 }

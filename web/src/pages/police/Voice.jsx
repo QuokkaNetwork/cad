@@ -3,6 +3,7 @@ import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
 import DispatcherVoiceClient from '../../services/voiceClient';
+import ExternalVoiceClient from '../../services/externalVoiceClient';
 import Modal from '../../components/Modal';
 
 export default function Voice() {
@@ -10,7 +11,7 @@ export default function Voice() {
   const [channels, setChannels] = useState([]);
   const [pendingCalls, setPendingCalls] = useState([]);
   const [activeCalls, setActiveCalls] = useState([]);
-  const voiceClient = useMemo(() => {
+  const legacyVoiceClient = useMemo(() => {
     try {
       return new DispatcherVoiceClient();
     } catch (err) {
@@ -18,7 +19,16 @@ export default function Voice() {
       return null;
     }
   }, []);
+  const externalVoiceClient = useMemo(() => {
+    try {
+      return new ExternalVoiceClient();
+    } catch (err) {
+      console.error('Failed to create ExternalVoiceClient:', err);
+      return null;
+    }
+  }, []);
   const [isConnected, setIsConnected] = useState(false);
+  const [isExternalConnected, setIsExternalConnected] = useState(false);
   const [currentChannel, setCurrentChannel] = useState(null);
   const [isPTTActive, setIsPTTActive] = useState(false);
   const [voiceMode, setVoiceMode] = useState('legacy');
@@ -48,13 +58,16 @@ export default function Voice() {
     const participants = Array.isArray(currentChannelData?.participants) ? currentChannelData.participants : [];
     return participants.filter((participant) => String(participant?.game_id || '').trim() !== '').length;
   }, [currentChannelData]);
-  const connectionState = isExternalRadioOnlyMode
-    ? 'external'
+  const isExternalCallChannel = isExternalBehavior && externalSession?.channelType === 'call';
+  const connectionState = isExternalBehavior
+    ? (isExternalConnected ? 'connected' : 'disconnected')
     : (isConnected ? 'connected' : 'disconnected');
   const joinedState = Number(currentChannel || 0) > 0 ? 'joined' : 'not joined';
   const receiveState = Number(currentChannel || 0) <= 0
     ? 'idle'
-    : (routableParticipantCount > 0 ? 'receiving' : 'no route');
+    : (isExternalCallChannel
+      ? (isExternalConnected ? 'receiving' : 'idle')
+      : (routableParticipantCount > 0 ? 'receiving' : 'no route'));
   const transmitState = Number(currentChannel || 0) <= 0
     ? 'idle'
     : (isPTTActive ? 'transmitting' : 'ready');
@@ -75,12 +88,12 @@ export default function Voice() {
     return 'bg-cad-card border-cad-border text-cad-muted';
   }
 
-  // Early return if voiceClient failed to initialize
-  if (!voiceClient) {
+  // Early return if the required voice client for the current mode failed to initialize.
+  if ((isExternalBehavior && !externalVoiceClient) || (!isExternalBehavior && !legacyVoiceClient)) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center text-red-400">
-          <p>Failed to initialize voice client. Please refresh the page.</p>
+          <p>Failed to initialize voice client for this mode. Please refresh the page.</p>
         </div>
       </div>
     );
@@ -159,13 +172,12 @@ export default function Voice() {
     'voice:call_ended': () => fetchData(),
   });
 
-  // Initialize voice client
+  // Initialize legacy voice bridge client.
   useEffect(() => {
-    if (!canUseLegacyBridge || !voiceClient) return;
+    if (!canUseLegacyBridge || !legacyVoiceClient) return;
 
     try {
-      // Set up voice client callbacks
-      voiceClient.onConnectionChange = (connected) => {
+      legacyVoiceClient.onConnectionChange = (connected) => {
         setIsConnected(connected);
         if (!connected) {
           setCurrentChannel(null);
@@ -173,27 +185,26 @@ export default function Voice() {
         }
       };
 
-      voiceClient.onChannelChange = (channelNumber) => {
+      legacyVoiceClient.onChannelChange = (channelNumber) => {
         setCurrentChannel(channelNumber);
       };
 
-      voiceClient.onError = (errorMsg) => {
+      legacyVoiceClient.onError = (errorMsg) => {
         setError(errorMsg);
       };
 
-      voiceClient.onTalkingChange = (talking) => {
+      legacyVoiceClient.onTalkingChange = (talking) => {
         setIsPTTActive(talking);
       };
 
-      // Auto-connect on mount - uses cookie-based auth automatically
-      voiceClient.connect('').catch(err => {
+      legacyVoiceClient.connect('').catch(err => {
         console.error('Failed to connect to voice bridge:', err);
         setError('Failed to connect to voice server. Voice features are unavailable.');
       });
 
       return () => {
         try {
-          voiceClient.disconnect();
+          legacyVoiceClient.disconnect();
         } catch (err) {
           console.error('Error disconnecting voice client:', err);
         }
@@ -202,12 +213,37 @@ export default function Voice() {
       console.error('Error initializing voice client:', err);
       setError('Failed to initialize voice client.');
     }
-  }, [canUseLegacyBridge, voiceClient]);
+  }, [canUseLegacyBridge, legacyVoiceClient]);
+
+  // Initialize external voice transport client.
+  useEffect(() => {
+    if (!isExternalBehavior || !externalVoiceClient) return;
+
+    externalVoiceClient.onConnectionChange = (connected) => {
+      setIsExternalConnected(connected);
+      if (!connected) setIsPTTActive(false);
+    };
+    externalVoiceClient.onError = (errorMsg) => {
+      setError(errorMsg);
+    };
+    externalVoiceClient.onTalkingChange = (talking) => {
+      setIsPTTActive(talking);
+    };
+
+    return () => {
+      externalVoiceClient.disconnect().catch((err) => {
+        console.error('Error disconnecting external voice client:', err);
+      });
+      setIsExternalConnected(false);
+      setIsPTTActive(false);
+    };
+  }, [isExternalBehavior, externalVoiceClient]);
 
   useEffect(() => {
-    if (!bridgeIntentionallyDisabled || !voiceClient) return;
+    if (isExternalBehavior) return;
+    if (!bridgeIntentionallyDisabled || !legacyVoiceClient) return;
     try {
-      voiceClient.disconnect();
+      legacyVoiceClient.disconnect();
     } catch (err) {
       console.error('Error disconnecting voice client for intentionally-disabled bridge mode:', err);
     }
@@ -215,22 +251,25 @@ export default function Voice() {
     setCurrentChannel(null);
     setIsPTTActive(false);
     setExternalSession(null);
-  }, [bridgeIntentionallyDisabled, voiceClient]);
+  }, [bridgeIntentionallyDisabled, isExternalBehavior, legacyVoiceClient]);
 
   // PTT keyboard shortcut
   useEffect(() => {
-    if (!currentChannel || !voiceClient || bridgeIntentionallyDisabled) return;
+    const activeClient = isExternalBehavior ? externalVoiceClient : legacyVoiceClient;
+    const canTransmit = isExternalBehavior
+      ? (externalTransportReady && isExternalConnected)
+      : (canUseLegacyBridge && isConnected && !bridgeIntentionallyDisabled);
+    if (!currentChannel || !activeClient || !canTransmit) return;
 
     const handleKeyDown = (e) => {
       // Space bar for PTT
-      if (e.code === 'Space' && !e.repeat && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+      const tagName = String(document.activeElement?.tagName || '').toUpperCase();
+      if (e.code === 'Space' && !e.repeat && tagName !== 'INPUT' && tagName !== 'TEXTAREA') {
         e.preventDefault();
-        try {
-          if (typeof voiceClient.setPushToTalk === 'function') {
-            voiceClient.setPushToTalk(true);
-          }
-        } catch (err) {
-          console.error('Error setting PTT:', err);
+        if (typeof activeClient.setPushToTalk === 'function') {
+          Promise.resolve(activeClient.setPushToTalk(true)).catch((err) => {
+            console.error('Error setting PTT:', err);
+          });
         }
       }
     };
@@ -238,12 +277,10 @@ export default function Voice() {
     const handleKeyUp = (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
-        try {
-          if (typeof voiceClient.setPushToTalk === 'function') {
-            voiceClient.setPushToTalk(false);
-          }
-        } catch (err) {
-          console.error('Error releasing PTT:', err);
+        if (typeof activeClient.setPushToTalk === 'function') {
+          Promise.resolve(activeClient.setPushToTalk(false)).catch((err) => {
+            console.error('Error releasing PTT:', err);
+          });
         }
       }
     };
@@ -255,16 +292,27 @@ export default function Voice() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [currentChannel, bridgeIntentionallyDisabled, voiceClient]);
+  }, [
+    bridgeIntentionallyDisabled,
+    canUseLegacyBridge,
+    currentChannel,
+    externalTransportReady,
+    isConnected,
+    isExternalBehavior,
+    isExternalConnected,
+    legacyVoiceClient,
+    externalVoiceClient,
+  ]);
 
   // Join channel
-  async function requestExternalToken(channelId, channelNumber) {
+  const requestExternalToken = useCallback(async (channelId, channelNumber, options = {}) => {
     const payload = {
       channel_id: Number(channelId || 0) || undefined,
       channel_number: Number(channelNumber || 0) || undefined,
+      call_session_id: Number(options?.callSessionId || 0) || undefined,
     };
     const result = await api.post('/api/voice/external/token', payload);
-    setExternalSession({
+    const session = {
       provider: result?.provider || '',
       url: result?.url || '',
       roomName: result?.room_name || '',
@@ -272,19 +320,23 @@ export default function Voice() {
       expiresInSeconds: Number(result?.expires_in_seconds || 0) || 0,
       token: result?.token || '',
       issuedAtMs: Date.now(),
-    });
+      channelType: result?.channel_type || 'radio',
+      channelNumber: Number(result?.channel_number || channelNumber || 0) || 0,
+      channelId: Number(result?.channel_id || channelId || 0) || null,
+      callSessionId: Number(result?.call_session_id || options?.callSessionId || 0) || null,
+    };
+    setExternalSession(session);
+    if (isExternalBehavior && externalVoiceClient) {
+      await externalVoiceClient.connect(session);
+    }
     return result;
-  }
+  }, [externalVoiceClient, isExternalBehavior]);
 
   async function joinChannel(channelId, channelNumber) {
-    if (!voiceClient) {
-      setError('Voice client not initialized');
-      return;
-    }
     try {
       await api.post(`/api/voice/channels/${channelId}/join`);
-      if (canUseLegacyBridge && typeof voiceClient.joinChannel === 'function') {
-        await voiceClient.joinChannel(channelNumber);
+      if (canUseLegacyBridge && legacyVoiceClient && typeof legacyVoiceClient.joinChannel === 'function') {
+        await legacyVoiceClient.joinChannel(channelNumber);
       } else {
         setCurrentChannel(channelNumber);
         setIsPTTActive(false);
@@ -301,18 +353,16 @@ export default function Voice() {
 
   // Leave channel
   async function leaveChannel(channelId) {
-    if (!voiceClient) {
-      setError('Voice client not initialized');
-      return;
-    }
     try {
       await api.post(`/api/voice/channels/${channelId}/leave`);
-      if (canUseLegacyBridge && typeof voiceClient.leaveChannel === 'function') {
-        await voiceClient.leaveChannel();
-      } else {
-        setCurrentChannel(null);
-        setIsPTTActive(false);
+      if (canUseLegacyBridge && legacyVoiceClient && typeof legacyVoiceClient.leaveChannel === 'function') {
+        await legacyVoiceClient.leaveChannel();
       }
+      if (isExternalBehavior && externalVoiceClient) {
+        await externalVoiceClient.disconnect();
+      }
+      setCurrentChannel(null);
+      setIsPTTActive(false);
       setExternalSession(null);
       fetchData();
     } catch (err) {
@@ -323,20 +373,17 @@ export default function Voice() {
 
   // Accept call
   async function acceptCall(callId) {
-    if (!voiceClient) {
-      setError('Voice client not initialized');
-      return;
-    }
     try {
       const result = await api.post(`/api/voice/calls/${callId}/accept`);
-      // Join call channel automatically
-      if (result?.call_channel_number && canUseLegacyBridge && typeof voiceClient.joinChannel === 'function') {
-        await voiceClient.joinChannel(result.call_channel_number);
+      if (result?.call_channel_number && canUseLegacyBridge && legacyVoiceClient && typeof legacyVoiceClient.joinChannel === 'function') {
+        await legacyVoiceClient.joinChannel(result.call_channel_number);
       } else if (result?.call_channel_number) {
         setCurrentChannel(result.call_channel_number);
         setIsPTTActive(false);
         if (isExternalBehavior) {
-          await requestExternalToken(null, result.call_channel_number);
+          await requestExternalToken(null, result.call_channel_number, {
+            callSessionId: result?.id || callId,
+          });
         }
       }
       setSelectedCall(null);
@@ -361,18 +408,16 @@ export default function Voice() {
 
   // End active call
   async function endCall(callId) {
-    if (!voiceClient) {
-      setError('Voice client not initialized');
-      return;
-    }
     try {
       await api.post(`/api/voice/calls/${callId}/end`);
-      if (canUseLegacyBridge && typeof voiceClient.leaveChannel === 'function') {
-        await voiceClient.leaveChannel();
-      } else {
-        setCurrentChannel(null);
-        setIsPTTActive(false);
+      if (canUseLegacyBridge && legacyVoiceClient && typeof legacyVoiceClient.leaveChannel === 'function') {
+        await legacyVoiceClient.leaveChannel();
       }
+      if (isExternalBehavior && externalVoiceClient) {
+        await externalVoiceClient.disconnect();
+      }
+      setCurrentChannel(null);
+      setIsPTTActive(false);
       setExternalSession(null);
       fetchData();
     } catch (err) {
@@ -411,10 +456,13 @@ export default function Voice() {
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold">Voice Radio</h2>
           <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-cad-card border border-cad-border">
-            <div className={`w-2 h-2 rounded-full ${isExternalRadioOnlyMode ? 'bg-blue-500' : (isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500')}`} />
+            <div className={`w-2 h-2 rounded-full ${isExternalRadioOnlyMode
+              ? (isExternalConnected ? 'bg-green-500 animate-pulse' : 'bg-blue-500')
+              : (isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500')}`}
+            />
             <span className="text-xs font-medium">
               {isExternalRadioOnlyMode
-                ? 'External Radio Mode'
+                ? (isExternalConnected ? 'External Voice Connected' : 'External Radio Mode')
                 : (isConnected ? 'Voice Bridge Connected' : 'Voice Bridge Disconnected')}
             </span>
           </div>
@@ -477,7 +525,7 @@ export default function Voice() {
           )}
           {externalSession?.roomName && (
             <p className="text-xs mt-1">
-              Session prepared for room <span className="font-mono">{externalSession.roomName}</span> as <span className="font-mono">{externalSession.identity || 'unknown'}</span>.
+              Session {isExternalConnected ? 'connected' : 'prepared'} for room <span className="font-mono">{externalSession.roomName}</span> as <span className="font-mono">{externalSession.identity || 'unknown'}</span>.
             </p>
           )}
         </div>
@@ -498,7 +546,7 @@ export default function Voice() {
           </p>
         </div>
       )}
-      {Number(currentChannel || 0) > 0 && !error && receiveState === 'no route' && (
+      {Number(currentChannel || 0) > 0 && !error && receiveState === 'no route' && !isExternalCallChannel && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm">
           <p className="font-medium mb-1">No routable participants on this channel</p>
           <p className="text-xs">
@@ -751,7 +799,7 @@ export default function Voice() {
           </div>
 
           {/* PTT Instructions */}
-          {currentChannel && !bridgeIntentionallyDisabled && (
+          {currentChannel && (
             <div className="px-3 py-2 rounded-lg bg-cad-card border border-cad-border">
               <p className="text-xs text-cad-muted mb-1">Push-to-Talk Controls:</p>
               <div className="flex items-center gap-2">

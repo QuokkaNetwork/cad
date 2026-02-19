@@ -94,14 +94,18 @@ Complete Phase 2 of the external radio behavior with a stable, simple flow:
     - startup provider-status check log
   - Added `cad_bridge_external_voice_token_enabled` config toggle (`config.lua` + `config.cfg`).
   - Added client event hook `cad_bridge:external_voice:session` and NUI message forwarding (`externalVoiceSession`) so the in-game UI path can consume issued tokens.
+- Phase 2 implementation continued (media path wired):
+  - Updated dispatcher token issuance route to allow accepted `000` call channels (active call session context) even when no `voice_participants` row exists.
+  - Added CAD web external media client (`livekit-client`) and wired Voice page join/leave/PTT to real external transport connect/publish/subscribe.
+  - Added in-game NUI external media bridge (`ui/external_voice_bridge.js`) that consumes `externalVoiceSession` + `updateRadioTalking` and joins/publishes/subscribes via LiveKit.
+  - Updated in-game Lua radio path to bypass CAD radio Mumble routing when external transport session is active (no Mumble radio routing while external session is healthy).
+  - Wired new NUI script in `ui/index.html` and `fxmanifest.lua`.
 
 ## Immediate Phase 2 Build Order (No-Mumble Path)
-1. Add an external media transport service (self-hosted WebRTC SFU) and token issuance API in CAD.
-2. Add CAD web client transport (join/leave/PTT) for dispatchers using that external service.
-3. Add FiveM NUI transport client for in-game radio TX/RX using the same channel IDs.
-4. Keep existing CAD channel membership + heartbeat flow as signaling/authorization source of truth.
-5. Remove legacy Mumble-root assumptions from the in-game TX path once external media path is verified.
-6. Wire `externalVoiceSession` token payloads into in-game NUI WebRTC client join/publish/subscribe logic (currently token plumbing only).
+1. Validate end-to-end with two in-game units + one dispatcher on the same channel (RX/TX both directions).
+2. Validate accepted `000` call-channel flow in CAD external mode (token issuance + audio path).
+3. Decide whether to vendor LiveKit browser SDK locally for NUI (remove runtime CDN dependency if desired).
+4. Add production diagnostics for external transport state transitions (connect/disconnect/reconnect and token refresh outcomes).
 
 ## Acceptance Criteria
 - Two in-game players on same channel can hear each other consistently.

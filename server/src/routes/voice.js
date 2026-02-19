@@ -170,6 +170,39 @@ function resolveChannelFromRequest(payload = {}) {
   return null;
 }
 
+function parsePositiveInt(value) {
+  const parsed = parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function resolveAcceptedCallSessionForUser(user, payload = {}, channel = null) {
+  if (!user || typeof user !== 'object') return null;
+
+  const requestedCallSessionId = parsePositiveInt(payload?.call_session_id ?? payload?.callSessionId);
+  const requestedChannelNumber = parsePositiveInt(payload?.channel_number ?? payload?.channelNumber);
+  const channelNumber = parsePositiveInt(channel?.channel_number) || requestedChannelNumber;
+
+  let callSession = null;
+  if (requestedCallSessionId > 0) {
+    callSession = VoiceCallSessions.findById(requestedCallSessionId);
+  }
+  if (!callSession && channelNumber > 0) {
+    callSession = VoiceCallSessions.findByChannelNumber(channelNumber);
+  }
+  if (!callSession) return null;
+  if (String(callSession.status || '').toLowerCase() !== 'active') return null;
+
+  const acceptedByUserId = parsePositiveInt(callSession.accepted_by_user_id);
+  if (!user.is_admin) {
+    const requesterId = parsePositiveInt(user.id);
+    if (acceptedByUserId <= 0 || acceptedByUserId !== requesterId) {
+      return null;
+    }
+  }
+
+  return callSession;
+}
+
 router.post('/external/token', requireAuth, (req, res) => {
   if (!req.user.is_admin && !isUserInDispatchDepartment(req.user)) {
     return res.status(403).json({ error: 'Dispatch access required' });
@@ -182,17 +215,29 @@ router.post('/external/token', requireAuth, (req, res) => {
     });
   }
 
-  const channel = resolveChannelFromRequest(req.body || {});
-  if (!channel) {
-    return res.status(404).json({ error: 'Voice channel not found' });
+  const payload = req.body || {};
+  const channel = resolveChannelFromRequest(payload);
+  const callSession = resolveAcceptedCallSessionForUser(req.user, payload, channel);
+  if (!channel && !callSession) {
+    return res.status(404).json({ error: 'Voice channel or accepted call channel not found' });
   }
 
-  const participant = VoiceParticipants.findByUserAndChannel(req.user.id, channel.id);
-  if (!participant) {
+  const participant = channel ? VoiceParticipants.findByUserAndChannel(req.user.id, channel.id) : null;
+  if (channel && !participant && !callSession) {
     return res.status(409).json({
-      error: 'Join the selected channel in CAD before requesting an external voice token',
+      error: 'Join the selected channel in CAD before requesting an external voice token (or use an accepted call channel)',
     });
   }
+
+  const channelNumber = parsePositiveInt(channel?.channel_number) || parsePositiveInt(callSession?.call_channel_number);
+  if (channelNumber <= 0) {
+    return res.status(409).json({ error: 'Unable to resolve a valid channel number for external voice token' });
+  }
+
+  const channelName = channel
+    ? String(channel.name || `Channel ${channelNumber}`).trim() || `Channel ${channelNumber}`
+    : `000 Call #${parsePositiveInt(callSession?.call_id) || parsePositiveInt(callSession?.id) || channelNumber}`;
+  const channelType = callSession ? 'call' : 'radio';
 
   try {
     const externalVoice = getExternalVoiceService();
@@ -207,20 +252,24 @@ router.post('/external/token', requireAuth, (req, res) => {
 
     const tokenData = externalVoice.issueDispatcherToken({
       user: req.user,
-      channelNumber: channel.channel_number,
-      channelName: channel.name,
+      channelNumber,
+      channelName,
     });
 
     audit(req.user.id, 'external_voice_dispatch_token_issued', {
       provider: tokenData.provider,
-      channel_id: channel.id,
-      channel_number: channel.channel_number,
+      channel_id: channel?.id || null,
+      channel_number: channelNumber,
+      channel_type: channelType,
+      call_session_id: callSession?.id || null,
     });
 
     return res.json({
       ok: true,
-      channel_id: channel.id,
-      channel_number: channel.channel_number,
+      channel_id: channel?.id || null,
+      channel_number: channelNumber,
+      channel_type: channelType,
+      call_session_id: callSession?.id || null,
       ...tokenData,
     });
   } catch (error) {
