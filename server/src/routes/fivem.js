@@ -1034,13 +1034,15 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     if (!ids.linkKey) continue;
     seenLinks.add(ids.linkKey);
     seenLiveMapIdentifiers.add(ids.linkKey);
+    const playerName = String(player.name || '').trim();
+    const platformName = String(player.platform_name || player.platformName || '').trim();
 
     const position = player.position || {};
     FiveMPlayerLinks.upsert({
       steam_id: ids.linkKey,
       game_id: String(player.source ?? ''),
       citizen_id: String(player.citizenid || ''),
-      player_name: String(player.name || ''),
+      player_name: playerName || platformName,
       position_x: Number(position.x || 0),
       position_y: Number(position.y || 0),
       position_z: Number(position.z || 0),
@@ -1065,15 +1067,14 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       }
     }
     if (!cadUser) {
-      const byName = resolveCadUserByName(player.name, onDutyNameIndex);
-      if (byName) {
-        cadUser = byName;
-      }
+      // Prefer platform/Steam-style names for CAD identity matching.
+      cadUser = resolveCadUserByName(platformName, onDutyNameIndex)
+        || resolveCadUserByName(playerName, onDutyNameIndex);
     }
 
     const mappedUnit = cadUser ? Units.findByUserId(cadUser.id) : null;
     liveMapStore.upsertPlayer(ids.linkKey, {
-      name: String(player.name || ''),
+      name: playerName || platformName,
       pos: {
         x: Number(position.x || 0),
         y: Number(position.y || 0),
@@ -1183,6 +1184,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   const payload = req.body || {};
   const ids = resolveLinkIdentifiers(payload.identifiers || []);
   const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Caller';
+  const platformName = String(payload.platform_name || payload.platformName || '').trim();
   const sourceId = String(payload.source ?? '').trim();
   const sourceType = normalizeEmergencySourceType(
     payload.source_type || payload.call_source || payload.origin || payload.entry_type
@@ -1196,7 +1198,9 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     if (cachedUserId) cadUser = Users.findById(cachedUserId) || null;
   }
   if (!cadUser) {
-    const byName = resolveCadUserByName(playerName, buildOnDutyNameIndex(Units.list()));
+    const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
+    const byName = resolveCadUserByName(platformName, onDutyNameIndex)
+      || resolveCadUserByName(playerName, onDutyNameIndex);
     if (byName) cadUser = byName;
   }
   if (cadUser) {
@@ -1324,6 +1328,7 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
     logBridgeDocumentTrace('license request received', payloadSummary, true);
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
     const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
+    const platformName = String(payload.platform_name || payload.platformName || '').trim();
 
     let cadUser = resolveCadUserFromIdentifiers(ids);
     if (!cadUser && ids.linkKey) {
@@ -1331,7 +1336,9 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
       if (cachedUserId) cadUser = Users.findById(cachedUserId) || null;
     }
     if (!cadUser) {
-      const byName = resolveCadUserByName(playerName, buildOnDutyNameIndex(Units.list()));
+      const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
+      const byName = resolveCadUserByName(platformName, onDutyNameIndex)
+        || resolveCadUserByName(playerName, onDutyNameIndex);
       if (byName) cadUser = byName;
     }
     if (cadUser) {
@@ -1489,6 +1496,7 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
     logBridgeDocumentTrace('registration request received', payloadSummary, true);
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
     const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
+    const platformName = String(payload.platform_name || payload.platformName || '').trim();
 
     let cadUser = resolveCadUserFromIdentifiers(ids);
     if (!cadUser && ids.linkKey) {
@@ -1496,7 +1504,9 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
       if (cachedUserId) cadUser = Users.findById(cachedUserId) || null;
     }
     if (!cadUser) {
-      const byName = resolveCadUserByName(playerName, buildOnDutyNameIndex(Units.list()));
+      const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
+      const byName = resolveCadUserByName(platformName, onDutyNameIndex)
+        || resolveCadUserByName(playerName, onDutyNameIndex);
       if (byName) cadUser = byName;
     }
     if (cadUser) {

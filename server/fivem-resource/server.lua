@@ -1072,6 +1072,7 @@ local function submitEmergencyCall(src, report)
   local payload = {
     source = s,
     player_name = getCharacterDisplayName(s),
+    platform_name = trim(GetPlayerName(s) or ''),
     identifiers = GetPlayerIdentifiers(s),
     title = ('000 %s'):format(report.emergency_type),
     message = details,
@@ -1131,6 +1132,7 @@ local function submitDriverLicense(src, formData)
   local payload = {
     source = s,
     player_name = getCharacterDisplayName(s),
+    platform_name = trim(GetPlayerName(s) or ''),
     identifiers = GetPlayerIdentifiers(s),
     citizenid = trim(getCitizenId(s) or defaults.citizenid or ''),
     full_name = trim(defaults.full_name ~= '' and defaults.full_name or formData.full_name),
@@ -1374,6 +1376,7 @@ local function submitVehicleRegistration(src, formData)
   local payload = {
     source = s,
     player_name = getCharacterDisplayName(s),
+    platform_name = trim(GetPlayerName(s) or ''),
     identifiers = GetPlayerIdentifiers(s),
     citizenid = trim(getCitizenId(s) or defaults.citizenid or ''),
     owner_name = trim(defaults.full_name ~= '' and defaults.full_name or formData.owner_name),
@@ -1589,6 +1592,7 @@ local function submitNpwdEmergencyCall(src, emergencyNumber, incomingCaller)
   local payload = {
     source = s,
     player_name = callerName ~= '' and callerName or getCharacterDisplayName(s),
+    platform_name = trim(GetPlayerName(s) or ''),
     identifiers = GetPlayerIdentifiers(s),
     citizenid = getCitizenId(s),
     title = ('000 Phone Call - %s'):format(callerName ~= '' and callerName or getCharacterDisplayName(s)),
@@ -2078,6 +2082,7 @@ CreateThread(function()
           payloadPlayers[#payloadPlayers + 1] = {
             source = s,
             name = getCharacterDisplayName(s),
+            platform_name = trim(GetPlayerName(s) or ''),
             identifiers = identifiers,
             citizenid = getCitizenId(s),
             position = {
