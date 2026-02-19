@@ -389,6 +389,8 @@ local vehicleRegistrationUiOpen = false
 local idCardUiOpen = false
 local SHOW_ID_COMMAND = trim(Config.ShowIdCommand or 'showid')
 if SHOW_ID_COMMAND == '' then SHOW_ID_COMMAND = 'showid' end
+local SHOW_ID_KEY = trim(Config.ShowIdKey or 'PAGEDOWN')
+if SHOW_ID_KEY == '' then SHOW_ID_KEY = 'PAGEDOWN' end
 local SHOW_ID_MAX_DISTANCE = tonumber(Config.ShowIdTargetDistance or 4.0) or 4.0
 
 local function hasAnyCadBridgeModalOpen()
@@ -1192,7 +1194,7 @@ RegisterCommand('cadbridgeidtoggle', function()
   requestShowIdCard()
 end, false)
 
-RegisterKeyMapping('cadbridgeidtoggle', 'Show or hide your ID card', 'keyboard', 'PGDN')
+RegisterKeyMapping('cadbridgeidtoggle', 'Show or hide your ID card', 'keyboard', SHOW_ID_KEY)
 
 -- Test command to verify UI works without server
 RegisterCommand('test000ui', function()

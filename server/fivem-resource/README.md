@@ -75,6 +75,7 @@ Command adapter execution now waits for the target character to be online.
 ## Driver license + registration commands
 - Use `/cadlicense` (configurable with `cad_bridge_license_command`) to open the in-game driver license form.
 - Use `/cadrego` (configurable with `cad_bridge_registration_command`) to open the vehicle registration form.
+- Use `cad_bridge_show_id_key` to control the default keybind for `cadbridgeidtoggle` (Page Down uses `PAGEDOWN`).
 - Driver license captures name, DOB, gender, classes, optional conditions/mugshot URL, and expiry.
 - Vehicle registration captures owner name, plate, model, colour, duration, and expiry.
 - Records are stored in CAD with status workflows:

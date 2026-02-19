@@ -142,31 +142,56 @@ local function hasTrackedIdentifier(identifiers)
   return false
 end
 
+local function isNumericOnly(value)
+  local text = trim(value)
+  if text == '' then return false end
+  return text:match('^%d+$') ~= nil
+end
+
+local function extractCitizenIdFromState(state)
+  if type(state) ~= 'table' then
+    return '', ''
+  end
+
+  -- Prefer explicit citizenid fields first.
+  local directCandidates = {
+    state.citizenid,
+    state.citizenId,
+    state.playerCitizenId,
+  }
+  for _, candidate in ipairs(directCandidates) do
+    local value = trim(candidate)
+    if value ~= '' then
+      return value, ''
+    end
+  end
+
+  local statePlayerData = state.PlayerData
+  if type(statePlayerData) == 'table' then
+    local value = trim(statePlayerData.citizenid or '')
+    if value ~= '' then
+      return value, ''
+    end
+  end
+
+  -- Some frameworks expose `state.cid` as a character slot index (e.g. "1"),
+  -- so only use it as a last fallback.
+  local cidFallback = trim(state.cid or '')
+  if cidFallback == '' then
+    return '', ''
+  end
+  if isNumericOnly(cidFallback) then
+    return '', cidFallback
+  end
+  return cidFallback, ''
+end
+
 local function getCitizenId(src)
   local player = Player(src)
+  local stateCitizenId = ''
+  local numericCidFallback = ''
   if player and player.state then
-    local state = player.state
-
-    local directCandidates = {
-      state.citizenid,
-      state.citizenId,
-      state.cid,
-      state.playerCitizenId,
-    }
-    for _, candidate in ipairs(directCandidates) do
-      local value = trim(candidate)
-      if value ~= '' then
-        return value
-      end
-    end
-
-    local statePlayerData = state.PlayerData
-    if type(statePlayerData) == 'table' then
-      local value = trim(statePlayerData.citizenid or '')
-      if value ~= '' then
-        return value
-      end
-    end
+    stateCitizenId, numericCidFallback = extractCitizenIdFromState(player.state)
   end
 
   if GetResourceState('qbx_core') == 'started' then
@@ -187,6 +212,14 @@ local function getCitizenId(src)
         return tostring(player.PlayerData.citizenid)
       end
     end
+  end
+
+  if stateCitizenId ~= '' then
+    return stateCitizenId
+  end
+
+  if numericCidFallback ~= '' then
+    return numericCidFallback
   end
 
   return ''

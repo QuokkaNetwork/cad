@@ -297,6 +297,8 @@ Config.VehicleRegistrationCommand = trim(getString('cad_bridge_registration_comm
 if Config.VehicleRegistrationCommand == '' then Config.VehicleRegistrationCommand = 'cadrego' end
 Config.ShowIdCommand = trim(getString('cad_bridge_show_id_command', 'showid'))
 if Config.ShowIdCommand == '' then Config.ShowIdCommand = 'showid' end
+Config.ShowIdKey = trim(getString('cad_bridge_show_id_key', 'PAGEDOWN'))
+if Config.ShowIdKey == '' then Config.ShowIdKey = 'PAGEDOWN' end
 Config.ShowIdTargetDistance = getNumber('cad_bridge_show_id_target_distance', 4.0)
 if Config.ShowIdTargetDistance < 0.5 then Config.ShowIdTargetDistance = 0.5 end
 Config.ShowIdNearbyDistance = getNumber('cad_bridge_show_id_nearby_distance', Config.ShowIdTargetDistance)

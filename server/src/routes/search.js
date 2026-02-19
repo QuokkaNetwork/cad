@@ -64,8 +64,10 @@ function normalizeLicenseForResponse(license) {
 
 function normalizePersonForResponse(person) {
   if (!person || typeof person !== 'object') return person;
+  const citizenid = String(person.citizenid || person.citizen_id || person.citizenId || '').trim();
   return {
     ...person,
+    citizenid,
     gender: normalizeGender(person.gender),
   };
 }
@@ -260,6 +262,7 @@ router.get('/persons', requireAuth, async (req, res) => {
     // Add warrant and BOLO flags to each result
     const enrichedResults = results.map(person => {
       const normalizedPerson = normalizePersonForResponse(person);
+      const citizenId = String(normalizedPerson.citizenid || '').trim();
       const personFullName = String(
         normalizedPerson.full_name
         || `${normalizedPerson.firstname || ''} ${normalizedPerson.lastname || ''}`.trim()
@@ -269,6 +272,7 @@ router.get('/persons', requireAuth, async (req, res) => {
 
       return {
         ...normalizedPerson,
+        cad_driver_license: citizenId ? normalizeLicenseForResponse(DriverLicenses.findByCitizenId(citizenId)) : null,
         has_warrant: warrants.length > 0,
         has_bolo: personBolos.length > 0,
         warrant_count: warrants.length,
