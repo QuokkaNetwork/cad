@@ -219,6 +219,7 @@ function buildCadPersonFromSources(req, citizenId, {
     qboxPerson?.full_name
     || `${qboxFirstName} ${qboxLastName}`.trim()
     || fallbackName
+    || license?.full_name
     || cid
   ).trim();
 
@@ -459,7 +460,7 @@ router.get('/cad/persons/:citizenid', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Person not found' });
     }
 
-    const fallbackName = registrations[0]?.owner_name || citizenId;
+    const fallbackName = registrations[0]?.owner_name || license?.full_name || citizenId;
     const person = buildCadPersonFromSources(req, citizenId, {
       license,
       fallbackName,
