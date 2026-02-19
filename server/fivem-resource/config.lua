@@ -1,7 +1,7 @@
 Config = {}
 
 local function trim(value)
-  return tostring(value or ''):gsub('^%s+', ''):gsub('%s+$', '')
+  return (tostring(value or ''):gsub('^%s+', ''):gsub('%s+$', ''))
 end
 
 local function unquote(value)
