@@ -999,6 +999,7 @@ RegisterNUICallback('cadBridge000Cancel', function(_data, cb)
 end)
 
 RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
+  print('[cad_bridge] NUI cadBridgeLicenseSubmit callback fired')
   local fullName = trim(data and data.full_name or data and data.character_name or '')
   local dateOfBirth = trim(data and data.date_of_birth or data and data.dob or '')
   local gender = trim(data and data.gender or '')
@@ -1015,28 +1016,46 @@ RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
     end
   end
 
+  print(('[cad_bridge] License form data: name=%q dob=%q gender=%q classes=%d expiry_days=%s'):format(
+    fullName, dateOfBirth, gender, #classes, tostring(expiryDays)))
+
   if fullName == '' or dateOfBirth == '' or gender == '' or #classes == 0 then
+    print(('[cad_bridge] License form validation FAILED: name=%q dob=%q gender=%q classes=%d'):format(
+      fullName, dateOfBirth, gender, #classes))
     if cb then cb({ ok = false, error = 'invalid_form' }) end
     return
   end
 
-  closeDriverLicensePopup()
-  -- Release NUI focus before taking screenshot-basic mugshot so the PED is captured, not the form UI.
-  Wait(80)
-  local mugshotUrl = captureMugshotUrl()
-  TriggerServerEvent('cad_bridge:submitDriverLicense', {
-    full_name = fullName,
-    date_of_birth = dateOfBirth,
-    gender = gender,
-    license_number = trim(data and data.license_number or ''),
-    license_classes = classes,
-    conditions = type(data and data.conditions) == 'table' and data.conditions or {},
-    mugshot_url = mugshotUrl,
-    expiry_days = math.floor(expiryDays),
-    expiry_at = trim(data and data.expiry_at or ''),
-  })
-
+  -- Respond to NUI immediately so the UI closes without delay.
   if cb then cb({ ok = true }) end
+
+  -- Capture form fields before entering async thread.
+  local licenseNumber = trim(data and data.license_number or '')
+  local conditions = type(data and data.conditions) == 'table' and data.conditions or {}
+  local expiryAt = trim(data and data.expiry_at or '')
+
+  closeDriverLicensePopup()
+
+  -- Run mugshot capture + server event in a proper coroutine so Wait() works reliably.
+  CreateThread(function()
+    -- Release NUI focus before taking mugshot so the PED is captured, not the form UI.
+    Wait(80)
+    print('[cad_bridge] Capturing mugshot...')
+    local mugshotUrl = captureMugshotUrl()
+    print(('[cad_bridge] Mugshot captured (length=%d). Triggering submitDriverLicense server event...'):format(#mugshotUrl))
+    TriggerServerEvent('cad_bridge:submitDriverLicense', {
+      full_name = fullName,
+      date_of_birth = dateOfBirth,
+      gender = gender,
+      license_number = licenseNumber,
+      license_classes = classes,
+      conditions = conditions,
+      mugshot_url = mugshotUrl,
+      expiry_days = math.floor(expiryDays),
+      expiry_at = expiryAt,
+    })
+    print('[cad_bridge] submitDriverLicense server event triggered successfully')
+  end)
 end)
 
 RegisterNUICallback('cadBridgeLicenseCancel', function(_data, cb)
@@ -1045,6 +1064,7 @@ RegisterNUICallback('cadBridgeLicenseCancel', function(_data, cb)
 end)
 
 RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
+  print('[cad_bridge] NUI cadBridgeRegistrationSubmit callback fired')
   local plate = trim(data and data.plate or data and data.license_plate or '')
   local model = trim(data and data.vehicle_model or data and data.model or '')
   local colour = trim(data and data.vehicle_colour or data and data.colour or data and data.color or '')
@@ -1052,12 +1072,18 @@ RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
   local durationDays = tonumber(data and data.duration_days or 0) or tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
   if durationDays < 1 then durationDays = 1 end
 
+  print(('[cad_bridge] Registration form data: plate=%q model=%q owner=%q duration=%s'):format(
+    plate, model, ownerName, tostring(durationDays)))
+
   if plate == '' or model == '' or ownerName == '' then
+    print(('[cad_bridge] Registration form validation FAILED: plate=%q model=%q owner=%q'):format(plate, model, ownerName))
     if cb then cb({ ok = false, error = 'invalid_form' }) end
     return
   end
 
+  if cb then cb({ ok = true }) end
   closeVehicleRegistrationPopup()
+  print('[cad_bridge] Triggering submitVehicleRegistration server event...')
   TriggerServerEvent('cad_bridge:submitVehicleRegistration', {
     plate = plate,
     vehicle_model = model,
@@ -1065,8 +1091,7 @@ RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
     owner_name = ownerName,
     duration_days = math.floor(durationDays),
   })
-
-  if cb then cb({ ok = true }) end
+  print('[cad_bridge] submitVehicleRegistration server event triggered successfully')
 end)
 
 RegisterNUICallback('cadBridgeRegistrationCancel', function(_data, cb)

@@ -23,6 +23,16 @@ const liveMapStore = require('../services/liveMapStore');
 const { handleParticipantJoin, handleParticipantLeave } = require('../services/voiceBridgeSync');
 
 const router = express.Router();
+
+// Log every incoming request to the fivem integration router.
+router.use((req, _res, next) => {
+  // Skip noisy heartbeat logging unless it fails auth.
+  if (req.path !== '/heartbeat') {
+    console.log(`[FiveMBridge] Incoming ${req.method} ${req.path} from ${req.ip || req.connection?.remoteAddress || 'unknown'}`);
+  }
+  next();
+});
+
 const liveLinkUserCache = new Map();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const pendingRouteJobs = new Map();

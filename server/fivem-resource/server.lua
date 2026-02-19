@@ -1146,8 +1146,10 @@ end
 local function submitDriverLicense(src, formData)
   local s = tonumber(src)
   if not s then return end
+  print(('[cad_bridge] submitDriverLicense() called for src=%s'):format(tostring(s)))
   if isBridgeBackoffActive('licenses') then
     local waitSeconds = math.max(1, math.ceil(getEffectiveBackoffRemainingMs('licenses') / 1000))
+    print(('[cad_bridge] submitDriverLicense BLOCKED by rate-limit backoff (%ss remaining)'):format(waitSeconds))
     notifyPlayer(s, ('CAD bridge is rate-limited. Try again in %ss.'):format(waitSeconds))
     return
   end
@@ -1170,6 +1172,9 @@ local function submitDriverLicense(src, formData)
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
+  print(('[cad_bridge] License payload: citizenid=%q name=%q dob=%q mugshot_len=%d'):format(
+    trim(payload.citizenid or ''), trim(payload.full_name or ''),
+    trim(payload.date_of_birth or ''), #trim(payload.mugshot_url or '')))
   logDocumentTrace('license-submit-start', {
     payload = summarizeLicensePayloadForLog(payload),
     form = summarizeLicensePayloadForLog(formData),
@@ -1185,7 +1190,9 @@ local function submitDriverLicense(src, formData)
     return
   end
 
+  print(('[cad_bridge] Checking existing license for citizenid=%s ...'):format(trim(payload.citizenid or '')))
   request('GET', '/api/integration/fivem/licenses/' .. urlEncode(payload.citizenid), nil, function(existingStatus, existingBody)
+    print(('[cad_bridge] Existing license check response: HTTP %s'):format(tostring(existingStatus)))
     logDocumentTrace('license-renew-check-response', {
       http_status = tonumber(existingStatus) or 0,
       citizenid = trim(payload.citizenid or ''),
@@ -1281,12 +1288,14 @@ local function submitDriverLicense(src, formData)
     end
 
     local function submitLicensePost()
+      print(('[cad_bridge] >>> Sending POST /api/integration/fivem/licenses for citizenid=%s'):format(trim(payload.citizenid or '')))
       logDocumentTrace('license-create-request', {
         citizenid = trim(payload.citizenid or ''),
         mugshot_length = #(trim(payload.mugshot_url or '')),
         has_retried_without_photo = hasRetriedWithoutPhoto == true,
       })
       request('POST', '/api/integration/fivem/licenses', payload, function(status, body, responseHeaders)
+        print(('[cad_bridge] <<< POST /licenses response: HTTP %s body_len=%d'):format(tostring(status), #(body or '')))
         logDocumentTrace('license-create-response', {
           http_status = tonumber(status) or 0,
           citizenid = trim(payload.citizenid or ''),
@@ -1753,7 +1762,11 @@ end)
 
 RegisterNetEvent('cad_bridge:submitDriverLicense', function(payload)
   local src = source
-  if not src or src == 0 then return end
+  print(('[cad_bridge] >>> submitDriverLicense event received from src=%s'):format(tostring(src)))
+  if not src or src == 0 then
+    print('[cad_bridge] submitDriverLicense ABORTED: invalid source')
+    return
+  end
   logDocumentTrace('license-event-received', {
     source = tonumber(src) or 0,
     payload = summarizeLicensePayloadForLog(payload),
@@ -1761,6 +1774,7 @@ RegisterNetEvent('cad_bridge:submitDriverLicense', function(payload)
 
   local formData, err = parseDriverLicenseForm(payload)
   if not formData then
+    print(('[cad_bridge] submitDriverLicense ABORTED: form validation failed: %s'):format(tostring(err)))
     logDocumentFailure('license-validate-failed', {
       source = tonumber(src) or 0,
       error = trim(err or 'invalid_form'),
@@ -1770,12 +1784,17 @@ RegisterNetEvent('cad_bridge:submitDriverLicense', function(payload)
     return
   end
 
+  print(('[cad_bridge] submitDriverLicense: form valid, calling submitDriverLicense() for citizenid=%s'):format(trim(getCitizenId(src) or '')))
   submitDriverLicense(src, formData)
 end)
 
 RegisterNetEvent('cad_bridge:submitVehicleRegistration', function(payload)
   local src = source
-  if not src or src == 0 then return end
+  print(('[cad_bridge] >>> submitVehicleRegistration event received from src=%s'):format(tostring(src)))
+  if not src or src == 0 then
+    print('[cad_bridge] submitVehicleRegistration ABORTED: invalid source')
+    return
+  end
   logDocumentTrace('registration-event-received', {
     source = tonumber(src) or 0,
     payload = summarizeRegistrationPayloadForLog(payload),
