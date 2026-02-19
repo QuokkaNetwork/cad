@@ -1386,6 +1386,8 @@ local cadRadioSubmixId = -1
 local cadRadioRxVolume = CAD_RADIO_RX_VOLUME
 local cadRadioMutedBySource = {}
 local cadRadioUiVisible = false
+local cadExternalVoiceSession = nil
+local cadExternalVoiceLastLogAt = 0
 
 local cadRadioUiSettings = {
   name = '',
@@ -1630,9 +1632,22 @@ local function cadRadioSendNui(action, data)
   })
 end
 
+local function cadRadioPushExternalVoiceSession()
+  if type(cadExternalVoiceSession) == 'table' then
+    cadRadioSendNui('externalVoiceSession', cadExternalVoiceSession)
+    return
+  end
+  cadRadioSendNui('externalVoiceSession', {
+    ok = false,
+    cleared = true,
+    reason = 'no_session',
+  })
+end
+
 local function cadRadioPushUiState()
   cadRadioSendNui('updateRadio', cadRadioBuildUiPayload())
   cadRadioSendNui('updateRadioList', cadRadioBuildUiMemberList())
+  cadRadioPushExternalVoiceSession()
 end
 
 local function cadRadioCloseUi()
@@ -1650,6 +1665,7 @@ local function cadRadioOpenUi()
   SetNuiFocusKeepInput(cadRadioUiSettings.userData.allowMovement == true)
   cadRadioSendNui('setRadioVisible', cadRadioBuildUiPayload())
   cadRadioSendNui('updateRadioList', cadRadioBuildUiMemberList())
+  cadRadioPushExternalVoiceSession()
 end
 
 cadRadioLoadUiSettings()
@@ -1829,18 +1845,55 @@ RegisterNetEvent('cad_bridge:radio:update', function(payload)
         description = ('Joined channel %s'):format(tostring(cadRadioChannel)),
         type = 'inform',
       })
+      TriggerServerEvent('cad_bridge:external_voice:refresh')
     elseif previousChannel > 0 then
       triggerCadOxNotify({
         title = 'CAD Radio',
         description = ('Left channel %s'):format(tostring(previousChannel)),
         type = 'inform',
       })
+      cadExternalVoiceSession = nil
+      cadRadioPushExternalVoiceSession()
     end
   end
 
   local memberList = cadRadioBuildUiMemberList()
   cadRadioSendNui('updateRadioList', memberList)
   cadRadioPushUiState()
+end)
+
+RegisterNetEvent('cad_bridge:external_voice:session', function(payload)
+  if type(payload) ~= 'table' then return end
+
+  if payload.ok == true and type(payload.token) == 'string' and payload.token ~= '' then
+    cadExternalVoiceSession = {
+      ok = true,
+      provider = tostring(payload.provider or ''),
+      url = tostring(payload.url or ''),
+      room_name = tostring(payload.room_name or ''),
+      identity = tostring(payload.identity or ''),
+      token = tostring(payload.token or ''),
+      channel_number = tonumber(payload.channel_number) or 0,
+      channel_type = tostring(payload.channel_type or 'radio'),
+      expires_in_seconds = tonumber(payload.expires_in_seconds) or 0,
+      issued_at_ms = tonumber(payload.issued_at_ms) or 0,
+      expires_at_ms = tonumber(payload.expires_at_ms) or 0,
+    }
+
+    cadRadioPushExternalVoiceSession()
+    return
+  end
+
+  cadExternalVoiceSession = nil
+  cadRadioPushExternalVoiceSession()
+
+  local nowMs = tonumber(GetGameTimer() or 0) or 0
+  if (nowMs - cadExternalVoiceLastLogAt) >= 5000 then
+    cadExternalVoiceLastLogAt = nowMs
+    print(('[cad_bridge][external_voice] session cleared (reason=%s)'):format(
+      tostring(payload.reason or 'cleared')
+    ))
+  end
 end)
 
 RegisterNetEvent('cad_bridge:radio:setTalking', function(sourceId, enabled)
@@ -2219,6 +2272,8 @@ AddEventHandler('onClientResourceStop', function(resourceName)
   end
   cadRadioCloseUi()
   clearAllRemoteCadRadioTalking()
+  cadExternalVoiceSession = nil
+  cadRadioPushExternalVoiceSession()
   MumbleClearVoiceTargetPlayers(CAD_RADIO_TARGET_ID)
   MumbleSetVoiceTarget(CAD_PROXIMITY_TARGET_ID)
 end)

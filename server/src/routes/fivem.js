@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
+const config = require('../config');
 const {
   Settings,
   Users,
@@ -22,6 +23,7 @@ const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
 const liveMapStore = require('../services/liveMapStore');
 const { handleParticipantJoin, handleParticipantLeave } = require('../services/voiceBridgeSync');
+const { getExternalVoiceService } = require('../services/externalVoice');
 
 const router = express.Router();
 
@@ -840,6 +842,53 @@ function findActiveLinkByCitizenId(citizenId) {
     if (linkedCitizenId === target) return link;
   }
   return null;
+}
+
+function findActiveLinkByGameId(gameId) {
+  const target = String(gameId || '').trim();
+  if (!target) return null;
+
+  for (const link of FiveMPlayerLinks.list()) {
+    if (!isActiveFiveMLink(link)) continue;
+    const linkedGameId = String(link.game_id || '').trim();
+    if (!linkedGameId) continue;
+    if (linkedGameId === target) return link;
+  }
+  return null;
+}
+
+function parsePositiveInt(value) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
+function resolveOrCreateVoiceChannelByNumber(channelNumber, { createIfMissing = false } = {}) {
+  const number = parsePositiveInt(channelNumber);
+  if (!number) return null;
+
+  let channel = VoiceChannels.findByChannelNumber(number);
+  if (!channel && createIfMissing) {
+    try {
+      channel = VoiceChannels.create({
+        channel_number: number,
+        department_id: null,
+        name: `Channel ${number}`,
+        description: `Radio channel ${number} (auto-created by external voice token flow)`,
+      });
+      console.log(`[FiveMBridge] Auto-created external voice channel ${number}`);
+    } catch {
+      // Race-safe fallback in case another request created the row first.
+      channel = VoiceChannels.findByChannelNumber(number) || null;
+    }
+  }
+
+  if (channel && !channel.is_active) {
+    VoiceChannels.update(channel.id, { is_active: 1 });
+    channel = VoiceChannels.findById(channel.id) || channel;
+  }
+
+  return channel || null;
 }
 
 function normalizePostalToken(value) {
@@ -1933,6 +1982,148 @@ router.post('/voice-events/:id/failed', requireBridgeAuth, (req, res) => {
   const error = String(req.body?.error || 'Voice delivery failed');
   markVoiceEventFailed(id, error);
   res.json({ ok: true });
+});
+
+router.get('/external-voice/status', requireBridgeAuth, (_req, res) => {
+  const behavior = String(config?.radio?.behavior || 'external');
+  const status = getExternalVoiceService().getStatus();
+  return res.json({
+    ok: true,
+    mode: behavior,
+    external_mode: behavior === 'external',
+    ...status,
+  });
+});
+
+router.post('/external-voice/token', requireBridgeAuth, (req, res) => {
+  const behavior = String(config?.radio?.behavior || 'external');
+  if (behavior !== 'external') {
+    return res.status(409).json({
+      error: 'External voice token flow is only available in RADIO_BEHAVIOR=external',
+      mode: behavior,
+    });
+  }
+
+  const externalVoice = getExternalVoiceService();
+  const transportStatus = externalVoice.getStatus();
+  if (!transportStatus.available) {
+    return res.status(503).json({
+      error: 'External voice transport is not configured',
+      provider: transportStatus.provider,
+      missing: transportStatus.missing,
+    });
+  }
+
+  const payload = req.body || {};
+  let gameId = String(payload.game_id ?? payload.gameId ?? '').trim();
+  let citizenId = String(payload.citizen_id ?? payload.citizenId ?? '').trim();
+  let playerName = String(payload.player_name ?? payload.playerName ?? '').trim();
+
+  const requestedChannelId = parsePositiveInt(payload.channel_id ?? payload.channelId);
+  const requestedChannelNumber = parsePositiveInt(payload.channel_number ?? payload.channelNumber);
+
+  let activeLink = null;
+  if (gameId) {
+    activeLink = findActiveLinkByGameId(gameId);
+  }
+  if (!activeLink && citizenId) {
+    activeLink = findActiveLinkByCitizenId(citizenId);
+  }
+  if (!activeLink && Array.isArray(payload.identifiers) && payload.identifiers.length > 0) {
+    const ids = resolveLinkIdentifiers(payload.identifiers);
+    if (ids.linkKey) {
+      const candidate = FiveMPlayerLinks.findBySteamId(ids.linkKey);
+      if (candidate && isActiveFiveMLink(candidate)) {
+        activeLink = candidate;
+      }
+    }
+  }
+
+  if (!gameId && activeLink) gameId = String(activeLink.game_id || '').trim();
+  if (!citizenId && activeLink) citizenId = String(activeLink.citizen_id || '').trim();
+  if (!playerName && activeLink) playerName = String(activeLink.player_name || '').trim();
+
+  if (!gameId) {
+    return res.status(400).json({
+      error: 'game_id is required (or resolveable from an active bridge link)',
+    });
+  }
+
+  let participant = VoiceParticipants.findByGameId(gameId);
+  if (!participant && citizenId) {
+    const byCitizen = findActiveLinkByCitizenId(citizenId);
+    if (byCitizen) {
+      const linkedGameId = String(byCitizen.game_id || '').trim();
+      if (linkedGameId) {
+        gameId = linkedGameId;
+        participant = VoiceParticipants.findByGameId(gameId);
+        if (!activeLink) activeLink = byCitizen;
+      }
+    }
+  }
+
+  let channel = null;
+  if (requestedChannelId) {
+    channel = VoiceChannels.findById(requestedChannelId);
+  }
+  if (!channel && requestedChannelNumber) {
+    channel = resolveOrCreateVoiceChannelByNumber(requestedChannelNumber, { createIfMissing: true });
+  }
+  if (!channel && participant?.channel_id) {
+    channel = VoiceChannels.findById(parsePositiveInt(participant.channel_id));
+  }
+  if (!channel && participant?.channel_number) {
+    channel = resolveOrCreateVoiceChannelByNumber(participant.channel_number, { createIfMissing: true });
+  }
+
+  if (!channel) {
+    return res.status(409).json({
+      error: 'No active voice channel context found for token request',
+      hint: 'Provide channel_number in request or join a CAD-tracked channel first',
+    });
+  }
+
+  const channelNumber = parsePositiveInt(channel.channel_number || requestedChannelNumber || participant?.channel_number);
+  if (!channelNumber) {
+    return res.status(409).json({
+      error: 'Resolved voice channel is invalid',
+    });
+  }
+
+  try {
+    const tokenData = externalVoice.issueFieldUnitToken({
+      gameId,
+      citizenId,
+      playerName: playerName || citizenId || `Unit ${gameId}`,
+      channelNumber,
+      channelName: String(channel.name || `Channel ${channelNumber}`).trim(),
+    });
+
+    audit(null, 'external_voice_field_token_issued', {
+      provider: tokenData.provider,
+      game_id: gameId,
+      citizen_id: citizenId,
+      channel_id: Number(channel.id || 0) || null,
+      channel_number: channelNumber,
+      participant_found: !!participant,
+    });
+
+    return res.json({
+      ok: true,
+      game_id: gameId,
+      citizen_id: citizenId,
+      channel_id: Number(channel.id || 0) || null,
+      channel_number: channelNumber,
+      participant_found: !!participant,
+      ...tokenData,
+    });
+  } catch (error) {
+    const statusCode = Number(error?.statusCode || 500) || 500;
+    return res.status(statusCode).json({
+      error: error?.message || 'Failed to issue external voice token',
+      details: error?.details || null,
+    });
+  }
 });
 
 // FiveM resource polls pending fine jobs and applies them through QBox-side logic.

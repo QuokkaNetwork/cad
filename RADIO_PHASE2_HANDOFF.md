@@ -77,6 +77,23 @@ Complete Phase 2 of the external radio behavior with a stable, simple flow:
   - Channel membership/state sync is in place.
   - Actual dispatcher media path is missing in external mode (CAD page currently only has legacy websocket + Mumble media client).
   - In-game radio TX/RX path is still Mumble-target based; this conflicts with the no-Mumble end goal.
+- Phase 2 implementation started (token/auth foundation):
+  - Added external voice provider service in CAD (`none`, `livekit`, `jwt` modes) with status reporting and token minting.
+  - Added `GET /api/voice/external/status` and `POST /api/voice/external/token`.
+  - Token endpoint enforces dispatch/admin auth + external mode + joined-channel membership before minting.
+  - Extended `GET /api/voice/bridge/status` to include `external_transport` status.
+  - Updated CAD Voice page to request an external token when joining a channel in external mode and show transport/session readiness.
+  - Added env scaffolding in `.env.example` for external provider config.
+  - Added bridge-auth external token endpoints for in-game units:
+    - `GET /api/integration/fivem/external-voice/status`
+    - `POST /api/integration/fivem/external-voice/token`
+  - Added FiveM bridge-side external token session lifecycle:
+    - requests token on radio channel join/switch
+    - clears token on leave/disconnect
+    - periodic pre-expiry refresh while player remains in channel
+    - startup provider-status check log
+  - Added `cad_bridge_external_voice_token_enabled` config toggle (`config.lua` + `config.cfg`).
+  - Added client event hook `cad_bridge:external_voice:session` and NUI message forwarding (`externalVoiceSession`) so the in-game UI path can consume issued tokens.
 
 ## Immediate Phase 2 Build Order (No-Mumble Path)
 1. Add an external media transport service (self-hosted WebRTC SFU) and token issuance API in CAD.
@@ -84,6 +101,7 @@ Complete Phase 2 of the external radio behavior with a stable, simple flow:
 3. Add FiveM NUI transport client for in-game radio TX/RX using the same channel IDs.
 4. Keep existing CAD channel membership + heartbeat flow as signaling/authorization source of truth.
 5. Remove legacy Mumble-root assumptions from the in-game TX path once external media path is verified.
+6. Wire `externalVoiceSession` token payloads into in-game NUI WebRTC client join/publish/subscribe logic (currently token plumbing only).
 
 ## Acceptance Criteria
 - Two in-game players on same channel can hear each other consistently.

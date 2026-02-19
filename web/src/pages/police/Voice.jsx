@@ -29,6 +29,8 @@ export default function Voice() {
   const [loading, setLoading] = useState(true);
   const [showAllChannels, setShowAllChannels] = useState(true);
   const [channelFilter, setChannelFilter] = useState('');
+  const [externalTransport, setExternalTransport] = useState(null);
+  const [externalSession, setExternalSession] = useState(null);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
@@ -36,6 +38,7 @@ export default function Voice() {
   const isExternalRadioOnlyMode = isExternalBehavior && bridgeIntentionallyDisabled === true;
   const isLegacyBridgeDisabled = !isExternalBehavior && bridgeIntentionallyDisabled === true;
   const canUseLegacyBridge = isDispatch && bridgeStatusLoaded && !isExternalBehavior && bridgeIntentionallyDisabled !== true;
+  const externalTransportReady = externalTransport?.available === true;
   const currentChannelData = useMemo(() => (
     Number(currentChannel || 0) > 0
       ? (channels.find((channel) => Number(channel?.channel_number || 0) === Number(currentChannel || 0)) || null)
@@ -119,6 +122,7 @@ export default function Voice() {
 
       setVoiceMode(mode);
       setBridgeIntentionallyDisabled(intentionallyDisabled);
+      setExternalTransport(status?.external_transport || null);
 
       if (!intentionallyDisabled) {
         setIsConnected(!!status?.available);
@@ -210,6 +214,7 @@ export default function Voice() {
     setIsConnected(false);
     setCurrentChannel(null);
     setIsPTTActive(false);
+    setExternalSession(null);
   }, [bridgeIntentionallyDisabled, voiceClient]);
 
   // PTT keyboard shortcut
@@ -253,6 +258,24 @@ export default function Voice() {
   }, [currentChannel, bridgeIntentionallyDisabled, voiceClient]);
 
   // Join channel
+  async function requestExternalToken(channelId, channelNumber) {
+    const payload = {
+      channel_id: Number(channelId || 0) || undefined,
+      channel_number: Number(channelNumber || 0) || undefined,
+    };
+    const result = await api.post('/api/voice/external/token', payload);
+    setExternalSession({
+      provider: result?.provider || '',
+      url: result?.url || '',
+      roomName: result?.room_name || '',
+      identity: result?.identity || '',
+      expiresInSeconds: Number(result?.expires_in_seconds || 0) || 0,
+      token: result?.token || '',
+      issuedAtMs: Date.now(),
+    });
+    return result;
+  }
+
   async function joinChannel(channelId, channelNumber) {
     if (!voiceClient) {
       setError('Voice client not initialized');
@@ -265,6 +288,9 @@ export default function Voice() {
       } else {
         setCurrentChannel(channelNumber);
         setIsPTTActive(false);
+        if (isExternalBehavior) {
+          await requestExternalToken(channelId, channelNumber);
+        }
       }
       fetchData();
     } catch (err) {
@@ -287,6 +313,7 @@ export default function Voice() {
         setCurrentChannel(null);
         setIsPTTActive(false);
       }
+      setExternalSession(null);
       fetchData();
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to leave channel';
@@ -308,6 +335,9 @@ export default function Voice() {
       } else if (result?.call_channel_number) {
         setCurrentChannel(result.call_channel_number);
         setIsPTTActive(false);
+        if (isExternalBehavior) {
+          await requestExternalToken(null, result.call_channel_number);
+        }
       }
       setSelectedCall(null);
       fetchData();
@@ -343,6 +373,7 @@ export default function Voice() {
         setCurrentChannel(null);
         setIsPTTActive(false);
       }
+      setExternalSession(null);
       fetchData();
     } catch (err) {
       const errorMsg = err?.message || String(err) || 'Failed to end call';
@@ -434,8 +465,21 @@ export default function Voice() {
         <div className="mb-4 px-4 py-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-200 text-sm">
           <p className="font-medium mb-1">External radio behavior mode enabled</p>
           <p className="text-xs">
-            CAD channel membership is active, but live radio audio is expected to be handled by your in-game radio stack.
+            CAD channel membership is active. External transport status:
+            {externalTransportReady
+              ? ` ready (${externalTransport?.provider || 'configured'})`
+              : ` not configured (${externalTransport?.provider || 'none'})`}
           </p>
+          {Array.isArray(externalTransport?.missing) && externalTransport.missing.length > 0 && (
+            <p className="text-xs mt-1">
+              Missing config: {externalTransport.missing.join(', ')}
+            </p>
+          )}
+          {externalSession?.roomName && (
+            <p className="text-xs mt-1">
+              Session prepared for room <span className="font-mono">{externalSession.roomName}</span> as <span className="font-mono">{externalSession.identity || 'unknown'}</span>.
+            </p>
+          )}
         </div>
       )}
       {!isExternalRadioOnlyMode && !isConnected && !error && (

@@ -41,8 +41,15 @@ The CAD auto-sync now patches `cad_bridge_base_url` and `cad_bridge_token` direc
 - Keep `cad_bridge_radio_channel_sync_enabled=true` so CAD channel labels stay in sync with in-game config.
 - Keep `cad_bridge_voice_participant_heartbeat_enabled=true` so CAD sees live in-game channel participants.
 - Keep `cad_bridge_voice_event_poll_enabled=false` for one-way membership flow (in-game radio state -> CAD heartbeat).
+- Keep `cad_bridge_external_voice_token_enabled=true` in external mode to let in-game clients request external voice session tokens from CAD.
+- If you are running legacy mode, set `cad_bridge_external_voice_token_enabled=false`.
 - Use `/radio` to open UI, `/radio <channel>` to join, `/radio off` to leave.
 - Restricted channels are optional and can be set via `cad_bridge_radio_restricted_channels_json` in `config.cfg`.
+- External mode token flow now uses:
+  - `GET /api/integration/fivem/external-voice/status`
+  - `POST /api/integration/fivem/external-voice/token`
+  via the bridge shared token (`cad_bridge_token`).
+- External provider credentials are configured on the CAD server (`.env`), not in the FiveM resource.
 
 CAD-side fine delivery options:
 - In Admin > System Settings, `Fine Delivery Mode = Direct QBX DB` applies fines directly in the QBX players table.

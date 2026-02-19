@@ -3329,6 +3329,125 @@ local CadRadioMembersByChannel = {} -- [channel] = { [source] = true }
 local CadRadioChannelBySource = {}  -- [source] = channel
 local CadRadioTalkingBySource = {}  -- [source] = bool
 local CadRadioDisplayNameBySource = {} -- [source] = custom display name
+local ExternalVoiceSessionBySource = {} -- [source] = session payload
+local externalVoiceTokenRequestInFlightBySource = {}
+
+local function clearExternalVoiceSessionForSource(source, reason)
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+  externalVoiceTokenRequestInFlightBySource[src] = nil
+  ExternalVoiceSessionBySource[src] = nil
+
+  TriggerClientEvent('cad_bridge:external_voice:session', src, {
+    ok = false,
+    cleared = true,
+    reason = tostring(reason or 'cleared'),
+  })
+end
+
+local function requestExternalVoiceTokenForSource(source, options)
+  if Config.ExternalVoiceTokenEnabled ~= true then return end
+  if not hasBridgeConfig() then return end
+
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+  if not GetPlayerName(src) then return end
+
+  local opts = type(options) == 'table' and options or {}
+  local channelNumber = tonumber(opts.channelNumber) or tonumber(CadRadioChannelBySource[src] or 0) or 0
+  channelNumber = math.floor(channelNumber)
+  if channelNumber <= 0 then
+    clearExternalVoiceSessionForSource(src, 'left_channel')
+    return
+  end
+
+  if isBridgeBackoffActive('external_voice_token') then
+    return
+  end
+
+  local channelType = trim(opts.channelType or 'radio')
+  if channelType == '' then channelType = 'radio' end
+  local now = nowMs()
+  local force = opts.force == true
+  local existing = ExternalVoiceSessionBySource[src]
+  if not force and type(existing) == 'table' then
+    local existingChannel = tonumber(existing.channel_number) or 0
+    local existingType = trim(existing.channel_type or 'radio')
+    local expiresAtMs = tonumber(existing.expires_at_ms or 0) or 0
+    if existingChannel == channelNumber and existingType == channelType and expiresAtMs > (now + 15000) then
+      return
+    end
+  end
+
+  if externalVoiceTokenRequestInFlightBySource[src] then
+    return
+  end
+  externalVoiceTokenRequestInFlightBySource[src] = true
+
+  request('POST', '/api/integration/fivem/external-voice/token', {
+    game_id = tostring(src),
+    citizen_id = getCitizenId(src),
+    player_name = getCharacterDisplayName(src),
+    channel_number = channelNumber,
+    channel_type = channelType,
+    identifiers = GetPlayerIdentifiers(src),
+  }, function(status, body, responseHeaders)
+    externalVoiceTokenRequestInFlightBySource[src] = nil
+
+    if status == 429 then
+      setBridgeBackoff('external_voice_token', responseHeaders, 5000, 'external voice token')
+      return
+    end
+
+    if status ~= 200 then
+      if status ~= 0 then
+        print(('[cad_bridge][external_voice] token request failed src=%s channel=%s status=%s'):format(
+          tostring(src),
+          tostring(channelNumber),
+          tostring(status)
+        ))
+      end
+      return
+    end
+
+    local ok, payload = pcall(json.decode, body or '{}')
+    if not ok or type(payload) ~= 'table' or payload.ok ~= true or trim(payload.token or '') == '' then
+      print(('[cad_bridge][external_voice] invalid token payload src=%s channel=%s'):format(
+        tostring(src),
+        tostring(channelNumber)
+      ))
+      return
+    end
+
+    local expiresInSeconds = tonumber(payload.expires_in_seconds) or 0
+    if expiresInSeconds < 1 then expiresInSeconds = 60 end
+    local session = {
+      ok = true,
+      provider = tostring(payload.provider or ''),
+      url = tostring(payload.url or ''),
+      room_name = tostring(payload.room_name or ''),
+      identity = tostring(payload.identity or ''),
+      token = tostring(payload.token or ''),
+      channel_id = tonumber(payload.channel_id) or 0,
+      channel_number = tonumber(payload.channel_number) or channelNumber,
+      channel_type = channelType,
+      game_id = tostring(payload.game_id or tostring(src)),
+      citizen_id = tostring(payload.citizen_id or ''),
+      expires_in_seconds = expiresInSeconds,
+      issued_at_ms = nowMs(),
+      expires_at_ms = nowMs() + (expiresInSeconds * 1000),
+    }
+    ExternalVoiceSessionBySource[src] = session
+    TriggerClientEvent('cad_bridge:external_voice:session', src, session)
+
+    print(('[cad_bridge][external_voice] token issued src=%s channel=%s provider=%s ttl=%ss'):format(
+      tostring(src),
+      tostring(session.channel_number),
+      tostring(session.provider),
+      tostring(session.expires_in_seconds)
+    ))
+  end)
+end
 
 local function cadRadioCountMembers(channelNumber)
   local channel = tonumber(channelNumber) or 0
@@ -3513,8 +3632,14 @@ local function cadRadioSetPlayerChannel(source, channelNumber)
   if oldChannel > 0 then cadRadioBroadcastChannel(oldChannel) end
   if newChannel > 0 then
     cadRadioBroadcastChannel(newChannel)
+    requestExternalVoiceTokenForSource(src, {
+      channelType = 'radio',
+      channelNumber = newChannel,
+      force = true,
+    })
   else
     cadRadioPushStateToPlayer(src, 0)
+    clearExternalVoiceSessionForSource(src, 'left_radio_channel')
   end
   cadRadioLogChannelChange(src, oldChannel, newChannel)
 
@@ -3778,8 +3903,85 @@ AddEventHandler('playerDropped', function(reason)
   removePlayerFromRadio(source)
   removePlayerFromCall(source)
   clearPlayerVoiceChannels(source)
+  clearExternalVoiceSessionForSource(source, 'player_dropped')
   CadRadioTalkingBySource[source] = nil
   CadRadioDisplayNameBySource[source] = nil
+end)
+
+RegisterNetEvent('cad_bridge:external_voice:refresh', function()
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+  local channel = tonumber(CadRadioChannelBySource[src] or 0) or 0
+  if channel <= 0 then
+    clearExternalVoiceSessionForSource(src, 'refresh_without_channel')
+    return
+  end
+  requestExternalVoiceTokenForSource(src, {
+    channelType = 'radio',
+    channelNumber = channel,
+    force = true,
+  })
+end)
+
+CreateThread(function()
+  Wait(5000)
+  if Config.ExternalVoiceTokenEnabled ~= true then
+    print('[cad_bridge][external_voice] token flow disabled (cad_bridge_external_voice_token_enabled=false).')
+    return
+  end
+  if not hasBridgeConfig() then
+    print('[cad_bridge][external_voice] bridge not configured; token flow disabled.')
+    return
+  end
+
+  request('GET', '/api/integration/fivem/external-voice/status', nil, function(status, body)
+    if status ~= 200 then
+      if status ~= 0 then
+        print(('[cad_bridge][external_voice] status check failed (status %s)'):format(tostring(status)))
+      end
+      return
+    end
+    local ok, payload = pcall(json.decode, body or '{}')
+    if not ok or type(payload) ~= 'table' then
+      print('[cad_bridge][external_voice] status check returned invalid payload')
+      return
+    end
+    print(('[cad_bridge][external_voice] mode=%s provider=%s available=%s'):format(
+      tostring(payload.mode or 'unknown'),
+      tostring(payload.provider or 'none'),
+      tostring(payload.available == true)
+    ))
+    if type(payload.missing) == 'table' and #payload.missing > 0 then
+      print(('[cad_bridge][external_voice] missing config: %s'):format(table.concat(payload.missing, ', ')))
+    end
+  end)
+
+  while true do
+    Wait(10000)
+    for src, session in pairs(ExternalVoiceSessionBySource) do
+      if not GetPlayerName(src) then
+        ExternalVoiceSessionBySource[src] = nil
+        externalVoiceTokenRequestInFlightBySource[src] = nil
+        goto nextSession
+      end
+
+      local expiresAtMs = tonumber(session and session.expires_at_ms or 0) or 0
+      local currentChannel = tonumber(CadRadioChannelBySource[src] or 0) or 0
+      if currentChannel <= 0 then
+        clearExternalVoiceSessionForSource(src, 'not_in_radio_channel')
+        goto nextSession
+      end
+
+      if expiresAtMs <= 0 or expiresAtMs <= (nowMs() + 20000) then
+        requestExternalVoiceTokenForSource(src, {
+          channelType = 'radio',
+          channelNumber = currentChannel,
+          force = true,
+        })
+      end
+      ::nextSession::
+    end
+  end
 end)
 
 -- Poll CAD for voice events and sync with cad-radio.

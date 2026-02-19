@@ -13,6 +13,7 @@ const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const { getVoiceBridge } = require('../services/voiceBridge');
 const { handleParticipantJoin, handleParticipantLeave, getRoutingStatus } = require('../services/voiceBridgeSync');
+const { getExternalVoiceService } = require('../services/externalVoice');
 
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
@@ -27,6 +28,7 @@ router.get('/bridge/status', requireAuth, (req, res) => {
   const behavior = String(config?.radio?.behavior || 'external');
   const externalMode = behavior === 'external';
   const bridgeEnabled = isLegacyVoiceBridgeEnabled(behavior);
+  const externalTransportStatus = getExternalVoiceService().getStatus();
 
   if (externalMode) {
     return res.json({
@@ -35,6 +37,7 @@ router.get('/bridge/status', requireAuth, (req, res) => {
       intentionally_disabled: true,
       message: 'External radio behavior mode enabled; CAD legacy voice bridge is intentionally disabled.',
       signaling: null,
+      external_transport: externalTransportStatus,
     });
   }
 
@@ -45,6 +48,7 @@ router.get('/bridge/status', requireAuth, (req, res) => {
       intentionally_disabled: true,
       message: 'Legacy voice bridge is disabled by VOICE_BRIDGE_ENABLED=false.',
       signaling: null,
+      external_transport: externalTransportStatus,
     });
   }
 
@@ -57,6 +61,7 @@ router.get('/bridge/status', requireAuth, (req, res) => {
       intentionally_disabled: false,
       ...status,
       signaling: signalingStatus,
+      external_transport: externalTransportStatus,
     });
   } catch (error) {
     res.json({
@@ -64,8 +69,20 @@ router.get('/bridge/status', requireAuth, (req, res) => {
       available: false,
       intentionally_disabled: false,
       error: 'Voice bridge not initialized',
+      external_transport: externalTransportStatus,
     });
   }
+});
+
+router.get('/external/status', requireAuth, (_req, res) => {
+  const behavior = String(config?.radio?.behavior || 'external');
+  const externalMode = behavior === 'external';
+  const status = getExternalVoiceService().getStatus();
+  return res.json({
+    mode: behavior,
+    external_mode: externalMode,
+    ...status,
+  });
 });
 
 // Get voice bridge routing debug info
@@ -138,6 +155,82 @@ function resolveLatestCallerGameId(callSession) {
   }
   return existing;
 }
+
+function resolveChannelFromRequest(payload = {}) {
+  const channelId = parseInt(payload?.channel_id ?? payload?.channelId, 10);
+  if (Number.isInteger(channelId) && channelId > 0) {
+    const byId = VoiceChannels.findById(channelId);
+    if (byId) return byId;
+  }
+  const channelNumber = parseInt(payload?.channel_number ?? payload?.channelNumber, 10);
+  if (Number.isInteger(channelNumber) && channelNumber > 0) {
+    const byNumber = VoiceChannels.findByChannelNumber(channelNumber);
+    if (byNumber) return byNumber;
+  }
+  return null;
+}
+
+router.post('/external/token', requireAuth, (req, res) => {
+  if (!req.user.is_admin && !isUserInDispatchDepartment(req.user)) {
+    return res.status(403).json({ error: 'Dispatch access required' });
+  }
+
+  const behavior = String(config?.radio?.behavior || 'external');
+  if (behavior !== 'external') {
+    return res.status(409).json({
+      error: 'External voice token flow is only available in RADIO_BEHAVIOR=external',
+    });
+  }
+
+  const channel = resolveChannelFromRequest(req.body || {});
+  if (!channel) {
+    return res.status(404).json({ error: 'Voice channel not found' });
+  }
+
+  const participant = VoiceParticipants.findByUserAndChannel(req.user.id, channel.id);
+  if (!participant) {
+    return res.status(409).json({
+      error: 'Join the selected channel in CAD before requesting an external voice token',
+    });
+  }
+
+  try {
+    const externalVoice = getExternalVoiceService();
+    const status = externalVoice.getStatus();
+    if (!status.available) {
+      return res.status(503).json({
+        error: 'External voice transport is not configured',
+        provider: status.provider,
+        missing: status.missing,
+      });
+    }
+
+    const tokenData = externalVoice.issueDispatcherToken({
+      user: req.user,
+      channelNumber: channel.channel_number,
+      channelName: channel.name,
+    });
+
+    audit(req.user.id, 'external_voice_dispatch_token_issued', {
+      provider: tokenData.provider,
+      channel_id: channel.id,
+      channel_number: channel.channel_number,
+    });
+
+    return res.json({
+      ok: true,
+      channel_id: channel.id,
+      channel_number: channel.channel_number,
+      ...tokenData,
+    });
+  } catch (error) {
+    const statusCode = Number(error?.statusCode || 500) || 500;
+    return res.status(statusCode).json({
+      error: error?.message || 'Failed to issue external voice token',
+      details: error?.details || null,
+    });
+  }
+});
 
 // List all voice channels
 router.get('/channels', requireAuth, (req, res) => {
