@@ -19,9 +19,7 @@ var licenseSubmitBtn = document.getElementById("licenseSubmitBtn");
 var licenseNameInput = document.getElementById("licenseNameInput");
 var licenseDobInput = document.getElementById("licenseDobInput");
 var licenseGenderInput = document.getElementById("licenseGenderInput");
-var licenseNumberInput = document.getElementById("licenseNumberInput");
-var licenseDurationSelect = document.getElementById("licenseDurationSelect");
-var licenseExpiryAtInput = document.getElementById("licenseExpiryAtInput");
+var licenseDurationList = document.getElementById("licenseDurationList");
 var licenseConditionsInput = document.getElementById("licenseConditionsInput");
 var licenseClassList = document.getElementById("licenseClassList");
 var licenseClassEmpty = document.getElementById("licenseClassEmpty");
@@ -36,7 +34,7 @@ var regoOwnerInput = document.getElementById("regoOwnerInput");
 var regoPlateInput = document.getElementById("regoPlateInput");
 var regoModelInput = document.getElementById("regoModelInput");
 var regoColourInput = document.getElementById("regoColourInput");
-var regoDurationSelect = document.getElementById("regoDurationSelect");
+var regoDurationList = document.getElementById("regoDurationList");
 var registrationFormError = document.getElementById("registrationFormError");
 
 var idCardOverlay = document.getElementById("idCardOverlay");
@@ -64,7 +62,9 @@ var selectedDepartmentIds = [];
 var classOptions = [];
 var selectedClasses = [];
 var licenseDurationOptions = [];
+var selectedLicenseDurationDays = 35;
 var durationOptions = [];
+var selectedRegistrationDurationDays = 35;
 
 function safeGet(obj, key, fallback) {
   if (!obj || typeof obj !== "object") return fallback;
@@ -387,28 +387,35 @@ function getLicenseDurationLabel(days) {
   return String(value) + " day" + (value === 1 ? "" : "s");
 }
 
-function renderLicenseDurationSelect(defaultDuration) {
-  if (!licenseDurationSelect) return;
-  licenseDurationSelect.innerHTML = "";
+function renderLicenseDurations(defaultDuration) {
+  if (!licenseDurationList) return;
+  licenseDurationList.innerHTML = "";
   var fallback = Number(defaultDuration) || 35;
   licenseDurationOptions = normalizeLicenseDurationOptions(licenseDurationOptions, fallback);
   if (licenseDurationOptions.indexOf(fallback) < 0) {
     fallback = licenseDurationOptions.indexOf(35) >= 0 ? 35 : licenseDurationOptions[0];
   }
+  selectedLicenseDurationDays = fallback;
 
   for (var i = 0; i < licenseDurationOptions.length; i += 1) {
-    var optionValue = licenseDurationOptions[i];
-    var option = document.createElement("option");
-    option.value = String(optionValue);
-    option.textContent = getLicenseDurationLabel(optionValue);
-    if (optionValue === fallback) option.selected = true;
-    licenseDurationSelect.appendChild(option);
+    (function renderDurationButton(optionValue) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip-btn" + (selectedLicenseDurationDays === optionValue ? " active" : "");
+      btn.textContent = getLicenseDurationLabel(optionValue);
+      btn.addEventListener("click", function onDurationClick() {
+        selectedLicenseDurationDays = optionValue;
+        renderLicenseDurations(optionValue);
+      });
+      licenseDurationList.appendChild(btn);
+    })(licenseDurationOptions[i]);
   }
 }
 
 function resetLicenseForm(payload) {
   var data = payload || {};
   classOptions = normalizeClassOptions(safeGet(data, "class_options", []));
+  if (classOptions.length === 0) classOptions = ["CAR"];
   selectedClasses = sanitizeStringArray(
     safeGet(data, "default_classes", []),
     true
@@ -421,11 +428,9 @@ function resetLicenseForm(payload) {
   if (licenseNameInput) licenseNameInput.value = String(safeGet(data, "full_name", "") || "");
   if (licenseDobInput) licenseDobInput.value = String(safeGet(data, "date_of_birth", "") || "");
   if (licenseGenderInput) licenseGenderInput.value = String(safeGet(data, "gender", "") || "");
-  if (licenseNumberInput) licenseNumberInput.value = String(safeGet(data, "license_number", "") || "");
   if (licenseConditionsInput) licenseConditionsInput.value = "";
-  if (licenseExpiryAtInput) licenseExpiryAtInput.value = String(safeGet(data, "expiry_at", "") || "");
   licenseDurationOptions = Array.isArray(data.duration_options) ? data.duration_options : [6, 14, 35, 70];
-  renderLicenseDurationSelect(Number(safeGet(data, "default_expiry_days", 35)) || 35);
+  renderLicenseDurations(Number(safeGet(data, "default_expiry_days", 35)) || 35);
   if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
   showErrorNode(licenseFormError, "");
 }
@@ -437,10 +442,6 @@ function openLicenseForm(payload) {
   licenseOpen = true;
   setVisible(licenseOverlay, true);
   setTimeout(function focusLicenseInput() {
-    if (licenseNumberInput) {
-      licenseNumberInput.focus();
-      return;
-    }
     if (licenseConditionsInput) licenseConditionsInput.focus();
   }, 40);
 }
@@ -477,17 +478,15 @@ async function submitLicenseForm() {
   showErrorNode(licenseFormError, "");
   if (licenseSubmitBtn) licenseSubmitBtn.disabled = true;
 
-  var expiryDays = Number(licenseDurationSelect && licenseDurationSelect.value || 0);
+  var expiryDays = Number(selectedLicenseDurationDays || 0);
   if (!Number.isFinite(expiryDays) || expiryDays < 1) expiryDays = 1;
   var payload = {
     full_name: fullName,
     date_of_birth: dateOfBirth,
     gender: gender,
-    license_number: String(licenseNumberInput && licenseNumberInput.value || "").trim(),
     license_classes: sanitizeStringArray(selectedClasses, true),
     conditions: parseConditionsFromInput(),
     expiry_days: Math.floor(expiryDays),
-    expiry_at: String(licenseExpiryAtInput && licenseExpiryAtInput.value || "").trim(),
   };
 
   try {
@@ -533,19 +532,25 @@ function normalizeDurationOptions(raw, fallback) {
   return out;
 }
 
-function renderDurationSelect(defaultDuration) {
-  if (!regoDurationSelect) return;
-  regoDurationSelect.innerHTML = "";
+function renderRegistrationDurations(defaultDuration) {
+  if (!regoDurationList) return;
+  regoDurationList.innerHTML = "";
   var fallback = Number(defaultDuration) || 35;
   durationOptions = normalizeDurationOptions(durationOptions, fallback);
-  var selectedValue = durationOptions.indexOf(fallback) >= 0 ? fallback : durationOptions[0];
+  selectedRegistrationDurationDays = durationOptions.indexOf(fallback) >= 0 ? fallback : durationOptions[0];
+
   for (var i = 0; i < durationOptions.length; i += 1) {
-    var optionValue = durationOptions[i];
-    var option = document.createElement("option");
-    option.value = String(optionValue);
-    option.textContent = getLicenseDurationLabel(optionValue);
-    if (optionValue === selectedValue) option.selected = true;
-    regoDurationSelect.appendChild(option);
+    (function renderDurationButton(optionValue) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip-btn" + (selectedRegistrationDurationDays === optionValue ? " active" : "");
+      btn.textContent = getLicenseDurationLabel(optionValue);
+      btn.addEventListener("click", function onDurationClick() {
+        selectedRegistrationDurationDays = optionValue;
+        renderRegistrationDurations(optionValue);
+      });
+      regoDurationList.appendChild(btn);
+    })(durationOptions[i]);
   }
 }
 
@@ -556,7 +561,7 @@ function resetRegistrationForm(payload) {
   if (regoModelInput) regoModelInput.value = String(safeGet(data, "vehicle_model", "") || "");
   if (regoColourInput) regoColourInput.value = String(safeGet(data, "vehicle_colour", "") || "");
   durationOptions = Array.isArray(data.duration_options) ? data.duration_options : [];
-  renderDurationSelect(Number(safeGet(data, "default_duration_days", 35)) || 35);
+  renderRegistrationDurations(Number(safeGet(data, "default_duration_days", 35)) || 35);
   if (registrationSubmitBtn) registrationSubmitBtn.disabled = false;
   showErrorNode(registrationFormError, "");
 }
@@ -568,7 +573,8 @@ function openRegistrationForm(payload) {
   registrationOpen = true;
   setVisible(registrationOverlay, true);
   setTimeout(function focusRegoDuration() {
-    if (regoDurationSelect) regoDurationSelect.focus();
+    var selectedButton = regoDurationList && regoDurationList.querySelector("button.active") || regoDurationList && regoDurationList.querySelector("button");
+    if (selectedButton) selectedButton.focus();
   }, 40);
 }
 
@@ -588,7 +594,7 @@ async function submitRegistrationForm() {
   showErrorNode(registrationFormError, "");
   if (registrationSubmitBtn) registrationSubmitBtn.disabled = true;
 
-  var durationDays = Number(regoDurationSelect && regoDurationSelect.value || 0);
+  var durationDays = Number(selectedRegistrationDurationDays || 0);
   if (!Number.isFinite(durationDays) || durationDays < 1) durationDays = 35;
   var payload = {
     owner_name: ownerName,

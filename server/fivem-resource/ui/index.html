@@ -105,28 +105,9 @@
             <div id="licenseClassList" class="chip-grid hidden"></div>
           </div>
 
-          <div class="inline-grid two-col">
-            <div class="field">
-              <label for="licenseNumberInput">Licence Number (Optional)</label>
-              <input id="licenseNumberInput" type="text" maxlength="32" autocomplete="off" placeholder="Auto-generated if blank" />
-            </div>
-            <div class="field">
-              <label for="licenseDurationSelect">Licence Length</label>
-              <select id="licenseDurationSelect"></select>
-            </div>
-          </div>
-
-          <div class="inline-grid two-col">
-            <div class="field">
-              <label for="licenseExpiryAtInput">Expiry Date (Optional Override)</label>
-              <input id="licenseExpiryAtInput" type="date" />
-            </div>
-            <div class="field">
-              <label>Mugshot</label>
-              <div class="inline-note">
-                Captured automatically from <strong>MugShotBase64</strong> when you save.
-              </div>
-            </div>
+          <div class="field">
+            <label>Licence Length</label>
+            <div id="licenseDurationList" class="chip-grid"></div>
           </div>
 
           <div class="field">
@@ -179,15 +160,9 @@
             </div>
           </div>
 
-          <div class="inline-grid two-col">
-            <div class="field">
-              <label for="regoDurationSelect">Registration Length</label>
-              <select id="regoDurationSelect"></select>
-            </div>
-            <div class="field">
-              <label>Expiry Date</label>
-              <div class="inline-note">Auto-calculated from current date using selected registration length.</div>
-            </div>
+          <div class="field">
+            <label>Registration Length</label>
+            <div id="regoDurationList" class="chip-grid"></div>
           </div>
 
           <div id="registrationFormError" class="error hidden"></div>
