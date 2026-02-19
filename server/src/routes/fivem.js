@@ -29,6 +29,10 @@ let nextVoiceEventId = 1;
 const VOICE_EVENT_RETRY_LIMIT = 5;
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
 const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
+const BRIDGE_MUGSHOT_MAX_CHARS = Math.max(
+  250000,
+  Number.parseInt(process.env.FIVEM_BRIDGE_MUGSHOT_MAX_CHARS || '4000000', 10) || 4000000
+);
 const VOICE_HEARTBEAT_LOG_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.FIVEM_VOICE_LOG_INTERVAL_MS || '15000', 10) || 15_000
@@ -1259,6 +1263,11 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
     const licenseNumber = providedLicenseNumber || generatedLicenseNumber;
     const conditions = normalizeTextList(payload.conditions, { uppercase: false, maxLength: 80 });
     const mugshotUrl = String(payload.mugshot_url || '').trim();
+    if (mugshotUrl.length > BRIDGE_MUGSHOT_MAX_CHARS) {
+      return res.status(413).json({
+        error: `mugshot_url is too large (max ${BRIDGE_MUGSHOT_MAX_CHARS} characters)`,
+      });
+    }
 
     const record = DriverLicenses.upsertByCitizenId({
       citizen_id: citizenId,

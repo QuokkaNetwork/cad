@@ -1103,17 +1103,8 @@ local function submitDriverLicense(src, formData)
       return
     end
 
-    if status == 429 then
-      setBridgeBackoff('licenses', responseHeaders, 15000, 'driver license create')
-    end
-
-    local err = ('Failed to create CAD driver license (HTTP %s)'):format(tostring(status))
-    local ok, parsed = pcall(json.decode, body or '{}')
-    if ok and type(parsed) == 'table' and parsed.error then
-      err = err .. ': ' .. tostring(parsed.error)
-    end
-    print('[cad_bridge] ' .. err)
-    if feeCharged and feeAmount > 0 then
+    local function maybeRefundFee()
+      if not feeCharged or feeAmount <= 0 then return end
       local refunded, refundErr = refundDocumentFee(
         s,
         payload.citizenid,
@@ -1129,6 +1120,38 @@ local function submitDriverLicense(src, formData)
         ))
       end
     end
+
+    if status == 409 then
+      local existingExpiry = ''
+      local ok, parsed = pcall(json.decode, body or '{}')
+      if ok and type(parsed) == 'table' then
+        existingExpiry = trim(parsed.existing_expiry_at or '')
+      end
+      notifyPlayer(s, ('Licence renewal unavailable. You can renew within 3 days of expiry%s%s.'):format(
+        existingExpiry ~= '' and ' (current expiry: ' or '',
+        existingExpiry ~= '' and (existingExpiry .. ')') or ''
+      ))
+      maybeRefundFee()
+      return
+    end
+
+    if status == 413 then
+      notifyPlayer(s, 'Licence photo is too large for CAD. Try again (JPG/compressed) or contact staff.')
+      maybeRefundFee()
+      return
+    end
+
+    if status == 429 then
+      setBridgeBackoff('licenses', responseHeaders, 15000, 'driver license create')
+    end
+
+    local err = ('Failed to create CAD driver license (HTTP %s)'):format(tostring(status))
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if ok and type(parsed) == 'table' and parsed.error then
+      err = err .. ': ' .. tostring(parsed.error)
+    end
+    print('[cad_bridge] ' .. err)
+    maybeRefundFee()
     notifyPlayer(s, 'Driver license failed to save to CAD. Check server logs.')
   end)
   end)

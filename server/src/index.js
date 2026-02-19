@@ -85,7 +85,9 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json());
+const jsonBodyLimit = String(process.env.CAD_JSON_BODY_LIMIT || '12mb').trim() || '12mb';
+app.use(express.json({ limit: jsonBodyLimit }));
+app.use(express.urlencoded({ extended: true, limit: jsonBodyLimit }));
 app.use(cookieParser());
 
 function extractRequestAuthToken(req) {
@@ -176,6 +178,11 @@ app.get('*', (req, res, next) => {
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
+  if (err?.type === 'entity.too.large' || err?.status === 413) {
+    return res.status(413).json({
+      error: `Request payload too large (max ${jsonBodyLimit})`,
+    });
+  }
   if (err?.name === 'MulterError') {
     if (err.code === 'LIMIT_FILE_SIZE') {
       const field = String(err.field || '').trim();

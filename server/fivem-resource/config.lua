@@ -339,9 +339,9 @@ Config.MugshotProvider = trim(getString('cad_bridge_mugshot_provider', 'screensh
 if Config.MugshotProvider == '' then Config.MugshotProvider = 'screenshot-basic' end
 Config.ScreenshotResource = trim(getString('cad_bridge_screenshot_resource', 'screenshot-basic'))
 if Config.ScreenshotResource == '' then Config.ScreenshotResource = 'screenshot-basic' end
-Config.ScreenshotEncoding = trim(getString('cad_bridge_screenshot_encoding', 'png')):lower()
-if Config.ScreenshotEncoding == '' then Config.ScreenshotEncoding = 'png' end
-Config.ScreenshotQuality = getNumber('cad_bridge_screenshot_quality', 1.0)
+Config.ScreenshotEncoding = trim(getString('cad_bridge_screenshot_encoding', 'jpg')):lower()
+if Config.ScreenshotEncoding == '' then Config.ScreenshotEncoding = 'jpg' end
+Config.ScreenshotQuality = getNumber('cad_bridge_screenshot_quality', 0.7)
 if Config.ScreenshotQuality < 0.1 then Config.ScreenshotQuality = 0.1 end
 if Config.ScreenshotQuality > 1.0 then Config.ScreenshotQuality = 1.0 end
 Config.ScreenshotTimeoutMs = math.max(1000, math.floor(getNumber('cad_bridge_screenshot_timeout_ms', 5000)))
