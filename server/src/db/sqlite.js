@@ -1274,7 +1274,7 @@ const DriverLicenses = {
   findByCitizenId(citizenId) {
     const normalized = String(citizenId || '').trim();
     if (!normalized) return null;
-    return hydrateDriverLicenseRow(db.prepare('SELECT * FROM driver_licenses WHERE citizen_id = ?').get(normalized));
+    return hydrateDriverLicenseRow(db.prepare('SELECT * FROM driver_licenses WHERE lower(citizen_id) = lower(?)').get(normalized));
   },
   search(query, limit = 50) {
     const text = String(query || '').trim().toLowerCase();
@@ -1459,7 +1459,7 @@ const VehicleRegistrations = {
     if (!normalized) return [];
     return db.prepare(`
       SELECT * FROM vehicle_registrations
-      WHERE citizen_id = ?
+      WHERE lower(citizen_id) = lower(?)
       ORDER BY updated_at DESC
     `).all(normalized).map(hydrateVehicleRegistrationRow);
   },
@@ -1658,7 +1658,7 @@ const FiveMPlayerLinks = {
     return db.prepare('SELECT * FROM fivem_player_links WHERE steam_id = ?').get(steamId);
   },
   findByCitizenId(citizenId) {
-    return db.prepare('SELECT * FROM fivem_player_links WHERE citizen_id = ?').get(citizenId);
+    return db.prepare('SELECT * FROM fivem_player_links WHERE lower(citizen_id) = lower(?)').get(String(citizenId || '').trim());
   },
   list() {
     return db.prepare('SELECT * FROM fivem_player_links ORDER BY updated_at DESC').all();
