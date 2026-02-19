@@ -582,6 +582,20 @@ local function addDaysDateOnly(days)
   return os.date('!%Y-%m-%d', when)
 end
 
+
+local function daysUntilDateOnly(value)
+  local normalized = normalizeDateOnly(value)
+  if normalized == '' then return nil end
+  local year, month, day = normalized:match('^(%d%d%d%d)%-(%d%d)%-(%d%d)$')
+  if not year or not month or not day then return nil end
+  local target = os.time({ year = tonumber(year), month = tonumber(month), day = tonumber(day), hour = 0, min = 0, sec = 0 })
+  if not target then return nil end
+  local now = os.date('!*t')
+  local today = os.time({ year = now.year, month = now.month, day = now.day, hour = 0, min = 0, sec = 0 })
+  if not today then return nil end
+  return math.floor((target - today) / (24 * 60 * 60))
+end
+
 local function normalizeList(input, makeUpper)
   local out = {}
   local seen = {}
@@ -959,10 +973,22 @@ local function submitDriverLicense(src, formData)
     return
   end
 
-  local feeAccount = trim(Config.DocumentFeeAccount or 'bank'):lower()
-  if feeAccount == '' then feeAccount = 'bank' end
-  local feeAmount = resolveDocumentFeeAmount(Config.DriverLicenseFeesByDays or {}, payload.expiry_days)
-  local feeCharged = false
+  request('GET', '/api/integration/fivem/licenses/' .. urlEncode(payload.citizenid), nil, function(existingStatus, existingBody)
+    if existingStatus >= 200 and existingStatus < 300 then
+      local okExisting, existingParsed = pcall(json.decode, existingBody or '{}')
+      if okExisting and type(existingParsed) == 'table' and type(existingParsed.license) == 'table' then
+        local daysUntilExpiry = daysUntilDateOnly(existingParsed.license.expiry_at)
+        if daysUntilExpiry ~= nil and daysUntilExpiry > 3 then
+          notifyPlayer(s, ('Licence renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(tostring(existingParsed.license.expiry_at or 'unknown')))
+          return
+        end
+      end
+    end
+
+    local feeAccount = trim(Config.DocumentFeeAccount or 'bank'):lower()
+    if feeAccount == '' then feeAccount = 'bank' end
+    local feeAmount = resolveDocumentFeeAmount(Config.DriverLicenseFeesByDays or {}, payload.expiry_days)
+    local feeCharged = false
 
   if feeAmount > 0 then
     local paid, payErr = chargeDocumentFee(
@@ -1022,6 +1048,7 @@ local function submitDriverLicense(src, formData)
       end
     end
     notifyPlayer(s, 'Driver license failed to save to CAD. Check server logs.')
+  end)
   end)
 end
 

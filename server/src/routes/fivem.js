@@ -441,6 +441,17 @@ function isPastOrTodayDateOnly(value) {
   return normalized <= today;
 }
 
+
+function daysUntilDateOnly(value) {
+  const normalized = normalizeDateOnly(value);
+  if (!normalized) return null;
+  const target = Date.parse(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(target)) return null;
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.floor((target - todayUtc) / (24 * 60 * 60 * 1000));
+}
+
 function normalizeTextList(value, { uppercase = false, maxLength = 64 } = {}) {
   const source = Array.isArray(value) ? value : [];
   const out = [];
@@ -1229,6 +1240,18 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
     let status = normalizeStatus(payload.status, DRIVER_LICENSE_STATUSES, 'valid');
     if (isPastOrTodayDateOnly(expiryAt)) {
       status = 'expired';
+    }
+
+    const existingLicense = DriverLicenses.findByCitizenId(citizenId);
+    if (existingLicense) {
+      const daysUntilExpiry = daysUntilDateOnly(existingLicense.expiry_at);
+      if (daysUntilExpiry !== null && daysUntilExpiry > 3) {
+        return res.status(409).json({
+          error: 'Driver license renewal is only available within 3 days of expiry',
+          renewal_available_in_days: daysUntilExpiry - 3,
+          existing_expiry_at: existingLicense.expiry_at,
+        });
+      }
     }
 
     const providedLicenseNumber = String(payload.license_number || '').trim();
