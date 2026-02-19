@@ -79,6 +79,21 @@ function normalizeNameKey(value) {
     .trim();
 }
 
+
+function personMatchesNameFilters(person, firstNameFilter = '', lastNameFilter = '') {
+  const firstNeedle = normalizeNameKey(firstNameFilter);
+  const lastNeedle = normalizeNameKey(lastNameFilter);
+  if (!firstNeedle && !lastNeedle) return true;
+
+  const firstHay = normalizeNameKey(person?.firstname || '');
+  const lastHay = normalizeNameKey(person?.lastname || '');
+  const fullHay = normalizeNameKey(person?.full_name || `${person?.firstname || ''} ${person?.lastname || ''}`);
+
+  if (firstNeedle && !(firstHay.includes(firstNeedle) || fullHay.includes(firstNeedle))) return false;
+  if (lastNeedle && !(lastHay.includes(lastNeedle) || fullHay.includes(lastNeedle))) return false;
+  return true;
+}
+
 function getScopedDepartmentIds(req) {
   if (!req?.user) return [];
   if (!Array.isArray(req.user.departments)) return [];
@@ -358,7 +373,9 @@ router.get('/vehicles/:plate', requireAuth, async (req, res) => {
 
 router.get('/cad/persons', requireAuth, async (req, res) => {
   const q = String(req.query?.q || '').trim();
-  if (q.length < 2) {
+  const firstNameFilter = String(req.query?.first_name || '').trim();
+  const lastNameFilter = String(req.query?.last_name || '').trim();
+  if (q.length < 2 && firstNameFilter.length < 2 && lastNameFilter.length < 2) {
     return res.status(400).json({ error: 'Search query must be at least 2 characters' });
   }
 
@@ -410,7 +427,11 @@ router.get('/cad/persons', requireAuth, async (req, res) => {
       });
     }
 
-    res.json(Array.from(byCitizen.values()).slice(0, 100));
+    const filtered = Array.from(byCitizen.values())
+      .filter((person) => personMatchesNameFilters(person, firstNameFilter, lastNameFilter))
+      .slice(0, 100);
+
+    res.json(filtered);
   } catch (err) {
     res.status(500).json({ error: 'Search failed', message: err.message });
   }

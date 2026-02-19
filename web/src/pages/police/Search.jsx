@@ -94,7 +94,6 @@ export default function Search() {
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
 
   const [searchType, setSearchType] = useState('person');
-  const [personLookupQuery, setPersonLookupQuery] = useState('');
   const [personFirstName, setPersonFirstName] = useState('');
   const [personLastName, setPersonLastName] = useState('');
   const [vehicleQuery, setVehicleQuery] = useState('');
@@ -112,7 +111,6 @@ export default function Search() {
   const [registrationStatusSaving, setRegistrationStatusSaving] = useState(false);
 
   const personQuery = [
-    String(personLookupQuery || '').trim(),
     String(personFirstName || '').trim(),
     String(personLastName || '').trim(),
   ].filter(Boolean).join(' ').trim();
@@ -132,7 +130,14 @@ export default function Search() {
     setResults([]);
     try {
       const endpoint = searchType === 'person' ? '/api/search/cad/persons' : '/api/search/cad/vehicles';
-      const data = await api.get(`${endpoint}?q=${encodeURIComponent(activeQuery)}`);
+      const query = searchType === 'person'
+        ? [
+            `first_name=${encodeURIComponent(String(personFirstName || '').trim())}`,
+            `last_name=${encodeURIComponent(String(personLastName || '').trim())}`,
+            `q=${encodeURIComponent(activeQuery)}`,
+          ].join('&')
+        : `q=${encodeURIComponent(activeQuery)}`;
+      const data = await api.get(`${endpoint}?${query}`);
       setResults(Array.isArray(data) ? data : []);
     } catch (err) {
       alert('Search failed:\n' + formatErr(err));
@@ -265,17 +270,7 @@ export default function Search() {
           </div>
 
           {searchType === 'person' ? (
-            <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr_1fr_auto] gap-3 items-end">
-              <div>
-                <label className="block text-xs text-cad-muted mb-1">General Lookup</label>
-                <input
-                  type="text"
-                  value={personLookupQuery}
-                  onChange={(e) => setPersonLookupQuery(e.target.value)}
-                  placeholder="Name, citizen ID, licence no, or plate"
-                  className="w-full bg-cad-surface border border-cad-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-                />
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
               <div>
                 <label className="block text-xs text-cad-muted mb-1">First Name</label>
                 <input
