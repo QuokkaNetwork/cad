@@ -110,6 +110,12 @@ end
 
 local function request(method, path, payload, cb)
   if not hasBridgeConfig() then
+    print(('[cad_bridge] WARNING: Bridge not configured (base_url=%q token=%s). Skipping %s %s'):format(
+      trim(Config.CadBaseUrl or ''),
+      trim(Config.SharedToken or '') ~= '' and 'SET' or 'EMPTY',
+      method or '?',
+      path or '?'
+    ))
     if cb then cb(0, '{}', {}) end
     return
   end
@@ -119,8 +125,13 @@ local function request(method, path, payload, cb)
     ['x-cad-bridge-token'] = Config.SharedToken,
   }
 
-  PerformHttpRequest(getCadUrl(path), function(status, body, responseHeaders)
-    if cb then cb(status, body or '{}', responseHeaders or {}) end
+  local url = getCadUrl(path)
+  PerformHttpRequest(url, function(status, body, responseHeaders)
+    local code = tonumber(status) or 0
+    if code == 0 then
+      print(('[cad_bridge] WARNING: HTTP request returned status 0 (connection refused/timeout). URL: %s %s'):format(method or '?', url or '?'))
+    end
+    if cb then cb(code, body or '{}', responseHeaders or {}) end
   end, method, payload and encodeJson(payload) or '', headers)
 end
 
@@ -454,6 +465,17 @@ end
 
 AddEventHandler('onResourceStart', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
+  -- Log bridge configuration status on startup for diagnostics
+  local baseUrl = trim(Config.CadBaseUrl or '')
+  local hasToken = trim(Config.SharedToken or '') ~= ''
+  if baseUrl ~= '' and hasToken then
+    print(('[cad_bridge] Bridge configured: base_url=%s token=SET'):format(baseUrl))
+  else
+    print(('[cad_bridge] WARNING: Bridge NOT configured. base_url=%q token=%s. License/registration features will NOT work.'):format(
+      baseUrl,
+      hasToken and 'SET' or 'EMPTY'
+    ))
+  end
   CreateThread(function()
     Wait(500)
     registerEmergencySuggestion(-1)
@@ -700,10 +722,12 @@ local function daysUntilDateOnly(value)
   if normalized == '' then return nil end
   local year, month, day = normalized:match('^(%d%d%d%d)%-(%d%d)%-(%d%d)$')
   if not year or not month or not day then return nil end
-  local target = os.time({ year = tonumber(year), month = tonumber(month), day = tonumber(day), hour = 0, min = 0, sec = 0 })
+  -- Use hour=12 on both sides to avoid DST boundary issues.
+  -- Use os.date('*t') (local) consistently with os.time() which expects local time.
+  local target = os.time({ year = tonumber(year), month = tonumber(month), day = tonumber(day), hour = 12, min = 0, sec = 0 })
   if not target then return nil end
-  local now = os.date('!*t')
-  local today = os.time({ year = now.year, month = now.month, day = now.day, hour = 0, min = 0, sec = 0 })
+  local now = os.date('*t')
+  local today = os.time({ year = now.year, month = now.month, day = now.day, hour = 12, min = 0, sec = 0 })
   if not today then return nil end
   return math.floor((target - today) / (24 * 60 * 60))
 end

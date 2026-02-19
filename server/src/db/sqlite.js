@@ -1348,6 +1348,7 @@ const DriverLicenses = {
         mugshot_url = excluded.mugshot_url,
         status = excluded.status,
         expiry_at = excluded.expiry_at,
+        issued_at = datetime('now'),
         updated_by_user_id = excluded.updated_by_user_id,
         updated_at = datetime('now')
     `).run(
@@ -1432,7 +1433,7 @@ const DriverLicenses = {
       WHERE status != 'expired'
         AND expiry_at IS NOT NULL
         AND trim(expiry_at) != ''
-        AND julianday(expiry_at) <= julianday('now')
+        AND date(expiry_at) < date('now')
     `).run();
     return Number(info?.changes || 0);
   },
@@ -1533,6 +1534,7 @@ const VehicleRegistrations = {
         status = excluded.status,
         expiry_at = excluded.expiry_at,
         duration_days = excluded.duration_days,
+        issued_at = datetime('now'),
         updated_by_user_id = excluded.updated_by_user_id,
         updated_at = datetime('now')
     `).run(
@@ -1611,7 +1613,7 @@ const VehicleRegistrations = {
       WHERE status != 'expired'
         AND expiry_at IS NOT NULL
         AND trim(expiry_at) != ''
-        AND julianday(expiry_at) <= julianday('now')
+        AND date(expiry_at) < date('now')
     `).run();
     return Number(info?.changes || 0);
   },

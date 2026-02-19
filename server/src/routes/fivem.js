@@ -83,10 +83,21 @@ function isActiveFiveMLink(link) {
 function requireBridgeAuth(req, res, next) {
   const configured = getBridgeToken();
   if (!configured) {
+    console.warn('[FiveMBridge] Bridge token not configured. Check FIVEM_BRIDGE_SHARED_TOKEN in .env or admin settings.', {
+      path: req.path,
+      method: req.method,
+    });
     return res.status(503).json({ error: 'FiveM bridge token not configured' });
   }
   const header = String(req.headers['x-cad-bridge-token'] || '').trim();
   if (!header || header !== configured) {
+    console.warn('[FiveMBridge] Bridge auth failed: token mismatch.', {
+      path: req.path,
+      method: req.method,
+      headerPresent: !!header,
+      headerLength: header.length,
+      configuredLength: configured.length,
+    });
     return res.status(401).json({ error: 'Bridge authentication failed' });
   }
   next();
@@ -451,11 +462,11 @@ function addDaysDateOnly(daysFromNow) {
   return now.toISOString().slice(0, 10);
 }
 
-function isPastOrTodayDateOnly(value) {
+function isPastDateOnly(value) {
   const normalized = normalizeDateOnly(value);
   if (!normalized) return false;
   const today = new Date().toISOString().slice(0, 10);
-  return normalized <= today;
+  return normalized < today;
 }
 
 
@@ -1403,7 +1414,7 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
     const expiryDays = Number.isFinite(expiryDaysRaw) ? Math.max(1, Math.trunc(expiryDaysRaw)) : defaultExpiryDays;
     const expiryAt = normalizeDateOnly(payload.expiry_at || '') || addDaysDateOnly(expiryDays);
     let status = normalizeStatus(payload.status, DRIVER_LICENSE_STATUSES, 'valid');
-    if (isPastOrTodayDateOnly(expiryAt)) {
+    if (isPastDateOnly(expiryAt)) {
       status = 'expired';
     }
 
@@ -1548,7 +1559,7 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
     const durationDays = Number.isFinite(durationRaw) ? Math.max(1, Math.trunc(durationRaw)) : defaultDuration;
     const expiryAt = normalizeDateOnly(payload.expiry_at || '') || addDaysDateOnly(durationDays);
     let status = normalizeStatus(payload.status, VEHICLE_REGISTRATION_STATUSES, 'valid');
-    if (isPastOrTodayDateOnly(expiryAt)) {
+    if (isPastDateOnly(expiryAt)) {
       status = 'expired';
     }
 
@@ -1664,7 +1675,7 @@ router.get('/plate-status/:plate', requireBridgeAuth, (req, res) => {
     }
 
     let status = normalizeStatus(registration.status, VEHICLE_REGISTRATION_STATUSES, 'valid');
-    if (status === 'valid' && isPastOrTodayDateOnly(registration.expiry_at)) {
+    if (status === 'valid' && isPastDateOnly(registration.expiry_at)) {
       status = 'expired';
     }
     const registrationAlert = status !== 'valid';

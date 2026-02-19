@@ -32,7 +32,7 @@ function shouldForceExpired(expiryAt) {
   const normalized = normalizeDateOnly(expiryAt);
   if (!normalized) return false;
   const today = new Date().toISOString().slice(0, 10);
-  return normalized <= today;
+  return normalized < today;
 }
 
 function splitFullName(fullName) {
