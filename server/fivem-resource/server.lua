@@ -2426,6 +2426,18 @@ local function applyJail(job)
     if not invoked then
       local eventAttempts = {
         {
+          label = 'TriggerEvent wasabi_police:sendToJail(source, minutes, reason)',
+          fn = function()
+            TriggerEvent('wasabi_police:sendToJail', sourceId, minutes, reason)
+          end,
+        },
+        {
+          label = 'TriggerEvent wasabi_police:sendToJail(source, minutes)',
+          fn = function()
+            TriggerEvent('wasabi_police:sendToJail', sourceId, minutes)
+          end,
+        },
+        {
           label = 'TriggerEvent wasabi_police:server:sendToJail(source, minutes, reason)',
           fn = function()
             TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes, reason)
@@ -3304,4 +3316,3 @@ CreateThread(function()
     ::heartbeatContinue::
   end
 end)
-
