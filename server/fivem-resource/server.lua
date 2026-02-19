@@ -1201,16 +1201,30 @@ local function submitDriverLicense(src, formData)
       local okExisting, existingParsed = pcall(json.decode, existingBody or '{}')
       if okExisting and type(existingParsed) == 'table' and type(existingParsed.license) == 'table' then
         local daysUntilExpiry = daysUntilDateOnly(existingParsed.license.expiry_at)
+        print(('[cad_bridge] Existing license found: expiry_at=%s daysUntilExpiry=%s status=%s'):format(
+          tostring(existingParsed.license.expiry_at or '?'),
+          tostring(daysUntilExpiry),
+          tostring(existingParsed.license.status or '?')
+        ))
         if daysUntilExpiry ~= nil and daysUntilExpiry > 3 then
+          print(('[cad_bridge] BLOCKED: Licence renewal unavailable — %s days until expiry (must be <=3). citizenid=%s'):format(
+            tostring(daysUntilExpiry), trim(payload.citizenid or '')))
           notifyPlayer(s, ('Licence renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(tostring(existingParsed.license.expiry_at or 'unknown')))
           return
         end
+        print('[cad_bridge] Existing license is within renewal window or expired — proceeding with upsert')
+      else
+        print('[cad_bridge] Existing license response could not be parsed — proceeding with create')
       end
+    else
+      print(('[cad_bridge] No existing license found (HTTP %s) — proceeding with create'):format(tostring(existingStatus)))
     end
 
     local feeAccount = trim(Config.DocumentFeeAccount or 'bank'):lower()
     if feeAccount == '' then feeAccount = 'bank' end
     local feeAmount = resolveDocumentFeeAmount(Config.DriverLicenseFeesByDays or {}, payload.expiry_days)
+    print(('[cad_bridge] Fee check: amount=%s required=%s account=%s'):format(
+      tostring(feeAmount), tostring(Config.RequireDocumentFeePayment == true), feeAccount))
     local feeCharged = false
     local feeRequired = Config.RequireDocumentFeePayment == true
 
