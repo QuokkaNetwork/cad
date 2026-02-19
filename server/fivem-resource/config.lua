@@ -321,6 +321,7 @@ Config.DriverLicenseDefaultClasses = firstNonEmptyList(classDefaultsFromCsv, DEF
 
 Config.DocumentFeeAccount = trim(getString('cad_bridge_document_fee_account', 'bank'))
 if Config.DocumentFeeAccount == '' then Config.DocumentFeeAccount = 'bank' end
+Config.RequireDocumentFeePayment = getBoolean('cad_bridge_document_fee_required', false)
 
 Config.DriverLicenseFeesByDays = DEFAULT_DRIVER_LICENSE_FEES_BY_DAYS
 local licenseFeesOverride = getJsonTable('cad_bridge_license_fees_json')
