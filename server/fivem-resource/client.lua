@@ -531,7 +531,23 @@ local function captureMugshotViaScreenshot()
   PointCamAtCoord(cam, lookX, lookY, lookZ)
   SetCamFov(cam, 34.0)
   RenderScriptCams(true, false, 0, true, true)
-  Wait(120)
+
+  local pedWasFrozen = false
+  if type(IsEntityPositionFrozen) == 'function' then
+    pedWasFrozen = IsEntityPositionFrozen(ped) == true
+  end
+  if not pedWasFrozen and type(FreezeEntityPosition) == 'function' then
+    FreezeEntityPosition(ped, true)
+  end
+
+  -- Force the player to face and look at the camera for a clean mugshot.
+  if type(TaskTurnPedToFaceCoord) == 'function' then
+    TaskTurnPedToFaceCoord(ped, camX, camY, camZ, 700)
+  end
+  if type(TaskLookAtCoord) == 'function' then
+    TaskLookAtCoord(ped, camX, camY, camZ, 2200, 0, 2)
+  end
+  Wait(200)
 
   local done = false
   local raw = ''
@@ -567,6 +583,12 @@ local function captureMugshotViaScreenshot()
   hideUi = false
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
+  if type(ClearPedSecondaryTask) == 'function' then
+    ClearPedSecondaryTask(ped)
+  end
+  if not pedWasFrozen and type(FreezeEntityPosition) == 'function' then
+    FreezeEntityPosition(ped, false)
+  end
 
   if not ok or not done then
     return ''
