@@ -995,6 +995,63 @@ local function buildEmergencyMessage(report)
   return table.concat(lines, ' | ')
 end
 
+local function encodeLogJson(value)
+  local ok, encoded = pcall(function()
+    return json.encode(value)
+  end)
+  if ok and type(encoded) == 'string' and encoded ~= '' then
+    return encoded
+  end
+  return tostring(value)
+end
+
+local function countList(value)
+  if type(value) ~= 'table' then return 0 end
+  local count = 0
+  for _ in ipairs(value) do
+    count = count + 1
+  end
+  return count
+end
+
+local function summarizeLicensePayloadForLog(payload)
+  local data = type(payload) == 'table' and payload or {}
+  local mugshot = trim(data.mugshot_url or '')
+  return {
+    source = tonumber(data.source) or 0,
+    player_name = trim(data.player_name or ''),
+    citizenid = trim(data.citizenid or data.citizen_id or ''),
+    full_name = trim(data.full_name or data.character_name or ''),
+    date_of_birth = trim(data.date_of_birth or data.dob or ''),
+    gender = trim(data.gender or ''),
+    license_number = trim(data.license_number or ''),
+    classes_count = countList(data.license_classes or data.classes),
+    conditions_count = countList(data.conditions),
+    expiry_days = tonumber(data.expiry_days or data.duration_days or 0) or 0,
+    expiry_at = trim(data.expiry_at or ''),
+    mugshot_length = #mugshot,
+  }
+end
+
+local function summarizeRegistrationPayloadForLog(payload)
+  local data = type(payload) == 'table' and payload or {}
+  return {
+    source = tonumber(data.source) or 0,
+    player_name = trim(data.player_name or ''),
+    citizenid = trim(data.citizenid or data.citizen_id or ''),
+    owner_name = trim(data.owner_name or data.character_name or ''),
+    plate = trim(data.plate or data.license_plate or ''),
+    vehicle_model = trim(data.vehicle_model or data.model or ''),
+    vehicle_colour = trim(data.vehicle_colour or data.colour or data.color or ''),
+    duration_days = tonumber(data.duration_days or data.expiry_days or 0) or 0,
+    expiry_at = trim(data.expiry_at or ''),
+  }
+end
+
+local function logDocumentFailure(kind, details)
+  print(('[cad_bridge][%s] %s'):format(trim(kind), encodeLogJson(details or {})))
+end
+
 local function submitEmergencyCall(src, report)
   local s = tonumber(src)
   if not s then return end
@@ -1085,6 +1142,10 @@ local function submitDriverLicense(src, formData)
   if trim(payload.citizenid) == '' then
     notifyPlayer(s, 'Unable to determine your active character (citizenid). Re-log and try again.')
     print(('[cad_bridge] Driver license submit blocked for src %s: missing citizenid'):format(tostring(s)))
+    logDocumentFailure('license-create-blocked', {
+      reason = 'missing_citizenid',
+      payload = summarizeLicensePayloadForLog(payload),
+    })
     return
   end
 
@@ -1117,6 +1178,13 @@ local function submitDriverLicense(src, formData)
       if not paid then
         local feeError = payErr ~= '' and payErr or ('Unable to charge licence fee %s from %s account.'):format(formatMoney(feeAmount), feeAccount)
         if feeRequired then
+          logDocumentFailure('license-create-blocked', {
+            reason = 'fee_charge_failed_required',
+            fee_account = feeAccount,
+            fee_amount = feeAmount,
+            fee_error = feeError,
+            payload = summarizeLicensePayloadForLog(payload),
+          })
           notifyPlayer(s, feeError)
           return
         end
@@ -1209,6 +1277,12 @@ local function submitDriverLicense(src, formData)
           if ok and type(parsed) == 'table' then
             existingExpiry = trim(parsed.existing_expiry_at or '')
           end
+          logDocumentFailure('license-create-rejected', {
+            reason = 'renewal_window_blocked',
+            http_status = tonumber(status) or 0,
+            existing_expiry_at = existingExpiry,
+            payload = summarizeLicensePayloadForLog(payload),
+          })
           notifyPlayer(s, ('Licence renewal unavailable. You can renew within 3 days of expiry%s%s.'):format(
             existingExpiry ~= '' and ' (current expiry: ' or '',
             existingExpiry ~= '' and (existingExpiry .. ')') or ''
@@ -1218,6 +1292,11 @@ local function submitDriverLicense(src, formData)
         end
 
         if status == 413 then
+          logDocumentFailure('license-create-rejected', {
+            reason = 'payload_too_large',
+            http_status = tonumber(status) or 0,
+            payload = summarizeLicensePayloadForLog(payload),
+          })
           notifyPlayer(s, 'Licence photo is too large for CAD. Try again (JPG/compressed) or contact staff.')
           maybeRefundFee()
           return
@@ -1233,6 +1312,13 @@ local function submitDriverLicense(src, formData)
           err = err .. ': ' .. parsedError
         end
         print('[cad_bridge] ' .. err)
+        logDocumentFailure('license-create-failed', {
+          http_status = tonumber(status) or 0,
+          api_error = parsedError,
+          fee_charged = feeCharged == true,
+          fee_amount = feeAmount,
+          payload = summarizeLicensePayloadForLog(payload),
+        })
         maybeRefundFee()
         if parsedError ~= '' then
           notifyPlayer(s, ('Driver license failed to save: %s'):format(parsedError))
@@ -1273,6 +1359,10 @@ local function submitVehicleRegistration(src, formData)
   if trim(payload.citizenid) == '' then
     notifyPlayer(s, 'Unable to determine your active character (citizenid). Re-log and try again.')
     print(('[cad_bridge] Registration submit blocked for src %s: missing citizenid'):format(tostring(s)))
+    logDocumentFailure('registration-create-blocked', {
+      reason = 'missing_citizenid',
+      payload = summarizeRegistrationPayloadForLog(payload),
+    })
     return
   end
 
@@ -1303,11 +1393,18 @@ local function submitVehicleRegistration(src, formData)
         ('Vehicle registration issue/renewal (%s days)'):format(tostring(math.floor(tonumber(payload.duration_days) or 0)))
       )
       if not paid then
-        local feeError = payErr ~= '' and payErr or ('Unable to charge registration fee %s from %s account.'):format(formatMoney(feeAmount), feeAccount)
-        if feeRequired then
-          notifyPlayer(s, feeError)
-          return
-        end
+      local feeError = payErr ~= '' and payErr or ('Unable to charge registration fee %s from %s account.'):format(formatMoney(feeAmount), feeAccount)
+      if feeRequired then
+        logDocumentFailure('registration-create-blocked', {
+          reason = 'fee_charge_failed_required',
+          fee_account = feeAccount,
+          fee_amount = feeAmount,
+          fee_error = feeError,
+          payload = summarizeRegistrationPayloadForLog(payload),
+        })
+        notifyPlayer(s, feeError)
+        return
+      end
         print(('[cad_bridge] Registration fee bypassed for src %s (continuing without payment): %s'):format(
           tostring(s),
           tostring(feeError)
@@ -1367,6 +1464,12 @@ local function submitVehicleRegistration(src, formData)
         if ok and type(parsed) == 'table' then
           existingExpiry = trim(parsed.existing_expiry_at or '')
         end
+        logDocumentFailure('registration-create-rejected', {
+          reason = 'renewal_window_blocked',
+          http_status = tonumber(status) or 0,
+          existing_expiry_at = existingExpiry,
+          payload = summarizeRegistrationPayloadForLog(payload),
+        })
         if existingExpiry ~= '' then
           notifyPlayer(s, ('Registration renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(existingExpiry))
         else
@@ -1374,6 +1477,13 @@ local function submitVehicleRegistration(src, formData)
         end
         return
       end
+      logDocumentFailure('registration-create-failed', {
+        http_status = tonumber(status) or 0,
+        api_error = parsedError,
+        fee_charged = feeCharged == true,
+        fee_amount = feeAmount,
+        payload = summarizeRegistrationPayloadForLog(payload),
+      })
       if parsedError ~= '' then
         notifyPlayer(s, ('Vehicle registration failed to save: %s'):format(parsedError))
       else
@@ -1573,6 +1683,11 @@ RegisterNetEvent('cad_bridge:submitDriverLicense', function(payload)
 
   local formData, err = parseDriverLicenseForm(payload)
   if not formData then
+    logDocumentFailure('license-validate-failed', {
+      source = tonumber(src) or 0,
+      error = trim(err or 'invalid_form'),
+      payload = summarizeLicensePayloadForLog(payload),
+    })
     notifyPlayer(src, err or 'Invalid driver license details.')
     return
   end
@@ -1586,6 +1701,11 @@ RegisterNetEvent('cad_bridge:submitVehicleRegistration', function(payload)
 
   local formData, err = parseVehicleRegistrationForm(payload)
   if not formData then
+    logDocumentFailure('registration-validate-failed', {
+      source = tonumber(src) or 0,
+      error = trim(err or 'invalid_form'),
+      payload = summarizeRegistrationPayloadForLog(payload),
+    })
     notifyPlayer(src, err or 'Invalid registration details.')
     return
   end

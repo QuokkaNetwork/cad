@@ -472,6 +472,48 @@ function normalizeTextList(value, { uppercase = false, maxLength = 64 } = {}) {
   return out;
 }
 
+function summarizeBridgeLicensePayload(payload = {}) {
+  const classes = Array.isArray(payload.license_classes)
+    ? payload.license_classes
+    : (Array.isArray(payload.classes) ? payload.classes : []);
+  const conditions = Array.isArray(payload.conditions) ? payload.conditions : [];
+  const mugshotUrl = String(payload.mugshot_url || '').trim();
+  return {
+    source: Number(payload.source || 0) || 0,
+    player_name: String(payload.player_name || payload.name || '').trim(),
+    citizenid: String(payload.citizenid || payload.citizen_id || '').trim(),
+    full_name: String(payload.full_name || payload.character_name || payload.name || '').trim(),
+    date_of_birth: String(payload.date_of_birth || payload.dob || payload.birthdate || '').trim(),
+    gender: String(payload.gender || '').trim(),
+    classes_count: classes.length,
+    conditions_count: conditions.length,
+    expiry_days: Number(payload.expiry_days ?? payload.duration_days ?? 0) || 0,
+    expiry_at: String(payload.expiry_at || '').trim(),
+    mugshot_length: mugshotUrl.length,
+  };
+}
+
+function summarizeBridgeRegistrationPayload(payload = {}) {
+  return {
+    source: Number(payload.source || 0) || 0,
+    player_name: String(payload.player_name || payload.name || '').trim(),
+    citizenid: String(payload.citizenid || payload.citizen_id || '').trim(),
+    owner_name: String(payload.owner_name || payload.character_name || payload.full_name || '').trim(),
+    plate: String(payload.plate || payload.license_plate || '').trim(),
+    vehicle_model: String(payload.vehicle_model || payload.model || '').trim(),
+    vehicle_colour: String(payload.vehicle_colour || payload.colour || payload.color || '').trim(),
+    duration_days: Number(payload.duration_days ?? payload.expiry_days ?? 0) || 0,
+    expiry_at: String(payload.expiry_at || '').trim(),
+  };
+}
+
+function logBridgeDocumentReject(kind, statusCode, reason, payloadSummary, extra = {}) {
+  console.warn(`[FiveMBridge] ${kind} rejected (${statusCode}): ${reason}`, {
+    ...payloadSummary,
+    ...extra,
+  });
+}
+
 function getDispatchVisibleDepartments() {
   return Departments.listDispatchVisible().filter(dept => dept.is_active && !dept.is_dispatch);
 }
@@ -1197,6 +1239,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
 router.post('/licenses', requireBridgeAuth, (req, res) => {
   try {
     const payload = req.body || {};
+    const payloadSummary = summarizeBridgeLicensePayload(payload);
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
     const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
 
@@ -1220,6 +1263,7 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
       citizenId = String(FiveMPlayerLinks.findBySteamId(ids.linkKey)?.citizen_id || '').trim();
     }
     if (!citizenId) {
+      logBridgeDocumentReject('license', 400, 'missing_citizenid', payloadSummary);
       return res.status(400).json({ error: 'citizenid is required to create a license' });
     }
 
@@ -1231,6 +1275,12 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
       : (Array.isArray(payload.classes) ? payload.classes : []);
     const licenseClasses = normalizeTextList(classesInput, { uppercase: true, maxLength: 10 });
     if (!fullName || !dateOfBirth || !gender || licenseClasses.length === 0) {
+      logBridgeDocumentReject('license', 400, 'invalid_required_fields', payloadSummary, {
+        resolved_full_name: fullName,
+        resolved_date_of_birth: dateOfBirth,
+        resolved_gender: gender,
+        resolved_classes_count: licenseClasses.length,
+      });
       return res.status(400).json({
         error: 'full_name, date_of_birth, gender and at least one license class are required',
       });
@@ -1250,6 +1300,10 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
     if (existingLicense) {
       const daysUntilExpiry = daysUntilDateOnly(existingLicense.expiry_at);
       if (daysUntilExpiry !== null && daysUntilExpiry > 3) {
+        logBridgeDocumentReject('license', 409, 'renewal_window_blocked', payloadSummary, {
+          existing_expiry_at: existingLicense.expiry_at,
+          renewal_available_in_days: daysUntilExpiry - 3,
+        });
         return res.status(409).json({
           error: 'Driver license renewal is only available within 3 days of expiry',
           renewal_available_in_days: daysUntilExpiry - 3,
@@ -1264,6 +1318,10 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
     const conditions = normalizeTextList(payload.conditions, { uppercase: false, maxLength: 80 });
     const mugshotUrl = String(payload.mugshot_url || '').trim();
     if (mugshotUrl.length > BRIDGE_MUGSHOT_MAX_CHARS) {
+      logBridgeDocumentReject('license', 413, 'mugshot_payload_too_large', payloadSummary, {
+        mugshot_length: mugshotUrl.length,
+        mugshot_limit: BRIDGE_MUGSHOT_MAX_CHARS,
+      });
       return res.status(413).json({
         error: `mugshot_url is too large (max ${BRIDGE_MUGSHOT_MAX_CHARS} characters)`,
       });
@@ -1294,7 +1352,11 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
 
     res.status(201).json({ ok: true, license: record });
   } catch (error) {
-    console.error('[FiveMBridge] Failed to upsert driver license:', error);
+    console.error('[FiveMBridge] Failed to upsert driver license:', {
+      error: error?.message || String(error),
+      stack: error?.stack || null,
+      payload: summarizeBridgeLicensePayload(req.body || {}),
+    });
     res.status(500).json({ error: 'Failed to create driver license record' });
   }
 });
@@ -1327,6 +1389,7 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
     VehicleRegistrations.markExpiredDue();
 
     const payload = req.body || {};
+    const payloadSummary = summarizeBridgeRegistrationPayload(payload);
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
     const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
 
@@ -1352,6 +1415,7 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
 
     const plate = String(payload.plate || payload.license_plate || '').trim();
     if (!plate) {
+      logBridgeDocumentReject('registration', 400, 'missing_plate', payloadSummary);
       return res.status(400).json({ error: 'plate is required to create registration' });
     }
 
@@ -1359,6 +1423,7 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
     const vehicleModel = String(payload.vehicle_model || payload.model || '').trim();
     const vehicleColour = String(payload.vehicle_colour || payload.colour || payload.color || '').trim();
     if (!vehicleModel) {
+      logBridgeDocumentReject('registration', 400, 'missing_vehicle_model', payloadSummary);
       return res.status(400).json({ error: 'vehicle_model is required' });
     }
 
@@ -1376,6 +1441,10 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
     if (existingRegistration) {
       const daysUntilExpiry = daysUntilDateOnly(existingRegistration.expiry_at);
       if (daysUntilExpiry !== null && daysUntilExpiry > 3) {
+        logBridgeDocumentReject('registration', 409, 'renewal_window_blocked', payloadSummary, {
+          existing_expiry_at: existingRegistration.expiry_at,
+          renewal_available_in_days: daysUntilExpiry - 3,
+        });
         return res.status(409).json({
           error: 'Vehicle registration renewal is only available within 3 days of expiry',
           renewal_available_in_days: daysUntilExpiry - 3,
@@ -1407,7 +1476,11 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
 
     res.status(201).json({ ok: true, registration: record });
   } catch (error) {
-    console.error('[FiveMBridge] Failed to upsert vehicle registration:', error);
+    console.error('[FiveMBridge] Failed to upsert vehicle registration:', {
+      error: error?.message || String(error),
+      stack: error?.stack || null,
+      payload: summarizeBridgeRegistrationPayload(req.body || {}),
+    });
     res.status(500).json({ error: 'Failed to create vehicle registration record' });
   }
 });
