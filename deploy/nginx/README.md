@@ -1,4 +1,4 @@
-# NGINX + Certbot Deployment
+# NGINX + TLS Deployment
 
 This repo includes a ready reverse-proxy setup for:
 
@@ -13,6 +13,23 @@ From the repo root:
 chmod +x deploy/scripts/setup-nginx-certbot.sh
 sudo bash deploy/scripts/setup-nginx-certbot.sh cad.quokkanetworks.net your-email@domain.tld
 ```
+
+## Quick Setup (Windows VPS)
+
+Run from an **Administrator** terminal on the Windows VPS:
+
+```bat
+deploy\scripts\setup-nginx-win.bat
+```
+
+The Windows setup script will:
+
+1. Install nginx (zip build) if missing
+2. Install win-acme (Let's Encrypt client) if missing
+3. Open inbound firewall ports `80` and `443`
+4. Write bootstrap nginx config for ACME HTTP-01 validation
+5. Request a certificate and configure renewal via win-acme
+6. Write final HTTPS + redirect nginx config and reload nginx
 
 ## Quick Setup From Windows (.bat + SSH)
 
@@ -49,3 +66,4 @@ TRUST_PROXY=1
 - Keep FiveM bridge base URL on local HTTP (`http://127.0.0.1:3031`) for bridge compatibility.
 - The nginx config includes websocket forwarding for `/voice-bridge`.
 - The nginx config disables proxy buffering for `/api/events` (SSE live events).
+- Cloud/VPS network firewalls/security groups must also allow inbound `80` and `443`.

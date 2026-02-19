@@ -368,9 +368,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Made with ❤️ for the FiveM community**
 
-## Production HTTPS (NGINX + Certbot)
+## Production HTTPS (NGINX + Let's Encrypt)
 
-If your DNS `A` record already points `cad.quokkanetworks.net` to your VPS, use the included nginx/certbot deployment files:
+If your DNS `A` record already points `cad.quokkanetworks.net` to your VPS, use the included nginx/TLS deployment files:
 
 ```bash
 chmod +x deploy/scripts/setup-nginx-certbot.sh
@@ -381,6 +381,12 @@ From Windows, you can run the SSH wrapper:
 
 ```bat
 deploy\scripts\setup-nginx-certbot.bat
+```
+
+On a Windows VPS (no SSH/Linux shell), run this directly on the VPS as Administrator:
+
+```bat
+deploy\scripts\setup-nginx-win.bat
 ```
 
 Set your `.env` for proxy + TLS domain:
