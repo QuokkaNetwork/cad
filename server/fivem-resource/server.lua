@@ -2910,13 +2910,27 @@ local function applyJail(job)
       return ok
     end
 
-    local function invoke(label, fn)
+    -- For exports: only treat an explicit true return as success.
+    -- wasabi_police exports return true on success; nil means the export
+    -- ran but did nothing (wrong signature, wrong version, etc.).
+    local function invokeExport(label, fn)
       local ok, result = pcall(fn)
       if not ok then
         return recordAttempt(label, false, result)
       end
-      if result == false then
-        return recordAttempt(label, false, 'returned false')
+      if result ~= true then
+        return recordAttempt(label, false, result == false and 'returned false' or 'returned nil')
+      end
+      return recordAttempt(label, true)
+    end
+
+    -- For server/client events: Lua events never return a value, so we
+    -- fire the event and treat a clean pcall as success. Only reached
+    -- when all export variants have already failed.
+    local function invokeEvent(label, fn)
+      local ok, err = pcall(fn)
+      if not ok then
+        return recordAttempt(label, false, err)
       end
       return recordAttempt(label, true)
     end
@@ -2952,7 +2966,7 @@ local function applyJail(job)
     }
 
     for _, adapterTry in ipairs(exportAttempts) do
-      if invoke(adapterTry.label, adapterTry.fn) then
+      if invokeExport(adapterTry.label, adapterTry.fn) then
         invoked = true
         break
       end
@@ -3005,7 +3019,7 @@ local function applyJail(job)
       }
 
       for _, eventTry in ipairs(eventAttempts) do
-        if invoke(eventTry.label, eventTry.fn) then
+        if invokeEvent(eventTry.label, eventTry.fn) then
           invoked = true
           break
         end

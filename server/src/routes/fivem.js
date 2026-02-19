@@ -1385,21 +1385,7 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
       status = 'expired';
     }
 
-    const existingLicense = DriverLicenses.findByCitizenId(citizenId);
-    if (existingLicense) {
-      const daysUntilExpiry = daysUntilDateOnly(existingLicense.expiry_at);
-      if (daysUntilExpiry !== null && daysUntilExpiry > 3) {
-        logBridgeDocumentReject('license', 409, 'renewal_window_blocked', payloadSummary, {
-          existing_expiry_at: existingLicense.expiry_at,
-          renewal_available_in_days: daysUntilExpiry - 3,
-        });
-        return res.status(409).json({
-          error: 'Driver license renewal is only available within 3 days of expiry',
-          renewal_available_in_days: daysUntilExpiry - 3,
-          existing_expiry_at: existingLicense.expiry_at,
-        });
-      }
-    }
+    DriverLicenses.markExpiredDue();
 
     const providedLicenseNumber = String(payload.license_number || '').trim();
     const generatedLicenseNumber = `VIC-${citizenId.slice(-8).toUpperCase() || String(Date.now()).slice(-8)}`;
@@ -1542,22 +1528,6 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
     let status = normalizeStatus(payload.status, VEHICLE_REGISTRATION_STATUSES, 'valid');
     if (isPastOrTodayDateOnly(expiryAt)) {
       status = 'expired';
-    }
-
-    const existingRegistration = VehicleRegistrations.findByPlate(plate);
-    if (existingRegistration) {
-      const daysUntilExpiry = daysUntilDateOnly(existingRegistration.expiry_at);
-      if (daysUntilExpiry !== null && daysUntilExpiry > 3) {
-        logBridgeDocumentReject('registration', 409, 'renewal_window_blocked', payloadSummary, {
-          existing_expiry_at: existingRegistration.expiry_at,
-          renewal_available_in_days: daysUntilExpiry - 3,
-        });
-        return res.status(409).json({
-          error: 'Vehicle registration renewal is only available within 3 days of expiry',
-          renewal_available_in_days: daysUntilExpiry - 3,
-          existing_expiry_at: existingRegistration.expiry_at,
-        });
-      }
     }
 
     const record = VehicleRegistrations.upsertByPlate({
