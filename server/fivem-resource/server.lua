@@ -1675,6 +1675,23 @@ end, false)
 
 local heartbeatInFlight = false
 local heartbeatInFlightSinceMs = 0
+local pollFineJobs = nil
+local pollJailJobs = nil
+local lastFastEnforcementPollMs = 0
+
+local function triggerFastEnforcementPoll()
+  local now = nowMs()
+  if (now - lastFastEnforcementPollMs) < 800 then
+    return
+  end
+  lastFastEnforcementPollMs = now
+  if pollFineJobs then
+    pollFineJobs()
+  end
+  if pollJailJobs then
+    pollJailJobs()
+  end
+end
 
 local function resetHeartbeatInFlight(reason)
   heartbeatInFlight = false
@@ -1782,6 +1799,12 @@ CreateThread(function()
           setBridgeBackoff('heartbeat', responseHeaders, 5000, 'heartbeat error')
         end
         print(('[cad_bridge] heartbeat failed with status %s'):format(tostring(status)))
+        return
+      end
+
+      if status >= 200 and status < 300 then
+        -- Nudge enforcement queues so record-created fines/jails apply quickly.
+        triggerFastEnforcementPoll()
       end
     end)
 
@@ -2476,47 +2499,49 @@ local function applyFine(job)
 end
 
 local finePollInFlight = false
+pollFineJobs = function()
+  if not hasBridgeConfig() then
+    return
+  end
+  if finePollInFlight or isBridgeBackoffActive('fine_poll') then
+    return
+  end
+
+  finePollInFlight = true
+  request('GET', '/api/integration/fivem/fine-jobs?limit=25', nil, function(status, body, responseHeaders)
+    finePollInFlight = false
+    if status == 429 then
+      setBridgeBackoff('fine_poll', responseHeaders, 10000, 'fine poll')
+      return
+    end
+    if status ~= 200 then
+      return
+    end
+
+    local ok, jobs = pcall(json.decode, body)
+    if not ok or type(jobs) ~= 'table' then
+      return
+    end
+
+    for _, job in ipairs(jobs) do
+      local success, err, transient = applyFine(job)
+      if success then
+        request('POST', ('/api/integration/fivem/fine-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+      elseif transient then
+        -- Keep pending and retry when the target character is online.
+      else
+        request('POST', ('/api/integration/fivem/fine-jobs/%s/failed'):format(tostring(job.id)), {
+          error = err or 'Fine adapter failed',
+        }, function() end)
+      end
+    end
+  end)
+end
+
 CreateThread(function()
   while true do
     Wait(math.max(2000, tonumber(Config.FinePollIntervalMs) or 7000))
-    if not hasBridgeConfig() then
-      goto continue
-    end
-    if finePollInFlight or isBridgeBackoffActive('fine_poll') then
-      goto continue
-    end
-
-    finePollInFlight = true
-    request('GET', '/api/integration/fivem/fine-jobs?limit=25', nil, function(status, body, responseHeaders)
-      finePollInFlight = false
-      if status == 429 then
-        setBridgeBackoff('fine_poll', responseHeaders, 10000, 'fine poll')
-        return
-      end
-      if status ~= 200 then
-        return
-      end
-
-      local ok, jobs = pcall(json.decode, body)
-      if not ok or type(jobs) ~= 'table' then
-        return
-      end
-
-      for _, job in ipairs(jobs) do
-        local success, err, transient = applyFine(job)
-        if success then
-          request('POST', ('/api/integration/fivem/fine-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
-        elseif transient then
-          -- Keep pending and retry when the target character is online.
-        else
-          request('POST', ('/api/integration/fivem/fine-jobs/%s/failed'):format(tostring(job.id)), {
-            error = err or 'Fine adapter failed',
-          }, function() end)
-        end
-      end
-    end)
-
-    ::continue::
+    pollFineJobs()
   end
 end)
 
@@ -2608,15 +2633,9 @@ local function applyJail(job)
     if not invoked then
       local eventAttempts = {
         {
-          label = 'TriggerEvent wasabi_police:sendToJail(source, minutes, reason)',
+          label = 'TriggerEvent wasabi_police:server:sendToJail(source, minutes)',
           fn = function()
-            TriggerEvent('wasabi_police:sendToJail', sourceId, minutes, reason)
-          end,
-        },
-        {
-          label = 'TriggerEvent wasabi_police:sendToJail(source, minutes)',
-          fn = function()
-            TriggerEvent('wasabi_police:sendToJail', sourceId, minutes)
+            TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes)
           end,
         },
         {
@@ -2626,9 +2645,15 @@ local function applyJail(job)
           end,
         },
         {
-          label = 'TriggerEvent wasabi_police:server:sendToJail(source, minutes)',
+          label = 'TriggerEvent wasabi_police:qbPrisonJail(source, minutes)',
           fn = function()
-            TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes)
+            TriggerEvent('wasabi_police:qbPrisonJail', sourceId, minutes)
+          end,
+        },
+        {
+          label = 'TriggerClientEvent wasabi_police:jailPlayer(source, minutes)',
+          fn = function()
+            TriggerClientEvent('wasabi_police:jailPlayer', sourceId, minutes)
           end,
         },
         {
@@ -2638,9 +2663,15 @@ local function applyJail(job)
           end,
         },
         {
-          label = 'TriggerClientEvent wasabi_police:jailPlayer(source, minutes)',
+          label = 'TriggerEvent wasabi_police:sendToJail(source, minutes)',
           fn = function()
-            TriggerClientEvent('wasabi_police:jailPlayer', sourceId, minutes)
+            TriggerEvent('wasabi_police:sendToJail', sourceId, minutes)
+          end,
+        },
+        {
+          label = 'TriggerEvent wasabi_police:sendToJail(source, minutes, reason)',
+          fn = function()
+            TriggerEvent('wasabi_police:sendToJail', sourceId, minutes, reason)
           end,
         },
       }
@@ -2698,47 +2729,49 @@ local function applyJail(job)
 end
 
 local jailPollInFlight = false
+pollJailJobs = function()
+  if not hasBridgeConfig() then
+    return
+  end
+  if jailPollInFlight or isBridgeBackoffActive('jail_poll') then
+    return
+  end
+
+  jailPollInFlight = true
+  request('GET', '/api/integration/fivem/jail-jobs?limit=25', nil, function(status, body, responseHeaders)
+    jailPollInFlight = false
+    if status == 429 then
+      setBridgeBackoff('jail_poll', responseHeaders, 10000, 'jail poll')
+      return
+    end
+    if status ~= 200 then
+      return
+    end
+
+    local ok, jobs = pcall(json.decode, body)
+    if not ok or type(jobs) ~= 'table' then
+      return
+    end
+
+    for _, job in ipairs(jobs) do
+      local success, err, transient = applyJail(job)
+      if success then
+        request('POST', ('/api/integration/fivem/jail-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+      elseif transient then
+        -- Keep pending and retry when the target character is online.
+      else
+        request('POST', ('/api/integration/fivem/jail-jobs/%s/failed'):format(tostring(job.id)), {
+          error = err or 'Jail adapter failed',
+        }, function() end)
+      end
+    end
+  end)
+end
+
 CreateThread(function()
   while true do
     Wait(math.max(2000, Config.JailPollIntervalMs or 7000))
-    if not hasBridgeConfig() then
-      goto continue
-    end
-    if jailPollInFlight or isBridgeBackoffActive('jail_poll') then
-      goto continue
-    end
-
-    jailPollInFlight = true
-    request('GET', '/api/integration/fivem/jail-jobs?limit=25', nil, function(status, body, responseHeaders)
-      jailPollInFlight = false
-      if status == 429 then
-        setBridgeBackoff('jail_poll', responseHeaders, 10000, 'jail poll')
-        return
-      end
-      if status ~= 200 then
-        return
-      end
-
-      local ok, jobs = pcall(json.decode, body)
-      if not ok or type(jobs) ~= 'table' then
-        return
-      end
-
-      for _, job in ipairs(jobs) do
-        local success, err, transient = applyJail(job)
-        if success then
-          request('POST', ('/api/integration/fivem/jail-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
-        elseif transient then
-          -- Keep pending and retry when the target character is online.
-        else
-          request('POST', ('/api/integration/fivem/jail-jobs/%s/failed'):format(tostring(job.id)), {
-            error = err or 'Jail adapter failed',
-          }, function() end)
-        end
-      end
-    end)
-
-    ::continue::
+    pollJailJobs()
   end
 end)
 

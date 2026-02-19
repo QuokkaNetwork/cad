@@ -68,3 +68,27 @@ TRUST_PROXY=1
 - The nginx config disables proxy buffering for `/api/events` (SSE live events).
 - Cloud/VPS network firewalls/security groups must also allow inbound `80` and `443`.
 - Canonical host redirect is enforced so IP-host requests are redirected to `https://cad.quokkanetworks.net`.
+
+## If Browser Still Shows "Not Secure" (Windows VPS)
+
+1. Make sure you are opening `https://cad.quokkanetworks.net` (not the raw VPS IP).
+2. Re-run the Windows setup as Administrator so nginx picks the current cert PEM files:
+
+```bat
+deploy\scripts\setup-nginx-win.bat
+```
+
+3. Verify nginx is serving HTTPS and using the domain site config:
+
+```powershell
+C:\nginx\nginx.exe -p C:\nginx\ -c conf\nginx.conf -t
+Get-Content C:\nginx\conf\conf.d\cad.quokkanetworks.net.conf
+```
+
+4. Confirm the certificate is reachable from the VPS:
+
+```powershell
+Invoke-WebRequest https://cad.quokkanetworks.net/health -UseBasicParsing
+```
+
+If HTTPS works on domain but not on IP, that is expected: Let's Encrypt certs are issued to the domain, not the IP address.

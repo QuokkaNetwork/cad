@@ -34,6 +34,65 @@ function To-NginxPath {
   return ($PathValue -replace '\\', '/')
 }
 
+function Resolve-FirstExistingPath {
+  param(
+    [string[]]$Candidates
+  )
+
+  foreach ($candidate in $Candidates) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+      continue
+    }
+    if (Test-Path -LiteralPath $candidate) {
+      return $candidate
+    }
+  }
+
+  return $null
+}
+
+function Resolve-PemCertificateFiles {
+  param(
+    [string]$CertDirectory,
+    [string]$DomainName
+  )
+
+  $preferredChain = Resolve-FirstExistingPath -Candidates @(
+    (Join-Path $CertDirectory "$DomainName-chain.pem"),
+    (Join-Path $CertDirectory "$DomainName-fullchain.pem"),
+    (Join-Path $CertDirectory "$DomainName.pem"),
+    (Join-Path $CertDirectory "$DomainName-crt.pem")
+  )
+
+  if (-not $preferredChain) {
+    $fallbackChain = Get-ChildItem -Path $CertDirectory -File -Filter '*-chain.pem' -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -First 1
+    if ($fallbackChain) {
+      $preferredChain = $fallbackChain.FullName
+    }
+  }
+
+  $preferredKey = Resolve-FirstExistingPath -Candidates @(
+    (Join-Path $CertDirectory "$DomainName-key.pem"),
+    (Join-Path $CertDirectory "$DomainName-privkey.pem")
+  )
+
+  if (-not $preferredKey) {
+    $fallbackKey = Get-ChildItem -Path $CertDirectory -File -Filter '*-key.pem' -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -First 1
+    if ($fallbackKey) {
+      $preferredKey = $fallbackKey.FullName
+    }
+  }
+
+  return [PSCustomObject]@{
+    Chain = $preferredChain
+    Key = $preferredKey
+  }
+}
+
 function Download-AndExtractZip {
   param(
     [string]$Url,
@@ -325,9 +384,15 @@ if ($LASTEXITCODE -ne 0) {
   throw 'win-acme certificate request failed. Confirm DNS points to this VPS and port 80 is reachable.'
 }
 
-if (-not (Test-Path -LiteralPath $CertChain) -or -not (Test-Path -LiteralPath $CertKey)) {
-  throw "Expected certificate files not found: $CertChain and $CertKey"
+$resolvedPem = Resolve-PemCertificateFiles -CertDirectory $CertDir -DomainName $Domain
+if (-not $resolvedPem.Chain -or -not $resolvedPem.Key) {
+  throw "Could not resolve certificate/key PEM files under $CertDir. Re-run win-acme and check output file names."
 }
+
+$CertChain = $resolvedPem.Chain
+$CertKey = $resolvedPem.Key
+$renderValues.CERT_CHAIN = To-NginxPath -PathValue $CertChain
+$renderValues.CERT_KEY = To-NginxPath -PathValue $CertKey
 
 Write-Step 'Writing HTTPS nginx site config...'
 Render-Template -TemplatePath $TlsTemplate -OutputPath $SiteConf -Values $renderValues
