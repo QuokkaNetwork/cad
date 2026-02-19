@@ -1249,79 +1249,104 @@ local function submitVehicleRegistration(src, formData)
   local feeCharged = false
   local feeRequired = Config.RequireDocumentFeePayment == true
 
-  if feeAmount > 0 then
-    local paid, payErr = chargeDocumentFee(
-      s,
-      payload.citizenid,
-      feeAccount,
-      feeAmount,
-      ('Vehicle registration issue/renewal (%s days)'):format(tostring(math.floor(tonumber(payload.duration_days) or 0)))
-    )
-    if not paid then
-      local feeError = payErr ~= '' and payErr or ('Unable to charge registration fee %s from %s account.'):format(formatMoney(feeAmount), feeAccount)
-      if feeRequired then
-        notifyPlayer(s, feeError)
-        return
+  request('GET', '/api/integration/fivem/registrations/' .. urlEncode(payload.plate), nil, function(existingStatus, existingBody)
+    if existingStatus >= 200 and existingStatus < 300 then
+      local okExisting, existingParsed = pcall(json.decode, existingBody or '{}')
+      if okExisting and type(existingParsed) == 'table' and type(existingParsed.registration) == 'table' then
+        local daysUntilExpiry = daysUntilDateOnly(existingParsed.registration.expiry_at)
+        if daysUntilExpiry ~= nil and daysUntilExpiry > 3 then
+          notifyPlayer(s, ('Registration renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(tostring(existingParsed.registration.expiry_at or 'unknown')))
+          return
+        end
       end
-      print(('[cad_bridge] Registration fee bypassed for src %s (continuing without payment): %s'):format(
-        tostring(s),
-        tostring(feeError)
-      ))
-      notifyPlayer(s, 'Registration fee could not be charged. Continuing without payment.')
-    else
-      feeCharged = true
-    end
-  end
-
-  request('POST', '/api/integration/fivem/registrations', payload, function(status, body, responseHeaders)
-    if status >= 200 and status < 300 then
-      local expiryAt = payload.expiry_at
-      local ok, parsed = pcall(json.decode, body or '{}')
-      if ok and type(parsed) == 'table' and type(parsed.registration) == 'table' then
-        expiryAt = tostring(parsed.registration.expiry_at or expiryAt)
-      end
-      notifyPlayer(s, ('Vehicle registration saved to CAD%s%s%s%s'):format(
-        expiryAt ~= '' and ' | Expires: ' or '',
-        expiryAt ~= '' and expiryAt or '',
-        feeCharged and ' | Charged: ' or '',
-        feeCharged and formatMoney(feeAmount) or ''
-      ))
-      return
     end
 
-    if status == 429 then
-      setBridgeBackoff('registrations', responseHeaders, 15000, 'vehicle registration create')
-    end
-
-    local err = ('Failed to create CAD vehicle registration (HTTP %s)'):format(tostring(status))
-    local ok, parsed = pcall(json.decode, body or '{}')
-    local parsedError = ''
-    if ok and type(parsed) == 'table' and parsed.error then
-      parsedError = tostring(parsed.error)
-      err = err .. ': ' .. parsedError
-    end
-    print('[cad_bridge] ' .. err)
-    if feeCharged and feeAmount > 0 then
-      local refunded, refundErr = refundDocumentFee(
+    if feeAmount > 0 then
+      local paid, payErr = chargeDocumentFee(
         s,
         payload.citizenid,
         feeAccount,
         feeAmount,
-        'CAD registration refund (save failed)'
+        ('Vehicle registration issue/renewal (%s days)'):format(tostring(math.floor(tonumber(payload.duration_days) or 0)))
       )
-      if not refunded then
-        print(('[cad_bridge] WARNING: registration fee refund failed for src %s amount %s: %s'):format(
+      if not paid then
+        local feeError = payErr ~= '' and payErr or ('Unable to charge registration fee %s from %s account.'):format(formatMoney(feeAmount), feeAccount)
+        if feeRequired then
+          notifyPlayer(s, feeError)
+          return
+        end
+        print(('[cad_bridge] Registration fee bypassed for src %s (continuing without payment): %s'):format(
           tostring(s),
-          tostring(feeAmount),
-          tostring(refundErr)
+          tostring(feeError)
         ))
+        notifyPlayer(s, 'Registration fee could not be charged. Continuing without payment.')
+      else
+        feeCharged = true
       end
     end
-    if parsedError ~= '' then
-      notifyPlayer(s, ('Vehicle registration failed to save: %s'):format(parsedError))
-    else
-      notifyPlayer(s, 'Vehicle registration failed to save to CAD. Check server logs.')
-    end
+
+    request('POST', '/api/integration/fivem/registrations', payload, function(status, body, responseHeaders)
+      if status >= 200 and status < 300 then
+        local expiryAt = payload.expiry_at
+        local ok, parsed = pcall(json.decode, body or '{}')
+        if ok and type(parsed) == 'table' and type(parsed.registration) == 'table' then
+          expiryAt = tostring(parsed.registration.expiry_at or expiryAt)
+        end
+        notifyPlayer(s, ('Vehicle registration saved to CAD%s%s%s%s'):format(
+          expiryAt ~= '' and ' | Expires: ' or '',
+          expiryAt ~= '' and expiryAt or '',
+          feeCharged and ' | Charged: ' or '',
+          feeCharged and formatMoney(feeAmount) or ''
+        ))
+        return
+      end
+
+      if status == 429 then
+        setBridgeBackoff('registrations', responseHeaders, 15000, 'vehicle registration create')
+      end
+
+      local err = ('Failed to create CAD vehicle registration (HTTP %s)'):format(tostring(status))
+      local ok, parsed = pcall(json.decode, body or '{}')
+      local parsedError = ''
+      if ok and type(parsed) == 'table' and parsed.error then
+        parsedError = tostring(parsed.error)
+        err = err .. ': ' .. parsedError
+      end
+      print('[cad_bridge] ' .. err)
+      if feeCharged and feeAmount > 0 then
+        local refunded, refundErr = refundDocumentFee(
+          s,
+          payload.citizenid,
+          feeAccount,
+          feeAmount,
+          'CAD registration refund (save failed)'
+        )
+        if not refunded then
+          print(('[cad_bridge] WARNING: registration fee refund failed for src %s amount %s: %s'):format(
+            tostring(s),
+            tostring(feeAmount),
+            tostring(refundErr)
+          ))
+        end
+      end
+      if status == 409 then
+        local existingExpiry = ''
+        if ok and type(parsed) == 'table' then
+          existingExpiry = trim(parsed.existing_expiry_at or '')
+        end
+        if existingExpiry ~= '' then
+          notifyPlayer(s, ('Registration renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(existingExpiry))
+        else
+          notifyPlayer(s, 'Registration renewal unavailable. You can renew when within 3 days of expiry.')
+        end
+        return
+      end
+      if parsedError ~= '' then
+        notifyPlayer(s, ('Vehicle registration failed to save: %s'):format(parsedError))
+      else
+        notifyPlayer(s, 'Vehicle registration failed to save to CAD. Check server logs.')
+      end
+    end)
   end)
 end
 

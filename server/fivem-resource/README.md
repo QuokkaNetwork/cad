@@ -81,6 +81,7 @@ Command adapter execution now waits for the target character to be online.
   `Driver license`: `valid`, `suspended`, `disqualified`, `expired`
   `Registration`: `valid`, `suspended`, `revoked`, `expired`
 - CAD auto-marks licenses/registrations as `expired` when expiry date is reached.
+- In-game renewals are blocked until within 3 days of expiry for both licenses and registrations.
 - Optional fee charging can be enforced with `cad_bridge_document_fee_required=true`.
   When set to `false` (default), fee charge failures no longer block save-to-CAD.
 

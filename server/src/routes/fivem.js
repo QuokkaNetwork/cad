@@ -1324,6 +1324,8 @@ router.get('/licenses/:citizenid', requireBridgeAuth, (req, res) => {
 // Create/update a vehicle registration from in-game CAD bridge UI.
 router.post('/registrations', requireBridgeAuth, (req, res) => {
   try {
+    VehicleRegistrations.markExpiredDue();
+
     const payload = req.body || {};
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
     const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
@@ -1370,6 +1372,18 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
       status = 'expired';
     }
 
+    const existingRegistration = VehicleRegistrations.findByPlate(plate);
+    if (existingRegistration) {
+      const daysUntilExpiry = daysUntilDateOnly(existingRegistration.expiry_at);
+      if (daysUntilExpiry !== null && daysUntilExpiry > 3) {
+        return res.status(409).json({
+          error: 'Vehicle registration renewal is only available within 3 days of expiry',
+          renewal_available_in_days: daysUntilExpiry - 3,
+          existing_expiry_at: existingRegistration.expiry_at,
+        });
+      }
+    }
+
     const record = VehicleRegistrations.upsertByPlate({
       plate,
       citizen_id: citizenId,
@@ -1395,6 +1409,28 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
   } catch (error) {
     console.error('[FiveMBridge] Failed to upsert vehicle registration:', error);
     res.status(500).json({ error: 'Failed to create vehicle registration record' });
+  }
+});
+
+// Read a vehicle's current registration record for in-game renewal checks.
+router.get('/registrations/:plate', requireBridgeAuth, (req, res) => {
+  try {
+    VehicleRegistrations.markExpiredDue();
+
+    const plate = String(req.params.plate || '').trim();
+    if (!plate) {
+      return res.status(400).json({ error: 'plate is required' });
+    }
+
+    const record = VehicleRegistrations.findByPlate(plate);
+    if (!record) {
+      return res.status(404).json({ error: 'Registration not found' });
+    }
+
+    return res.json({ ok: true, registration: record });
+  } catch (error) {
+    console.error('[FiveMBridge] Failed to read vehicle registration:', error);
+    return res.status(500).json({ error: 'Failed to read vehicle registration record' });
   }
 });
 

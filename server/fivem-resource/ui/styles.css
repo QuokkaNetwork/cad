@@ -32,6 +32,10 @@ body {
   background: transparent;
 }
 
+html {
+  font-size: 17px;
+}
+
 body {
   pointer-events: none;
 }
@@ -57,8 +61,8 @@ body * {
 }
 
 .panel {
-  width: min(980px, 96vw);
-  max-height: 92vh;
+  width: min(1140px, 97vw);
+  max-height: 93vh;
   overflow: auto;
   border-radius: 16px;
   border: 1px solid var(--cad-border);
@@ -66,25 +70,25 @@ body * {
   box-shadow:
     0 20px 40px rgba(0, 0, 0, 0.6),
     0 0 0 1px rgba(0, 82, 194, 0.1) inset;
-  padding: 1.35rem 1.45rem 1.3rem;
+  padding: 1.65rem 1.75rem 1.55rem;
   animation: panel-enter 180ms ease-out;
 }
 
 .panel-license {
-  width: min(900px, 96vw);
+  width: min(1060px, 97vw);
 }
 
 .panel-registration {
-  width: min(860px, 95vw);
+  width: min(1020px, 96vw);
 }
 
 .panel-license,
 .panel-registration {
-  --cad-surface: #f4fbf6;
+  --cad-surface: #edf6f1;
   --cad-card: #ffffff;
-  --cad-border: #bfd8c7;
+  --cad-border: #9ebdac;
   --cad-ink: #123125;
-  --cad-muted: #4a6f5b;
+  --cad-muted: #2d5441;
   --cad-bg: #ffffff;
   --cad-accent: #1f8f4a;
   --cad-accent-light: #2faf5f;
@@ -149,7 +153,7 @@ body * {
 
 h1 {
   margin: 0;
-  font-size: clamp(1.45rem, 2vw, 1.9rem);
+  font-size: clamp(1.75rem, 2.35vw, 2.25rem);
   font-weight: 700;
   line-height: 1.2;
 }
@@ -157,8 +161,18 @@ h1 {
 .subtitle {
   margin: 0.45rem 0 1.1rem;
   color: var(--cad-muted);
-  font-size: 1.02rem;
+  font-size: 1.08rem;
   line-height: 1.4;
+}
+
+.panel-license h1,
+.panel-registration h1 {
+  color: #103224;
+}
+
+.panel-license .subtitle,
+.panel-registration .subtitle {
+  color: #2a5642;
 }
 
 .panel-license .eyebrow,
@@ -171,7 +185,15 @@ h1 {
 .panel-license .icon-btn,
 .panel-registration .icon-btn {
   background: #ffffff;
-  color: #5f7690;
+  color: #3b5a4a;
+  border-color: #9ebdac;
+}
+
+.panel-license .icon-btn:hover,
+.panel-registration .icon-btn:hover {
+  color: #123125;
+  border-color: #1f8f4a;
+  background: #edf6f1;
 }
 
 .portal-brand {
@@ -215,20 +237,20 @@ h1 {
 
 .form {
   display: grid;
-  gap: 1rem;
+  gap: 1.12rem;
 }
 
 .field {
   background: var(--cad-surface);
   border: 1px solid var(--cad-border);
-  border-radius: 10px;
-  padding: 0.82rem;
+  border-radius: 12px;
+  padding: 0.98rem;
 }
 
 .field label {
   display: block;
   margin-bottom: 0.52rem;
-  font-size: 0.92rem;
+  font-size: 1.02rem;
   font-weight: 600;
   color: var(--cad-ink);
 }
@@ -258,8 +280,8 @@ h1 {
   background: var(--cad-surface);
   color: var(--cad-ink);
   border-radius: 999px;
-  padding: 0.48rem 0.92rem;
-  font-size: 0.9rem;
+  padding: 0.58rem 1.02rem;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   cursor: pointer;
@@ -286,9 +308,9 @@ textarea {
   border: 1px solid var(--cad-border);
   background: var(--cad-bg);
   color: var(--cad-ink);
-  border-radius: 8px;
-  padding: 0.76rem 0.78rem;
-  font-size: 1rem;
+  border-radius: 9px;
+  padding: 0.88rem 0.9rem;
+  font-size: 1.08rem;
   outline: none;
   transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
@@ -361,12 +383,12 @@ select {
 
 .counter {
   color: var(--cad-muted);
-  font-size: 0.82rem;
+  font-size: 0.92rem;
 }
 
 .error {
   color: var(--danger);
-  font-size: 0.84rem;
+  font-size: 0.95rem;
   font-weight: 600;
 }
 
@@ -380,12 +402,12 @@ select {
 
 .dept-hint {
   color: var(--cad-muted);
-  font-size: 0.82rem;
+  font-size: 0.92rem;
 }
 
 .empty-state {
   color: var(--cad-muted);
-  font-size: 0.9rem;
+  font-size: 0.98rem;
   border: 1px dashed var(--cad-border);
   border-radius: 10px;
   padding: 0.7rem 0.72rem;
@@ -393,7 +415,7 @@ select {
 
 .inline-note {
   color: var(--cad-muted);
-  font-size: 0.92rem;
+  font-size: 1rem;
   line-height: 1.4;
 }
 
@@ -433,7 +455,7 @@ select {
 
 .dept-title {
   display: block;
-  font-size: 0.92rem;
+  font-size: 1rem;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -443,7 +465,7 @@ select {
 .dept-subtitle {
   display: block;
   margin-top: 0.16rem;
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   color: var(--cad-muted);
 }
 
@@ -458,9 +480,9 @@ select {
   appearance: none;
   border-radius: 11px;
   border: 1px solid transparent;
-  min-width: 172px;
-  padding: 0.76rem 1.08rem;
-  font-size: 0.96rem;
+  min-width: 210px;
+  padding: 0.9rem 1.2rem;
+  font-size: 1.04rem;
   font-weight: 700;
   cursor: pointer;
   transition: filter 120ms ease, transform 120ms ease, border-color 120ms ease;
@@ -480,8 +502,25 @@ select {
 
 .btn-primary {
   color: white;
+  background-color: var(--cad-accent);
   border-color: var(--cad-accent);
   background: linear-gradient(135deg, var(--cad-accent), var(--cad-accent-light));
+}
+
+.panel-license .btn-primary,
+.panel-registration .btn-primary {
+  color: #ffffff;
+  border-color: #16743d;
+  background-color: #1f8f4a;
+  background-image: linear-gradient(135deg, #1b8143, #2ca65a);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.panel-license .btn-ghost,
+.panel-registration .btn-ghost {
+  color: #153726;
+  border-color: #90b29f;
+  background: #f7fbf8;
 }
 
 .btn-ghost {
