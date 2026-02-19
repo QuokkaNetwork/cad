@@ -860,6 +860,24 @@ function queueVoiceEvent(eventType, options = {}) {
   return entry;
 }
 
+function shouldQueueVoiceEventToFiveM(payload = {}) {
+  if (payload.queue_to_fivem === true) return true;
+  if (payload.queue_to_fivem === false) return false;
+
+  const source = String(payload.source || payload.origin || '').trim().toLowerCase();
+  if (!source) return true;
+
+  if (
+    source === 'fivem-heartbeat'
+    || source === 'voice-heartbeat'
+    || source === 'voice-prune'
+    || source === 'voice-startup-cleanup'
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function listPendingVoiceEvents(limit = 50) {
   const normalizedLimit = Math.min(100, Math.max(1, Number(limit || 50) || 50));
   return Array.from(pendingVoiceEvents.values())
@@ -978,7 +996,9 @@ bus.on('unit:status_available', ({ unit, call }) => {
   }
 });
 
-bus.on('voice:join', ({ channelNumber, gameId, citizenId }) => {
+bus.on('voice:join', (payload = {}) => {
+  if (!shouldQueueVoiceEventToFiveM(payload)) return;
+  const { channelNumber, gameId, citizenId } = payload;
   queueVoiceEvent('join_radio', {
     channel_number: Number(channelNumber || 0),
     game_id: String(gameId || '').trim(),
@@ -986,7 +1006,9 @@ bus.on('voice:join', ({ channelNumber, gameId, citizenId }) => {
   });
 });
 
-bus.on('voice:leave', ({ channelNumber, gameId, citizenId }) => {
+bus.on('voice:leave', (payload = {}) => {
+  if (!shouldQueueVoiceEventToFiveM(payload)) return;
+  const { channelNumber, gameId, citizenId } = payload;
   queueVoiceEvent('leave_radio', {
     channel_number: Number(channelNumber || 0),
     game_id: String(gameId || '').trim(),
@@ -1983,6 +2005,8 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
         userId: null,
         gameId: existingGameId,
         citizenId: String(existing?.citizen_id || ''),
+        source: 'fivem-heartbeat',
+        queue_to_fivem: false,
       });
 
       const oldChannelNum = Number(existing?.channel_number || 0) || 0;
@@ -1993,7 +2017,6 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
       const gameId      = String(entry.game_id    || '').trim();
       const citizenId   = String(entry.citizen_id || '').trim();
       const channelNum  = parseInt(entry.channel_number, 10) || 0;
-      const channelType = String(entry.channel_type || 'radio').trim(); // 'radio' | 'call'
 
       if (!gameId) continue; // Must have a game_id to identify the player
 
@@ -2015,6 +2038,8 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
               userId: null,
               gameId,
               citizenId,
+              source: 'fivem-heartbeat',
+              queue_to_fivem: false,
             });
             if (oldChannel) changedChannels.add(oldChannel.channel_number);
           }
@@ -2033,6 +2058,8 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
             gameId,
             citizenId,
             participant,
+            source: 'fivem-heartbeat',
+            queue_to_fivem: false,
           });
           changedChannels.add(channel.channel_number);
         } else {
@@ -2049,6 +2076,8 @@ router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
             userId: null,
             gameId,
             citizenId,
+            source: 'fivem-heartbeat',
+            queue_to_fivem: false,
           });
           changedChannels.add(existing.channel_number);
         }

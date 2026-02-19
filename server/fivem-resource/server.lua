@@ -3716,9 +3716,16 @@ AddEventHandler('playerDropped', function(reason)
   CadRadioDisplayNameBySource[source] = nil
 end)
 
--- Poll CAD for voice events and sync with cad-radio
+-- Poll CAD for voice events and sync with cad-radio.
+-- Sonoran-style deployments should keep this disabled to avoid duplicate
+-- channel membership writers (in-game radio state -> CAD heartbeat is canonical).
 local voicePollInFlight = false
 CreateThread(function()
+  if Config.VoiceEventPollEnabled ~= true then
+    print('[cad_bridge] Voice event poll disabled (cad_bridge_voice_event_poll_enabled=false).')
+    return
+  end
+
   while true do
     Wait(math.max(1000, Config.VoicePollIntervalMs or 2000))
     if not hasBridgeConfig() then

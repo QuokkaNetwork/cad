@@ -277,6 +277,7 @@ Config.RadioOverlayMode = trim(getString('cad_bridge_radio_overlay', 'default'))
 if Config.RadioOverlayMode == '' then Config.RadioOverlayMode = 'default' end
 Config.RadioChannelSyncEnabled = getBoolean('cad_bridge_radio_channel_sync_enabled', true)
 Config.VoiceParticipantHeartbeatEnabled = getBoolean('cad_bridge_voice_participant_heartbeat_enabled', true)
+Config.VoiceEventPollEnabled = getBoolean('cad_bridge_voice_event_poll_enabled', false)
 
 Config.RadioNames = DEFAULT_RADIO_NAMES
 local radioNamesOverride = getJsonTable('cad_bridge_radio_names_json')

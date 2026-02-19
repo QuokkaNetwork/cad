@@ -31,6 +31,8 @@ function clearStartupParticipants() {
         gameId: String(row.game_id || ''),
         citizenId: String(row.citizen_id || ''),
         staleEviction: true,
+        source: 'voice-startup-cleanup',
+        queue_to_fivem: false,
       });
     }
   } catch (err) {
@@ -99,6 +101,8 @@ function pruneStaleParticipants() {
         gameId: String(row.game_id || ''),
         citizenId: String(row.citizen_id || ''),
         staleEviction: true,
+        source: 'voice-prune',
+        queue_to_fivem: false,
       });
       if (chNum > 0) affectedChannels.add(chNum);
     }

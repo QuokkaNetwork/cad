@@ -59,6 +59,9 @@ Complete Phase 2 of the Sonoran-style radio behavior with a stable, simple flow:
 - Began Sonoran config alignment:
   - Enabled `cad_bridge_radio_channel_sync_enabled=true`.
   - Enabled `cad_bridge_voice_participant_heartbeat_enabled=true`.
+- Radio authority alignment pass:
+  - Stopped heartbeat-driven participant updates from re-queueing CAD `voice-events` back to FiveM (prevents duplicate membership writers/echo loop).
+  - Added `cad_bridge_voice_event_poll_enabled` (default `false`) to keep Sonoran-style flow one-way by default.
 
 ## Acceptance Criteria
 - Two in-game players on same channel can hear each other consistently.
