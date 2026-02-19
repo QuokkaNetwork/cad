@@ -761,6 +761,7 @@ local function parseDriverLicenseForm(payload)
   local gender = trim(payload.gender or '')
   local classes = normalizeList(payload.license_classes or payload.classes or {}, true)
   local conditions = normalizeList(payload.conditions or {}, false)
+  local mugshotData = trim(payload.mugshot_data or '')
   local mugshotUrl = trim(payload.mugshot_url or '')
   local licenseNumber = trim(payload.license_number or '')
   local expiryDays = tonumber(payload.expiry_days or payload.duration_days or Config.DriverLicenseDefaultExpiryDays or 35) or (Config.DriverLicenseDefaultExpiryDays or 35)
@@ -781,6 +782,7 @@ local function parseDriverLicenseForm(payload)
     gender = gender,
     license_classes = classes,
     conditions = conditions,
+    mugshot_data = mugshotData,
     mugshot_url = mugshotUrl,
     license_number = licenseNumber,
     expiry_days = math.floor(expiryDays),
@@ -1040,7 +1042,8 @@ end
 
 local function summarizeLicensePayloadForLog(payload)
   local data = type(payload) == 'table' and payload or {}
-  local mugshot = trim(data.mugshot_url or '')
+  local mugshotData = trim(data.mugshot_data or '')
+  local mugshotUrl = trim(data.mugshot_url or '')
   return {
     source = tonumber(data.source) or 0,
     player_name = trim(data.player_name or ''),
@@ -1053,7 +1056,9 @@ local function summarizeLicensePayloadForLog(payload)
     conditions_count = countList(data.conditions),
     expiry_days = tonumber(data.expiry_days or data.duration_days or 0) or 0,
     expiry_at = trim(data.expiry_at or ''),
-    mugshot_length = #mugshot,
+    mugshot_length = #mugshotData > 0 and #mugshotData or #mugshotUrl,
+    mugshot_data_length = #mugshotData,
+    mugshot_url_length = #mugshotUrl,
   }
 end
 
@@ -1167,14 +1172,15 @@ local function submitDriverLicense(src, formData)
     license_number = trim(formData.license_number or ''),
     license_classes = formData.license_classes or {},
     conditions = formData.conditions or {},
+    mugshot_data = trim(formData.mugshot_data or ''),
     mugshot_url = trim(formData.mugshot_url or ''),
     expiry_days = tonumber(formData.expiry_days or Config.DriverLicenseDefaultExpiryDays or 35) or (Config.DriverLicenseDefaultExpiryDays or 35),
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
-  print(('[cad_bridge] License payload: citizenid=%q name=%q dob=%q mugshot_len=%d'):format(
+  print(('[cad_bridge] License payload: citizenid=%q name=%q dob=%q mugshot_data_len=%d mugshot_url_len=%d'):format(
     trim(payload.citizenid or ''), trim(payload.full_name or ''),
-    trim(payload.date_of_birth or ''), #trim(payload.mugshot_url or '')))
+    trim(payload.date_of_birth or ''), #trim(payload.mugshot_data or ''), #trim(payload.mugshot_url or '')))
   logDocumentTrace('license-submit-start', {
     payload = summarizeLicensePayloadForLog(payload),
     form = summarizeLicensePayloadForLog(formData),
@@ -1289,7 +1295,7 @@ local function submitDriverLicense(src, formData)
 
     local function shouldRetryWithoutPhoto(status, body)
       if hasRetriedWithoutPhoto then return false end
-      if trim(payload.mugshot_url or '') == '' then return false end
+      if trim(payload.mugshot_data or '') == '' and trim(payload.mugshot_url or '') == '' then return false end
 
       local code = tonumber(status) or 0
       if code == 413 then return true end
@@ -1305,7 +1311,9 @@ local function submitDriverLicense(src, formData)
       print(('[cad_bridge] >>> Sending POST /api/integration/fivem/licenses for citizenid=%s'):format(trim(payload.citizenid or '')))
       logDocumentTrace('license-create-request', {
         citizenid = trim(payload.citizenid or ''),
-        mugshot_length = #(trim(payload.mugshot_url or '')),
+        mugshot_length = math.max(#(trim(payload.mugshot_data or '')), #(trim(payload.mugshot_url or ''))),
+        mugshot_data_length = #(trim(payload.mugshot_data or '')),
+        mugshot_url_length = #(trim(payload.mugshot_url or '')),
         has_retried_without_photo = hasRetriedWithoutPhoto == true,
       })
       request('POST', '/api/integration/fivem/licenses', payload, function(status, body, responseHeaders)
@@ -1340,6 +1348,7 @@ local function submitDriverLicense(src, formData)
         if shouldRetryWithoutPhoto(status, body) then
           hasRetriedWithoutPhoto = true
           savedWithoutPhoto = true
+          payload.mugshot_data = ''
           payload.mugshot_url = ''
           print(('[cad_bridge] Driver licence save retry without mugshot for src %s (initial HTTP %s)'):format(
             tostring(s),

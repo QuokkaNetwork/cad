@@ -633,6 +633,30 @@ local function captureMugshotUrl()
   return captureMugshotViaLegacyExport()
 end
 
+local function splitMugshotPayload(value)
+  local normalized = trim(value)
+  if normalized == '' then return '', '' end
+  if normalized:match('^data:image/') then
+    return normalized, ''
+  end
+  if normalized:match('^https?://') then
+    return '', normalized
+  end
+
+  -- Safety fallback if an export returns raw base64.
+  if #normalized > 100 and normalized:match('^[A-Za-z0-9+/=]+$') then
+    local encoding = trim(Config.ScreenshotEncoding or 'jpg'):lower()
+    if encoding == 'jpg' then encoding = 'jpeg' end
+    if encoding ~= 'jpeg' and encoding ~= 'png' and encoding ~= 'webp' then
+      encoding = 'jpeg'
+    end
+    return ('data:image/%s;base64,%s'):format(encoding, normalized), ''
+  end
+
+  -- Unknown non-data format; pass through as URL/text for compatibility.
+  return '', normalized
+end
+
 local GTA_COLOUR_NAMES = {
   [0] = 'Black', [1] = 'Graphite', [2] = 'Black Steel', [3] = 'Dark Silver', [4] = 'Silver',
   [5] = 'Bluish Silver', [6] = 'Rolled Steel', [7] = 'Shadow Silver', [8] = 'Stone Silver', [9] = 'Midnight Silver',
@@ -1054,8 +1078,10 @@ RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
     -- Release NUI focus before taking mugshot so the PED is captured, not the form UI.
     Wait(80)
     print('[cad_bridge] Capturing mugshot...')
-    local mugshotUrl = captureMugshotUrl()
-    print(('[cad_bridge] Mugshot captured (length=%d). Triggering submitDriverLicense server event...'):format(#mugshotUrl))
+    local capturedMugshot = captureMugshotUrl()
+    local mugshotData, mugshotUrl = splitMugshotPayload(capturedMugshot)
+    print(('[cad_bridge] Mugshot captured (data_len=%d url_len=%d). Triggering submitDriverLicense server event...'):format(
+      #mugshotData, #mugshotUrl))
     TriggerServerEvent('cad_bridge:submitDriverLicense', {
       full_name = fullName,
       date_of_birth = dateOfBirth,
@@ -1063,6 +1089,7 @@ RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
       license_number = licenseNumber,
       license_classes = classes,
       conditions = conditions,
+      mugshot_data = mugshotData,
       mugshot_url = mugshotUrl,
       expiry_days = math.floor(expiryDays),
       expiry_at = expiryAt,
@@ -1687,7 +1714,7 @@ local function rebuildCadRadioTarget()
 
   local rootTargets = 0
   if CAD_RADIO_FORWARD_ROOT then
-    -- Send in-game radio TX to Mumble root so CAD dispatchers can hear it.
+    -- Legacy compatibility path only (disabled by default): forward TX to root channel.
     MumbleAddVoiceTargetChannel(CAD_RADIO_TARGET_ID, 0)
     rootTargets = 1
   end

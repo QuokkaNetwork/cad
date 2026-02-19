@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const {
   Settings,
@@ -45,6 +46,11 @@ const BRIDGE_MUGSHOT_MAX_CHARS = Math.max(
   250000,
   Number.parseInt(process.env.FIVEM_BRIDGE_MUGSHOT_MAX_CHARS || '4000000', 10) || 4000000
 );
+const BRIDGE_MUGSHOT_MAX_BYTES = Math.max(
+  250000,
+  Number.parseInt(process.env.FIVEM_BRIDGE_MUGSHOT_MAX_BYTES || '5000000', 10) || 5000000
+);
+const BRIDGE_MUGSHOT_UPLOAD_DIR = path.resolve(__dirname, '../../data/uploads/fivem-mugshots');
 const BRIDGE_DOCUMENT_DEBUG_LOGS = String(process.env.FIVEM_BRIDGE_DOCUMENT_DEBUG_LOGS || 'true')
   .trim()
   .toLowerCase() !== 'false';
@@ -506,12 +512,136 @@ function normalizeTextList(value, { uppercase = false, maxLength = 64 } = {}) {
   return out;
 }
 
+function createBridgeInputError(statusCode, message, details = {}) {
+  const err = new Error(String(message || 'Invalid request payload'));
+  err.statusCode = Number(statusCode) || 400;
+  err.details = details && typeof details === 'object' ? details : {};
+  return err;
+}
+
+function sanitizeFileToken(value, fallback = 'player') {
+  const token = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '')
+    .slice(0, 40);
+  return token || fallback;
+}
+
+function ensureBridgeMugshotUploadDir() {
+  fs.mkdirSync(BRIDGE_MUGSHOT_UPLOAD_DIR, { recursive: true });
+  return BRIDGE_MUGSHOT_UPLOAD_DIR;
+}
+
+function resolveMugshotExtension(mimeType = '') {
+  const normalized = String(mimeType || '').trim().toLowerCase();
+  if (normalized === 'image/jpg' || normalized === 'image/jpeg') return { mime: 'image/jpeg', extension: 'jpg' };
+  if (normalized === 'image/png') return { mime: 'image/png', extension: 'png' };
+  if (normalized === 'image/webp') return { mime: 'image/webp', extension: 'webp' };
+  return null;
+}
+
+function decodeMugshotBase64Payload(rawValue, rawMimeHint = '') {
+  const encoded = String(rawValue || '').trim().replace(/\s+/g, '');
+  if (!encoded) return null;
+  if (!/^[A-Za-z0-9+/=]+$/.test(encoded)) {
+    throw createBridgeInputError(400, 'mugshot payload contains invalid base64 data');
+  }
+
+  const mimeHint = String(rawMimeHint || '').trim().toLowerCase();
+  const resolvedType = resolveMugshotExtension(mimeHint || 'image/jpeg');
+  if (!resolvedType) {
+    throw createBridgeInputError(400, 'unsupported mugshot image type');
+  }
+
+  const imageBuffer = Buffer.from(encoded, 'base64');
+  if (!imageBuffer || imageBuffer.length === 0) {
+    throw createBridgeInputError(400, 'mugshot payload decoded to an empty image');
+  }
+  if (imageBuffer.length > BRIDGE_MUGSHOT_MAX_BYTES) {
+    throw createBridgeInputError(413, `mugshot image is too large (max ${BRIDGE_MUGSHOT_MAX_BYTES} bytes)`, {
+      mugshot_bytes: imageBuffer.length,
+      mugshot_limit_bytes: BRIDGE_MUGSHOT_MAX_BYTES,
+    });
+  }
+
+  return {
+    imageBuffer,
+    mimeType: resolvedType.mime,
+    extension: resolvedType.extension,
+  };
+}
+
+function persistBridgeMugshot(payload = {}, citizenId = '') {
+  const mugshotDataInput = String(payload.mugshot_data || payload.mugshotData || '').trim();
+  const mugshotUrlInput = String(payload.mugshot_url || '').trim();
+  const dataCandidate = mugshotDataInput || (/^data:image\//i.test(mugshotUrlInput) ? mugshotUrlInput : '');
+
+  if (!dataCandidate) {
+    if (!mugshotUrlInput) {
+      return {
+        mugshot_url: '',
+        persisted: false,
+        bytes: 0,
+        mime_type: '',
+      };
+    }
+    if (mugshotUrlInput.length > BRIDGE_MUGSHOT_MAX_CHARS) {
+      throw createBridgeInputError(413, `mugshot_url is too large (max ${BRIDGE_MUGSHOT_MAX_CHARS} characters)`, {
+        mugshot_length: mugshotUrlInput.length,
+        mugshot_limit: BRIDGE_MUGSHOT_MAX_CHARS,
+      });
+    }
+    return {
+      mugshot_url: mugshotUrlInput,
+      persisted: false,
+      bytes: 0,
+      mime_type: '',
+    };
+  }
+
+  if (dataCandidate.length > BRIDGE_MUGSHOT_MAX_CHARS) {
+    throw createBridgeInputError(413, `mugshot payload is too large (max ${BRIDGE_MUGSHOT_MAX_CHARS} characters)`, {
+      mugshot_length: dataCandidate.length,
+      mugshot_limit: BRIDGE_MUGSHOT_MAX_CHARS,
+    });
+  }
+
+  let parsed = null;
+  const dataUriMatch = dataCandidate.match(/^data:(image\/[A-Za-z0-9.+-]+);base64,(.+)$/i);
+  if (dataUriMatch) {
+    parsed = decodeMugshotBase64Payload(dataUriMatch[2], dataUriMatch[1]);
+  } else {
+    parsed = decodeMugshotBase64Payload(
+      dataCandidate,
+      payload.mugshot_mime || payload.mugshotMime || 'image/jpeg'
+    );
+  }
+  if (!parsed) {
+    throw createBridgeInputError(400, 'mugshot payload decoded to an empty image');
+  }
+
+  const uploadDir = ensureBridgeMugshotUploadDir();
+  const safeCitizenId = sanitizeFileToken(citizenId, 'unknown');
+  const fileName = `${safeCitizenId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${parsed.extension}`;
+  const filePath = path.join(uploadDir, fileName);
+
+  fs.writeFileSync(filePath, parsed.imageBuffer);
+  return {
+    mugshot_url: `/uploads/fivem-mugshots/${fileName}`,
+    persisted: true,
+    bytes: parsed.imageBuffer.length,
+    mime_type: parsed.mimeType,
+  };
+}
+
 function summarizeBridgeLicensePayload(payload = {}) {
   const classes = Array.isArray(payload.license_classes)
     ? payload.license_classes
     : (Array.isArray(payload.classes) ? payload.classes : []);
   const conditions = Array.isArray(payload.conditions) ? payload.conditions : [];
   const mugshotUrl = String(payload.mugshot_url || '').trim();
+  const mugshotData = String(payload.mugshot_data || payload.mugshotData || '').trim();
   return {
     source: Number(payload.source || 0) || 0,
     player_name: String(payload.player_name || payload.name || '').trim(),
@@ -523,7 +653,9 @@ function summarizeBridgeLicensePayload(payload = {}) {
     conditions_count: conditions.length,
     expiry_days: Number(payload.expiry_days ?? payload.duration_days ?? 0) || 0,
     expiry_at: String(payload.expiry_at || '').trim(),
-    mugshot_length: mugshotUrl.length,
+    mugshot_length: mugshotData.length || mugshotUrl.length,
+    mugshot_data_length: mugshotData.length,
+    mugshot_url_length: mugshotUrl.length,
   };
 }
 
@@ -549,6 +681,7 @@ function getBridgeLicenseLogStream() {
   try {
     fs.mkdirSync(path.dirname(BRIDGE_LICENSE_LOG_FILE), { recursive: true });
     bridgeLicenseLogStream = fs.createWriteStream(BRIDGE_LICENSE_LOG_FILE, { flags: 'a', encoding: 'utf8' });
+    console.log('[FiveMBridge] License log file enabled:', { path: BRIDGE_LICENSE_LOG_FILE });
     bridgeLicenseLogStream.on('error', (error) => {
       bridgeLicenseLogInitFailed = true;
       bridgeLicenseLogStream = null;
@@ -1434,15 +1567,29 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
     const generatedLicenseNumber = `VIC-${citizenId.slice(-8).toUpperCase() || String(Date.now()).slice(-8)}`;
     const licenseNumber = providedLicenseNumber || generatedLicenseNumber;
     const conditions = normalizeTextList(payload.conditions, { uppercase: false, maxLength: 80 });
-    const mugshotUrl = String(payload.mugshot_url || '').trim();
-    if (mugshotUrl.length > BRIDGE_MUGSHOT_MAX_CHARS) {
-      logBridgeDocumentReject('license', 413, 'mugshot_payload_too_large', payloadSummary, {
-        mugshot_length: mugshotUrl.length,
-        mugshot_limit: BRIDGE_MUGSHOT_MAX_CHARS,
-      });
-      return res.status(413).json({
-        error: `mugshot_url is too large (max ${BRIDGE_MUGSHOT_MAX_CHARS} characters)`,
-      });
+    let mugshotUrl = '';
+    let mugshotPersisted = false;
+    let mugshotBytes = 0;
+    let mugshotMimeType = '';
+    try {
+      const persistedMugshot = persistBridgeMugshot(payload, citizenId);
+      mugshotUrl = persistedMugshot.mugshot_url;
+      mugshotPersisted = persistedMugshot.persisted === true;
+      mugshotBytes = Number(persistedMugshot.bytes || 0) || 0;
+      mugshotMimeType = String(persistedMugshot.mime_type || '').trim();
+    } catch (mugshotError) {
+      const statusCode = Number(mugshotError?.statusCode || 400) || 400;
+      logBridgeDocumentReject(
+        'license',
+        statusCode,
+        'invalid_mugshot_payload',
+        payloadSummary,
+        {
+          error: mugshotError?.message || String(mugshotError),
+          ...(mugshotError?.details && typeof mugshotError.details === 'object' ? mugshotError.details : {}),
+        }
+      );
+      return res.status(statusCode).json({ error: mugshotError?.message || 'Invalid mugshot payload' });
     }
 
     const record = DriverLicenses.upsertByCitizenId({
@@ -1473,6 +1620,9 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
       status: record?.status || status,
       expiry_at: record?.expiry_at || expiryAt,
       mugshot_length: mugshotUrl.length,
+      mugshot_persisted: mugshotPersisted,
+      mugshot_bytes: mugshotBytes,
+      mugshot_mime_type: mugshotMimeType,
     }, true);
 
     res.status(201).json({ ok: true, license: record });

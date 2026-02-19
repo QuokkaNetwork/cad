@@ -268,7 +268,7 @@ if Config.RadioRxVolume > 1.0 then Config.RadioRxVolume = 1.0 end
 Config.RadioPttKey = trim(getString('cad_bridge_radio_ptt_key', 'LMENU'))
 if Config.RadioPttKey == '' then Config.RadioPttKey = 'LMENU' end
 Config.RadioFollowNativePtt = getBoolean('cad_bridge_radio_follow_native_ptt', true)
-Config.RadioForwardRoot = getBoolean('cad_bridge_radio_forward_root', true)
+Config.RadioForwardRoot = getBoolean('cad_bridge_radio_forward_root', false)
 Config.RadioUiEnabled = getBoolean('cad_bridge_radio_ui_enabled', true)
 Config.RadioUiKey = trim(getString('cad_bridge_radio_ui_key', 'EQUALS'))
 if Config.RadioUiKey == '' then Config.RadioUiKey = 'EQUALS' end
@@ -340,8 +340,8 @@ if type(registrationFeesOverride) == 'table' then
 end
 
 -- Mugshot/photo capture.
-Config.MugshotProvider = trim(getString('cad_bridge_mugshot_provider', 'screenshot-basic')):lower()
-if Config.MugshotProvider == '' then Config.MugshotProvider = 'screenshot-basic' end
+Config.MugshotProvider = trim(getString('cad_bridge_mugshot_provider', 'auto')):lower()
+if Config.MugshotProvider == '' then Config.MugshotProvider = 'auto' end
 Config.ScreenshotResource = trim(getString('cad_bridge_screenshot_resource', 'screenshot-basic'))
 if Config.ScreenshotResource == '' then Config.ScreenshotResource = 'screenshot-basic' end
 Config.ScreenshotEncoding = trim(getString('cad_bridge_screenshot_encoding', 'jpg')):lower()

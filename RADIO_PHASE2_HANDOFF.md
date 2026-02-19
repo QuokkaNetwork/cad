@@ -68,6 +68,22 @@ Complete Phase 2 of the external radio behavior with a stable, simple flow:
 - External-mode hardening:
   - Enforced that external mode always disables CAD-managed Mumble bridge even if `VOICE_BRIDGE_ENABLED=true`.
   - Updated status/config guidance so legacy bridge is only available in `RADIO_BEHAVIOR=legacy`.
+- Reference resource deep comparison (local free copy):
+  - In-game radio UI bootstraps a remote standalone client (`standaloneUrl`) in CEF/NUI and sends radio state updates to it.
+  - Server registers a public callback endpoint (`/events`) and periodically updates backend `pushUrl` + `roomId`.
+  - Access to voice sessions is tokenized (guest/emergency tokens) via backend API calls.
+  - Net result: transport is external web audio stack (WebRTC in hosted client), not CAD-managed Mumble bridging.
+- Gap confirmed in current `cad_bridge` external mode:
+  - Channel membership/state sync is in place.
+  - Actual dispatcher media path is missing in external mode (CAD page currently only has legacy websocket + Mumble media client).
+  - In-game radio TX/RX path is still Mumble-target based; this conflicts with the no-Mumble end goal.
+
+## Immediate Phase 2 Build Order (No-Mumble Path)
+1. Add an external media transport service (self-hosted WebRTC SFU) and token issuance API in CAD.
+2. Add CAD web client transport (join/leave/PTT) for dispatchers using that external service.
+3. Add FiveM NUI transport client for in-game radio TX/RX using the same channel IDs.
+4. Keep existing CAD channel membership + heartbeat flow as signaling/authorization source of truth.
+5. Remove legacy Mumble-root assumptions from the in-game TX path once external media path is verified.
 
 ## Acceptance Criteria
 - Two in-game players on same channel can hear each other consistently.
