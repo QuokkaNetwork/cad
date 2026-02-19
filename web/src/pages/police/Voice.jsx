@@ -34,6 +34,41 @@ export default function Voice() {
   const isDispatch = !!activeDepartment?.is_dispatch;
   const isSonoranMode = voiceMode === 'sonoran' || bridgeIntentionallyDisabled;
   const canUseLegacyBridge = isDispatch && bridgeStatusLoaded && !isSonoranMode;
+  const currentChannelData = useMemo(() => (
+    Number(currentChannel || 0) > 0
+      ? (channels.find((channel) => Number(channel?.channel_number || 0) === Number(currentChannel || 0)) || null)
+      : null
+  ), [channels, currentChannel]);
+  const routableParticipantCount = useMemo(() => {
+    const participants = Array.isArray(currentChannelData?.participants) ? currentChannelData.participants : [];
+    return participants.filter((participant) => String(participant?.game_id || '').trim() !== '').length;
+  }, [currentChannelData]);
+  const connectionState = isSonoranMode
+    ? 'external'
+    : (isConnected ? 'connected' : 'disconnected');
+  const joinedState = Number(currentChannel || 0) > 0 ? 'joined' : 'not joined';
+  const receiveState = Number(currentChannel || 0) <= 0
+    ? 'idle'
+    : (routableParticipantCount > 0 ? 'receiving' : 'no route');
+  const transmitState = Number(currentChannel || 0) <= 0
+    ? 'idle'
+    : (isPTTActive ? 'transmitting' : 'ready');
+
+  function stateBadgeClass(state) {
+    if (state === 'connected' || state === 'joined' || state === 'receiving' || state === 'ready') {
+      return 'bg-green-500/10 border-green-500/35 text-green-300';
+    }
+    if (state === 'transmitting') {
+      return 'bg-red-500/10 border-red-500/35 text-red-300';
+    }
+    if (state === 'external') {
+      return 'bg-blue-500/10 border-blue-500/35 text-blue-200';
+    }
+    if (state === 'no route') {
+      return 'bg-yellow-500/10 border-yellow-500/35 text-yellow-300';
+    }
+    return 'bg-cad-card border-cad-border text-cad-muted';
+  }
 
   // Early return if voiceClient failed to initialize
   if (!voiceClient) {
@@ -366,6 +401,25 @@ export default function Voice() {
         )}
       </div>
 
+      <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className={`px-3 py-2 rounded-lg border text-xs ${stateBadgeClass(connectionState)}`}>
+          <p className="uppercase tracking-wide opacity-80">Connected</p>
+          <p className="font-semibold">{connectionState}</p>
+        </div>
+        <div className={`px-3 py-2 rounded-lg border text-xs ${stateBadgeClass(joinedState)}`}>
+          <p className="uppercase tracking-wide opacity-80">Joined</p>
+          <p className="font-semibold">{joinedState}</p>
+        </div>
+        <div className={`px-3 py-2 rounded-lg border text-xs ${stateBadgeClass(receiveState)}`}>
+          <p className="uppercase tracking-wide opacity-80">Receiving</p>
+          <p className="font-semibold">{receiveState}</p>
+        </div>
+        <div className={`px-3 py-2 rounded-lg border text-xs ${stateBadgeClass(transmitState)}`}>
+          <p className="uppercase tracking-wide opacity-80">Transmitting</p>
+          <p className="font-semibold">{transmitState}</p>
+        </div>
+      </div>
+
       {/* Error banner */}
       {error && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
@@ -387,6 +441,15 @@ export default function Voice() {
           <p className="font-medium mb-1">Voice bridge not connected</p>
           <p className="text-xs">
             The voice bridge allows you to communicate with in-game units. Select a channel below to join when the connection is established.
+          </p>
+        </div>
+      )}
+      {Number(currentChannel || 0) > 0 && !error && receiveState === 'no route' && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm">
+          <p className="font-medium mb-1">No routable participants on this channel</p>
+          <p className="text-xs">
+            Channel {currentChannel} is joined, but CAD currently sees no in-game participants to route audio to.
+            Check that players are in the same channel and that voice participant heartbeat is enabled in `cad_bridge`.
           </p>
         </div>
       )}
