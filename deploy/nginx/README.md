@@ -67,3 +67,4 @@ TRUST_PROXY=1
 - The nginx config includes websocket forwarding for `/voice-bridge`.
 - The nginx config disables proxy buffering for `/api/events` (SSE live events).
 - Cloud/VPS network firewalls/security groups must also allow inbound `80` and `443`.
+- Canonical host redirect is enforced so IP-host requests are redirected to `https://cad.quokkanetworks.net`.

@@ -6,6 +6,11 @@ server {
   # Match CAD upload limits (map tile uploads can be large).
   client_max_body_size 40m;
 
+  # Force canonical host so requests landing on raw VPS IP redirect to domain.
+  if ($host != "{{DOMAIN}}") {
+    return 301 https://{{DOMAIN}}$request_uri;
+  }
+
   location /voice-bridge {
     proxy_pass {{BACKEND}};
     proxy_http_version 1.1;
