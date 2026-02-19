@@ -10,6 +10,7 @@
   --cad-accent-dim: #032261;
   --danger: #ef4444;
   --cad-amber: #f59e0b;
+  --cad-ui-scale: 1.2;
 }
 
 *,
@@ -56,7 +57,7 @@ body * {
 
 .panel {
   width: min(880px, 95vw);
-  max-height: 92vh;
+  max-height: calc(92vh / var(--cad-ui-scale));
   overflow: auto;
   border-radius: 12px;
   border: 1px solid var(--cad-border);
@@ -65,6 +66,8 @@ body * {
     0 20px 40px rgba(0, 0, 0, 0.6),
     0 0 0 1px rgba(0, 82, 194, 0.1) inset;
   padding: 1.1rem 1.15rem 1rem;
+  transform: scale(var(--cad-ui-scale));
+  transform-origin: center center;
   animation: panel-enter 180ms ease-out;
 }
 
@@ -76,13 +79,29 @@ body * {
   width: min(700px, 90vw);
 }
 
+.panel-license,
+.panel-registration {
+  --cad-surface: #f4fbf6;
+  --cad-card: #ffffff;
+  --cad-border: #bfd8c7;
+  --cad-ink: #123125;
+  --cad-muted: #4a6f5b;
+  --cad-bg: #ffffff;
+  --cad-accent: #1f8f4a;
+  --cad-accent-light: #2faf5f;
+  --cad-accent-dim: #e3f7ea;
+  box-shadow:
+    0 20px 40px rgba(0, 0, 0, 0.38),
+    0 0 0 1px rgba(31, 143, 74, 0.18) inset;
+}
+
 @keyframes panel-enter {
   from {
-    transform: translateY(8px) scale(0.985);
+    transform: translateY(8px) scale(calc(var(--cad-ui-scale) * 0.985));
     opacity: 0;
   }
   to {
-    transform: translateY(0) scale(1);
+    transform: translateY(0) scale(var(--cad-ui-scale));
     opacity: 1;
   }
 }
@@ -139,6 +158,58 @@ h1 {
   margin: 0.35rem 0 0.95rem;
   color: var(--cad-muted);
   font-size: 0.88rem;
+}
+
+.panel-license .eyebrow,
+.panel-registration .eyebrow {
+  color: #1f8f4a;
+  border-color: rgba(31, 143, 74, 0.35);
+  background: rgba(31, 143, 74, 0.11);
+}
+
+.panel-license .icon-btn,
+.panel-registration .icon-btn {
+  background: #ffffff;
+  color: #5f7690;
+}
+
+.portal-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid var(--cad-border);
+  border-radius: 10px;
+  padding: 0.52rem 0.64rem;
+  background: linear-gradient(90deg, rgba(31, 143, 74, 0.13), rgba(255, 255, 255, 0.96));
+}
+
+.portal-logo {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  flex: 0 0 42px;
+}
+
+.portal-brand-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.portal-brand-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: #123125;
+  line-height: 1.15;
+}
+
+.portal-brand-subtitle {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #4a6f5b;
 }
 
 .form {
@@ -235,6 +306,27 @@ input[readonly] {
   background: rgba(42, 58, 78, 0.45);
   color: #c0cbda;
   border-style: dashed;
+}
+
+.panel-license input[readonly],
+.panel-registration input[readonly] {
+  background: #e6f3ea;
+  color: #1f3b2a;
+  border-style: solid;
+}
+
+.panel-license input[type="text"]:focus,
+.panel-license input[type="date"]:focus,
+.panel-license input[type="number"]:focus,
+.panel-license select:focus,
+.panel-license textarea:focus,
+.panel-registration input[type="text"]:focus,
+.panel-registration input[type="date"]:focus,
+.panel-registration input[type="number"]:focus,
+.panel-registration select:focus,
+.panel-registration textarea:focus {
+  border-color: var(--cad-accent);
+  box-shadow: 0 0 0 2px rgba(31, 143, 74, 0.22);
 }
 
 textarea {
@@ -407,19 +499,35 @@ select {
 
 .id-card {
   width: min(450px, 92vw);
+  max-height: calc(85vh / var(--cad-ui-scale));
+  overflow: auto;
   border-radius: 12px;
-  border: 1px solid var(--cad-border);
-  background:
-    linear-gradient(165deg, rgba(0, 82, 194, 0.18), rgba(17, 24, 39, 0.95) 30%),
-    var(--cad-card);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  border: 1px solid #c8d8ea;
+  background: linear-gradient(180deg, #f4f9ff 0%, #ffffff 28%);
+  box-shadow: 0 18px 40px rgba(3, 35, 78, 0.35);
   padding: 0.8rem 0.9rem;
+  transform: scale(var(--cad-ui-scale));
+  transform-origin: right bottom;
 }
 
 .id-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+}
+
+.id-card-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.id-card-logo {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  flex: 0 0 44px;
 }
 
 .id-card-eyebrow {
@@ -427,18 +535,28 @@ select {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 700;
-  color: #f4d36a;
+  color: #0052c2;
+}
+
+.id-card-brand-subtitle {
+  margin-top: 0.1rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #4f6780;
 }
 
 .id-card-title {
   margin: 0.3rem 0 0.2rem;
   font-size: 1.1rem;
+  color: #102235;
 }
 
 .id-card-note {
   margin: 0 0 0.55rem;
   font-size: 0.78rem;
-  color: var(--cad-muted);
+  color: #4f6780;
 }
 
 .id-card-body {
@@ -452,8 +570,8 @@ select {
   height: 140px;
   object-fit: cover;
   border-radius: 8px;
-  border: 1px solid var(--cad-border);
-  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid #b9cce2;
+  background: #edf4fb;
 }
 
 .id-card-fields {
@@ -470,24 +588,42 @@ select {
 
 .id-label {
   font-size: 0.75rem;
-  color: var(--cad-muted);
+  color: #4a627a;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .id-value {
   font-size: 0.85rem;
-  color: var(--cad-ink);
+  color: #102235;
   overflow-wrap: anywhere;
 }
 
 .id-card-footer {
   margin-top: 0.65rem;
   font-size: 0.75rem;
-  color: var(--cad-muted);
+  color: #4f6780;
+  border-top: 1px solid #d7e2ef;
+  padding-top: 0.55rem;
+}
+
+.id-card .icon-btn {
+  background: #ffffff;
+  color: #5f7690;
+  border-color: #bfcee0;
+}
+
+.id-card .icon-btn:hover {
+  color: #102235;
+  border-color: #0052c2;
+  background: #edf4ff;
 }
 
 @media (max-width: 760px) {
+  :root {
+    --cad-ui-scale: 1.0;
+  }
+
   .overlay {
     padding: 0.8rem;
   }
@@ -508,6 +644,16 @@ select {
 
   .btn {
     width: 100%;
+  }
+
+  .portal-brand {
+    padding: 0.48rem 0.52rem;
+  }
+
+  .portal-logo {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
   }
 
   .id-card-overlay {

@@ -24,6 +24,7 @@ This resource links FiveM/QBox to CAD for:
 - Optional notification enforcement:
   - `cad_bridge_force_ox_notify_position=true`
   - `cad_bridge_ox_notify_position=center-right`
+  - This force applies to notifications sent by `cad_bridge`; other resources can still choose their own `ox_lib` positions.
 
 The CAD auto-sync now patches `cad_bridge_base_url` and `cad_bridge_token` directly in `config.cfg`.
 

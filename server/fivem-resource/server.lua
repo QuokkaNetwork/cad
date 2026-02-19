@@ -359,7 +359,7 @@ local function registerEmergencySuggestion(target)
 
   local showIdCommand = trim(Config.ShowIdCommand or 'showid')
   if showIdCommand ~= '' then
-    TriggerClientEvent('chat:addSuggestion', target, '/' .. showIdCommand, 'Show your driver licence to the player in front of you')
+    TriggerClientEvent('chat:addSuggestion', target, '/' .. showIdCommand, 'Show your driver licence to nearby players')
   end
 
   TriggerClientEvent('chat:addSuggestion', target, '/radio', 'Open CAD radio UI or join/leave channel', {
@@ -390,23 +390,35 @@ local function getNpwdResourceName()
 end
 
 local lastForcedOxNotifyPosition = ''
+local loggedOxNotifyModernBehavior = false
 local function forceOxNotifyPosition(logApplied)
   if Config.ForceOxNotifyPosition ~= true then return end
 
   local target = trim(Config.OxNotifyPosition or 'center-right')
   if target == '' then target = 'center-right' end
 
-  local ok, err = pcall(function()
+  local okReplicated, errReplicated = pcall(function()
     SetConvarReplicated('ox:notifyPosition', target)
   end)
+  local okSetr, errSetr = pcall(function()
+    ExecuteCommand(('setr ox:notifyPosition %s'):format(target))
+  end)
 
-  if not ok then
-    print(('[cad_bridge] Failed to force ox:notifyPosition=%s (%s)'):format(target, tostring(err)))
+  if not okReplicated and not okSetr then
+    print(('[cad_bridge] Failed to force ox:notifyPosition=%s (SetConvarReplicated=%s, setr=%s)'):format(
+      target,
+      tostring(errReplicated),
+      tostring(errSetr)
+    ))
     return
   end
 
   if logApplied == true or lastForcedOxNotifyPosition ~= target then
     print(('[cad_bridge] Forced ox:notifyPosition=%s'):format(target))
+    if not loggedOxNotifyModernBehavior then
+      print('[cad_bridge] Note: modern ox_lib keeps default notification position in player settings. cad_bridge notifications still force this position explicitly.')
+      loggedOxNotifyModernBehavior = true
+    end
   end
   lastForcedOxNotifyPosition = target
 end
@@ -565,13 +577,84 @@ local function parseEmergencyPopupReport(payload)
   }
 end
 
+local function isValidDateOnly(year, month, day)
+  local y = tonumber(year)
+  local m = tonumber(month)
+  local d = tonumber(day)
+  if not y or not m or not d then return false end
+  if y < 1900 or y > 2100 then return false end
+  if m < 1 or m > 12 then return false end
+  if d < 1 or d > 31 then return false end
+
+  local stamp = os.time({
+    year = math.floor(y),
+    month = math.floor(m),
+    day = math.floor(d),
+    hour = 12,
+    min = 0,
+    sec = 0,
+  })
+  if not stamp then return false end
+
+  local normalized = os.date('!*t', stamp)
+  if not normalized then return false end
+  return normalized.year == math.floor(y)
+    and normalized.month == math.floor(m)
+    and normalized.day == math.floor(d)
+end
+
+local function formatDateOnly(year, month, day)
+  return ('%04d-%02d-%02d'):format(
+    math.floor(tonumber(year) or 0),
+    math.floor(tonumber(month) or 0),
+    math.floor(tonumber(day) or 0)
+  )
+end
+
 local function normalizeDateOnly(value)
   local text = trim(value)
   if text == '' then return '' end
-  local y, m, d = text:match('^(%d%d%d%d)%-(%d%d)%-(%d%d)$')
-  if y and m and d then
-    return ('%s-%s-%s'):format(y, m, d)
+
+  -- Accept ISO date with optional time suffix.
+  local yIso, mIso, dIso = text:match('^(%d%d%d%d)%-(%d%d)%-(%d%d)')
+  if yIso and mIso and dIso and isValidDateOnly(yIso, mIso, dIso) then
+    return formatDateOnly(yIso, mIso, dIso)
   end
+
+  -- Accept common separators and both YYYY-MM-DD and DD-MM-YYYY/MM-DD-YYYY inputs.
+  local p1, p2, p3 = text:match('^(%d+)[%./%-](%d+)[%./%-](%d+)$')
+  if not p1 or not p2 or not p3 then
+    return ''
+  end
+
+  if #p1 == 4 then
+    if isValidDateOnly(p1, p2, p3) then
+      return formatDateOnly(p1, p2, p3)
+    end
+    return ''
+  end
+
+  if #p3 == 4 then
+    local first = math.floor(tonumber(p1) or 0)
+    local second = math.floor(tonumber(p2) or 0)
+    local year = math.floor(tonumber(p3) or 0)
+
+    -- Prefer day-first for Australian-style DOB strings, but fallback to month-first if needed.
+    local day = first
+    local month = second
+    if first <= 12 and second > 12 then
+      month = first
+      day = second
+    end
+
+    if isValidDateOnly(year, month, day) then
+      return formatDateOnly(year, month, day)
+    end
+    if isValidDateOnly(year, first, second) then
+      return formatDateOnly(year, first, second)
+    end
+  end
+
   return ''
 end
 
@@ -629,7 +712,10 @@ local function parseDriverLicenseForm(payload)
   local licenseNumber = trim(payload.license_number or '')
   local expiryDays = tonumber(payload.expiry_days or payload.duration_days or Config.DriverLicenseDefaultExpiryDays or 35) or (Config.DriverLicenseDefaultExpiryDays or 35)
   if expiryDays < 1 then expiryDays = 1 end
-  local expiryAt = normalizeDateOnly(payload.expiry_at or '') or addDaysDateOnly(expiryDays)
+  local expiryAt = normalizeDateOnly(payload.expiry_at or '')
+  if expiryAt == '' then
+    expiryAt = addDaysDateOnly(expiryDays)
+  end
 
   if fullName == '' then return nil, 'Character name is required.' end
   if dateOfBirth == '' then return nil, 'Date of birth is required (YYYY-MM-DD).' end
@@ -1369,9 +1455,68 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
     return
   end
 
+  local function getPlayerCoords(sourceId)
+    local s = tonumber(sourceId) or 0
+    if s <= 0 then return nil end
+
+    local ped = GetPlayerPed(s)
+    if ped and ped > 0 then
+      local coords = GetEntityCoords(ped)
+      if coords then
+        return {
+          x = tonumber(coords.x) or 0.0,
+          y = tonumber(coords.y) or 0.0,
+          z = tonumber(coords.z) or 0.0,
+        }
+      end
+    end
+
+    local cached = PlayerPositions[s]
+    if type(cached) == 'table' then
+      return {
+        x = tonumber(cached.x) or 0.0,
+        y = tonumber(cached.y) or 0.0,
+        z = tonumber(cached.z) or 0.0,
+      }
+    end
+    return nil
+  end
+
+  local function findNearbyPlayers(originSource, radius)
+    local nearby = {}
+    local seen = {}
+    local origin = getPlayerCoords(originSource)
+    if not origin then return nearby, seen end
+
+    local maxDistance = tonumber(radius) or tonumber(Config.ShowIdTargetDistance or 4.0) or 4.0
+    if maxDistance < 1.0 then maxDistance = 1.0 end
+
+    for _, player in ipairs(GetPlayers()) do
+      local candidate = tonumber(player) or 0
+      if candidate > 0 and candidate ~= originSource and GetPlayerName(candidate) then
+        local targetCoords = getPlayerCoords(candidate)
+        if targetCoords then
+          local dx = targetCoords.x - origin.x
+          local dy = targetCoords.y - origin.y
+          local dz = targetCoords.z - origin.z
+          local distance = math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+          if distance <= maxDistance then
+            seen[candidate] = true
+            nearby[#nearby + 1] = candidate
+          end
+        end
+      end
+    end
+
+    return nearby, seen
+  end
+
+  local nearbyDistance = tonumber(Config.ShowIdNearbyDistance or Config.ShowIdTargetDistance or 4.0) or 4.0
+  local viewerTargets, viewerTargetSet = findNearbyPlayers(src, nearbyDistance)
   local target = tonumber(targetSource) or 0
-  if target <= 0 or target == src or not GetPlayerName(target) then
-    target = 0
+  if target > 0 and target ~= src and GetPlayerName(target) and not viewerTargetSet[target] then
+    viewerTargetSet[target] = true
+    viewerTargets[#viewerTargets + 1] = target
   end
 
   request('GET', '/api/integration/fivem/licenses/' .. urlEncode(citizenId), nil, function(status, body)
@@ -1418,8 +1563,10 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
       viewer_note = 'Your licence record',
     })
 
-    if target > 0 then
-      TriggerClientEvent('cad_bridge:showIdCard', target, {
+    local shownCount = 0
+    for _, viewerSource in ipairs(viewerTargets) do
+      if tonumber(viewerSource) and viewerSource ~= src and GetPlayerName(viewerSource) then
+        TriggerClientEvent('cad_bridge:showIdCard', viewerSource, {
         full_name = payload.full_name,
         date_of_birth = payload.date_of_birth,
         gender = payload.gender,
@@ -1431,11 +1578,19 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
         mugshot_url = payload.mugshot_url,
         viewer_note = ('Shown by %s'):format(getCharacterDisplayName(src)),
       })
-      notifyPlayer(src, ('Licence shown to %s.'):format(GetPlayerName(target) or ('Player ' .. tostring(target))))
+        shownCount = shownCount + 1
+      end
+    end
+
+    if shownCount > 0 then
+      notifyPlayer(src, ('Licence shown to %s nearby player%s.'):format(
+        tostring(shownCount),
+        shownCount == 1 and '' or 's'
+      ))
       return
     end
 
-    notifyPlayer(src, 'No player in front. Licence shown to yourself only.')
+    notifyPlayer(src, 'No nearby player found. Licence shown to yourself only.')
   end)
 end)
 

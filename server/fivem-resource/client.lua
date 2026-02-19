@@ -236,6 +236,34 @@ local function getPostalCoords(postal)
   return nil
 end
 
+local function getCadOxNotifyPosition()
+  local configured = trim(Config and Config.OxNotifyPosition or 'center-right')
+  if configured == '' then
+    configured = 'center-right'
+  end
+  return configured
+end
+
+local function triggerCadOxNotify(payload)
+  if GetResourceState('ox_lib') ~= 'started' then
+    return false
+  end
+
+  local nextPayload = {}
+  if type(payload) == 'table' then
+    for key, value in pairs(payload) do
+      nextPayload[key] = value
+    end
+  end
+
+  if (Config and Config.ForceOxNotifyPosition == true) or trim(nextPayload.position or '') == '' then
+    nextPayload.position = getCadOxNotifyPosition()
+  end
+
+  TriggerEvent('ox_lib:notify', nextPayload)
+  return true
+end
+
 local function notifyRoute(route, hadWaypoint)
   local callId = tostring(route.call_id or '?')
   local targetLabel = normalizePostal(route.postal)
@@ -247,13 +275,11 @@ local function notifyRoute(route, hadWaypoint)
     and ('CAD route set for call #%s%s%s'):format(callId, targetLabel ~= '' and ' -> ' or '', targetLabel)
     or ('CAD assigned call #%s%s%s (postal lookup unavailable for waypoint)'):format(callId, targetLabel ~= '' and ' -> ' or '', targetLabel)
 
-  if GetResourceState('ox_lib') == 'started' then
-    TriggerEvent('ox_lib:notify', {
-      title = 'CAD Dispatch',
-      description = message,
-      type = hadWaypoint and 'inform' or 'warning',
-      position = 'center-right',
-    })
+  if triggerCadOxNotify({
+    title = 'CAD Dispatch',
+    description = message,
+    type = hadWaypoint and 'inform' or 'warning',
+  }) then
     return
   end
 
@@ -269,13 +295,11 @@ local function notifyRouteCleared(route)
   local callId = tostring(route.call_id or '?')
   local message = ('CAD route cleared for call #%s'):format(callId)
 
-  if GetResourceState('ox_lib') == 'started' then
-    TriggerEvent('ox_lib:notify', {
-      title = 'CAD Dispatch',
-      description = message,
-      type = 'inform',
-      position = 'center-right',
-    })
+  if triggerCadOxNotify({
+    title = 'CAD Dispatch',
+    description = message,
+    type = 'inform',
+  }) then
     return
   end
 
@@ -291,13 +315,11 @@ local function notifyFine(payload)
   local title = tostring(payload and payload.title or 'CAD Fine Issued')
   local description = tostring(payload and payload.description or 'You have received a fine.')
 
-  if GetResourceState('ox_lib') == 'started' then
-    TriggerEvent('ox_lib:notify', {
-      title = title,
-      description = description,
-      type = 'error',
-      position = 'center-right',
-    })
+  if triggerCadOxNotify({
+    title = title,
+    description = description,
+    type = 'error',
+  }) then
     return
   end
 
@@ -315,13 +337,11 @@ local function notifyAlert(payload)
   local notifyType = tostring(payload and payload.type or 'inform')
   if notifyType == '' then notifyType = 'inform' end
 
-  if GetResourceState('ox_lib') == 'started' then
-    TriggerEvent('ox_lib:notify', {
-      title = title,
-      description = description,
-      type = notifyType,
-      position = 'center-right',
-    })
+  if triggerCadOxNotify({
+    title = title,
+    description = description,
+    type = notifyType,
+  }) then
     return
   end
 
@@ -687,13 +707,11 @@ end
 local function notifyEmergencyUiIssue(message)
   local text = tostring(message or 'Unable to open the 000 UI right now.')
 
-  if GetResourceState('ox_lib') == 'started' then
-    TriggerEvent('ox_lib:notify', {
-      title = 'CAD Dispatch',
-      description = text,
-      type = 'warning',
-      position = 'center-right',
-    })
+  if triggerCadOxNotify({
+    title = 'CAD Dispatch',
+    description = text,
+    type = 'warning',
+  }) then
     return
   end
 
@@ -873,14 +891,11 @@ local function openVehicleRegistrationPopup(payload)
 
   if trim(nextPayload.plate or '') == '' or trim(nextPayload.vehicle_model or '') == '' then
     local message = 'You must be in the driver seat of a vehicle to auto-fill registration details.'
-    if GetResourceState('ox_lib') == 'started' then
-      TriggerEvent('ox_lib:notify', {
-        title = 'CAD Registration',
-        description = message,
-        type = 'warning',
-        position = 'center-right',
-      })
-    elseif GetResourceState('chat') == 'started' then
+    if not triggerCadOxNotify({
+      title = 'CAD Registration',
+      description = message,
+      type = 'warning',
+    }) and GetResourceState('chat') == 'started' then
       TriggerEvent('chat:addMessage', {
         color = { 255, 170, 0 },
         args = { 'CAD', message },
@@ -981,9 +996,10 @@ RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
     return
   end
 
-  local mugshotUrl = captureMugshotUrl()
-
   closeDriverLicensePopup()
+  -- Release NUI focus before taking screenshot-basic mugshot so the PED is captured, not the form UI.
+  Wait(80)
+  local mugshotUrl = captureMugshotUrl()
   TriggerServerEvent('cad_bridge:submitDriverLicense', {
     full_name = fullName,
     date_of_birth = dateOfBirth,
@@ -1133,16 +1149,28 @@ local function findFacingPlayerServerId(maxDistance)
   return tonumber(bestServerId) or 0
 end
 
-RegisterCommand(SHOW_ID_COMMAND, function()
+local function requestShowIdCard()
   local targetSource = findFacingPlayerServerId(SHOW_ID_MAX_DISTANCE)
   TriggerServerEvent('cad_bridge:requestShowId', targetSource)
+end
+
+RegisterCommand(SHOW_ID_COMMAND, function()
+  requestShowIdCard()
 end, false)
 
 RegisterCommand('cadbridgecloseid', function()
   closeShownIdCard()
 end, false)
 
-RegisterKeyMapping('cadbridgecloseid', 'Close shown ID card', 'keyboard', 'PGDN')
+RegisterCommand('cadbridgeidtoggle', function()
+  if idCardUiOpen then
+    closeShownIdCard()
+    return
+  end
+  requestShowIdCard()
+end, false)
+
+RegisterKeyMapping('cadbridgeidtoggle', 'Show or hide your ID card', 'keyboard', 'PGDN')
 
 -- Test command to verify UI works without server
 RegisterCommand('test000ui', function()
@@ -1676,22 +1704,18 @@ RegisterNetEvent('cad_bridge:radio:update', function(payload)
   end
 
   if previousChannel ~= cadRadioChannel then
-    if GetResourceState('ox_lib') == 'started' then
-      if cadRadioChannel > 0 then
-        TriggerEvent('ox_lib:notify', {
-          title = 'CAD Radio',
-          description = ('Joined channel %s'):format(tostring(cadRadioChannel)),
-          type = 'inform',
-          position = 'center-right',
-        })
-      elseif previousChannel > 0 then
-        TriggerEvent('ox_lib:notify', {
-          title = 'CAD Radio',
-          description = ('Left channel %s'):format(tostring(previousChannel)),
-          type = 'inform',
-          position = 'center-right',
-        })
-      end
+    if cadRadioChannel > 0 then
+      triggerCadOxNotify({
+        title = 'CAD Radio',
+        description = ('Joined channel %s'):format(tostring(cadRadioChannel)),
+        type = 'inform',
+      })
+    elseif previousChannel > 0 then
+      triggerCadOxNotify({
+        title = 'CAD Radio',
+        description = ('Left channel %s'):format(tostring(previousChannel)),
+        type = 'inform',
+      })
     end
   end
 
@@ -1731,14 +1755,11 @@ RegisterKeyMapping('+cadbridgeradio', 'CAD Radio Push-To-Talk', 'keyboard', CAD_
 local function cadRadioNotify(message, notifyType)
   local text = tostring(message or '')
   if text == '' then return end
-  if GetResourceState('ox_lib') == 'started' then
-    TriggerEvent('ox_lib:notify', {
-      title = 'CAD Radio',
-      description = text,
-      type = notifyType or 'inform',
-      position = 'center-right',
-    })
-  end
+  triggerCadOxNotify({
+    title = 'CAD Radio',
+    description = text,
+    type = notifyType or 'inform',
+  })
 end
 
 local function cadRadioSetVolumePercent(value)

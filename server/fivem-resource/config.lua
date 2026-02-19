@@ -297,6 +297,8 @@ Config.ShowIdCommand = trim(getString('cad_bridge_show_id_command', 'showid'))
 if Config.ShowIdCommand == '' then Config.ShowIdCommand = 'showid' end
 Config.ShowIdTargetDistance = getNumber('cad_bridge_show_id_target_distance', 4.0)
 if Config.ShowIdTargetDistance < 0.5 then Config.ShowIdTargetDistance = 0.5 end
+Config.ShowIdNearbyDistance = getNumber('cad_bridge_show_id_nearby_distance', Config.ShowIdTargetDistance)
+if Config.ShowIdNearbyDistance < 1.0 then Config.ShowIdNearbyDistance = 1.0 end
 
 Config.DriverLicenseDefaultExpiryDays = math.max(1, math.floor(getNumber('cad_bridge_license_default_expiry_days', 35)))
 Config.VehicleRegistrationDefaultDays = math.max(1, math.floor(getNumber('cad_bridge_registration_default_days', 35)))

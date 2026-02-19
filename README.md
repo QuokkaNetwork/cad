@@ -367,3 +367,31 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Made with ❤️ for the FiveM community**
+
+## Production HTTPS (NGINX + Certbot)
+
+If your DNS `A` record already points `cad.quokkanetworks.net` to your VPS, use the included nginx/certbot deployment files:
+
+```bash
+chmod +x deploy/scripts/setup-nginx-certbot.sh
+sudo bash deploy/scripts/setup-nginx-certbot.sh cad.quokkanetworks.net your-email@domain.tld
+```
+
+From Windows, you can run the SSH wrapper:
+
+```bat
+deploy\scripts\setup-nginx-certbot.bat
+```
+
+Set your `.env` for proxy + TLS domain:
+
+```env
+NODE_ENV=production
+WEB_URL=https://cad.quokkanetworks.net
+STEAM_REALM=https://cad.quokkanetworks.net
+STEAM_RETURN_URL=https://cad.quokkanetworks.net/api/auth/steam/callback
+AUTH_COOKIE_SECURE=true
+TRUST_PROXY=1
+```
+
+Details are in `deploy/nginx/README.md`.

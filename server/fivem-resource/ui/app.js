@@ -122,6 +122,61 @@ function sanitizeStringArray(raw, toUpper) {
   return out;
 }
 
+function pad2(value) {
+  var num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  var rounded = Math.floor(num);
+  if (rounded < 0) return "";
+  return rounded < 10 ? "0" + String(rounded) : String(rounded);
+}
+
+function normalizeDateForDateInput(rawValue) {
+  var text = String(rawValue || "").trim();
+  if (!text) return "";
+
+  var isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return isoMatch[1] + "-" + isoMatch[2] + "-" + isoMatch[3];
+  }
+
+  var parts = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (!parts) return "";
+
+  var first = Number(parts[1]);
+  var second = Number(parts[2]);
+  var year = Number(parts[3]);
+  if (!Number.isFinite(first) || !Number.isFinite(second) || !Number.isFinite(year)) return "";
+  if (year < 1900 || year > 2100) return "";
+
+  // Prefer AU-style day-first, fallback to month-first when day-first is impossible.
+  var day = first;
+  var month = second;
+  if (first <= 12 && second > 12) {
+    month = first;
+    day = second;
+  }
+
+  var candidate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    candidate.getUTCFullYear() !== year ||
+    (candidate.getUTCMonth() + 1) !== month ||
+    candidate.getUTCDate() !== day
+  ) {
+    candidate = new Date(Date.UTC(year, first - 1, second));
+    if (
+      candidate.getUTCFullYear() !== year ||
+      (candidate.getUTCMonth() + 1) !== first ||
+      candidate.getUTCDate() !== second
+    ) {
+      return "";
+    }
+    month = first;
+    day = second;
+  }
+
+  return String(year) + "-" + pad2(month) + "-" + pad2(day);
+}
+
 function showErrorNode(node, text) {
   if (!node) return;
   node.textContent = String(text || "");
@@ -426,7 +481,9 @@ function resetLicenseForm(payload) {
   renderLicenseClasses();
 
   if (licenseNameInput) licenseNameInput.value = String(safeGet(data, "full_name", "") || "");
-  if (licenseDobInput) licenseDobInput.value = String(safeGet(data, "date_of_birth", "") || "");
+  if (licenseDobInput) {
+    licenseDobInput.value = normalizeDateForDateInput(safeGet(data, "date_of_birth", ""));
+  }
   if (licenseGenderInput) licenseGenderInput.value = String(safeGet(data, "gender", "") || "");
   if (licenseConditionsInput) licenseConditionsInput.value = "";
   licenseDurationOptions = Array.isArray(data.duration_options) ? data.duration_options : [6, 14, 35, 70];

@@ -21,4 +21,5 @@ files {
   'ui/cad_radio.css',
   'ui/cad_radio.js',
   'ui/overlay.webp',
+  'ui/vicroads-logo.jpg',
 }
