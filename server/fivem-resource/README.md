@@ -36,6 +36,8 @@ The CAD auto-sync now patches `cad_bridge_base_url` and `cad_bridge_token` direc
 - Open radio UI with `cad_bridge_radio_ui_key` (default `EQUALS`).
 - Transmit on radio with `cad_bridge_radio_ptt_key` (default `LMENU`).
 - `cad_bridge_radio_follow_native_ptt=true` mirrors normal talk-key press into CAD radio TX while joined.
+- Keep `cad_bridge_radio_channel_sync_enabled=true` so CAD channel labels stay in sync with in-game config.
+- Keep `cad_bridge_voice_participant_heartbeat_enabled=true` so CAD sees live in-game channel participants.
 - Use `/radio` to open UI, `/radio <channel>` to join, `/radio off` to leave.
 - Restricted channels are optional and can be set via `cad_bridge_radio_restricted_channels_json` in `config.cfg`.
 

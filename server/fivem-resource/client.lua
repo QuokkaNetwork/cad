@@ -1316,6 +1316,7 @@ local cadRadioTalkingStateBySource = {}
 local cadRadioPttPressed = false
 local cadRadioManualPttWanted = false
 local cadRadioLastTargetBuildAt = 0
+local cadRadioLastNoRouteLogAt = 0
 local cadRadioSubmixId = -1
 local cadRadioRxVolume = CAD_RADIO_RX_VOLUME
 local cadRadioMutedBySource = {}
@@ -1638,16 +1639,26 @@ local function rebuildCadRadioTarget()
   MumbleClearVoiceTargetPlayers(CAD_RADIO_TARGET_ID)
 
   local localSource = getLocalServerId()
+  local peerTargets = 0
   for src, _ in pairs(cadRadioMemberBySource) do
     if src ~= localSource then
       MumbleAddVoiceTargetPlayerByServerId(CAD_RADIO_TARGET_ID, src)
+      peerTargets = peerTargets + 1
     end
   end
 
+  local rootTargets = 0
   if CAD_RADIO_FORWARD_ROOT then
     -- Send in-game radio TX to Mumble root so CAD dispatchers can hear it.
     MumbleAddVoiceTargetChannel(CAD_RADIO_TARGET_ID, 0)
+    rootTargets = 1
   end
+
+  return {
+    peerTargets = peerTargets,
+    rootTargets = rootTargets,
+    totalTargets = peerTargets + rootTargets,
+  }
 end
 
 local function setCadRadioPttState(enabled)
@@ -1659,7 +1670,7 @@ local function setCadRadioPttState(enabled)
     if cadRadioChannel <= 0 then return end
     if isPlayerDeadForCadRadio() then return end
     cadRadioPttPressed = true
-    rebuildCadRadioTarget()
+    local routeStats = rebuildCadRadioTarget()
     cadRadioLastTargetBuildAt = tonumber(GetGameTimer() or 0) or 0
     MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
     TriggerServerEvent('cad_bridge:radio:setTalking', true)
@@ -1667,6 +1678,25 @@ local function setCadRadioPttState(enabled)
       radioId = tostring(getLocalServerId()),
       radioTalking = true,
     })
+    if routeStats and routeStats.totalTargets <= 0 then
+      local nowMs = tonumber(GetGameTimer() or 0) or 0
+      if (nowMs - cadRadioLastNoRouteLogAt) >= 5000 then
+        cadRadioLastNoRouteLogAt = nowMs
+        print(('[cad_bridge][radio] tx-start channel=%s peer_targets=%s root_targets=%s total_targets=%s no_route_reason=no_members_and_root_forward_disabled'):format(
+          tostring(cadRadioChannel),
+          tostring(routeStats.peerTargets or 0),
+          tostring(routeStats.rootTargets or 0),
+          tostring(routeStats.totalTargets or 0)
+        ))
+      end
+    else
+      print(('[cad_bridge][radio] tx-start channel=%s peer_targets=%s root_targets=%s total_targets=%s'):format(
+        tostring(cadRadioChannel),
+        tostring(routeStats and routeStats.peerTargets or 0),
+        tostring(routeStats and routeStats.rootTargets or 0),
+        tostring(routeStats and routeStats.totalTargets or 0)
+      ))
+    end
     playCadRadioMicClick(true)
     return
   end

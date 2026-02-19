@@ -3250,6 +3250,71 @@ local CadRadioChannelBySource = {}  -- [source] = channel
 local CadRadioTalkingBySource = {}  -- [source] = bool
 local CadRadioDisplayNameBySource = {} -- [source] = custom display name
 
+local function cadRadioCountMembers(channelNumber)
+  local channel = tonumber(channelNumber) or 0
+  if channel <= 0 then return 0 end
+  local bucket = CadRadioMembersByChannel[channel]
+  if type(bucket) ~= 'table' then return 0 end
+
+  local count = 0
+  for memberSource, _ in pairs(bucket) do
+    local src = tonumber(memberSource) or 0
+    if src > 0 and GetPlayerName(src) then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+local function cadRadioCountRouteTargetsForSource(source, channelNumber)
+  local src = tonumber(source) or 0
+  local channel = tonumber(channelNumber) or 0
+  if src <= 0 or channel <= 0 then return 0 end
+
+  local bucket = CadRadioMembersByChannel[channel]
+  if type(bucket) ~= 'table' then return 0 end
+
+  local count = 0
+  for memberSource, _ in pairs(bucket) do
+    local member = tonumber(memberSource) or 0
+    if member > 0 and member ~= src and GetPlayerName(member) then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+local function cadRadioLogChannelChange(source, oldChannel, newChannel)
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+  local fromChannel = tonumber(oldChannel) or 0
+  local toChannel = tonumber(newChannel) or 0
+
+  if toChannel > 0 then
+    local members = cadRadioCountMembers(toChannel)
+    local routeTargets = cadRadioCountRouteTargetsForSource(src, toChannel)
+    local noRouteReason = routeTargets > 0 and '' or ' no_route_reason=single_member_or_no_peers'
+    print(('[cad_bridge][radio] join-success src=%s from=%s to=%s members=%s route_targets=%s%s'):format(
+      tostring(src),
+      tostring(fromChannel),
+      tostring(toChannel),
+      tostring(members),
+      tostring(routeTargets),
+      noRouteReason
+    ))
+    return
+  end
+
+  if fromChannel > 0 then
+    local remaining = cadRadioCountMembers(fromChannel)
+    print(('[cad_bridge][radio] leave-success src=%s from=%s remaining_members=%s'):format(
+      tostring(src),
+      tostring(fromChannel),
+      tostring(remaining)
+    ))
+  end
+end
+
 local function cadRadioGetMemberRows(channelNumber)
   local channel = tonumber(channelNumber) or 0
   if channel <= 0 then return {} end
@@ -3371,6 +3436,7 @@ local function cadRadioSetPlayerChannel(source, channelNumber)
   else
     cadRadioPushStateToPlayer(src, 0)
   end
+  cadRadioLogChannelChange(src, oldChannel, newChannel)
 
   return true, nil
 end
@@ -3499,6 +3565,11 @@ RegisterNetEvent('cad_bridge:radio:uiJoinRequest', function(channelNumber, radio
   local channel = tonumber(channelNumber) or 0
   local allowed, denyReason = validateCadRadioJoin(src, channel)
   if not allowed then
+    print(('[cad_bridge][radio] join-denied src=%s channel=%s reason=%s'):format(
+      tostring(src),
+      tostring(channel),
+      tostring(denyReason or 'join_denied')
+    ))
     TriggerClientEvent('cad_bridge:radio:uiJoinResult', src, false, denyReason, channel)
     return
   end
@@ -3511,6 +3582,13 @@ RegisterNetEvent('cad_bridge:radio:uiJoinRequest', function(channelNumber, radio
   end
 
   local success, err = cadRadioSetPlayerChannel(src, channel)
+  if not success then
+    print(('[cad_bridge][radio] join-failed src=%s channel=%s reason=%s'):format(
+      tostring(src),
+      tostring(channel),
+      tostring(err or 'join_failed')
+    ))
+  end
   TriggerClientEvent('cad_bridge:radio:uiJoinResult', src, success, success and nil or tostring(err or 'join_failed'), channel)
 end)
 
@@ -3519,6 +3597,12 @@ RegisterNetEvent('cad_bridge:radio:uiLeaveRequest', function()
   local src = tonumber(source) or 0
   if src <= 0 then return end
   local success, err = cadRadioSetPlayerChannel(src, 0)
+  if not success then
+    print(('[cad_bridge][radio] leave-failed src=%s reason=%s'):format(
+      tostring(src),
+      tostring(err or 'leave_failed')
+    ))
+  end
   TriggerClientEvent('cad_bridge:radio:uiLeaveResult', src, success, success and nil or tostring(err or 'leave_failed'))
 end)
 

@@ -1,7 +1,8 @@
 # Sonoran Switch - Phase 2 (Deferred Handoff)
 
-Status: `Deferred / do not implement yet`  
+Status: `In progress`  
 Created: `2026-02-18`
+Resumed: `2026-02-19`
 
 ## Goal
 Complete Phase 2 of the Sonoran-style radio behavior with a stable, simple flow:
@@ -47,6 +48,17 @@ Complete Phase 2 of the Sonoran-style radio behavior with a stable, simple flow:
 - Keep concise periodic diagnostics (connected, channel, targets, inbound/outbound packet counters).
 - Add clear per-event logs: join success, route match count, no-route reason.
 - Keep debug noise bounded to avoid log spam.
+
+## Progress (2026-02-19)
+- Started CAD Voice UX parity work:
+  - Added explicit state labels for `connected`, `joined`, `receiving`, `transmitting` on the CAD Voice page.
+  - Added operator troubleshooting banner when a joined channel has zero routable in-game participants.
+- Started diagnostics hardening in `cad_bridge`:
+  - Added radio join/leave result logs with route target counts and no-route reasons.
+  - Added transmit-start route diagnostics with no-route reason throttling.
+- Began Sonoran config alignment:
+  - Enabled `cad_bridge_radio_channel_sync_enabled=true`.
+  - Enabled `cad_bridge_voice_participant_heartbeat_enabled=true`.
 
 ## Acceptance Criteria
 - Two in-game players on same channel can hear each other consistently.
