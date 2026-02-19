@@ -1,5 +1,11 @@
 import { formatTimeAU } from '../utils/dateTime';
 
+function formatFlagBadgeLabel(value) {
+  const text = String(value || '').trim().replace(/_/g, ' ');
+  if (!text) return '';
+  return text.replace(/\b([a-z])/g, (char) => char.toUpperCase());
+}
+
 export default function BOLOCard({ bolo, onResolve, onCancel }) {
   const isVehicle = bolo.type === 'vehicle';
   let details = {};
@@ -61,7 +67,7 @@ export default function BOLOCard({ bolo, onResolve, onCancel }) {
                   key={flag}
                   className="inline-flex items-center px-2 py-0.5 rounded text-[11px] border border-red-500/40 bg-red-500/10 text-red-300"
                 >
-                  {String(flag).replace(/_/g, ' ')}
+                  {formatFlagBadgeLabel(flag)}
                 </span>
               ))}
             </div>
