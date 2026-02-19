@@ -33,6 +33,9 @@ const BRIDGE_MUGSHOT_MAX_CHARS = Math.max(
   250000,
   Number.parseInt(process.env.FIVEM_BRIDGE_MUGSHOT_MAX_CHARS || '4000000', 10) || 4000000
 );
+const BRIDGE_DOCUMENT_DEBUG_LOGS = String(process.env.FIVEM_BRIDGE_DOCUMENT_DEBUG_LOGS || 'true')
+  .trim()
+  .toLowerCase() !== 'false';
 const VOICE_HEARTBEAT_LOG_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.FIVEM_VOICE_LOG_INTERVAL_MS || '15000', 10) || 15_000
@@ -512,6 +515,11 @@ function logBridgeDocumentReject(kind, statusCode, reason, payloadSummary, extra
     ...payloadSummary,
     ...extra,
   });
+}
+
+function logBridgeDocumentTrace(kind, data, force = false) {
+  if (!force && !BRIDGE_DOCUMENT_DEBUG_LOGS) return;
+  console.log(`[FiveMBridge] ${kind}`, data || {});
 }
 
 function getDispatchVisibleDepartments() {
@@ -1240,6 +1248,7 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
   try {
     const payload = req.body || {};
     const payloadSummary = summarizeBridgeLicensePayload(payload);
+    logBridgeDocumentTrace('license request received', payloadSummary, true);
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
     const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
 
@@ -1349,6 +1358,13 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
       classes: licenseClasses,
       source: 'fivem',
     });
+    logBridgeDocumentTrace('license upsert success', {
+      citizenid: citizenId,
+      license_number: record?.license_number || licenseNumber,
+      status: record?.status || status,
+      expiry_at: record?.expiry_at || expiryAt,
+      mugshot_length: mugshotUrl.length,
+    }, true);
 
     res.status(201).json({ ok: true, license: record });
   } catch (error) {
@@ -1390,6 +1406,7 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
 
     const payload = req.body || {};
     const payloadSummary = summarizeBridgeRegistrationPayload(payload);
+    logBridgeDocumentTrace('registration request received', payloadSummary, true);
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
     const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
 
@@ -1473,6 +1490,12 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
       expiry_at: record?.expiry_at || expiryAt,
       source: 'fivem',
     });
+    logBridgeDocumentTrace('registration upsert success', {
+      plate: record?.plate || plate,
+      citizenid: citizenId,
+      status: record?.status || status,
+      expiry_at: record?.expiry_at || expiryAt,
+    }, true);
 
     res.status(201).json({ ok: true, registration: record });
   } catch (error) {

@@ -1052,6 +1052,12 @@ local function logDocumentFailure(kind, details)
   print(('[cad_bridge][%s] %s'):format(trim(kind), encodeLogJson(details or {})))
 end
 
+local function logDocumentTrace(kind, details, force)
+  if force == true or Config.DocumentDebugLogs == true then
+    print(('[cad_bridge][%s] %s'):format(trim(kind), encodeLogJson(details or {})))
+  end
+end
+
 local function submitEmergencyCall(src, report)
   local s = tonumber(src)
   if not s then return end
@@ -1138,6 +1144,10 @@ local function submitDriverLicense(src, formData)
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
+  logDocumentTrace('license-submit-start', {
+    payload = summarizeLicensePayloadForLog(payload),
+    form = summarizeLicensePayloadForLog(formData),
+  }, true)
 
   if trim(payload.citizenid) == '' then
     notifyPlayer(s, 'Unable to determine your active character (citizenid). Re-log and try again.')
@@ -1150,6 +1160,10 @@ local function submitDriverLicense(src, formData)
   end
 
   request('GET', '/api/integration/fivem/licenses/' .. urlEncode(payload.citizenid), nil, function(existingStatus, existingBody)
+    logDocumentTrace('license-renew-check-response', {
+      http_status = tonumber(existingStatus) or 0,
+      citizenid = trim(payload.citizenid or ''),
+    })
     if existingStatus >= 200 and existingStatus < 300 then
       local okExisting, existingParsed = pcall(json.decode, existingBody or '{}')
       if okExisting and type(existingParsed) == 'table' and type(existingParsed.license) == 'table' then
@@ -1241,13 +1255,28 @@ local function submitDriverLicense(src, formData)
     end
 
     local function submitLicensePost()
+      logDocumentTrace('license-create-request', {
+        citizenid = trim(payload.citizenid or ''),
+        mugshot_length = #(trim(payload.mugshot_url or '')),
+        has_retried_without_photo = hasRetriedWithoutPhoto == true,
+      })
       request('POST', '/api/integration/fivem/licenses', payload, function(status, body, responseHeaders)
+        logDocumentTrace('license-create-response', {
+          http_status = tonumber(status) or 0,
+          citizenid = trim(payload.citizenid or ''),
+          retry_without_photo = hasRetriedWithoutPhoto == true,
+        })
         if status >= 200 and status < 300 then
           local expiryAt = payload.expiry_at
           local ok, parsed = pcall(json.decode, body or '{}')
           if ok and type(parsed) == 'table' and type(parsed.license) == 'table' then
             expiryAt = tostring(parsed.license.expiry_at or expiryAt)
           end
+          logDocumentTrace('license-create-success', {
+            citizenid = trim(payload.citizenid or ''),
+            expiry_at = trim(expiryAt or ''),
+            saved_without_photo = savedWithoutPhoto == true,
+          }, true)
           notifyPlayer(s, ('Driver licence saved to CAD. Status: VALID%s%s%s%s%s%s'):format(
             expiryAt ~= '' and ' | Expires: ' or '',
             expiryAt ~= '' and expiryAt or '',
@@ -1355,6 +1384,10 @@ local function submitVehicleRegistration(src, formData)
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
+  logDocumentTrace('registration-submit-start', {
+    payload = summarizeRegistrationPayloadForLog(payload),
+    form = summarizeRegistrationPayloadForLog(formData),
+  }, true)
 
   if trim(payload.citizenid) == '' then
     notifyPlayer(s, 'Unable to determine your active character (citizenid). Re-log and try again.')
@@ -1373,6 +1406,10 @@ local function submitVehicleRegistration(src, formData)
   local feeRequired = Config.RequireDocumentFeePayment == true
 
   request('GET', '/api/integration/fivem/registrations/' .. urlEncode(payload.plate), nil, function(existingStatus, existingBody)
+    logDocumentTrace('registration-renew-check-response', {
+      http_status = tonumber(existingStatus) or 0,
+      plate = trim(payload.plate or ''),
+    })
     if existingStatus >= 200 and existingStatus < 300 then
       local okExisting, existingParsed = pcall(json.decode, existingBody or '{}')
       if okExisting and type(existingParsed) == 'table' and type(existingParsed.registration) == 'table' then
@@ -1416,12 +1453,21 @@ local function submitVehicleRegistration(src, formData)
     end
 
     request('POST', '/api/integration/fivem/registrations', payload, function(status, body, responseHeaders)
+      logDocumentTrace('registration-create-response', {
+        http_status = tonumber(status) or 0,
+        plate = trim(payload.plate or ''),
+      })
       if status >= 200 and status < 300 then
         local expiryAt = payload.expiry_at
         local ok, parsed = pcall(json.decode, body or '{}')
         if ok and type(parsed) == 'table' and type(parsed.registration) == 'table' then
           expiryAt = tostring(parsed.registration.expiry_at or expiryAt)
         end
+        logDocumentTrace('registration-create-success', {
+          plate = trim(payload.plate or ''),
+          citizenid = trim(payload.citizenid or ''),
+          expiry_at = trim(expiryAt or ''),
+        }, true)
         notifyPlayer(s, ('Vehicle registration saved to CAD%s%s%s%s'):format(
           expiryAt ~= '' and ' | Expires: ' or '',
           expiryAt ~= '' and expiryAt or '',
@@ -1680,6 +1726,10 @@ end)
 RegisterNetEvent('cad_bridge:submitDriverLicense', function(payload)
   local src = source
   if not src or src == 0 then return end
+  logDocumentTrace('license-event-received', {
+    source = tonumber(src) or 0,
+    payload = summarizeLicensePayloadForLog(payload),
+  }, true)
 
   local formData, err = parseDriverLicenseForm(payload)
   if not formData then
@@ -1698,6 +1748,10 @@ end)
 RegisterNetEvent('cad_bridge:submitVehicleRegistration', function(payload)
   local src = source
   if not src or src == 0 then return end
+  logDocumentTrace('registration-event-received', {
+    source = tonumber(src) or 0,
+    payload = summarizeRegistrationPayloadForLog(payload),
+  }, true)
 
   local formData, err = parseVehicleRegistrationForm(payload)
   if not formData then
