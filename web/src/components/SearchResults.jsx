@@ -10,12 +10,7 @@ function primaryTitle(type, item) {
 }
 
 function secondaryText(type, item) {
-  if (type === 'person') {
-    const citizen = String(item?.citizenid || '').trim();
-    const license = String(item?.cad_driver_license?.license_number || item?.license_number || '').trim();
-    if (citizen && license) return `${citizen} | Licence ${license}`;
-    return citizen || license || '';
-  }
+  if (type === 'person') return '';
   const model = String(item?.vehicle_model || item?.vehicle || '').trim();
   const owner = String(item?.owner_name || item?.owner || '').trim();
   if (model && owner) return `${model} | ${owner}`;
@@ -31,10 +26,24 @@ export default function SearchResults({ type, results, onSelect }) {
     <div className="divide-y divide-cad-border/40">
       {results.map((item, i) => {
         const title = primaryTitle(type, item);
-        const sub = secondaryText(type, item);
+        const isPerson = type === 'person';
         const key = type === 'person'
           ? (item?.citizenid || `p-${i}`)
           : (item?.plate || `v-${i}`);
+        if (isPerson) {
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onSelect?.(item)}
+              className="w-full text-left px-4 py-3 hover:bg-cad-card transition-colors"
+            >
+              <p className="font-medium">{title}</p>
+            </button>
+          );
+        }
+
+        const sub = secondaryText(type, item);
         const status = type === 'person'
           ? String(item?.cad_driver_license?.status || item?.status || '').trim()
           : String(item?.cad_registration?.status || item?.status || '').trim();
@@ -56,7 +65,7 @@ export default function SearchResults({ type, results, onSelect }) {
               </div>
               <div className="text-right">
                 <p className="text-[11px] text-cad-muted uppercase tracking-wider">
-                  {type === 'person' ? 'Licence' : 'Registration'}
+                  Registration
                 </p>
                 {status ? <p className="text-xs text-cad-ink">{status}</p> : null}
               </div>
@@ -66,7 +75,7 @@ export default function SearchResults({ type, results, onSelect }) {
               {expiry ? `Expiry: ${formatDateAU(expiry, '-')}` : 'No expiry recorded'}
             </p>
 
-            {type === 'person' && (item?.has_warrant || item?.has_bolo) ? (
+            {item?.has_warrant || item?.has_bolo ? (
               <div className="mt-2 flex flex-wrap gap-1">
                 {item?.has_warrant ? (
                   <span className="inline-flex items-center px-2 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-[11px] font-medium text-red-300">

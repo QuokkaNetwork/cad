@@ -76,13 +76,88 @@ function MugshotPreview({ url }) {
   );
 }
 
-function PersonDetailField({ label, value, mono = false }) {
+function CadVictoriaLicenseCard({ person }) {
+  const license = person?.cad_driver_license;
+  if (!license) {
+    return (
+      <p className="text-sm text-cad-muted">No CAD driver licence record found.</p>
+    );
+  }
+
+  const fullName = resolvePersonName(person);
+  const licenceNumber = String(license.license_number || '-').trim() || '-';
+  const dob = formatDateAU(license.date_of_birth || person?.birthdate || '', '-');
+  const expiry = formatDateAU(license.expiry_at || '', '-');
+  const status = formatStatusLabel(license.status || '');
+  const licenceType = Array.isArray(license.license_classes) && license.license_classes.length > 0
+    ? license.license_classes.join(', ')
+    : '-';
+  const conditions = Array.isArray(license.conditions) && license.conditions.length > 0
+    ? license.conditions.join(', ')
+    : '-';
+  const mugshot = String(license.mugshot_url || '').trim();
+  const gender = formatGenderLabel(license.gender || person?.gender || '');
+
   return (
-    <div className="rounded-lg border border-cad-border/60 bg-cad-card/70 px-3 py-2">
-      <p className="text-[11px] uppercase tracking-wider text-cad-muted">{label}</p>
-      <p className={`mt-1 text-sm text-cad-ink ${mono ? 'font-mono' : ''}`}>
-        {String(value || '-')}
-      </p>
+    <div
+      className="relative overflow-hidden rounded-[18px] border border-[#7ca270] p-4 text-[#0f2215] shadow-[0_18px_40px_rgba(5,24,13,0.32)]"
+      style={{
+        backgroundImage: 'radial-gradient(circle at 20% 40%, rgba(255,255,255,0.55), rgba(255,255,255,0.12) 34%, transparent 50%), repeating-linear-gradient(168deg, rgba(93,145,78,0.26) 0px, rgba(93,145,78,0.26) 2px, rgba(226,244,216,0.16) 2px, rgba(226,244,216,0.16) 8px), linear-gradient(160deg, #dbeec9 0%, #c4e1a8 45%, #d8ecc6 100%)',
+      }}
+    >
+      <div className="mb-3 rounded-[10px] bg-gradient-to-r from-[#044497] to-[#1c5dab] px-4 py-2 text-center text-white shadow-inner">
+        <p className="text-[28px] leading-none font-black tracking-[0.08em]">DRIVER LICENCE</p>
+        <p className="text-[24px] leading-none font-extrabold tracking-[0.06em]">VICTORIA AUSTRALIA</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_210px] gap-4 items-start">
+        <div>
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.07em] text-[#354a3a] font-bold">Name</p>
+              <p className="mt-1 text-[34px] leading-none font-extrabold uppercase tracking-[0.02em] break-words">{fullName}</p>
+            </div>
+            <div className="sm:text-right min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.07em] text-[#354a3a] font-bold">Licence No.</p>
+              <p className="mt-1 text-[34px] leading-none font-extrabold tracking-[0.02em] break-all">{licenceNumber}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 border-t border-[#18382442] pt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.07em] text-[#32493a] font-bold">Licence Expiry</p>
+              <p className="text-[29px] leading-none font-extrabold">{expiry}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.07em] text-[#32493a] font-bold">Date Of Birth</p>
+              <p className="text-[29px] leading-none font-extrabold">{dob}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.07em] text-[#32493a] font-bold">Licence Type</p>
+              <p className="text-[29px] leading-none font-extrabold break-words">{licenceType}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.07em] text-[#32493a] font-bold">Conditions</p>
+              <p className="text-[29px] leading-none font-extrabold break-words">{conditions}</p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2 text-[12px]">
+            <span className="rounded-full border border-[#18382442] bg-white/45 px-2 py-1">Status: <strong>{status || '-'}</strong></span>
+            <span className="rounded-full border border-[#18382442] bg-white/45 px-2 py-1">Gender: <strong>{gender || '-'}</strong></span>
+            <span className="rounded-full border border-[#18382442] bg-white/45 px-2 py-1">Citizen ID: <strong className="font-mono">{person?.citizenid || '-'}</strong></span>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-start gap-2">
+          <div className="h-[250px] w-[210px] rounded-[8px] border border-[#18382472] bg-white/45 overflow-hidden">
+            {mugshot ? (
+              <img src={mugshot} alt="Licence photo" className="h-full w-full object-cover object-top" />
+            ) : null}
+          </div>
+          <img src="/vicroads-logo.jpg" alt="VicRoads" className="h-auto w-[152px] rounded border border-[#18382459] bg-white/90 p-0.5" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -369,44 +444,13 @@ export default function Search() {
               </div>
             ) : null}
 
-            <div className="bg-cad-surface border border-cad-border rounded-lg px-4 py-4 text-sm">
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">
-                  Person Details
-                </h4>
-                <span className="px-2 py-1 rounded border border-cad-border bg-cad-card text-xs text-cad-muted">
-                  Profile
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <PersonDetailField label="Name" value={resolvePersonName(selectedPerson)} />
-                <PersonDetailField label="Citizen ID" value={selectedPerson.citizenid || '-'} mono />
-                <PersonDetailField
-                  label="Date of Birth"
-                  value={formatDateAU(selectedPerson.cad_driver_license?.date_of_birth || selectedPerson.birthdate || '', '-')}
-                />
-                <PersonDetailField
-                  label="Gender"
-                  value={formatGenderLabel(selectedPerson.cad_driver_license?.gender || selectedPerson.gender || '')}
-                />
-              </div>
-            </div>
-
             <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
                 Driver Licence (CAD)
               </h4>
               {selectedPerson.cad_driver_license ? (
                 <div className="space-y-3">
-                  <div className="flex flex-col md:flex-row gap-4">
-                    <MugshotPreview url={selectedPerson.cad_driver_license.mugshot_url} />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm flex-1">
-                      <p>Licence No: <span className="text-cad-ink">{selectedPerson.cad_driver_license.license_number || '-'}</span></p>
-                      <p>Expiry: <span className="text-cad-ink">{formatDateAU(selectedPerson.cad_driver_license.expiry_at || '', '-')}</span></p>
-                      <p>Status: <span className="text-cad-ink">{formatStatusLabel(selectedPerson.cad_driver_license.status)}</span></p>
-                      <p>Classes: <span className="text-cad-ink">{Array.isArray(selectedPerson.cad_driver_license.license_classes) && selectedPerson.cad_driver_license.license_classes.length > 0 ? selectedPerson.cad_driver_license.license_classes.join(', ') : '-'}</span></p>
-                    </div>
-                  </div>
+                  <CadVictoriaLicenseCard person={selectedPerson} />
                   <div className="flex flex-col md:flex-row gap-2 md:items-center">
                     <select
                       value={licenseStatusDraft}

@@ -1550,6 +1550,12 @@ local function spawnDocumentPed(pedConfig)
   local y = tonumber(coords.y) or 0.0
   local z = tonumber(coords.z) or 0.0
   local w = tonumber(coords.w) or 0.0
+  local spawnZ = z
+
+  local okGround, groundZ = GetGroundZFor_3dCoord(x + 0.0, y + 0.0, z + 2.0, false)
+  if okGround and type(groundZ) == 'number' then
+    spawnZ = groundZ
+  end
 
   local modelHash = loadPedModel(pedConfig.model or '')
   if not modelHash then
@@ -1557,8 +1563,11 @@ local function spawnDocumentPed(pedConfig)
     return
   end
 
-  local entity = CreatePed(4, modelHash, x, y, z - 1.0, w, false, true)
+  local entity = CreatePed(4, modelHash, x, y, spawnZ, w, false, true)
   SetEntityAsMissionEntity(entity, true, true)
+  PlaceEntityOnGroundProperly(entity)
+  SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, GetEntityCoords(entity).z + 0.0, false, false, false)
+  SetEntityHeading(entity, w + 0.0)
   SetEntityInvincible(entity, true)
   SetBlockingOfNonTemporaryEvents(entity, true)
   FreezeEntityPosition(entity, true)

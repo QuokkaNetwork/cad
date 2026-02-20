@@ -538,79 +538,175 @@ select {
 }
 
 .id-card {
-  width: min(560px, 95vw);
+  width: min(760px, 96vw);
   max-height: 88vh;
   overflow: auto;
-  border-radius: 14px;
-  border: 1px solid #bad5c5;
-  background: linear-gradient(180deg, #f0faf4 0%, #ffffff 30%);
-  box-shadow: 0 18px 40px rgba(3, 35, 78, 0.3);
-  padding: 1rem 1.05rem;
+  border-radius: 18px;
+  border: 1px solid #7ca270;
+  background:
+    radial-gradient(circle at 20% 40%, rgba(255,255,255,0.55), rgba(255,255,255,0.12) 34%, transparent 50%),
+    repeating-linear-gradient(168deg, rgba(93, 145, 78, 0.26) 0px, rgba(93, 145, 78, 0.26) 2px, rgba(226, 244, 216, 0.16) 2px, rgba(226, 244, 216, 0.16) 8px),
+    linear-gradient(160deg, #dbeec9 0%, #c4e1a8 45%, #d8ecc6 100%);
+  box-shadow: 0 18px 40px rgba(5, 24, 13, 0.32);
+  padding: 0.9rem 1rem 0.95rem;
 }
 
 .id-card-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.id-card-brand {
-  display: flex;
   align-items: center;
-  gap: 0.7rem;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.id-card-banner {
+  flex: 1;
   min-width: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #044497, #1c5dab);
+  color: #ffffff;
+  text-align: center;
+  padding: 0.5rem 0.8rem 0.44rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
-.id-card-logo {
-  width: 52px;
-  height: 52px;
-  object-fit: contain;
-  flex: 0 0 52px;
+.id-card-banner-line1 {
+  font-size: 1.75rem;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: 0.06em;
 }
 
-.id-card-eyebrow {
-  font-size: 0.76rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 700;
-  color: #1f8f4a;
-}
-
-.id-card-brand-subtitle {
-  margin-top: 0.1rem;
-  font-size: 0.74rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: #4a6f5b;
+.id-card-banner-line2 {
+  margin-top: 0.08rem;
+  font-size: 1.52rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 
 .id-card-title {
-  margin: 0.36rem 0 0.25rem;
-  font-size: 1.34rem;
-  color: #102235;
+  margin: 0.48rem 0 0.2rem;
+  font-size: 0.98rem;
+  color: #1d2a1a;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 700;
 }
 
 .id-card-note {
   margin: 0 0 0.68rem;
-  font-size: 0.9rem;
-  color: #4a6f5b;
+  font-size: 0.85rem;
+  color: #2e4634;
 }
 
 .id-card-body {
   display: grid;
-  grid-template-columns: 142px minmax(0, 1fr);
-  gap: 0.88rem;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.id-card-main {
+  min-width: 0;
+}
+
+.id-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.id-card-name-block,
+.id-card-licence-block {
+  min-width: 0;
+}
+
+.id-card-top-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #354a3a;
+  font-weight: 700;
+}
+
+.id-card-name {
+  display: block;
+  margin-top: 0.12rem;
+  font-size: 2rem;
+  line-height: 1.03;
+  color: #0f2215;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  word-break: break-word;
+}
+
+.id-card-licence-no {
+  display: block;
+  margin-top: 0.12rem;
+  font-size: 2rem;
+  line-height: 1.03;
+  color: #0f2215;
+  font-weight: 800;
+  letter-spacing: 0.025em;
+}
+
+.id-card-bottom-grid {
+  margin-top: 0.8rem;
+  padding-top: 0.52rem;
+  border-top: 1px solid rgba(24, 56, 36, 0.26);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.52rem 0.8rem;
+}
+
+.id-card-field {
+  min-width: 0;
+}
+
+.id-card-meta {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.id-card-meta-chip {
+  border: 1px solid rgba(24, 56, 36, 0.26);
+  background: rgba(255, 255, 255, 0.44);
+  color: #1f3826;
+  border-radius: 999px;
+  padding: 0.2rem 0.58rem;
+  font-size: 0.76rem;
+  letter-spacing: 0.02em;
+}
+
+.id-card-photo-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .id-card-photo {
-  width: 142px;
-  height: 172px;
+  width: 210px;
+  height: 250px;
   object-fit: cover;
   object-position: top;
-  border-radius: 10px;
-  border: 1px solid #bad5c5;
-  background: transparent;
+  border-radius: 8px;
+  border: 1px solid rgba(24, 56, 36, 0.45);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.id-card-vicroads-logo {
+  width: 152px;
+  height: auto;
+  border: 1px solid rgba(24, 56, 36, 0.35);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0.12rem;
 }
 
 .id-card-fields {
@@ -626,36 +722,39 @@ select {
 }
 
 .id-label {
-  font-size: 0.82rem;
-  color: #436452;
+  font-size: 0.78rem;
+  color: #32493a;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.055em;
+  font-weight: 700;
 }
 
 .id-value {
-  font-size: 0.96rem;
-  color: #163022;
+  font-size: 1.36rem;
+  line-height: 1.03;
+  color: #0f2215;
+  font-weight: 800;
   overflow-wrap: anywhere;
 }
 
 .id-card-footer {
-  margin-top: 0.72rem;
-  font-size: 0.84rem;
-  color: #4a6f5b;
-  border-top: 1px solid #cde1d5;
-  padding-top: 0.62rem;
+  margin-top: 0.82rem;
+  font-size: 0.8rem;
+  color: #2f4635;
+  border-top: 1px solid rgba(24, 56, 36, 0.22);
+  padding-top: 0.58rem;
 }
 
 .id-card .icon-btn {
-  background: #ffffff;
-  color: #5a6f67;
-  border-color: #bad5c5;
+  background: rgba(255, 255, 255, 0.8);
+  color: #2f493a;
+  border-color: rgba(24, 56, 36, 0.34);
 }
 
 .id-card .icon-btn:hover {
-  color: #163022;
-  border-color: #1f8f4a;
-  background: #e8f6ee;
+  color: #102617;
+  border-color: rgba(24, 56, 36, 0.46);
+  background: rgba(255, 255, 255, 0.98);
 }
 
 @media (max-width: 760px) {
@@ -703,15 +802,45 @@ select {
   }
 
   .id-card-body {
-    grid-template-columns: 108px minmax(0, 1fr);
+    grid-template-columns: 1fr;
+  }
+
+  .id-card-banner-line1 {
+    font-size: 1.28rem;
+  }
+
+  .id-card-banner-line2 {
+    font-size: 1.12rem;
+  }
+
+  .id-card-top {
+    flex-direction: column;
+    gap: 0.42rem;
+  }
+
+  .id-card-name,
+  .id-card-licence-no {
+    font-size: 1.56rem;
+  }
+
+  .id-card-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .id-value {
+    font-size: 1.15rem;
+  }
+
+  .id-card-photo-panel {
+    align-items: flex-start;
   }
 
   .id-card-photo {
-    width: 108px;
-    height: 132px;
+    width: 148px;
+    height: 178px;
   }
 
-  .id-row {
-    grid-template-columns: 88px minmax(0, 1fr);
+  .id-card-vicroads-logo {
+    width: 118px;
   }
 }

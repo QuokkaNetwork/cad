@@ -185,31 +185,57 @@
     <div id="idCardOverlay" class="id-card-overlay hidden" aria-hidden="true">
       <section class="id-card" role="dialog" aria-modal="false" aria-labelledby="idCardTitle">
         <header class="id-card-header">
-          <div class="id-card-brand">
-            <img class="id-card-logo" src="vicroads-logo.jpg" alt="VicRoads" />
-            <div>
-              <div class="id-card-eyebrow">VicRoads Photo Licence</div>
-              <div class="id-card-brand-subtitle">Victorian Registration Authority</div>
-            </div>
+          <div class="id-card-banner">
+            <div class="id-card-banner-line1">DRIVER LICENCE</div>
+            <div class="id-card-banner-line2">VICTORIA AUSTRALIA</div>
           </div>
           <button id="idCardCloseBtn" class="icon-btn" type="button" aria-label="Close">x</button>
         </header>
 
-        <h2 id="idCardTitle" class="id-card-title">Driver Licence</h2>
+        <h2 id="idCardTitle" class="id-card-title">Victorian Driver Licence</h2>
         <div id="idCardViewerNote" class="id-card-note"></div>
 
         <div class="id-card-body">
-          <img id="idCardPhoto" class="id-card-photo" alt="Licence photo" />
+          <div class="id-card-main">
+            <div class="id-card-top">
+              <div class="id-card-name-block">
+                <span class="id-card-top-label">Name</span>
+                <span id="idCardName" class="id-card-name"></span>
+              </div>
+              <div class="id-card-licence-block">
+                <span class="id-card-top-label">Licence No.</span>
+                <span id="idCardNumber" class="id-card-licence-no"></span>
+              </div>
+            </div>
 
-          <div class="id-card-fields">
-            <div class="id-row"><span class="id-label">Name</span><span id="idCardName" class="id-value"></span></div>
-            <div class="id-row"><span class="id-label">DOB</span><span id="idCardDob" class="id-value"></span></div>
-            <div class="id-row"><span class="id-label">Gender</span><span id="idCardGender" class="id-value"></span></div>
-            <div class="id-row"><span class="id-label">Licence No.</span><span id="idCardNumber" class="id-value"></span></div>
-            <div class="id-row"><span class="id-label">Class</span><span id="idCardClasses" class="id-value"></span></div>
-            <div class="id-row"><span class="id-label">Status</span><span id="idCardStatus" class="id-value"></span></div>
-            <div class="id-row"><span class="id-label">Expiry</span><span id="idCardExpiry" class="id-value"></span></div>
-            <div class="id-row"><span class="id-label">Conditions</span><span id="idCardConditions" class="id-value"></span></div>
+            <div class="id-card-bottom-grid">
+              <div class="id-card-field">
+                <span class="id-label">Licence Expiry</span>
+                <span id="idCardExpiry" class="id-value"></span>
+              </div>
+              <div class="id-card-field">
+                <span class="id-label">Date Of Birth</span>
+                <span id="idCardDob" class="id-value"></span>
+              </div>
+              <div class="id-card-field">
+                <span class="id-label">Licence Type</span>
+                <span id="idCardClasses" class="id-value"></span>
+              </div>
+              <div class="id-card-field">
+                <span class="id-label">Conditions</span>
+                <span id="idCardConditions" class="id-value"></span>
+              </div>
+            </div>
+
+            <div class="id-card-meta">
+              <span class="id-card-meta-chip">Status: <strong id="idCardStatus"></strong></span>
+              <span class="id-card-meta-chip">Gender: <strong id="idCardGender"></strong></span>
+            </div>
+          </div>
+
+          <div class="id-card-photo-panel">
+            <img id="idCardPhoto" class="id-card-photo" alt="Licence photo" />
+            <img class="id-card-vicroads-logo" src="vicroads-logo.jpg" alt="VicRoads" />
           </div>
         </div>
 
