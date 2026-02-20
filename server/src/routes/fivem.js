@@ -20,6 +20,7 @@ const {
   VoiceParticipants,
   Bolos,
 } = require('../db/sqlite');
+const { getVehicleByPlate } = require('../db/qbox');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
 const liveMapStore = require('../services/liveMapStore');
@@ -1817,7 +1818,7 @@ router.get('/licenses/:citizenid', requireBridgeAuth, (req, res) => {
 });
 
 // Create/update a vehicle registration from in-game CAD bridge UI.
-router.post('/registrations', requireBridgeAuth, (req, res) => {
+router.post('/registrations', requireBridgeAuth, async (req, res) => {
   try {
     VehicleRegistrations.markExpiredDue();
 
@@ -1854,6 +1855,36 @@ router.post('/registrations', requireBridgeAuth, (req, res) => {
     if (!plate) {
       logBridgeDocumentReject('registration', 400, 'missing_plate', payloadSummary);
       return res.status(400).json({ error: 'plate is required to create registration' });
+    }
+    const normalizedPlate = normalizePlateKey(plate);
+    if (!normalizedPlate) {
+      logBridgeDocumentReject('registration', 400, 'invalid_plate', payloadSummary);
+      return res.status(400).json({ error: 'plate is invalid' });
+    }
+    if (!citizenId) {
+      logBridgeDocumentReject('registration', 400, 'missing_citizenid', payloadSummary);
+      return res.status(400).json({ error: 'citizenid is required to create registration' });
+    }
+
+    let ownedVehicle = null;
+    try {
+      ownedVehicle = await getVehicleByPlate(plate);
+    } catch (lookupError) {
+      console.error('[FiveMBridge] Failed to verify registration ownership against QBox:', {
+        error: lookupError?.message || String(lookupError),
+        plate: normalizedPlate,
+        citizenid: citizenId,
+      });
+      return res.status(503).json({ error: 'Unable to verify vehicle ownership right now' });
+    }
+    const ownerCitizenId = String(ownedVehicle?.owner || '').trim();
+    if (!ownedVehicle || !ownerCitizenId || ownerCitizenId.toLowerCase() !== citizenId.toLowerCase()) {
+      logBridgeDocumentReject('registration', 403, 'ownership_mismatch', {
+        ...payloadSummary,
+        plate: normalizedPlate,
+        citizenid: citizenId,
+      });
+      return res.status(403).json({ error: 'You do not own this vehicle in player_vehicles' });
     }
 
     const ownerName = String(payload.owner_name || payload.character_name || payload.full_name || playerName).trim();

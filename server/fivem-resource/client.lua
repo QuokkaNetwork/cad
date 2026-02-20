@@ -863,35 +863,22 @@ local function isVehicleUsableForRegistration(vehicle)
   if not vehicle or vehicle == 0 then return false end
   if not DoesEntityExist(vehicle) then return false end
   if not IsEntityAVehicle(vehicle) then return false end
-  local speed = tonumber(GetEntitySpeed(vehicle)) or 0.0
-  local engineOn = IsVehicleEngineOn(vehicle) == true
-  local inAir = IsEntityInAir(vehicle) == true
-  if inAir then return false end
-  if speed <= 3.0 then return true end
-  if (not engineOn) and speed <= 6.0 then return true end
-  return false
+  return true
 end
 
-local function findNearestParkedVehicle(origin, radius)
+local function findNearestVehicleInRadius(origin, radius)
   local vehicles = GetGamePool('CVehicle')
   if type(vehicles) ~= 'table' or not origin then return 0, 999999.0 end
 
   local maxRadius = tonumber(radius) or 8.0
   if maxRadius < 2.0 then maxRadius = 2.0 end
-  local fallbackRadius = math.max(maxRadius, maxRadius * 1.75, 35.0)
   local bestVehicle = 0
   local bestDistance = maxRadius + 0.001
-  local fallbackVehicle = 0
-  local fallbackDistance = fallbackRadius + 0.001
 
   for _, vehicle in ipairs(vehicles) do
     if vehicle and vehicle ~= 0 and DoesEntityExist(vehicle) then
       local coords = GetEntityCoords(vehicle)
       local dist2d = distanceBetweenVec2(coords, origin)
-      if dist2d <= fallbackRadius and dist2d < fallbackDistance then
-        fallbackDistance = dist2d
-        fallbackVehicle = vehicle
-      end
       if dist2d <= maxRadius and dist2d < bestDistance and isVehicleUsableForRegistration(vehicle) then
         bestDistance = dist2d
         bestVehicle = vehicle
@@ -899,9 +886,7 @@ local function findNearestParkedVehicle(origin, radius)
     end
   end
 
-  if bestVehicle == 0 then
-    return fallbackVehicle or 0, fallbackDistance or 999999.0
-  end
+  if bestVehicle == 0 then return 0, 999999.0 end
   return bestVehicle, bestDistance
 end
 
@@ -922,15 +907,11 @@ local function getCurrentVehicleRegistrationDefaults(registrationParking)
   local zoneRadius = tonumber(parking.radius or 0) or 0
 
   local searchOrigin = zoneCoords or playerCoords
-  local searchRadius = zoneRadius > 0 and math.max(8.0, zoneRadius) or 10.0
-  local vehicle, vehicleDistance = findNearestParkedVehicle(searchOrigin, searchRadius)
+  local searchRadius = zoneRadius > 0 and zoneRadius or 10.0
+  local vehicle = findNearestVehicleInRadius(searchOrigin, searchRadius)
 
   if not vehicle or vehicle == 0 then
-    payload.error_message = 'No parked vehicle found in the registration area.'
-    return payload
-  end
-  if not isVehicleUsableForRegistration(vehicle) then
-    payload.error_message = ('Nearest vehicle found (%.1fm) but it is moving. Park it and try again.'):format(tonumber(vehicleDistance) or 0.0)
+    payload.error_message = 'No vehicle found in the registration area.'
     return payload
   end
 
