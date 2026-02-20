@@ -102,7 +102,7 @@ function getMapBounds(map, tileConfig) {
   return latLngBounds(southWest, northEast);
 }
 
-function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration, gameBounds) {
+function convertToMapLatLng(rawX, rawY, map, tileConfig) {
   const x = Number(rawX);
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !map) return null;
@@ -112,30 +112,19 @@ function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration, gameBounds
   const latLng1 = map.unproject([0, 0], 0);
   const latLng2 = map.unproject([width / 2, height - tileConfig.tileSize], 0);
 
-  const denomX = Number(gameBounds.x1) - Number(gameBounds.x2);
-  const denomY = Number(gameBounds.y1) - Number(gameBounds.y2);
+  const denomX = DEFAULT_GAME_BOUNDS.x1 - DEFAULT_GAME_BOUNDS.x2;
+  const denomY = DEFAULT_GAME_BOUNDS.y1 - DEFAULT_GAME_BOUNDS.y2;
   if (Math.abs(denomX) < 0.0001 || Math.abs(denomY) < 0.0001) return null;
 
-  const projectedLng = latLng1.lng + ((x - Number(gameBounds.x1)) * (latLng1.lng - latLng2.lng)) / denomX;
-  const projectedLat = latLng1.lat + ((y - Number(gameBounds.y1)) * (latLng1.lat - latLng2.lat)) / denomY;
-  const baseLatLng = { lat: projectedLat, lng: projectedLng };
-  const baseProjected = map.project(baseLatLng, 0);
-  let projectedX = baseProjected.x;
-  let projectedY = baseProjected.y;
+  const projectedLng = latLng1.lng + ((x - DEFAULT_GAME_BOUNDS.x1) * (latLng1.lng - latLng2.lng)) / denomX;
+  const projectedLat = latLng1.lat + ((y - DEFAULT_GAME_BOUNDS.y1) * (latLng1.lat - latLng2.lat)) / denomY;
+  const baseProjected = map.project({ lat: projectedLat, lng: projectedLng }, 0);
+  const projectedX = baseProjected.x;
+  const projectedY = baseProjected.y;
 
-  const hasCalibration = calibration.scaleX !== 1
-    || calibration.scaleY !== 1
-    || calibration.offsetX !== 0
-    || calibration.offsetY !== 0;
-  if (hasCalibration) {
-    projectedX = (projectedX * calibration.scaleX) + calibration.offsetX;
-    projectedY = (projectedY * calibration.scaleY) + calibration.offsetY;
-  }
-
-  const adjustedLatLng = map.unproject([projectedX, projectedY], 0);
   return {
-    lat: adjustedLatLng.lat,
-    lng: adjustedLatLng.lng,
+    lat: projectedLat,
+    lng: projectedLng,
     projectedX,
     projectedY,
     outOfBounds: projectedX < 0 || projectedY < 0 || projectedX > width || projectedY > height,
@@ -166,9 +155,7 @@ function MapBoundsController({ tileConfig, resetSignal, onMapReady }) {
     map.fitBounds(bounds, { animate: false });
     map.setMinZoom(tileConfig.minZoom);
     map.setMaxZoom(tileConfig.maxZoom);
-    if (map.getZoom() < tileConfig.minZoom || map.getZoom() > tileConfig.maxZoom) {
-      map.setZoom(Math.max(tileConfig.minZoom, Math.min(0, tileConfig.maxZoom)));
-    }
+    map.setZoom(tileConfig.minZoom);
 
     appliedRef.current = key;
   }, [map, tileConfig, resetSignal, onMapReady]);
@@ -198,8 +185,7 @@ export default function LiveMap({ isPopout = false }) {
   const [mapOffsetY, setMapOffsetY] = useState(0);
   const [calibrationStep, setCalibrationStep] = useState(DEFAULT_CALIBRATION_INCREMENT);
   const [scaleStep, setScaleStep] = useState(DEFAULT_SCALE_INCREMENT);
-  const [adminCalibrationVisible, setAdminCalibrationVisible] = useState(true);
-  const [gameBounds, setGameBounds] = useState(DEFAULT_GAME_BOUNDS);
+  const [adminCalibrationVisible, setAdminCalibrationVisible] = useState(false);
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [mapConfigError, setMapConfigError] = useState('');
@@ -230,7 +216,7 @@ export default function LiveMap({ isPopout = false }) {
 
       setTileConfig({
         mapAvailable,
-        tileUrlTemplate: String(cfg?.tile_url_template || DEFAULT_TILE_URL_TEMPLATE).trim() || DEFAULT_TILE_URL_TEMPLATE,
+        tileUrlTemplate: DEFAULT_TILE_URL_TEMPLATE,
         // Match SnailyCAD map configuration exactly.
         tileSize: DEFAULT_TILE_SIZE,
         tileRows: DEFAULT_TILE_ROWS,
@@ -250,14 +236,7 @@ export default function LiveMap({ isPopout = false }) {
         setCalibrationStep(parseCalibrationIncrement(cfg?.map_calibration_increment, DEFAULT_CALIBRATION_INCREMENT));
         setScaleStep(parseCalibrationIncrement(cfg?.map_scale_increment, DEFAULT_SCALE_INCREMENT));
       }
-      setAdminCalibrationVisible(cfg?.admin_calibration_visible !== false);
-      const cfgBounds = cfg?.map_game_bounds || {};
-      setGameBounds({
-        x1: parseMapNumber(cfgBounds?.x1 ?? cfg?.map_game_x1, DEFAULT_GAME_BOUNDS.x1),
-        y1: parseMapNumber(cfgBounds?.y1 ?? cfg?.map_game_y1, DEFAULT_GAME_BOUNDS.y1),
-        x2: parseMapNumber(cfgBounds?.x2 ?? cfg?.map_game_x2, DEFAULT_GAME_BOUNDS.x2),
-        y2: parseMapNumber(cfgBounds?.y2 ?? cfg?.map_game_y2, DEFAULT_GAME_BOUNDS.y2),
-      });
+      setAdminCalibrationVisible(false);
 
       if (!mapAvailable) {
         const missingText = missingTiles.length > 0 ? ` Missing: ${missingTiles.join(', ')}` : '';
@@ -448,23 +427,16 @@ export default function LiveMap({ isPopout = false }) {
     return () => clearInterval(id);
   }, [deptId, fetchMapConfig, fetchPlayers, recoveringStaleFeed]);
 
-  const calibration = useMemo(() => ({
-    scaleX: mapScaleX,
-    scaleY: mapScaleY,
-    offsetX: mapOffsetX,
-    offsetY: mapOffsetY,
-  }), [mapOffsetX, mapOffsetY, mapScaleX, mapScaleY]);
-
   const markers = useMemo(() => {
     if (!mapInstance) return [];
     return players
       .map((player) => {
-        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, calibration, gameBounds);
+        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig);
         if (!latLng) return null;
         return { player, latLng };
       })
       .filter(Boolean);
-  }, [players, mapInstance, tileConfig, calibration, gameBounds]);
+  }, [players, mapInstance, tileConfig]);
   const outOfBoundsCount = useMemo(() => markers.filter((m) => m?.latLng?.outOfBounds === true).length, [markers]);
 
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;
@@ -681,7 +653,7 @@ export default function LiveMap({ isPopout = false }) {
             zoom={tileConfig.minZoom}
             minZoom={tileConfig.minZoom}
             maxZoom={tileConfig.maxZoom}
-            zoomControl
+            zoomControl={false}
             className="w-full h-full"
           >
             <MapBoundsController
@@ -738,7 +710,7 @@ export default function LiveMap({ isPopout = false }) {
       )}
       {!error && outOfBoundsCount > 0 && (
         <p className="text-xs text-amber-300">
-          {outOfBoundsCount} marker{outOfBoundsCount !== 1 ? 's are' : ' is'} outside tile bounds. This usually means map scale/bounds need recalibration.
+          {outOfBoundsCount} marker{outOfBoundsCount !== 1 ? 's are' : ' is'} outside tile bounds. This usually means tiles or map bounds do not match Snaily defaults.
         </p>
       )}
       {staleSinceAt && (
