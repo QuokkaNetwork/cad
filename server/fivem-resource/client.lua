@@ -1914,7 +1914,8 @@ local function spawnDocumentPed(pedConfig)
   local z = tonumber(coords.z) or 0.0
   local w = tonumber(coords.w) or 0.0
   requestPedSpawnCollision(x, y, z, 1800)
-  local spawnZ = resolveGroundZForPed(x, y, z)
+  local configuredZ = z + 0.0
+  local spawnZ = configuredZ
 
   local modelHash = loadPedModel(pedConfig.model or '')
   if not modelHash then
@@ -1933,6 +1934,12 @@ local function spawnDocumentPed(pedConfig)
   if type(groundedZ) == 'number' then
     spawnZ = groundedZ
   end
+  local minAllowedZ = configuredZ - 0.02
+  if spawnZ < minAllowedZ then
+    spawnZ = configuredZ
+    SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ, false, false, false)
+    SetEntityHeading(entity, w + 0.0)
+  end
   SetEntityInvincible(entity, true)
   SetBlockingOfNonTemporaryEvents(entity, true)
   SetPedCanRagdoll(entity, false)
@@ -1940,6 +1947,13 @@ local function spawnDocumentPed(pedConfig)
   local scenario = trim(pedConfig.scenario or '')
   if scenario ~= '' then
     TaskStartScenarioInPlace(entity, scenario, 0, true)
+    Wait(75)
+    local afterScenarioCoords = GetEntityCoords(entity)
+    local afterScenarioZ = tonumber(afterScenarioCoords and afterScenarioCoords.z) or spawnZ
+    if afterScenarioZ < minAllowedZ then
+      SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ, false, false, false)
+      SetEntityHeading(entity, w + 0.0)
+    end
   end
   FreezeEntityPosition(entity, true)
 
