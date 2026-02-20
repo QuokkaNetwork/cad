@@ -609,7 +609,11 @@ local function captureMugshotViaScreenshot()
 
   local screenshotOptions = {
     encoding = trim(Config.ScreenshotEncoding or 'jpg'):lower(),
-    quality = tonumber(Config.ScreenshotQuality or 0.95) or 0.95,
+    quality = tonumber(Config.ScreenshotQuality or 0.7) or 0.7,
+    -- Cap resolution for mugshots — a face photo does not need 1080p.
+    -- Keeps base64 size under FiveM's ~1MB TriggerServerEvent limit.
+    maxWidth = 512,
+    maxHeight = 512,
   }
 
   local ok = pcall(function()
