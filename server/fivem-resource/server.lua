@@ -1040,6 +1040,82 @@ local function countList(value)
   return count
 end
 
+-- ---------------------------------------------------------------------------
+-- Mugshot file persistence
+-- ---------------------------------------------------------------------------
+-- Saves base64 mugshot data to a local file inside the resource so a copy
+-- is always retained on the server regardless of CAD upload outcome.
+-- Files are stored under mugshots/<citizenid>_<timestamp>.<ext>
+-- Returns the relative file path on success, or '' on failure.
+-- ---------------------------------------------------------------------------
+
+local function saveMugshotFile(citizenid, base64Data)
+  if trim(base64Data) == '' then return '' end
+  if trim(citizenid) == '' then return '' end
+
+  -- Strip the data URI prefix if present to get raw base64.
+  local mimeType = 'image/jpg'
+  local rawBase64 = base64Data
+  local dataUriPrefix = base64Data:match('^(data:image/[^;]+;base64,)')
+  if dataUriPrefix then
+    mimeType = dataUriPrefix:match('data:(image/[^;]+);') or mimeType
+    rawBase64 = base64Data:sub(#dataUriPrefix + 1)
+  end
+
+  -- Determine file extension from mime type.
+  local extMap = {
+    ['image/jpeg'] = 'jpg',
+    ['image/jpg'] = 'jpg',
+    ['image/png'] = 'png',
+    ['image/webp'] = 'webp',
+  }
+  local ext = extMap[mimeType:lower()] or 'jpg'
+
+  -- Decode base64 to binary.
+  -- FiveM server-side Lua does not have a built-in base64 decoder, but we
+  -- can use the raw base64 string and let SaveResourceFile handle it if the
+  -- data is already decoded, or we decode manually.
+  local decodeOk, binaryData = pcall(function()
+    -- FiveM's Lua runtime does not expose a native base64 decode. We use a
+    -- pure-Lua implementation that is compatible with server-side scripting.
+    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    rawBase64 = rawBase64:gsub('[^' .. b .. '=]', '')
+    return (rawBase64:gsub('.', function(x)
+      if x == '=' then return '' end
+      local r, f = '', (b:find(x) - 1)
+      for i = 6, 1, -1 do r = r .. (f % 2^i - f % 2^(i-1) > 0 and '1' or '0') end
+      return r
+    end):gsub('%d%d%d?%d?%d?%d?%d?%d', function(x)
+      if #x ~= 8 then return '' end
+      local c = 0
+      for i = 1, 8 do c = c + (x:sub(i, i) == '1' and 2^(8-i) or 0) end
+      return string.char(c)
+    end))
+  end)
+
+  if not decodeOk or not binaryData or #binaryData == 0 then
+    print(('[cad_bridge] WARNING: Failed to decode mugshot base64 for citizenid=%s'):format(citizenid))
+    return ''
+  end
+
+  -- Sanitise citizenid for use in a filename.
+  local safeCitizenId = citizenid:gsub('[^%w%-_]', '_')
+  local timestamp = os.time()
+  local fileName = ('mugshots/%s_%d.%s'):format(safeCitizenId, timestamp, ext)
+
+  local saveOk = pcall(function()
+    SaveResourceFile(GetCurrentResourceName(), fileName, binaryData, #binaryData)
+  end)
+
+  if not saveOk then
+    print(('[cad_bridge] WARNING: Failed to save mugshot file %s for citizenid=%s'):format(fileName, citizenid))
+    return ''
+  end
+
+  print(('[cad_bridge] Mugshot saved to file: %s (%d bytes) for citizenid=%s'):format(fileName, #binaryData, citizenid))
+  return fileName
+end
+
 local function summarizeLicensePayloadForLog(payload)
   local data = type(payload) == 'table' and payload or {}
   local mugshotData = trim(data.mugshot_data or '')
@@ -1181,6 +1257,15 @@ local function submitDriverLicense(src, formData)
   print(('[cad_bridge] License payload: citizenid=%q name=%q dob=%q mugshot_data_len=%d mugshot_url_len=%d'):format(
     trim(payload.citizenid or ''), trim(payload.full_name or ''),
     trim(payload.date_of_birth or ''), #trim(payload.mugshot_data or ''), #trim(payload.mugshot_url or '')))
+
+  -- Persist mugshot to a local file as a backup copy.
+  if trim(payload.mugshot_data) ~= '' and trim(payload.citizenid) ~= '' then
+    local savedFile = saveMugshotFile(payload.citizenid, payload.mugshot_data)
+    if savedFile ~= '' then
+      print(('[cad_bridge] Mugshot file persisted: %s'):format(savedFile))
+    end
+  end
+
   logDocumentTrace('license-submit-start', {
     payload = summarizeLicensePayloadForLog(payload),
     form = summarizeLicensePayloadForLog(formData),
