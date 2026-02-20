@@ -25,10 +25,10 @@ const DEFAULT_MAP_OFFSET = 0;
 const DEFAULT_MAP_CALIBRATION_INCREMENT = 0.1;
 const DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE = true;
 const DEFAULT_MAP_GAME_BOUNDS = Object.freeze({
-  x1: -4000,
-  y1: 8000,
-  x2: 4500,
-  y2: -4000,
+  x1: -4230,
+  y1: 8420,
+  x2: 370,
+  y2: -640,
 });
 
 function parseMapNumber(value, fallback) {

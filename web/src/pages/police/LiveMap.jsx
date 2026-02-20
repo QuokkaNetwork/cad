@@ -19,15 +19,16 @@ const DEFAULT_TILE_ROWS = 3;
 const DEFAULT_TILE_COLUMNS = 2;
 const DEFAULT_TILE_URL_TEMPLATE = '/tiles/minimap_sea_{y}_{x}.webp';
 const DEFAULT_MIN_ZOOM = -2;
-const DEFAULT_MAX_ZOOM = 4;
+const DEFAULT_MAX_ZOOM = 2;
 const DEFAULT_NATIVE_ZOOM = 0;
 const DEFAULT_CALIBRATION_INCREMENT = 0.1;
 const DEFAULT_SCALE_INCREMENT = 0.01;
 const DEFAULT_GAME_BOUNDS = Object.freeze({
-  x1: -4000,
-  y1: 8000,
-  x2: 4500,
-  y2: -4000,
+  // Match SnailyCAD map conversion constants exactly.
+  x1: -4230,
+  y1: 8420,
+  x2: 370,
+  y2: -640,
 });
 
 function parseMapNumber(value, fallback) {
@@ -101,34 +102,27 @@ function getMapBounds(map, tileConfig) {
   return latLngBounds(southWest, northEast);
 }
 
-function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration, gameBounds) {
+function convertToMapLatLng(rawX, rawY, map, tileConfig, gameBounds) {
   const x = Number(rawX);
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !map) return null;
 
   const width = tileConfig.tileSize * tileConfig.tileColumns;
   const height = tileConfig.tileSize * tileConfig.tileRows;
-  const gameWidth = Number(gameBounds.x2) - Number(gameBounds.x1);
-  const gameHeight = Number(gameBounds.y1) - Number(gameBounds.y2);
-  if (!Number.isFinite(gameWidth) || !Number.isFinite(gameHeight)) return null;
-  if (Math.abs(gameWidth) < 0.0001 || Math.abs(gameHeight) < 0.0001) return null;
+  const latLng1 = map.unproject([0, 0], 0);
+  const latLng2 = map.unproject([width / 2, height - tileConfig.tileSize], 0);
 
-  // Map full GTA coordinate extents to full tile pixel extents.
-  // This avoids location-dependent drift caused by partial anchor mapping.
-  let projectedX = ((x - Number(gameBounds.x1)) / gameWidth) * width;
-  let projectedY = ((Number(gameBounds.y1) - y) / gameHeight) * height;
+  const denomX = Number(gameBounds.x1) - Number(gameBounds.x2);
+  const denomY = Number(gameBounds.y1) - Number(gameBounds.y2);
+  if (Math.abs(denomX) < 0.0001 || Math.abs(denomY) < 0.0001) return null;
 
-  const hasCalibration = calibration.scaleX !== 1
-    || calibration.scaleY !== 1
-    || calibration.offsetX !== 0
-    || calibration.offsetY !== 0;
+  const projectedLng = latLng1.lng + ((x - Number(gameBounds.x1)) * (latLng1.lng - latLng2.lng)) / denomX;
+  const projectedLat = latLng1.lat + ((y - Number(gameBounds.y1)) * (latLng1.lat - latLng2.lat)) / denomY;
+  const adjustedLatLng = { lat: projectedLat, lng: projectedLng };
 
-  if (hasCalibration) {
-    projectedX = (projectedX * calibration.scaleX) + calibration.offsetX;
-    projectedY = (projectedY * calibration.scaleY) + calibration.offsetY;
-  }
-
-  const adjustedLatLng = map.unproject([projectedX, projectedY], 0);
+  // Keep these debug fields for existing UI warning logic.
+  const projectedX = ((x - Number(gameBounds.x1)) / (Number(gameBounds.x2) - Number(gameBounds.x1))) * width;
+  const projectedY = ((Number(gameBounds.y1) - y) / (Number(gameBounds.y1) - Number(gameBounds.y2))) * height;
   return {
     lat: adjustedLatLng.lat,
     lng: adjustedLatLng.lng,
@@ -227,34 +221,27 @@ export default function LiveMap({ isPopout = false }) {
       setTileConfig({
         mapAvailable,
         tileUrlTemplate: String(cfg?.tile_url_template || DEFAULT_TILE_URL_TEMPLATE).trim() || DEFAULT_TILE_URL_TEMPLATE,
-        tileSize: Math.max(128, Math.round(parseMapNumber(cfg?.tile_size, DEFAULT_TILE_SIZE))),
-        tileRows: Math.max(1, Math.round(parseMapNumber(cfg?.tile_rows, DEFAULT_TILE_ROWS))),
-        tileColumns: Math.max(1, Math.round(parseMapNumber(cfg?.tile_columns, DEFAULT_TILE_COLUMNS))),
-        minZoom: parseMapNumber(cfg?.min_zoom, DEFAULT_MIN_ZOOM),
-        maxZoom: parseMapNumber(cfg?.max_zoom, DEFAULT_MAX_ZOOM),
-        minNativeZoom: parseMapNumber(cfg?.min_native_zoom, DEFAULT_NATIVE_ZOOM),
-        maxNativeZoom: parseMapNumber(cfg?.max_native_zoom, DEFAULT_NATIVE_ZOOM),
+        // Match SnailyCAD map configuration exactly.
+        tileSize: DEFAULT_TILE_SIZE,
+        tileRows: DEFAULT_TILE_ROWS,
+        tileColumns: DEFAULT_TILE_COLUMNS,
+        minZoom: DEFAULT_MIN_ZOOM,
+        maxZoom: DEFAULT_MAX_ZOOM,
+        minNativeZoom: DEFAULT_NATIVE_ZOOM,
+        maxNativeZoom: DEFAULT_NATIVE_ZOOM,
         missingTiles,
       });
 
       if (!calibrationDirty) {
-        setMapScaleX(parseMapNumber(cfg?.map_scale_x, 1));
-        setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
-        setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
-        setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
+        setMapScaleX(1);
+        setMapScaleY(1);
+        setMapOffsetX(0);
+        setMapOffsetY(0);
         setCalibrationStep(parseCalibrationIncrement(cfg?.map_calibration_increment, DEFAULT_CALIBRATION_INCREMENT));
         setScaleStep(parseCalibrationIncrement(cfg?.map_scale_increment, DEFAULT_SCALE_INCREMENT));
       }
-      setAdminCalibrationVisible(cfg?.admin_calibration_visible !== false);
-
-      const cfgBounds = cfg?.map_game_bounds || {};
-      const nextGameBounds = {
-        x1: parseMapNumber(cfgBounds?.x1 ?? cfg?.map_game_x1, DEFAULT_GAME_BOUNDS.x1),
-        y1: parseMapNumber(cfgBounds?.y1 ?? cfg?.map_game_y1, DEFAULT_GAME_BOUNDS.y1),
-        x2: parseMapNumber(cfgBounds?.x2 ?? cfg?.map_game_x2, DEFAULT_GAME_BOUNDS.x2),
-        y2: parseMapNumber(cfgBounds?.y2 ?? cfg?.map_game_y2, DEFAULT_GAME_BOUNDS.y2),
-      };
-      setGameBounds(nextGameBounds);
+      setAdminCalibrationVisible(false);
+      setGameBounds(DEFAULT_GAME_BOUNDS);
 
       if (!mapAvailable) {
         const missingText = missingTiles.length > 0 ? ` Missing: ${missingTiles.join(', ')}` : '';
@@ -445,23 +432,16 @@ export default function LiveMap({ isPopout = false }) {
     return () => clearInterval(id);
   }, [deptId, fetchMapConfig, fetchPlayers, recoveringStaleFeed]);
 
-  const calibration = useMemo(() => ({
-    scaleX: mapScaleX,
-    scaleY: mapScaleY,
-    offsetX: mapOffsetX,
-    offsetY: mapOffsetY,
-  }), [mapOffsetX, mapOffsetY, mapScaleX, mapScaleY]);
-
   const markers = useMemo(() => {
     if (!mapInstance) return [];
     return players
       .map((player) => {
-        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, calibration, gameBounds);
+        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, gameBounds);
         if (!latLng) return null;
         return { player, latLng };
       })
       .filter(Boolean);
-  }, [players, mapInstance, tileConfig, calibration, gameBounds]);
+  }, [players, mapInstance, tileConfig, gameBounds]);
   const outOfBoundsCount = useMemo(() => markers.filter((m) => m?.latLng?.outOfBounds === true).length, [markers]);
 
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;

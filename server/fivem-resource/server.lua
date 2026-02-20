@@ -2519,10 +2519,10 @@ local function submitLiveMapCalibration(src, data)
   local shouldResetToDefault = payload.reset == true or payload.reset == 1
 
   local DEFAULT_GAME_BOUNDS = {
-    x1 = -4000.0,
-    y1 = 8000.0,
-    x2 = 4500.0,
-    y2 = -4000.0,
+    x1 = -4230.0,
+    y1 = 8420.0,
+    x2 = 370.0,
+    y2 = -640.0,
   }
 
   if shouldResetToDefault then
