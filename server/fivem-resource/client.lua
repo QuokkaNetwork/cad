@@ -401,6 +401,7 @@ if documentPromptDistance < documentInteractionDistance then
 end
 local lastDocumentInteractAt = 0
 local documentPeds = {}
+local documentPedBlips = {}
 
 local function hasAnyCadBridgeModalOpen()
   return emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen
@@ -858,20 +859,97 @@ local function getVehicleColourLabel(vehicle)
   return ('%s / %s'):format(primaryLabel, secondaryLabel)
 end
 
-local function getCurrentVehicleRegistrationDefaults()
+local function distanceBetweenVec3(a, b)
+  if type(a) ~= 'table' or type(b) ~= 'table' then return 999999.0 end
+  local ax = tonumber(a.x) or 0.0
+  local ay = tonumber(a.y) or 0.0
+  local az = tonumber(a.z) or 0.0
+  local bx = tonumber(b.x) or 0.0
+  local by = tonumber(b.y) or 0.0
+  local bz = tonumber(b.z) or 0.0
+  local dx = ax - bx
+  local dy = ay - by
+  local dz = az - bz
+  return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+end
+
+local function findNearestVehicle(origin, radius)
+  local vehicles = GetGamePool('CVehicle')
+  if type(vehicles) ~= 'table' or not origin then return 0, 999999.0 end
+
+  local maxRadius = tonumber(radius) or 8.0
+  if maxRadius < 2.0 then maxRadius = 2.0 end
+  local bestVehicle = 0
+  local bestDistance = maxRadius + 0.001
+
+  for _, vehicle in ipairs(vehicles) do
+    if vehicle and vehicle ~= 0 and DoesEntityExist(vehicle) then
+      local coords = GetEntityCoords(vehicle)
+      local dist = distanceBetweenVec3(coords, origin)
+      if dist <= maxRadius and dist < bestDistance then
+        bestDistance = dist
+        bestVehicle = vehicle
+      end
+    end
+  end
+
+  if bestVehicle == 0 then
+    return 0, 999999.0
+  end
+  return bestVehicle, bestDistance
+end
+
+local function getCurrentVehicleRegistrationDefaults(registrationParking)
   local payload = {
     plate = '',
     vehicle_model = '',
     vehicle_colour = '',
+    error_message = '',
   }
 
   local ped = PlayerPedId()
   if not ped or ped == 0 then return payload end
-  if not IsPedInAnyVehicle(ped, false) then return payload end
 
-  local vehicle = GetVehiclePedIsIn(ped, false)
-  if not vehicle or vehicle == 0 then return payload end
-  if GetPedInVehicleSeat(vehicle, -1) ~= ped then return payload end
+  local playerCoords = GetEntityCoords(ped)
+  local parking = type(registrationParking) == 'table' and registrationParking or {}
+  local zoneCoords = type(parking.coords) == 'table' and parking.coords or nil
+  local zoneRadius = tonumber(parking.radius or 0) or 0
+  if zoneCoords and zoneRadius > 0 then
+    local zoneDistance = distanceBetweenVec3(playerCoords, zoneCoords)
+    if zoneDistance > zoneRadius then
+      payload.error_message = ('Move to the registration carpark first (within %sm).'):format(tostring(math.floor(zoneRadius)))
+      return payload
+    end
+  end
+
+  local searchOrigin = zoneCoords or playerCoords
+  local searchRadius = zoneRadius > 0 and math.max(8.0, zoneRadius) or 10.0
+  local vehicle = 0
+
+  if IsPedInAnyVehicle(ped, false) then
+    local currentVehicle = GetVehiclePedIsIn(ped, false)
+    if currentVehicle and currentVehicle ~= 0 then
+      local currentCoords = GetEntityCoords(currentVehicle)
+      if not zoneCoords or distanceBetweenVec3(currentCoords, zoneCoords) <= searchRadius then
+        vehicle = currentVehicle
+      end
+    end
+  end
+
+  if not vehicle or vehicle == 0 then
+    local nearestVehicle = nil
+    nearestVehicle = select(1, findNearestVehicle(searchOrigin, searchRadius))
+    vehicle = nearestVehicle or 0
+  end
+
+  if not vehicle or vehicle == 0 then
+    payload.error_message = 'No parked vehicle found in the registration area.'
+    return payload
+  end
+  if (tonumber(GetEntitySpeed(vehicle)) or 0.0) > 1.5 then
+    payload.error_message = 'Vehicle must be parked before registration.'
+    return payload
+  end
 
   local plate = trim(GetVehicleNumberPlateText(vehicle) or '')
   local modelHash = GetEntityModel(vehicle)
@@ -1062,8 +1140,8 @@ local function openVehicleRegistrationPopup(payload)
     closeDriverLicensePopup()
   end
 
-  local defaults = getCurrentVehicleRegistrationDefaults()
   local nextPayload = payload or {}
+  local defaults = getCurrentVehicleRegistrationDefaults(nextPayload.registration_parking)
   if trim(nextPayload.plate or '') == '' then
     nextPayload.plate = defaults.plate
   end
@@ -1075,7 +1153,10 @@ local function openVehicleRegistrationPopup(payload)
   end
 
   if trim(nextPayload.plate or '') == '' or trim(nextPayload.vehicle_model or '') == '' then
-    local message = 'You must be in the driver seat of a vehicle to auto-fill registration details.'
+    local message = trim(defaults.error_message or '')
+    if message == '' then
+      message = 'Park your vehicle in the registration carpark so details can be auto-filled.'
+    end
     if not triggerCadOxNotify({
       title = 'CAD Registration',
       description = message,
@@ -1226,6 +1307,60 @@ RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
       expiry_at = expiryAt,
     })
     print('[cad_bridge] submitDriverLicense server event triggered successfully')
+  end)
+end)
+
+RegisterNUICallback('cadBridgeLicenseRetakePhoto', function(data, cb)
+  local existing = type(data and data.existing_license) == 'table' and data.existing_license or {}
+  local fullName = trim(existing.full_name or '')
+  local dateOfBirth = trim(existing.date_of_birth or '')
+  local gender = trim(existing.gender or '')
+  local licenseNumber = trim(existing.license_number or '')
+  local expiryAt = trim(existing.expiry_at or '')
+  local classes = {}
+  if type(existing.license_classes) == 'table' then
+    for _, value in ipairs(existing.license_classes) do
+      local normalized = trim(value)
+      if normalized ~= '' then classes[#classes + 1] = normalized:upper() end
+    end
+  end
+  local conditions = {}
+  if type(existing.conditions) == 'table' then
+    for _, value in ipairs(existing.conditions) do
+      local normalized = trim(value)
+      if normalized ~= '' then conditions[#conditions + 1] = normalized end
+    end
+  end
+
+  if fullName == '' or dateOfBirth == '' or gender == '' or #classes == 0 or expiryAt == '' then
+    if cb then cb({ ok = false, error = 'invalid_existing_license' }) end
+    return
+  end
+
+  if cb then cb({ ok = true }) end
+  closeDriverLicensePopup()
+
+  CreateThread(function()
+    Wait(80)
+    print('[cad_bridge] Retake-photo flow: capturing mugshot via server-side screencapture...')
+    local capturedMugshot = captureMugshotUrl()
+    local mugshotData = ''
+    local mugshotUrl = ''
+    if capturedMugshot ~= 'SERVER_CAPTURE' then
+      mugshotData, mugshotUrl = splitMugshotPayload(capturedMugshot)
+    end
+    TriggerServerEvent('cad_bridge:submitDriverLicense', {
+      full_name = fullName,
+      date_of_birth = dateOfBirth,
+      gender = gender,
+      license_number = licenseNumber,
+      license_classes = classes,
+      conditions = conditions,
+      mugshot_data = mugshotData,
+      mugshot_url = mugshotUrl,
+      expiry_at = expiryAt,
+      photo_only = true,
+    })
   end)
 end)
 
@@ -1486,6 +1621,37 @@ local function deleteDocumentPeds()
   documentPeds = {}
 end
 
+local function clearDocumentPedBlips()
+  for i = 1, #documentPedBlips do
+    local blip = documentPedBlips[i]
+    if blip and DoesBlipExist(blip) then
+      RemoveBlip(blip)
+    end
+  end
+  documentPedBlips = {}
+end
+
+local function createDocumentPedBlip(pedConfig)
+  if type(pedConfig) ~= 'table' then return end
+  if pedConfig.allows_registration ~= true then return end
+  local coords = type(pedConfig.coords) == 'table' and pedConfig.coords or nil
+  if not coords then return end
+  local x = tonumber(coords.x) or 0.0
+  local y = tonumber(coords.y) or 0.0
+  local z = tonumber(coords.z) or 0.0
+
+  local blip = AddBlipForCoord(x, y, z)
+  SetBlipSprite(blip, 525)
+  SetBlipDisplay(blip, 4)
+  SetBlipScale(blip, 0.8)
+  SetBlipAsShortRange(blip, true)
+  SetBlipColour(blip, 5)
+  BeginTextCommandSetBlipName('STRING')
+  AddTextComponentString('VicRoads')
+  EndTextCommandSetBlipName(blip)
+  documentPedBlips[#documentPedBlips + 1] = blip
+end
+
 local function drawDocumentHelpText(label)
   BeginTextCommandDisplayHelp('STRING')
   AddTextComponentSubstringPlayerName(tostring(label or 'Press ~INPUT_CONTEXT~ to interact'))
@@ -1494,6 +1660,7 @@ end
 
 CreateThread(function()
   Wait(1000)
+  clearDocumentPedBlips()
   local interactionPeds = Config.DocumentInteractionPeds or {}
   if type(interactionPeds) ~= 'table' or #interactionPeds == 0 then
     interactionPeds = {
@@ -1519,6 +1686,7 @@ CreateThread(function()
   end
   for _, pedConfig in ipairs(interactionPeds) do
     spawnDocumentPed(pedConfig)
+    createDocumentPedBlip(pedConfig)
   end
 end)
 
@@ -1578,6 +1746,7 @@ end)
 
 AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
+  clearDocumentPedBlips()
   deleteDocumentPeds()
   if idCardUiOpen then
     closeShownIdCard()

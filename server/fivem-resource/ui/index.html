@@ -93,9 +93,26 @@
           <input id="licenseNameInput" type="hidden" />
           <input id="licenseDobInput" type="hidden" />
           <input id="licenseGenderInput" type="hidden" />
-          <div class="field">
+
+          <div id="licenseStatusPanel" class="field hidden">
+            <label>Licence Status</label>
+            <p id="licenseStatusMessage" class="subtitle"></p>
+            <div class="actions">
+              <button id="licenseRetakePhotoBtn" class="btn btn-secondary" type="button">Retake Photo</button>
+            </div>
+          </div>
+
+          <div id="licenseQuizPanel" class="field">
             <label>Learner Quiz</label>
             <div id="licenseQuizList" class="form"></div>
+          </div>
+
+          <div id="licensePassPanel" class="field hidden">
+            <label>Result</label>
+            <p id="licensePassMessage" class="subtitle"></p>
+            <div class="actions">
+              <button id="licenseContinuePhotoBtn" class="btn btn-primary" type="button">Continue To Photo</button>
+            </div>
           </div>
 
           <div id="licenseFormError" class="error hidden"></div>

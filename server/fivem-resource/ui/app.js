@@ -20,6 +20,13 @@ var licenseNameInput = document.getElementById("licenseNameInput");
 var licenseDobInput = document.getElementById("licenseDobInput");
 var licenseGenderInput = document.getElementById("licenseGenderInput");
 var licenseQuizList = document.getElementById("licenseQuizList");
+var licenseStatusPanel = document.getElementById("licenseStatusPanel");
+var licenseStatusMessage = document.getElementById("licenseStatusMessage");
+var licenseRetakePhotoBtn = document.getElementById("licenseRetakePhotoBtn");
+var licenseQuizPanel = document.getElementById("licenseQuizPanel");
+var licensePassPanel = document.getElementById("licensePassPanel");
+var licensePassMessage = document.getElementById("licensePassMessage");
+var licenseContinuePhotoBtn = document.getElementById("licenseContinuePhotoBtn");
 var licenseFormError = document.getElementById("licenseFormError");
 
 var registrationOverlay = document.getElementById("registrationOverlay");
@@ -58,6 +65,11 @@ var departments = [];
 var selectedDepartmentIds = [];
 var quizAnswers = {};
 var quizPassPercent = 80;
+var licenseRenewalWindowDays = 3;
+var activeQuizQuestions = [];
+var existingLicenseSnapshot = null;
+var pendingLicenseSubmissionPayload = null;
+var licenseViewMode = "quiz";
 var durationOptions = [];
 var selectedRegistrationDurationDays = 35;
 
@@ -360,7 +372,7 @@ function cancelEmergencyForm() {
   closeEmergencyForm();
 }
 
-var LICENSE_QUIZ_QUESTIONS = [
+var LICENSE_QUIZ_QUESTION_POOL = [
   {
     id: "q1",
     question: "At a STOP sign in Australia, what must you do?",
@@ -410,14 +422,98 @@ var LICENSE_QUIZ_QUESTIONS = [
       "Illegal"
     ],
     answer: 2
+  },
+  {
+    id: "q6",
+    question: "When approaching a roundabout, you must:",
+    options: [
+      "Give way to vehicles already in the roundabout",
+      "Enter first if you are on the right",
+      "Always stop even if clear"
+    ],
+    answer: 0
+  },
+  {
+    id: "q7",
+    question: "A flashing yellow traffic light means:",
+    options: [
+      "Stop and wait",
+      "Proceed with caution and obey give-way rules",
+      "Traffic lights are off so you can ignore signs"
+    ],
+    answer: 1
+  },
+  {
+    id: "q8",
+    question: "In wet weather, your safe following distance should:",
+    options: [
+      "Stay the same as dry conditions",
+      "Be reduced because speeds are lower",
+      "Increase to allow extra stopping distance"
+    ],
+    answer: 2
+  },
+  {
+    id: "q9",
+    question: "You may overtake on the left only when:",
+    options: [
+      "The vehicle ahead is turning right or it is safe in marked lanes",
+      "You are in a hurry",
+      "There is a school zone"
+    ],
+    answer: 0
+  },
+  {
+    id: "q10",
+    question: "Seatbelts must be worn by:",
+    options: [
+      "Driver only",
+      "Front passengers only",
+      "All occupants where fitted"
+    ],
+    answer: 2
+  },
+  {
+    id: "q11",
+    question: "At a pedestrian crossing without lights, you must:",
+    options: [
+      "Give way to pedestrians on or entering the crossing",
+      "Sound horn and continue",
+      "Only stop for children"
+    ],
+    answer: 0
+  },
+  {
+    id: "q12",
+    question: "What should you do before changing lanes?",
+    options: [
+      "Brake hard first",
+      "Check mirrors, blind spot, then indicate",
+      "Only indicate if another car is close"
+    ],
+    answer: 1
   }
 ];
+
+function pickRandomQuizQuestions(count) {
+  var normalizedCount = Number(count);
+  if (!Number.isFinite(normalizedCount) || normalizedCount < 1) normalizedCount = 5;
+  var desiredCount = Math.min(Math.floor(normalizedCount), LICENSE_QUIZ_QUESTION_POOL.length);
+  var pool = LICENSE_QUIZ_QUESTION_POOL.slice(0);
+  for (var i = pool.length - 1; i > 0; i -= 1) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var temp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = temp;
+  }
+  return pool.slice(0, desiredCount);
+}
 
 function renderLicenseQuiz() {
   if (!licenseQuizList) return;
   licenseQuizList.innerHTML = "";
 
-  for (var i = 0; i < LICENSE_QUIZ_QUESTIONS.length; i += 1) {
+  for (var i = 0; i < activeQuizQuestions.length; i += 1) {
     (function renderQuestion(questionObj, questionIndex) {
       var wrapper = document.createElement("div");
       wrapper.className = "field";
@@ -446,23 +542,84 @@ function renderLicenseQuiz() {
 
       wrapper.appendChild(optionsGrid);
       licenseQuizList.appendChild(wrapper);
-    })(LICENSE_QUIZ_QUESTIONS[i], i);
+    })(activeQuizQuestions[i], i);
   }
+}
+
+function setLicenseMode(mode) {
+  licenseViewMode = String(mode || "quiz");
+  setVisible(licenseStatusPanel, licenseViewMode === "blocked");
+  setVisible(licenseQuizPanel, licenseViewMode === "quiz");
+  setVisible(licensePassPanel, licenseViewMode === "pass");
+  if (licenseSubmitBtn) {
+    licenseSubmitBtn.textContent = licenseViewMode === "pass" ? "Processing..." : "Submit Quiz";
+    licenseSubmitBtn.disabled = licenseViewMode !== "quiz";
+  }
+}
+
+function normalizeExistingLicense(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    full_name: String(raw.full_name || "").trim(),
+    date_of_birth: String(raw.date_of_birth || "").trim(),
+    gender: String(raw.gender || "").trim(),
+    license_number: String(raw.license_number || "").trim(),
+    license_classes: sanitizeStringArray(Array.isArray(raw.license_classes) ? raw.license_classes : [], true),
+    conditions: sanitizeStringArray(Array.isArray(raw.conditions) ? raw.conditions : [], false),
+    expiry_at: String(raw.expiry_at || "").trim(),
+    status: String(raw.status || "").trim(),
+    days_until_expiry: Number(raw.days_until_expiry),
+  };
 }
 
 function resetLicenseForm(payload) {
   var data = payload || {};
   quizAnswers = {};
+  activeQuizQuestions = pickRandomQuizQuestions(Number(safeGet(data, "quiz_question_count", 5)) || 5);
   quizPassPercent = Number(safeGet(data, "quiz_pass_percent", 80));
   if (!Number.isFinite(quizPassPercent) || quizPassPercent < 1) quizPassPercent = 80;
+  licenseRenewalWindowDays = Number(safeGet(data, "renewal_window_days", 3));
+  if (!Number.isFinite(licenseRenewalWindowDays) || licenseRenewalWindowDays < 0) licenseRenewalWindowDays = 3;
+  existingLicenseSnapshot = normalizeExistingLicense(safeGet(data, "existing_license", null));
+  pendingLicenseSubmissionPayload = null;
+  if (licenseContinuePhotoBtn) licenseContinuePhotoBtn.disabled = false;
+  if (licenseCancelBtn) licenseCancelBtn.disabled = false;
+  if (licenseCloseBtn) licenseCloseBtn.disabled = false;
+
   if (licenseNameInput) licenseNameInput.value = String(safeGet(data, "full_name", "") || "");
   if (licenseDobInput) {
     licenseDobInput.value = normalizeDateForDateInput(safeGet(data, "date_of_birth", ""));
   }
   if (licenseGenderInput) licenseGenderInput.value = String(safeGet(data, "gender", "") || "");
   renderLicenseQuiz();
-  if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
   showErrorNode(licenseFormError, "");
+
+  var canTakeQuiz = safeGet(data, "can_take_quiz", true) === true;
+  var canRetakePhoto = safeGet(data, "can_retake_photo", false) === true;
+  var expiryText = existingLicenseSnapshot && existingLicenseSnapshot.expiry_at ? existingLicenseSnapshot.expiry_at : "unknown";
+  var statusText = existingLicenseSnapshot && existingLicenseSnapshot.status ? existingLicenseSnapshot.status : "unknown";
+
+  if (!canTakeQuiz) {
+    if (licenseStatusMessage) {
+      licenseStatusMessage.textContent =
+        "You already have a valid licence (status: " + statusText + ", expiry: " + expiryText + "). " +
+        "You can take a new test within " + String(licenseRenewalWindowDays) + " days of expiry.";
+    }
+    if (licenseRetakePhotoBtn) licenseRetakePhotoBtn.disabled = !canRetakePhoto;
+    setLicenseMode("blocked");
+    return;
+  }
+
+  if (licenseStatusMessage && existingLicenseSnapshot) {
+    var days = Number(existingLicenseSnapshot.days_until_expiry);
+    if (Number.isFinite(days)) {
+      licenseStatusMessage.textContent = "Current licence found. Days until expiry: " + String(days) + ".";
+    } else {
+      licenseStatusMessage.textContent = "";
+    }
+  }
+  if (licenseRetakePhotoBtn) licenseRetakePhotoBtn.disabled = !canRetakePhoto;
+  setLicenseMode("quiz");
 }
 
 function openLicenseForm(payload) {
@@ -482,6 +639,7 @@ function closeLicenseForm() {
 }
 
 async function submitLicenseForm() {
+  if (licenseViewMode !== "quiz") return;
   var fullName = String(licenseNameInput && licenseNameInput.value || "").trim();
   var dateOfBirth = String(licenseDobInput && licenseDobInput.value || "").trim();
   var gender = String(licenseGenderInput && licenseGenderInput.value || "").trim();
@@ -492,20 +650,20 @@ async function submitLicenseForm() {
 
   var answered = 0;
   var correct = 0;
-  for (var i = 0; i < LICENSE_QUIZ_QUESTIONS.length; i += 1) {
-    var questionObj = LICENSE_QUIZ_QUESTIONS[i];
+  for (var i = 0; i < activeQuizQuestions.length; i += 1) {
+    var questionObj = activeQuizQuestions[i];
     var selected = Number(quizAnswers[questionObj.id]);
     if (!Number.isInteger(selected)) continue;
     answered += 1;
     if (selected === Number(questionObj.answer)) correct += 1;
   }
 
-  if (answered < LICENSE_QUIZ_QUESTIONS.length) {
+  if (answered < activeQuizQuestions.length) {
     showErrorNode(licenseFormError, "Please answer every question.");
     return;
   }
 
-  var scorePercent = Math.floor((correct / LICENSE_QUIZ_QUESTIONS.length) * 100);
+  var scorePercent = Math.floor((correct / activeQuizQuestions.length) * 100);
   if (scorePercent < quizPassPercent) {
     showErrorNode(
       licenseFormError,
@@ -514,10 +672,7 @@ async function submitLicenseForm() {
     return;
   }
 
-  showErrorNode(licenseFormError, "");
-  if (licenseSubmitBtn) licenseSubmitBtn.disabled = true;
-
-  var payload = {
+  pendingLicenseSubmissionPayload = {
     full_name: fullName,
     date_of_birth: dateOfBirth,
     gender: gender,
@@ -526,12 +681,25 @@ async function submitLicenseForm() {
     expiry_days: 30,
     quiz_mode: true,
     quiz_score_percent: scorePercent,
-    quiz_total_questions: LICENSE_QUIZ_QUESTIONS.length,
+    quiz_total_questions: activeQuizQuestions.length,
     quiz_correct_answers: correct
   };
+  if (licensePassMessage) {
+    licensePassMessage.textContent =
+      "Congratulations, you passed with " + String(scorePercent) + "%. " +
+      "Your photo will now be taken for your licence record.";
+  }
+  showErrorNode(licenseFormError, "");
+  setLicenseMode("pass");
+}
 
+async function submitPendingLicenseAfterPass() {
+  if (!pendingLicenseSubmissionPayload) return;
+  if (licenseContinuePhotoBtn) licenseContinuePhotoBtn.disabled = true;
+  if (licenseCancelBtn) licenseCancelBtn.disabled = true;
+  if (licenseCloseBtn) licenseCloseBtn.disabled = true;
   try {
-    var response = await postNui("cadBridgeLicenseSubmit", payload);
+    var response = await postNui("cadBridgeLicenseSubmit", pendingLicenseSubmissionPayload);
     var result = null;
     try {
       result = await response.json();
@@ -540,13 +708,54 @@ async function submitLicenseForm() {
     }
     if (!response.ok || (result && result.ok === false)) {
       showErrorNode(licenseFormError, "Unable to submit quiz result.");
-      if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
+      setLicenseMode("pass");
+      if (licenseContinuePhotoBtn) licenseContinuePhotoBtn.disabled = false;
+      if (licenseCancelBtn) licenseCancelBtn.disabled = false;
+      if (licenseCloseBtn) licenseCloseBtn.disabled = false;
       return;
     }
     closeLicenseForm();
   } catch (_err2) {
     showErrorNode(licenseFormError, "Unable to submit quiz result.");
-    if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
+    setLicenseMode("pass");
+    if (licenseContinuePhotoBtn) licenseContinuePhotoBtn.disabled = false;
+    if (licenseCancelBtn) licenseCancelBtn.disabled = false;
+    if (licenseCloseBtn) licenseCloseBtn.disabled = false;
+  }
+}
+
+async function requestLicensePhotoRetake() {
+  if (!existingLicenseSnapshot) {
+    showErrorNode(licenseFormError, "No existing licence found for photo retake.");
+    return;
+  }
+  if (licenseRetakePhotoBtn) licenseRetakePhotoBtn.disabled = true;
+  if (licenseCancelBtn) licenseCancelBtn.disabled = true;
+  if (licenseCloseBtn) licenseCloseBtn.disabled = true;
+
+  try {
+    var response = await postNui("cadBridgeLicenseRetakePhoto", {
+      existing_license: existingLicenseSnapshot
+    });
+    var result = null;
+    try {
+      result = await response.json();
+    } catch (_err) {
+      result = null;
+    }
+    if (!response.ok || (result && result.ok === false)) {
+      showErrorNode(licenseFormError, "Unable to start photo retake.");
+      if (licenseRetakePhotoBtn) licenseRetakePhotoBtn.disabled = false;
+      if (licenseCancelBtn) licenseCancelBtn.disabled = false;
+      if (licenseCloseBtn) licenseCloseBtn.disabled = false;
+      return;
+    }
+    closeLicenseForm();
+  } catch (_err2) {
+    showErrorNode(licenseFormError, "Unable to start photo retake.");
+    if (licenseRetakePhotoBtn) licenseRetakePhotoBtn.disabled = false;
+    if (licenseCancelBtn) licenseCancelBtn.disabled = false;
+    if (licenseCloseBtn) licenseCloseBtn.disabled = false;
   }
 }
 
@@ -851,6 +1060,16 @@ function initialize() {
   }
   if (licenseCloseBtn) licenseCloseBtn.addEventListener("click", cancelLicenseForm);
   if (licenseCancelBtn) licenseCancelBtn.addEventListener("click", cancelLicenseForm);
+  if (licenseRetakePhotoBtn) {
+    licenseRetakePhotoBtn.addEventListener("click", function onRetakePhotoClick() {
+      requestLicensePhotoRetake();
+    });
+  }
+  if (licenseContinuePhotoBtn) {
+    licenseContinuePhotoBtn.addEventListener("click", function onContinuePhotoClick() {
+      submitPendingLicenseAfterPass();
+    });
+  }
 
   if (registrationForm) {
     registrationForm.addEventListener("submit", function onRegistrationSubmit(event) {

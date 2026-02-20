@@ -758,6 +758,7 @@ local function parseDriverLicenseForm(payload)
     return nil, 'Invalid driver license payload.'
   end
 
+  local photoOnly = payload.photo_only == true or payload.photo_only == 1
   local fullName = trim(payload.full_name or payload.character_name or '')
   local dateOfBirth = normalizeDateOnly(payload.date_of_birth or payload.dob or '')
   local gender = trim(payload.gender or '')
@@ -802,6 +803,7 @@ local function parseDriverLicenseForm(payload)
     expiry_days = math.floor(expiryDays),
     expiry_at = expiryAt,
     status = 'valid',
+    photo_only = photoOnly,
     quiz_mode = quizMode,
   }
 end
@@ -1314,6 +1316,7 @@ end
 local function submitDriverLicense(src, formData)
   local s = tonumber(src)
   if not s then return end
+  local photoOnly = formData and formData.photo_only == true
   print(('[cad_bridge] submitDriverLicense() called for src=%s'):format(tostring(s)))
   if isBridgeBackoffActive('licenses') then
     local waitSeconds = math.max(1, math.ceil(getEffectiveBackoffRemainingMs('licenses') / 1000))
@@ -1340,6 +1343,7 @@ local function submitDriverLicense(src, formData)
     expiry_days = tonumber(formData.expiry_days or Config.DriverLicenseDefaultExpiryDays or 35) or (Config.DriverLicenseDefaultExpiryDays or 35),
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
+    photo_only = photoOnly,
   }
 
   -- Check for server-side captured mugshot (from serverCapture export).
@@ -1386,29 +1390,50 @@ local function submitDriverLicense(src, formData)
     if existingStatus >= 200 and existingStatus < 300 then
       local okExisting, existingParsed = pcall(json.decode, existingBody or '{}')
       if okExisting and type(existingParsed) == 'table' and type(existingParsed.license) == 'table' then
-        local daysUntilExpiry = daysUntilDateOnly(existingParsed.license.expiry_at)
+        local existingLicense = existingParsed.license
+        local daysUntilExpiry = daysUntilDateOnly(existingLicense.expiry_at)
         print(('[cad_bridge] Existing license found: expiry_at=%s daysUntilExpiry=%s status=%s'):format(
-          tostring(existingParsed.license.expiry_at or '?'),
+          tostring(existingLicense.expiry_at or '?'),
           tostring(daysUntilExpiry),
-          tostring(existingParsed.license.status or '?')
+          tostring(existingLicense.status or '?')
         ))
-        if daysUntilExpiry ~= nil and daysUntilExpiry > 3 then
+        if photoOnly then
+          payload.full_name = trim(existingLicense.full_name or payload.full_name)
+          payload.date_of_birth = normalizeDateOnly(existingLicense.date_of_birth or payload.date_of_birth)
+          payload.gender = trim(existingLicense.gender or payload.gender)
+          payload.license_number = trim(existingLicense.license_number or payload.license_number)
+          payload.license_classes = normalizeList(existingLicense.license_classes or payload.license_classes or {}, true)
+          payload.conditions = normalizeList(existingLicense.conditions or payload.conditions or {}, false)
+          payload.expiry_at = normalizeDateOnly(existingLicense.expiry_at or payload.expiry_at)
+          local resolvedDays = daysUntilDateOnly(payload.expiry_at)
+          payload.expiry_days = (resolvedDays and resolvedDays > 0) and resolvedDays or math.floor(payload.expiry_days or 1)
+          if payload.expiry_days < 1 then payload.expiry_days = 1 end
+          print('[cad_bridge] Photo-only licence update requested; skipping renewal window block and fees')
+        elseif daysUntilExpiry ~= nil and daysUntilExpiry > 3 then
           print(('[cad_bridge] BLOCKED: Licence renewal unavailable — %s days until expiry (must be <=3). citizenid=%s'):format(
             tostring(daysUntilExpiry), trim(payload.citizenid or '')))
-          notifyPlayer(s, ('Licence renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(tostring(existingParsed.license.expiry_at or 'unknown')))
+          notifyPlayer(s, ('Licence renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(tostring(existingLicense.expiry_at or 'unknown')))
           return
         end
         print('[cad_bridge] Existing license is within renewal window or expired — proceeding with upsert')
       else
-        print('[cad_bridge] Existing license response could not be parsed — proceeding with create')
+        if photoOnly then
+          notifyPlayer(s, 'Unable to read existing licence record for photo update.')
+          return
+        end
+        print('[cad_bridge] Existing license response could not be parsed - proceeding with create')
       end
     else
-      print(('[cad_bridge] No existing license found (HTTP %s) — proceeding with create'):format(tostring(existingStatus)))
+      if photoOnly then
+        notifyPlayer(s, 'No existing licence record found to update photo.')
+        return
+      end
+      print(('[cad_bridge] No existing license found (HTTP %s) - proceeding with create'):format(tostring(existingStatus)))
     end
 
     local feeAccount = trim(Config.DocumentFeeAccount or 'bank'):lower()
     if feeAccount == '' then feeAccount = 'bank' end
-    local feeAmount = resolveDocumentFeeAmount(Config.DriverLicenseFeesByDays or {}, payload.expiry_days)
+    local feeAmount = photoOnly and 0 or resolveDocumentFeeAmount(Config.DriverLicenseFeesByDays or {}, payload.expiry_days)
     print(('[cad_bridge] Fee check: amount=%s required=%s account=%s'):format(
       tostring(feeAmount), tostring(Config.RequireDocumentFeePayment == true), feeAccount))
     local feeCharged = false
@@ -1514,7 +1539,8 @@ local function submitDriverLicense(src, formData)
             expiry_at = trim(expiryAt or ''),
             saved_without_photo = savedWithoutPhoto == true,
           }, true)
-          notifyPlayer(s, ('Driver licence saved to CAD. Status: VALID%s%s%s%s%s%s'):format(
+          notifyPlayer(s, ('Driver licence saved to CAD%s%s%s%s%s%s%s'):format(
+            photoOnly and ' | Photo updated' or '. Status: VALID',
             expiryAt ~= '' and ' | Expires: ' or '',
             expiryAt ~= '' and expiryAt or '',
             feeCharged and ' | Charged: ' or '',
@@ -2319,17 +2345,60 @@ local function openDriverLicensePromptForSource(src, pedId)
   local defaults = getCharacterDefaults(src)
   local defaultExpiryDays = tonumber(Config.DriverLicenseQuizExpiryDays or 30) or 30
   if defaultExpiryDays < 1 then defaultExpiryDays = 30 end
-  TriggerClientEvent('cad_bridge:promptDriverLicense', src, {
+  local citizenId = trim(defaults.citizenid or getCitizenId(src) or '')
+  local payload = {
     full_name = defaults.full_name,
     date_of_birth = defaults.date_of_birth,
     gender = defaults.gender,
+    citizenid = citizenId,
     quiz_pass_percent = tonumber(Config.DriverLicenseQuizPassPercent or 80) or 80,
     class_options = Config.DriverLicenseQuizClasses or { 'CAR' },
     default_classes = Config.DriverLicenseQuizClasses or { 'CAR' },
     default_expiry_days = defaultExpiryDays,
     duration_options = { defaultExpiryDays },
     quiz_mode = true,
-  })
+    can_take_quiz = true,
+    can_retake_photo = false,
+    existing_license = nil,
+    renewal_window_days = 3,
+  }
+
+  if citizenId == '' then
+    TriggerClientEvent('cad_bridge:promptDriverLicense', src, payload)
+    return
+  end
+
+  request('GET', '/api/integration/fivem/licenses/' .. urlEncode(citizenId), nil, function(status, body)
+    if status >= 200 and status < 300 then
+      local ok, parsed = pcall(json.decode, body or '{}')
+      if ok and type(parsed) == 'table' and type(parsed.license) == 'table' then
+        local license = parsed.license
+        local expiryAt = trim(license.expiry_at or '')
+        local statusText = trim(license.status or '')
+        local daysUntilExpiry = daysUntilDateOnly(expiryAt)
+        local outsideRenewalWindow = statusText:lower() == 'valid' and daysUntilExpiry ~= nil and daysUntilExpiry > 3
+        payload.existing_license = {
+          full_name = trim(license.full_name or payload.full_name),
+          date_of_birth = normalizeDateOnly(license.date_of_birth or payload.date_of_birth),
+          gender = trim(license.gender or payload.gender),
+          license_number = trim(license.license_number or ''),
+          license_classes = normalizeList(license.license_classes or {}, true),
+          conditions = normalizeList(license.conditions or {}, false),
+          expiry_at = expiryAt,
+          status = statusText,
+          days_until_expiry = daysUntilExpiry,
+        }
+        if outsideRenewalWindow then
+          payload.can_take_quiz = false
+          payload.can_retake_photo = true
+        else
+          payload.can_take_quiz = true
+          payload.can_retake_photo = true
+        end
+      end
+    end
+    TriggerClientEvent('cad_bridge:promptDriverLicense', src, payload)
+  end)
 end
 
 local function openVehicleRegistrationPromptForSource(src, pedId)
@@ -2366,6 +2435,10 @@ local function openVehicleRegistrationPromptForSource(src, pedId)
     owner_name = defaults.full_name,
     duration_options = resolvedDurationOptions,
     default_duration_days = defaultDuration,
+    registration_parking = {
+      coords = type(sourcePed and sourcePed.registration_parking_coords) == 'table' and sourcePed.registration_parking_coords or nil,
+      radius = tonumber(sourcePed and sourcePed.registration_parking_radius or 0) or 0,
+    },
   })
 end
 

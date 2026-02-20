@@ -275,6 +275,8 @@ local DEFAULT_DOCUMENT_INTERACTION_PEDS = {
     scenario = 'WORLD_HUMAN_CLIPBOARD',
     allows_license = true,
     allows_registration = true,
+    registration_parking_coords = { x = 222.96, y = -1387.89, z = 29.54 },
+    registration_parking_radius = 20.0,
   },
   {
     id = 'sandy_pd',

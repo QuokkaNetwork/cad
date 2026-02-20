@@ -133,10 +133,17 @@ function steamHexToSteam64(hexValue) {
 }
 
 function parseIdentifier(identifiers = [], prefix = '') {
-  if (!Array.isArray(identifiers)) return '';
+  let list = [];
+  if (Array.isArray(identifiers)) {
+    list = identifiers;
+  } else if (identifiers && typeof identifiers === 'object') {
+    list = Object.values(identifiers);
+  } else {
+    return '';
+  }
   const normalizedPrefix = `${String(prefix || '').toLowerCase()}:`;
   if (!normalizedPrefix || normalizedPrefix === ':') return '';
-  const hit = identifiers.find(i => typeof i === 'string' && i.toLowerCase().startsWith(normalizedPrefix));
+  const hit = list.find(i => typeof i === 'string' && i.toLowerCase().startsWith(normalizedPrefix));
   if (!hit) return '';
   const raw = String(hit);
   return raw.slice(raw.indexOf(':') + 1).trim();
@@ -1298,6 +1305,17 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
 
   for (const player of players) {
     const ids = resolveLinkIdentifiers(player.identifiers);
+    if (!ids.linkKey) {
+      const fallbackCitizenId = String(player?.citizenid || '').trim().toLowerCase();
+      if (fallbackCitizenId) {
+        ids.linkKey = `citizen:${fallbackCitizenId}`;
+      } else {
+        const fallbackSource = String(player?.source ?? '').trim();
+        if (fallbackSource) {
+          ids.linkKey = `source:${fallbackSource}`;
+        }
+      }
+    }
     if (!ids.linkKey) continue;
     seenLinks.add(ids.linkKey);
     seenLiveMapIdentifiers.add(ids.linkKey);
