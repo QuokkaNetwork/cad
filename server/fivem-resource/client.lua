@@ -1854,7 +1854,7 @@ end
 
 local function placePedOnGroundProperly(entity, x, y, z, heading)
   if not entity or entity == 0 or not DoesEntityExist(entity) then
-    return false
+    return false, tonumber(z) or 0.0
   end
 
   local px = (tonumber(x) or 0.0) + 0.0
@@ -1874,34 +1874,33 @@ local function placePedOnGroundProperly(entity, x, y, z, heading)
   end
 
   local placed = false
-  if type(PlaceEntityOnGroundProperly) == 'function' then
-    local ok, result = pcall(function()
-      return PlaceEntityOnGroundProperly(entity)
-    end)
-    placed = ok and (result == nil or result == true)
-  end
-  if not placed and type(SetPedOnGroundProperly) == 'function' then
-    local ok, result = pcall(function()
-      return SetPedOnGroundProperly(entity)
-    end)
-    placed = ok and (result == nil or result == true)
+  for _ = 1, 3 do
+    if type(PlaceEntityOnGroundProperly) == 'function' then
+      local ok, result = pcall(function()
+        return PlaceEntityOnGroundProperly(entity)
+      end)
+      placed = ok and (result == nil or result == true)
+    end
+    if not placed and type(SetPedOnGroundProperly) == 'function' then
+      local ok, result = pcall(function()
+        return SetPedOnGroundProperly(entity)
+      end)
+      placed = ok and (result == nil or result == true)
+    end
+    if placed then break end
+    Wait(50)
   end
 
   local settledGroundZ = resolveGroundZForPed(px, py, pz)
-  SetEntityCoordsNoOffset(entity, px, py, settledGroundZ + 0.02, false, false, false)
+  local entityCoords = GetEntityCoords(entity)
+  local finalZ = tonumber(entityCoords and entityCoords.z) or settledGroundZ
+  if (not placed) or finalZ < (settledGroundZ - 0.2) then
+    finalZ = settledGroundZ + 0.08
+    SetEntityCoordsNoOffset(entity, px, py, finalZ, false, false, false)
+  end
   SetEntityHeading(entity, h)
 
-  if type(PlaceEntityOnGroundProperly) == 'function' then
-    pcall(function()
-      PlaceEntityOnGroundProperly(entity)
-    end)
-  elseif type(SetPedOnGroundProperly) == 'function' then
-    pcall(function()
-      SetPedOnGroundProperly(entity)
-    end)
-  end
-
-  return placed
+  return placed, finalZ
 end
 
 local function spawnDocumentPed(pedConfig)
@@ -1914,6 +1913,7 @@ local function spawnDocumentPed(pedConfig)
   local y = tonumber(coords.y) or 0.0
   local z = tonumber(coords.z) or 0.0
   local w = tonumber(coords.w) or 0.0
+  requestPedSpawnCollision(x, y, z, 1800)
   local spawnZ = resolveGroundZForPed(x, y, z)
 
   local modelHash = loadPedModel(pedConfig.model or '')
@@ -1922,7 +1922,6 @@ local function spawnDocumentPed(pedConfig)
     return
   end
 
-  requestPedSpawnCollision(x, y, spawnZ, 1800)
   local entity = CreatePed(4, modelHash, x, y, spawnZ + 1.0, w, false, true)
   if not entity or entity == 0 or not DoesEntityExist(entity) then
     print(('[cad_bridge] Failed to create document ped for id=%s'):format(tostring(pedConfig.id or 'unknown')))
@@ -1930,9 +1929,10 @@ local function spawnDocumentPed(pedConfig)
     return
   end
   SetEntityAsMissionEntity(entity, true, true)
-  placePedOnGroundProperly(entity, x, y, spawnZ, w)
-  local settledGroundZ = resolveGroundZForPed(x, y, spawnZ)
-  spawnZ = settledGroundZ
+  local _, groundedZ = placePedOnGroundProperly(entity, x, y, spawnZ, w)
+  if type(groundedZ) == 'number' then
+    spawnZ = groundedZ
+  end
   SetEntityInvincible(entity, true)
   SetBlockingOfNonTemporaryEvents(entity, true)
   SetPedCanRagdoll(entity, false)
@@ -1949,7 +1949,7 @@ local function spawnDocumentPed(pedConfig)
     entity = entity,
     x = x,
     y = y,
-    z = spawnZ + 0.02,
+    z = spawnZ,
     licenseLabel = trim(pedConfig.license_label or ''),
     registrationLabel = trim(pedConfig.registration_label or ''),
     allowsLicense = pedConfig.allows_license == true,
