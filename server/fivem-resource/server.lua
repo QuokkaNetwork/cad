@@ -1167,6 +1167,11 @@ RegisterNetEvent('cad_bridge:requestMugshotCapture', function()
     quality = tonumber(Config.ScreenshotQuality or 0.7) or 0.7,
     maxWidth = 512,
     maxHeight = 512,
+    -- Explicitly disable chroma-key style capture so the real world stays visible.
+    chromaKey = Config.ScreenshotChromaKeyEnabled == true,
+    chroma = Config.ScreenshotChromaKeyEnabled == true,
+    transparent = Config.ScreenshotChromaKeyEnabled == true,
+    disableChromaKey = Config.ScreenshotChromaKeyEnabled ~= true,
   }
 
   print(('[cad_bridge] [screencapture] Calling serverCapture for src=%s encoding=%s quality=%s'):format(

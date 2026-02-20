@@ -478,6 +478,7 @@ Config.ScreenshotQuality = getNumber('cad_bridge_screenshot_quality', 0.7)
 if Config.ScreenshotQuality < 0.1 then Config.ScreenshotQuality = 0.1 end
 if Config.ScreenshotQuality > 1.0 then Config.ScreenshotQuality = 1.0 end
 Config.ScreenshotTimeoutMs = math.max(1000, math.floor(getNumber('cad_bridge_screenshot_timeout_ms', 5000)))
+Config.ScreenshotChromaKeyEnabled = getBoolean('cad_bridge_screenshot_chroma_key_enabled', false)
 Config.MugshotResource = trim(getString('cad_bridge_mugshot_resource', 'MugShotBase64'))
 
 -- Fine/job/jail adapters.

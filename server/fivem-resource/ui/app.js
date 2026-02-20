@@ -1078,7 +1078,7 @@ window.addEventListener("message", function onMessage(event) {
   }
   if (message.action === "cadBridgeMugshot:showBackdrop") {
     var bd = document.getElementById("mugshotBackdrop");
-    if (bd) bd.style.display = "block";
+    if (bd) bd.style.display = "none";
     return;
   }
   if (message.action === "cadBridgeMugshot:hideBackdrop") {

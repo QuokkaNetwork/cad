@@ -596,12 +596,12 @@ local function captureMugshotViaScreenshot()
   local camDist = 0.82
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
-  local camZ = headPos.z + 0.03  -- above eye level so top of head has clearance
+  local camZ = headPos.z + 0.10  -- extra headroom to avoid clipping hair/hats
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
-  -- Aim just below head center — shifts the whole frame up, giving headroom.
-  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.02)
+  -- Aim slightly above head center to keep hair/hat tops inside frame.
+  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z + 0.04)
   -- FOV 30 = tight portrait crop, shoulders overlap the frame edges.
   SetCamFov(cam, 30.0)
   RenderScriptCams(true, false, 0, true, true)
