@@ -606,10 +606,11 @@ select {
 .id-card-photo {
   width: 142px;
   height: 172px;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: top;
   border-radius: 10px;
   border: 1px solid #bad5c5;
-  background: #eaf5ef;
+  background: #ffffff;
 }
 
 .id-card-fields {

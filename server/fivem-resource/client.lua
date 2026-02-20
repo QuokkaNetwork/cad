@@ -538,29 +538,38 @@ local function captureMugshotViaScreenshot()
   end
   local originalHeading = GetEntityHeading(ped)
 
-  -- 1) Trigger the Airforce 2 emote via scully_emotemenu.
-  --    This forces a rigid military attention stance — completely still, arms at sides,
-  --    facing forward. Perfect for an ID/passport photo.
+  -- 1) Freeze the ped and lock heading FIRST, before any animation.
+  FreezeEntityPosition(ped, true)
+  SetEntityHeading(ped, originalHeading)
+  Wait(100)
+
+  -- 2) Trigger the Airforce 2 emote via scully_emotemenu.
+  --    This forces a rigid military attention stance — completely still, arms at sides.
   local hasScully = GetResourceState('scully_emotemenu') == 'started'
   if hasScully then
-    -- Cancel any current emote first, then play airforce2.
     exports['scully_emotemenu']:cancelEmote()
     Wait(200)
     exports['scully_emotemenu']:playEmoteByCommand('airforce2')
   end
 
-  -- Freeze position so ped can't walk, lock heading forward.
-  FreezeEntityPosition(ped, true)
-  SetEntityHeading(ped, originalHeading)
-
   -- Wait for the emote animation to fully settle into its loop pose.
   Wait(1500)
 
-  -- Re-assert heading after animation settles (emotes can rotate the ped).
+  -- 3) Force the ped to face the original heading after the emote settles.
+  --    Emotes can rotate the ped, so we re-assert heading aggressively.
   SetEntityHeading(ped, originalHeading)
-  Wait(200)
+  Wait(100)
+  SetEntityHeading(ped, originalHeading)
 
-  -- 2) Get head bone position for camera framing AFTER the emote has settled.
+  -- Force the ped to look straight ahead using a far-away look-at point.
+  local headingRad = math.rad(originalHeading)
+  local lookX = GetEntityCoords(ped).x + (-math.sin(headingRad)) * 50.0
+  local lookY = GetEntityCoords(ped).y + ( math.cos(headingRad)) * 50.0
+  local lookZ = GetEntityCoords(ped).z + 0.5
+  TaskLookAtCoord(ped, lookX, lookY, lookZ, 5000, 2048 + 16, 2)
+  Wait(500)
+
+  -- 4) Get head bone position for camera framing AFTER the emote and look-at have settled.
   local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
   if not headPos then
     if hasScully then exports['scully_emotemenu']:cancelEmote() end
@@ -568,22 +577,21 @@ local function captureMugshotViaScreenshot()
     return ''
   end
 
-  -- 3) Calculate camera position using heading-based trig.
-  local headingRad = math.rad(originalHeading)
+  -- 5) Calculate camera position using heading-based trig.
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
 
-  -- Camera 1.0m in front of ped head, framed to include head + shoulders.
-  local camDist = 1.0
+  -- Camera 1.1m in front of ped, at nose level to center the head+shoulders frame.
+  local camDist = 1.1
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
-  local camZ = headPos.z - 0.05  -- slightly below eye line to center head+shoulders
+  local camZ = headPos.z - 0.10  -- nose level: head above, shoulders below
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
-  -- Aim below the head center to include shoulders/upper chest in the frame.
-  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.15)
-  -- FOV 35 = wider to include shoulders while keeping a portrait feel.
+  -- Aim at neck/chin area so head has headroom and shoulders are included.
+  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.10)
+  -- FOV 35 = wide enough for shoulders while keeping a portrait feel.
   SetCamFov(cam, 35.0)
   RenderScriptCams(true, false, 0, true, true)
 
