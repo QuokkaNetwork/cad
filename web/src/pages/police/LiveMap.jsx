@@ -250,7 +250,7 @@ export default function LiveMap({ isPopout = false }) {
         setCalibrationStep(parseCalibrationIncrement(cfg?.map_calibration_increment, DEFAULT_CALIBRATION_INCREMENT));
         setScaleStep(parseCalibrationIncrement(cfg?.map_scale_increment, DEFAULT_SCALE_INCREMENT));
       }
-      setAdminCalibrationVisible(false);
+      setAdminCalibrationVisible(cfg?.admin_calibration_visible !== false);
       const cfgBounds = cfg?.map_game_bounds || {};
       setGameBounds({
         x1: parseMapNumber(cfgBounds?.x1 ?? cfg?.map_game_x1, DEFAULT_GAME_BOUNDS.x1),
