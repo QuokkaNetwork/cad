@@ -595,15 +595,22 @@ local function captureMugshotViaScreenshot()
   local drawBackdrop = true
   CreateThread(function()
     while drawBackdrop do
-      -- Scale 10x10x10 — massively oversized to guarantee full frame coverage.
-      DrawMarker(43,
-        backdropX, backdropY, backdropZ,
-        0.0, 0.0, 0.0,            -- direction
-        0.0, 0.0, 0.0,            -- rotation
-        10.0, 10.0, 10.0,         -- scale X, Y, Z — very large to fill entire frame
-        255, 255, 255, 255,       -- RGBA white
-        false, true, 2,           -- bobUpAndDown, faceCamera=true, p19 (2)
-        false, nil, nil, false)   -- rotate, textureDict, textureName, drawOnEnts
+      -- Draw 3 layered white planes at slightly different depths behind the ped.
+      -- Single markers can render semi-transparent; stacking 3 guarantees fully
+      -- opaque solid white regardless of lighting or time-of-day.
+      for layer = 1, 3 do
+        local offset = 0.02 * layer  -- tiny depth offsets so they don't z-fight
+        DrawMarker(43,
+          backdropX - forwardX * offset,
+          backdropY - forwardY * offset,
+          backdropZ,
+          0.0, 0.0, 0.0,            -- direction
+          0.0, 0.0, 0.0,            -- rotation
+          10.0, 10.0, 10.0,         -- scale — very large to fill entire frame
+          255, 255, 255, 255,       -- RGBA white, full alpha
+          false, true, 2,           -- bobUpAndDown, faceCamera=true, p19 (2)
+          false, nil, nil, false)   -- rotate, textureDict, textureName, drawOnEnts
+      end
       Wait(0)
     end
   end)
