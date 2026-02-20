@@ -538,28 +538,32 @@ local function captureMugshotViaScreenshot()
   end
   local originalHeading = GetEntityHeading(ped)
 
-  -- 1) Freeze ped, kill ALL movement: tasks, animations, scenarios, physics.
+  -- 1) Trigger the Airforce 2 emote via scully_emotemenu.
+  --    This forces a rigid military attention stance — completely still, arms at sides,
+  --    facing forward. Perfect for an ID/passport photo.
+  local hasScully = GetResourceState('scully_emotemenu') == 'started'
+  if hasScully then
+    -- Cancel any current emote first, then play airforce2.
+    exports['scully_emotemenu']:cancelEmote()
+    Wait(200)
+    exports['scully_emotemenu']:playEmoteByCommand('airforce2')
+  end
+
+  -- Freeze position so ped can't walk, lock heading forward.
   FreezeEntityPosition(ped, true)
-  ClearPedTasksImmediately(ped)
-  ClearPedSecondaryTask(ped)
-  if type(ClearPedTasks) == 'function' then ClearPedTasks(ped) end
-  SetPedCurrentWeaponVisible(ped, false, true, true, true)
-  -- Stop any ambient scenario the ped might be playing.
-  if type(SetPedCanPlayAmbientAnims) == 'function' then SetPedCanPlayAmbientAnims(ped, false) end
-  if type(SetPedCanPlayAmbientBaseAnims) == 'function' then SetPedCanPlayAmbientBaseAnims(ped, false) end
   SetEntityHeading(ped, originalHeading)
 
-  -- TaskStandStill locks the body completely — no fidgeting, weight shifting, etc.
-  TaskStandStill(ped, 15000)
+  -- Wait for the emote animation to fully settle into its loop pose.
+  Wait(1500)
+
+  -- Re-assert heading after animation settles (emotes can rotate the ped).
+  SetEntityHeading(ped, originalHeading)
   Wait(200)
 
-  -- Re-assert heading after stand still takes effect.
-  SetEntityHeading(ped, originalHeading)
-  Wait(100)
-
-  -- 2) Get head bone position for camera framing.
+  -- 2) Get head bone position for camera framing AFTER the emote has settled.
   local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
   if not headPos then
+    if hasScully then exports['scully_emotemenu']:cancelEmote() end
     if not pedWasFrozen then FreezeEntityPosition(ped, false) end
     return ''
   end
@@ -569,62 +573,46 @@ local function captureMugshotViaScreenshot()
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
 
-  -- Camera 0.85m in front of ped head — closer for a tighter ID crop.
-  local camDist = 0.85
+  -- Camera 0.90m in front of ped head, slightly above eye level to include full head.
+  local camDist = 0.90
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
-  local camZ = headPos.z
+  local camZ = headPos.z + 0.05  -- slightly above eye line so top of head isn't cut off
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
-  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.05)
-  -- FOV 25 = tighter zoom for a real ID/passport photo crop.
-  SetCamFov(cam, 25.0)
+  -- Look at the head center — the +0.05 camera offset ensures full head is in frame.
+  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z)
+  -- FOV 28 = tight but with enough margin to include full head + shoulders.
+  SetCamFov(cam, 28.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  -- 4) Force ped head to look directly at the camera.
-  --    Heading is already locked; TaskLookAtCoord only rotates the head.
-  SetEntityHeading(ped, originalHeading)
-  TaskLookAtCoord(ped, camX, camY, camZ, -1, 2048 + 16, 2)
-
-  -- Wait for head to turn toward camera and settle.
-  Wait(800)
-
-  -- Re-lock heading (TaskLookAtCoord can sometimes drift the body slightly).
-  SetEntityHeading(ped, originalHeading)
-
-  -- 5) White backdrop: place a large flat 3D marker BEHIND the ped.
-  --    DrawMarker type 43 is a flat plane that renders in the 3D world.
-  --    Position 0.3m behind the ped's head (opposite direction from camera).
-  --    Lower it slightly so it covers from above head down to chest/shoulders.
+  -- 4) White backdrop: 3D markers behind the ped, stacked for solid opacity.
   local backdropX = headPos.x - forwardX * 0.3
   local backdropY = headPos.y - forwardY * 0.3
-  local backdropZ = headPos.z - 0.15  -- shift down slightly to cover shoulders
+  local backdropZ = headPos.z - 0.10
 
   local drawBackdrop = true
   CreateThread(function()
     while drawBackdrop do
-      -- Draw 3 layered white planes at slightly different depths behind the ped.
-      -- Single markers can render semi-transparent; stacking 3 guarantees fully
-      -- opaque solid white regardless of lighting or time-of-day.
       for layer = 1, 3 do
-        local offset = 0.02 * layer  -- tiny depth offsets so they don't z-fight
+        local off = 0.02 * layer
         DrawMarker(43,
-          backdropX - forwardX * offset,
-          backdropY - forwardY * offset,
+          backdropX - forwardX * off,
+          backdropY - forwardY * off,
           backdropZ,
-          0.0, 0.0, 0.0,            -- direction
-          0.0, 0.0, 0.0,            -- rotation
-          10.0, 10.0, 10.0,         -- scale — very large to fill entire frame
-          255, 255, 255, 255,       -- RGBA white, full alpha
-          false, true, 2,           -- bobUpAndDown, faceCamera=true, p19 (2)
-          false, nil, nil, false)   -- rotate, textureDict, textureName, drawOnEnts
+          0.0, 0.0, 0.0,
+          0.0, 0.0, 0.0,
+          10.0, 10.0, 10.0,
+          255, 255, 255, 255,
+          false, true, 2,
+          false, nil, nil, false)
       end
       Wait(0)
     end
   end)
 
-  -- 6) Hide HUD during capture.
+  -- 5) Hide HUD during capture.
   local hideUi = true
   CreateThread(function()
     while hideUi do
@@ -641,7 +629,7 @@ local function captureMugshotViaScreenshot()
     end
   end)
 
-  -- Let the camera + backdrop + head look render a few frames.
+  -- Let camera + backdrop render a few frames.
   Wait(600)
 
   -- 6) Tell the server to capture.
@@ -657,15 +645,13 @@ local function captureMugshotViaScreenshot()
     Wait(50)
   end
 
-  -- 7) Cleanup: stop backdrop + HUD threads, restore camera, restore ped state.
+  -- 7) Cleanup: stop backdrop + HUD threads, cancel emote, restore ped.
   drawBackdrop = false
   hideUi = false
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
-  -- Stop all tasks, re-enable ambient anims, restore ped to normal.
+  if hasScully then exports['scully_emotemenu']:cancelEmote() end
   ClearPedTasksImmediately(ped)
-  if type(SetPedCanPlayAmbientAnims) == 'function' then SetPedCanPlayAmbientAnims(ped, true) end
-  if type(SetPedCanPlayAmbientBaseAnims) == 'function' then SetPedCanPlayAmbientBaseAnims(ped, true) end
   SetEntityHeading(ped, originalHeading)
   if not pedWasFrozen then
     FreezeEntityPosition(ped, false)
