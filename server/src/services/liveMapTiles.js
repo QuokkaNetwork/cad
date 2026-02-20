@@ -28,6 +28,44 @@ function ensureLiveMapTilesDir() {
   return liveMapTilesDir;
 }
 
+function fileExists(filePath) {
+  try {
+    return fs.existsSync(filePath);
+  } catch {
+    return false;
+  }
+}
+
+function hasAllTilesInDir(dirPath) {
+  if (!dirPath) return false;
+  const base = path.resolve(String(dirPath));
+  return LIVE_MAP_TILE_NAMES.every((tileName) => {
+    const tilePath = path.join(base, `${tileName}${LIVE_MAP_TILE_EXTENSION}`);
+    return fileExists(tilePath);
+  });
+}
+
+function getFallbackLiveMapTilesDir() {
+  const envDir = String(process.env.LIVE_MAP_FALLBACK_TILES_DIR || '').trim();
+  const candidates = [
+    envDir,
+    path.resolve(process.cwd(), '../snailycad/snaily-cadv4-1.80.2/apps/client/public/tiles'),
+    path.resolve(process.cwd(), '../../snailycad/snaily-cadv4-1.80.2/apps/client/public/tiles'),
+    path.resolve(__dirname, '../../../../snailycad/snaily-cadv4-1.80.2/apps/client/public/tiles'),
+  ].filter(Boolean);
+
+  const seen = new Set();
+  for (const raw of candidates) {
+    const resolved = path.resolve(raw);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    if (hasAllTilesInDir(resolved)) {
+      return resolved;
+    }
+  }
+  return '';
+}
+
 function normalizeTileBaseName(fileName) {
   const parsed = path.parse(String(fileName || '').trim());
   if (parsed.name) return parsed.name;
@@ -39,7 +77,13 @@ function getLiveMapTilePath(tileName) {
 }
 
 function listMissingLiveMapTiles() {
-  return LIVE_MAP_TILE_NAMES.filter((tileName) => !fs.existsSync(getLiveMapTilePath(tileName)));
+  const fallbackDir = getFallbackLiveMapTilesDir();
+  return LIVE_MAP_TILE_NAMES.filter((tileName) => {
+    if (fileExists(getLiveMapTilePath(tileName))) return false;
+    if (!fallbackDir) return true;
+    const fallbackPath = path.join(fallbackDir, `${tileName}${LIVE_MAP_TILE_EXTENSION}`);
+    return !fileExists(fallbackPath);
+  });
 }
 
 function hasCompleteLiveMapTiles() {
@@ -59,6 +103,7 @@ module.exports = {
   LIVE_MAP_MAX_NATIVE_ZOOM,
   liveMapTilesDir,
   ensureLiveMapTilesDir,
+  getFallbackLiveMapTilesDir,
   normalizeTileBaseName,
   getLiveMapTilePath,
   listMissingLiveMapTiles,

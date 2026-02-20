@@ -16,7 +16,7 @@ const { startBot } = require('./discord/bot');
 const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
-const { ensureLiveMapTilesDir } = require('./services/liveMapTiles');
+const { ensureLiveMapTilesDir, getFallbackLiveMapTilesDir } = require('./services/liveMapTiles');
 
 function parseBool(value, fallback = false) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -164,6 +164,11 @@ app.use('/uploads', express.static(uploadsPath));
 const liveMapTilesPath = ensureLiveMapTilesDir();
 fs.mkdirSync(liveMapTilesPath, { recursive: true });
 app.use('/tiles', express.static(liveMapTilesPath));
+const fallbackLiveMapTilesPath = getFallbackLiveMapTilesDir();
+if (fallbackLiveMapTilesPath) {
+  console.log(`[LiveMap] Using fallback tile directory: ${fallbackLiveMapTilesPath}`);
+  app.use('/tiles', express.static(fallbackLiveMapTilesPath));
+}
 
 // Serve static frontend in production
 const distPath = path.join(__dirname, '../../web/dist');
