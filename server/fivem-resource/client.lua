@@ -1841,6 +1841,69 @@ local function resolveGroundZForPed(x, y, fallbackZ)
   return baseZ
 end
 
+local function requestPedSpawnCollision(x, y, z, timeoutMs)
+  local px = (tonumber(x) or 0.0) + 0.0
+  local py = (tonumber(y) or 0.0) + 0.0
+  local pz = (tonumber(z) or 0.0) + 0.0
+  local deadline = (tonumber(GetGameTimer() or 0) or 0) + math.max(250, math.floor(tonumber(timeoutMs) or 1500))
+  repeat
+    RequestCollisionAtCoord(px, py, pz)
+    Wait(0)
+  until (tonumber(GetGameTimer() or 0) or 0) >= deadline
+end
+
+local function placePedOnGroundProperly(entity, x, y, z, heading)
+  if not entity or entity == 0 or not DoesEntityExist(entity) then
+    return false
+  end
+
+  local px = (tonumber(x) or 0.0) + 0.0
+  local py = (tonumber(y) or 0.0) + 0.0
+  local pz = (tonumber(z) or 0.0) + 0.0
+  local h = (tonumber(heading) or 0.0) + 0.0
+
+  SetEntityCoordsNoOffset(entity, px, py, pz + 1.0, false, false, false)
+  SetEntityHeading(entity, h)
+  requestPedSpawnCollision(px, py, pz, 1800)
+
+  local deadline = (tonumber(GetGameTimer() or 0) or 0) + 2000
+  while (tonumber(GetGameTimer() or 0) or 0) < deadline do
+    if HasCollisionLoadedAroundEntity(entity) then break end
+    RequestCollisionAtCoord(px, py, pz)
+    Wait(0)
+  end
+
+  local placed = false
+  if type(PlaceEntityOnGroundProperly) == 'function' then
+    local ok, result = pcall(function()
+      return PlaceEntityOnGroundProperly(entity)
+    end)
+    placed = ok and (result == nil or result == true)
+  end
+  if not placed and type(SetPedOnGroundProperly) == 'function' then
+    local ok, result = pcall(function()
+      return SetPedOnGroundProperly(entity)
+    end)
+    placed = ok and (result == nil or result == true)
+  end
+
+  local settledGroundZ = resolveGroundZForPed(px, py, pz)
+  SetEntityCoordsNoOffset(entity, px, py, settledGroundZ + 0.02, false, false, false)
+  SetEntityHeading(entity, h)
+
+  if type(PlaceEntityOnGroundProperly) == 'function' then
+    pcall(function()
+      PlaceEntityOnGroundProperly(entity)
+    end)
+  elseif type(SetPedOnGroundProperly) == 'function' then
+    pcall(function()
+      SetPedOnGroundProperly(entity)
+    end)
+  end
+
+  return placed
+end
+
 local function spawnDocumentPed(pedConfig)
   if type(pedConfig) ~= 'table' or pedConfig.enabled == false then
     return
@@ -1852,7 +1915,6 @@ local function spawnDocumentPed(pedConfig)
   local z = tonumber(coords.z) or 0.0
   local w = tonumber(coords.w) or 0.0
   local spawnZ = resolveGroundZForPed(x, y, z)
-  local spawnOffsetZ = 0.08
 
   local modelHash = loadPedModel(pedConfig.model or '')
   if not modelHash then
@@ -1860,25 +1922,26 @@ local function spawnDocumentPed(pedConfig)
     return
   end
 
-  RequestCollisionAtCoord(x + 0.0, y + 0.0, spawnZ + 0.0)
+  requestPedSpawnCollision(x, y, spawnZ, 1800)
   local entity = CreatePed(4, modelHash, x, y, spawnZ + 1.0, w, false, true)
-  SetEntityAsMissionEntity(entity, true, true)
-  SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ + spawnOffsetZ, false, false, false)
-  local settledGroundZ = resolveGroundZForPed(x, y, spawnZ)
-  if type(settledGroundZ) == 'number' then
-    spawnZ = settledGroundZ
-    SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ + spawnOffsetZ, false, false, false)
+  if not entity or entity == 0 or not DoesEntityExist(entity) then
+    print(('[cad_bridge] Failed to create document ped for id=%s'):format(tostring(pedConfig.id or 'unknown')))
+    SetModelAsNoLongerNeeded(modelHash)
+    return
   end
-  SetEntityHeading(entity, w + 0.0)
+  SetEntityAsMissionEntity(entity, true, true)
+  placePedOnGroundProperly(entity, x, y, spawnZ, w)
+  local settledGroundZ = resolveGroundZForPed(x, y, spawnZ)
+  spawnZ = settledGroundZ
   SetEntityInvincible(entity, true)
   SetBlockingOfNonTemporaryEvents(entity, true)
-  FreezeEntityPosition(entity, true)
   SetPedCanRagdoll(entity, false)
 
   local scenario = trim(pedConfig.scenario or '')
   if scenario ~= '' then
     TaskStartScenarioInPlace(entity, scenario, 0, true)
   end
+  FreezeEntityPosition(entity, true)
 
   SetModelAsNoLongerNeeded(modelHash)
   documentPeds[#documentPeds + 1] = {
@@ -1886,7 +1949,7 @@ local function spawnDocumentPed(pedConfig)
     entity = entity,
     x = x,
     y = y,
-    z = spawnZ + spawnOffsetZ,
+    z = spawnZ + 0.02,
     licenseLabel = trim(pedConfig.license_label or ''),
     registrationLabel = trim(pedConfig.registration_label or ''),
     allowsLicense = pedConfig.allows_license == true,
