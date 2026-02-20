@@ -32,6 +32,7 @@ export default function AdminSystemSettings() {
   const [bridgeStatus, setBridgeStatus] = useState(null);
   const [mapTileFiles, setMapTileFiles] = useState(null);
   const [uploadingMapTiles, setUploadingMapTiles] = useState(false);
+  const [removingMapTiles, setRemovingMapTiles] = useState(false);
   const [mapTileUploadResult, setMapTileUploadResult] = useState(null);
   const [purgingLicenses, setPurgingLicenses] = useState(false);
   const [purgingRegistrations, setPurgingRegistrations] = useState(false);
@@ -137,6 +138,33 @@ export default function AdminSystemSettings() {
       });
     } finally {
       setUploadingMapTiles(false);
+    }
+  }
+
+  async function removeLiveMapTiles() {
+    const confirmed = window.confirm(
+      'This will remove all uploaded custom Live Map tiles from CAD. Continue?'
+    );
+    if (!confirmed) return;
+
+    setRemovingMapTiles(true);
+    setMapTileUploadResult(null);
+    try {
+      const result = await api.delete('/api/admin/live-map/tiles');
+      setMapTileUploadResult({
+        success: true,
+        message: `Removed ${Number(result?.removed || 0)} custom live map tile(s).`,
+      });
+      setMapTileFiles(null);
+      if (tileInputRef.current) tileInputRef.current.value = '';
+      fetchSettings();
+    } catch (err) {
+      setMapTileUploadResult({
+        success: false,
+        message: formatErr(err),
+      });
+    } finally {
+      setRemovingMapTiles(false);
     }
   }
 
@@ -297,10 +325,18 @@ export default function AdminSystemSettings() {
               <button
                 type="button"
                 onClick={uploadLiveMapTiles}
-                disabled={uploadingMapTiles}
+                disabled={uploadingMapTiles || removingMapTiles}
                 className="px-3 py-1.5 text-xs bg-cad-accent hover:bg-cad-accent-light text-white rounded border border-cad-accent/40 transition-colors disabled:opacity-50"
               >
                 {uploadingMapTiles ? 'Uploading Tiles...' : 'Upload Map Tiles'}
+              </button>
+              <button
+                type="button"
+                onClick={removeLiveMapTiles}
+                disabled={uploadingMapTiles || removingMapTiles}
+                className="px-3 py-1.5 text-xs bg-red-700 hover:bg-red-600 text-white rounded border border-red-500/40 transition-colors disabled:opacity-50"
+              >
+                {removingMapTiles ? 'Removing Tiles...' : 'Remove Custom Tiles'}
               </button>
               {mapTileUploadResult && (
                 <span className={`text-xs whitespace-pre-wrap ${mapTileUploadResult.success ? 'text-emerald-400' : 'text-red-400'}`}>

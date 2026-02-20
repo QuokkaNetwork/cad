@@ -353,6 +353,55 @@ router.post('/live-map/tiles', mapTilesUpload.array('tiles', LIVE_MAP_TILE_NAMES
   }
 });
 
+router.delete('/live-map/tiles', (req, res, next) => {
+  try {
+    const removedTiles = [];
+    const failedTiles = [];
+
+    for (const tileName of LIVE_MAP_TILE_NAMES) {
+      const tilePath = getLiveMapTilePath(tileName);
+      if (!fs.existsSync(tilePath)) continue;
+      try {
+        fs.unlinkSync(tilePath);
+        removedTiles.push(tileName);
+      } catch (err) {
+        failedTiles.push({
+          tile: tileName,
+          error: err?.message || String(err),
+        });
+      }
+    }
+
+    if (failedTiles.length > 0) {
+      return res.status(500).json({
+        error: 'Failed to remove one or more live map tile files',
+        details: {
+          failed: failedTiles,
+          removed: removedTiles,
+        },
+      });
+    }
+
+    Settings.set('live_map_tile_size', '');
+    const missingAfterRemoval = listMissingLiveMapTiles();
+    audit(req.user.id, 'live_map_tiles_removed', {
+      removed_tiles: removedTiles,
+      removed_count: removedTiles.length,
+      missing_after_removal: missingAfterRemoval,
+    });
+
+    return res.json({
+      success: true,
+      removed: removedTiles.length,
+      removed_tiles: removedTiles,
+      missing: missingAfterRemoval,
+      map_available: missingAfterRemoval.length === 0,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- Users ---
 router.get('/users', (req, res) => {
   const users = Users.list().map(u => {
