@@ -411,7 +411,7 @@ local function registerEmergencySuggestion(target)
   if Config.LiveMapCalibrationEnabled == true then
     local calibrationCommand = trim(Config.LiveMapCalibrationCommand or 'calibrate')
     if calibrationCommand ~= '' then
-      TriggerClientEvent('chat:addSuggestion', target, '/' .. calibrationCommand, 'Capture map calibration points (point1/point2/save)')
+      TriggerClientEvent('chat:addSuggestion', target, '/' .. calibrationCommand, 'Calibrate live map (manual or auto teleport flow)')
     end
   end
 

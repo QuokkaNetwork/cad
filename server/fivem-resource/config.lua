@@ -218,6 +218,41 @@ local function parseVec4String(rawValue, fallback)
   }
 end
 
+local function parseVec3String(rawValue, fallback)
+  if type(fallback) ~= 'table' then
+    fallback = { x = 0.0, y = 0.0, z = 0.0 }
+  end
+  local raw = trim(rawValue)
+  if raw == '' then
+    return {
+      x = tonumber(fallback.x) or 0.0,
+      y = tonumber(fallback.y) or 0.0,
+      z = tonumber(fallback.z) or 0.0,
+    }
+  end
+
+  local numbers = {}
+  for token in raw:gmatch('([^,%s]+)') do
+    local numeric = tonumber(token)
+    if numeric then
+      numbers[#numbers + 1] = numeric
+    end
+  end
+  if #numbers < 3 then
+    return {
+      x = tonumber(fallback.x) or 0.0,
+      y = tonumber(fallback.y) or 0.0,
+      z = tonumber(fallback.z) or 0.0,
+    }
+  end
+
+  return {
+    x = tonumber(numbers[1]) or 0.0,
+    y = tonumber(numbers[2]) or 0.0,
+    z = tonumber(numbers[3]) or 0.0,
+  }
+end
+
 local DEFAULT_RADIO_NAMES = {
   ['1'] = 'DISPATCH (All Units)',
   ['1.%'] = 'DISPATCH (All Units)',
@@ -310,6 +345,9 @@ local DEFAULT_REGISTRATION_FEES_BY_DAYS = {
   [70] = 22000,
 }
 
+local DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT1 = { x = -2672.40, y = 4285.00, z = 44.20 }
+local DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT2 = { x = 1707.50, y = -3290.20, z = 41.10 }
+
 -- CAD bridge endpoint/token.
 Config.CadBaseUrl = getString('cad_bridge_base_url', 'http://127.0.0.1:3031')
 Config.SharedToken = getString('cad_bridge_token', '')
@@ -398,6 +436,18 @@ Config.LiveMapCalibrationPadding = getNumber('cad_bridge_live_map_calibration_pa
 if Config.LiveMapCalibrationPadding < 0.0 then Config.LiveMapCalibrationPadding = 0.0 end
 Config.LiveMapCalibrationAce = trim(getString('cad_bridge_live_map_calibration_ace', 'cad_bridge.calibrate'))
 if Config.LiveMapCalibrationAce == '' then Config.LiveMapCalibrationAce = 'cad_bridge.calibrate' end
+Config.LiveMapCalibrationAutoPoint1 = parseVec3String(
+  getString('cad_bridge_live_map_calibration_auto_point1', ''),
+  DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT1
+)
+Config.LiveMapCalibrationAutoPoint2 = parseVec3String(
+  getString('cad_bridge_live_map_calibration_auto_point2', ''),
+  DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT2
+)
+Config.LiveMapCalibrationAutoTeleportDelayMs = math.max(
+  400,
+  math.floor(getNumber('cad_bridge_live_map_calibration_auto_delay_ms', 1200))
+)
 
 Config.DriverLicenseDefaultExpiryDays = math.max(1, math.floor(getNumber('cad_bridge_license_default_expiry_days', 35)))
 Config.VehicleRegistrationDefaultDays = math.max(1, math.floor(getNumber('cad_bridge_registration_default_days', 35)))

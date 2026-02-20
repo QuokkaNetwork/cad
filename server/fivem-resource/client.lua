@@ -848,31 +848,59 @@ local function distanceBetweenVec3(a, b)
   return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
 end
 
+local function distanceBetweenVec2(a, b)
+  if type(a) ~= 'table' or type(b) ~= 'table' then return 999999.0 end
+  local ax = tonumber(a.x) or 0.0
+  local ay = tonumber(a.y) or 0.0
+  local bx = tonumber(b.x) or 0.0
+  local by = tonumber(b.y) or 0.0
+  local dx = ax - bx
+  local dy = ay - by
+  return math.sqrt((dx * dx) + (dy * dy))
+end
+
+local function isVehicleUsableForRegistration(vehicle)
+  if not vehicle or vehicle == 0 then return false end
+  if not DoesEntityExist(vehicle) then return false end
+  if not IsEntityAVehicle(vehicle) then return false end
+  local speed = tonumber(GetEntitySpeed(vehicle)) or 0.0
+  local engineOn = IsVehicleEngineOn(vehicle) == true
+  local inAir = IsEntityInAir(vehicle) == true
+  if inAir then return false end
+  if speed <= 3.0 then return true end
+  if (not engineOn) and speed <= 6.0 then return true end
+  return false
+end
+
 local function findNearestParkedVehicle(origin, radius)
   local vehicles = GetGamePool('CVehicle')
   if type(vehicles) ~= 'table' or not origin then return 0, 999999.0 end
 
   local maxRadius = tonumber(radius) or 8.0
   if maxRadius < 2.0 then maxRadius = 2.0 end
+  local fallbackRadius = math.max(maxRadius, maxRadius * 1.75, 35.0)
   local bestVehicle = 0
   local bestDistance = maxRadius + 0.001
+  local fallbackVehicle = 0
+  local fallbackDistance = fallbackRadius + 0.001
 
   for _, vehicle in ipairs(vehicles) do
     if vehicle and vehicle ~= 0 and DoesEntityExist(vehicle) then
-      local speed = tonumber(GetEntitySpeed(vehicle)) or 0.0
-      if speed <= 1.5 then
-        local coords = GetEntityCoords(vehicle)
-        local dist = distanceBetweenVec3(coords, origin)
-        if dist <= maxRadius and dist < bestDistance then
-          bestDistance = dist
-          bestVehicle = vehicle
-        end
+      local coords = GetEntityCoords(vehicle)
+      local dist2d = distanceBetweenVec2(coords, origin)
+      if dist2d <= fallbackRadius and dist2d < fallbackDistance then
+        fallbackDistance = dist2d
+        fallbackVehicle = vehicle
+      end
+      if dist2d <= maxRadius and dist2d < bestDistance and isVehicleUsableForRegistration(vehicle) then
+        bestDistance = dist2d
+        bestVehicle = vehicle
       end
     end
   end
 
   if bestVehicle == 0 then
-    return 0, 999999.0
+    return fallbackVehicle or 0, fallbackDistance or 999999.0
   end
   return bestVehicle, bestDistance
 end
@@ -895,10 +923,14 @@ local function getCurrentVehicleRegistrationDefaults(registrationParking)
 
   local searchOrigin = zoneCoords or playerCoords
   local searchRadius = zoneRadius > 0 and math.max(8.0, zoneRadius) or 10.0
-  local vehicle = select(1, findNearestParkedVehicle(searchOrigin, searchRadius))
+  local vehicle, vehicleDistance = findNearestParkedVehicle(searchOrigin, searchRadius)
 
   if not vehicle or vehicle == 0 then
     payload.error_message = 'No parked vehicle found in the registration area.'
+    return payload
+  end
+  if not isVehicleUsableForRegistration(vehicle) then
+    payload.error_message = ('Nearest vehicle found (%.1fm) but it is moving. Park it and try again.'):format(tonumber(vehicleDistance) or 0.0)
     return payload
   end
 
@@ -1517,6 +1549,100 @@ local function formatCalibrationPoint(point)
   )
 end
 
+local function resolveGroundZQuick(x, y, fallbackZ)
+  local baseZ = tonumber(fallbackZ) or 0.0
+  local probes = {
+    baseZ + 2.0,
+    baseZ + 8.0,
+    baseZ + 25.0,
+    baseZ + 60.0,
+    baseZ + 120.0,
+  }
+  for _, probeZ in ipairs(probes) do
+    local foundGround, groundZ = GetGroundZFor_3dCoord((tonumber(x) or 0.0) + 0.0, (tonumber(y) or 0.0) + 0.0, probeZ + 0.0, false)
+    if foundGround and type(groundZ) == 'number' then
+      return groundZ
+    end
+  end
+  return baseZ
+end
+
+local function teleportCalibrationPoint(point)
+  if type(point) ~= 'table' then return false end
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then return false end
+
+  local x = tonumber(point.x) or 0.0
+  local y = tonumber(point.y) or 0.0
+  local zHint = tonumber(point.z) or 0.0
+  local z = resolveGroundZQuick(x, y, zHint) + 1.0
+  local heading = GetEntityHeading(ped)
+
+  DoScreenFadeOut(250)
+  while not IsScreenFadedOut() do Wait(0) end
+
+  RequestCollisionAtCoord(x + 0.0, y + 0.0, z + 0.0)
+  local entity = ped
+  if IsPedInAnyVehicle(ped, false) then
+    local vehicle = GetVehiclePedIsIn(ped, false)
+    if vehicle and vehicle ~= 0 and GetPedInVehicleSeat(vehicle, -1) == ped then
+      entity = vehicle
+    end
+  end
+
+  SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, z + 0.0, false, false, false)
+  SetEntityHeading(entity, heading + 0.0)
+  Wait(350)
+
+  DoScreenFadeIn(250)
+  return true
+end
+
+local function runAutoLiveMapCalibration()
+  local point1 = type(Config.LiveMapCalibrationAutoPoint1) == 'table' and Config.LiveMapCalibrationAutoPoint1 or nil
+  local point2 = type(Config.LiveMapCalibrationAutoPoint2) == 'table' and Config.LiveMapCalibrationAutoPoint2 or nil
+  if not point1 or not point2 then
+    notifyLiveMapCalibration('Auto calibration points are not configured.', 'error')
+    return
+  end
+
+  local delayMs = tonumber(Config.LiveMapCalibrationAutoTeleportDelayMs or 1200) or 1200
+  if delayMs < 400 then delayMs = 400 end
+
+  notifyLiveMapCalibration('Auto calibration started. Teleporting to point 1...')
+  if not teleportCalibrationPoint(point1) then
+    notifyLiveMapCalibration('Failed to teleport to point 1.', 'error')
+    return
+  end
+  Wait(delayMs)
+  liveMapCalibrationPointA = getCalibrationPointFromPlayer()
+  if type(liveMapCalibrationPointA) ~= 'table' then
+    notifyLiveMapCalibration('Failed to capture point 1.', 'error')
+    return
+  end
+  notifyLiveMapCalibration('Point 1 captured: ' .. formatCalibrationPoint(liveMapCalibrationPointA))
+
+  notifyLiveMapCalibration('Teleporting to point 2...')
+  if not teleportCalibrationPoint(point2) then
+    notifyLiveMapCalibration('Failed to teleport to point 2.', 'error')
+    return
+  end
+  Wait(delayMs)
+  liveMapCalibrationPointB = getCalibrationPointFromPlayer()
+  if type(liveMapCalibrationPointB) ~= 'table' then
+    notifyLiveMapCalibration('Failed to capture point 2.', 'error')
+    return
+  end
+  notifyLiveMapCalibration('Point 2 captured: ' .. formatCalibrationPoint(liveMapCalibrationPointB))
+
+  TriggerServerEvent('cad_bridge:saveLiveMapCalibration', {
+    point1 = liveMapCalibrationPointA,
+    point2 = liveMapCalibrationPointB,
+    padding = tonumber(Config.LiveMapCalibrationPadding or 250.0) or 250.0,
+  })
+  notifyLiveMapCalibration('Auto calibration submitted.')
+end
+
 RegisterCommand(SHOW_ID_COMMAND, function()
   requestShowIdCard()
 end, false)
@@ -1537,7 +1663,7 @@ if LIVE_MAP_CALIBRATION_ENABLED then
   RegisterCommand(LIVE_MAP_CALIBRATION_COMMAND, function(_source, args)
     local action = trim(args and args[1] or ''):lower()
     if action == '' or action == 'help' then
-      notifyLiveMapCalibration(('Usage: /%s start | point1 | point2 | status | save | cancel'):format(LIVE_MAP_CALIBRATION_COMMAND))
+      notifyLiveMapCalibration(('Usage: /%s start | point1 | point2 | status | save | auto | cancel'):format(LIVE_MAP_CALIBRATION_COMMAND))
       return
     end
 
@@ -1596,6 +1722,13 @@ if LIVE_MAP_CALIBRATION_ENABLED then
         padding = tonumber(Config.LiveMapCalibrationPadding or 250.0) or 250.0,
       })
       notifyLiveMapCalibration('Calibration submitted to server. If authorised, map bounds will be updated.')
+      return
+    end
+
+    if action == 'auto' then
+      CreateThread(function()
+        runAutoLiveMapCalibration()
+      end)
       return
     end
 
