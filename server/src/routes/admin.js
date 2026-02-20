@@ -280,6 +280,47 @@ router.post('/live-map/tiles', mapTilesUpload.array('tiles', LIVE_MAP_TILE_NAMES
       });
     }
 
+    const invalidDimensions = [];
+    let detectedTileSize = 0;
+    for (const tileName of LIVE_MAP_TILE_NAMES) {
+      const file = filesByName.get(tileName);
+      if (!file) continue;
+      const metadata = await sharp(file.buffer).metadata();
+      const width = Number(metadata?.width || 0);
+      const height = Number(metadata?.height || 0);
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1 || width !== height) {
+        invalidDimensions.push({
+          tile: tileName,
+          width,
+          height,
+          reason: 'tiles must be square and non-zero',
+        });
+        continue;
+      }
+      if (detectedTileSize === 0) {
+        detectedTileSize = width;
+      } else if (width !== detectedTileSize) {
+        invalidDimensions.push({
+          tile: tileName,
+          width,
+          height,
+          reason: `all tiles must match the same dimensions (${detectedTileSize}x${detectedTileSize})`,
+        });
+      }
+    }
+    if (invalidDimensions.length > 0) {
+      return res.status(400).json({
+        error: 'Invalid tile dimensions',
+        details: {
+          note: 'All tiles must be the same square dimensions (e.g. 1024x1024 or 3072x3072).',
+          invalid: invalidDimensions,
+        },
+      });
+    }
+    if (!detectedTileSize || !Number.isFinite(detectedTileSize)) {
+      return res.status(400).json({ error: 'Unable to determine tile dimensions' });
+    }
+
     for (const tileName of LIVE_MAP_TILE_NAMES) {
       const file = filesByName.get(tileName);
       if (!file) continue;
@@ -290,9 +331,11 @@ router.post('/live-map/tiles', mapTilesUpload.array('tiles', LIVE_MAP_TILE_NAMES
     }
 
     const missingAfterUpload = listMissingLiveMapTiles();
+    Settings.set('live_map_tile_size', String(Math.round(detectedTileSize)));
     audit(req.user.id, 'live_map_tiles_uploaded', {
       tile_count: LIVE_MAP_TILE_NAMES.length,
       tile_names: LIVE_MAP_TILE_NAMES,
+      tile_size: detectedTileSize,
       missing_after_upload: missingAfterUpload,
       total_size_bytes: files.reduce((acc, file) => acc + Number(file?.size || 0), 0),
     });
@@ -301,6 +344,7 @@ router.post('/live-map/tiles', mapTilesUpload.array('tiles', LIVE_MAP_TILE_NAMES
       success: true,
       uploaded: LIVE_MAP_TILE_NAMES.length,
       tile_names: LIVE_MAP_TILE_NAMES,
+      tile_size: detectedTileSize,
       missing: missingAfterUpload,
       map_available: missingAfterUpload.length === 0,
     });

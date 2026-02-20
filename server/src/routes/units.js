@@ -44,6 +44,18 @@ function parseMapCalibrationIncrement(value, fallback = DEFAULT_MAP_CALIBRATION_
   return Math.max(0.001, Math.min(100, parsed));
 }
 
+function parseMapScale(value, fallback = DEFAULT_MAP_SCALE) {
+  const parsed = parseMapNumber(value, fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(0.2, Math.min(5, parsed));
+}
+
+function parseTileSize(value, fallback = LIVE_MAP_TILE_SIZE) {
+  const parsed = Math.round(parseMapNumber(value, fallback));
+  if (!Number.isFinite(parsed) || parsed < 128) return fallback;
+  return Math.min(8192, parsed);
+}
+
 function parseMapBoolean(value, fallback) {
   const text = String(value ?? '').trim().toLowerCase();
   if (!text) return fallback;
@@ -352,13 +364,17 @@ router.get('/map', requireAuth, (req, res) => {
 router.get('/map-config', requireAuth, (_req, res) => {
   const directUrl = String(Settings.get('live_map_url') || '').trim();
   const socketUrl = String(Settings.get('live_map_socket_url') || '').trim();
-  const mapScaleX = parseMapNumber(Settings.get('live_map_scale_x'), DEFAULT_MAP_SCALE);
-  const mapScaleY = parseMapNumber(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
+  const mapScaleX = parseMapScale(Settings.get('live_map_scale_x'), DEFAULT_MAP_SCALE);
+  const mapScaleY = parseMapScale(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
   const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
   const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
   const mapCalibrationIncrement = parseMapCalibrationIncrement(
     Settings.get('live_map_calibration_increment'),
     DEFAULT_MAP_CALIBRATION_INCREMENT
+  );
+  const mapScaleIncrement = parseMapCalibrationIncrement(
+    Settings.get('live_map_scale_increment'),
+    0.01
   );
   const adminCalibrationVisible = parseMapBoolean(
     Settings.get('live_map_admin_calibration_visible'),
@@ -387,6 +403,7 @@ router.get('/map-config', requireAuth, (_req, res) => {
     map_offset_x: mapOffsetX,
     map_offset_y: mapOffsetY,
     map_calibration_increment: mapCalibrationIncrement,
+    map_scale_increment: mapScaleIncrement,
     admin_calibration_visible: adminCalibrationVisible,
     map_game_x1: mapGameX1,
     map_game_y1: mapGameY1,
@@ -400,7 +417,7 @@ router.get('/map-config', requireAuth, (_req, res) => {
     },
     tile_url_template: LIVE_MAP_TILE_URL_TEMPLATE,
     tile_names: LIVE_MAP_TILE_NAMES,
-    tile_size: LIVE_MAP_TILE_SIZE,
+    tile_size: tileSize,
     tile_rows: LIVE_MAP_TILE_ROWS,
     tile_columns: LIVE_MAP_TILE_COLUMNS,
     min_zoom: LIVE_MAP_MIN_ZOOM,
@@ -678,3 +695,4 @@ router.delete('/me', requireAuth, (req, res) => {
 });
 
 module.exports = router;
+  const tileSize = parseTileSize(Settings.get('live_map_tile_size'), LIVE_MAP_TILE_SIZE);

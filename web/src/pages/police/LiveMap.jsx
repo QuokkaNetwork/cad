@@ -22,6 +22,7 @@ const DEFAULT_MIN_ZOOM = -2;
 const DEFAULT_MAX_ZOOM = 4;
 const DEFAULT_NATIVE_ZOOM = 0;
 const DEFAULT_CALIBRATION_INCREMENT = 0.1;
+const DEFAULT_SCALE_INCREMENT = 0.01;
 const DEFAULT_GAME_BOUNDS = Object.freeze({
   x1: -4000,
   y1: 8000,
@@ -128,7 +129,13 @@ function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration, gameBounds
   }
 
   const adjustedLatLng = map.unproject([projectedX, projectedY], 0);
-  return { lat: adjustedLatLng.lat, lng: adjustedLatLng.lng };
+  return {
+    lat: adjustedLatLng.lat,
+    lng: adjustedLatLng.lng,
+    projectedX,
+    projectedY,
+    outOfBounds: projectedX < 0 || projectedY < 0 || projectedX > width || projectedY > height,
+  };
 }
 
 function markerColor(player) {
@@ -186,6 +193,7 @@ export default function LiveMap({ isPopout = false }) {
   const [mapOffsetX, setMapOffsetX] = useState(0);
   const [mapOffsetY, setMapOffsetY] = useState(0);
   const [calibrationStep, setCalibrationStep] = useState(DEFAULT_CALIBRATION_INCREMENT);
+  const [scaleStep, setScaleStep] = useState(DEFAULT_SCALE_INCREMENT);
   const [adminCalibrationVisible, setAdminCalibrationVisible] = useState(true);
   const [gameBounds, setGameBounds] = useState(DEFAULT_GAME_BOUNDS);
   const [players, setPlayers] = useState([]);
@@ -235,6 +243,7 @@ export default function LiveMap({ isPopout = false }) {
         setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
         setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
         setCalibrationStep(parseCalibrationIncrement(cfg?.map_calibration_increment, DEFAULT_CALIBRATION_INCREMENT));
+        setScaleStep(parseCalibrationIncrement(cfg?.map_scale_increment, DEFAULT_SCALE_INCREMENT));
       }
       setAdminCalibrationVisible(cfg?.admin_calibration_visible !== false);
 
@@ -318,12 +327,35 @@ export default function LiveMap({ isPopout = false }) {
     setCalibrationNotice('');
   }, []);
 
+  const updateScaleStep = useCallback((value) => {
+    setScaleStep(parseCalibrationIncrement(value, DEFAULT_SCALE_INCREMENT));
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, []);
+
   const resetCalibrationOffsets = useCallback(() => {
     setMapOffsetX(0);
     setMapOffsetY(0);
     setCalibrationDirty(true);
     setCalibrationNotice('');
   }, []);
+
+  const resetCalibrationAll = useCallback(() => {
+    setMapScaleX(1);
+    setMapScaleY(1);
+    setMapOffsetX(0);
+    setMapOffsetY(0);
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, []);
+
+  const nudgeScale = useCallback((deltaX, deltaY) => {
+    const step = parseCalibrationIncrement(scaleStep, DEFAULT_SCALE_INCREMENT);
+    setMapScaleX((prev) => roundCalibrationValue(Math.max(0.2, Math.min(5, prev + (deltaX * step)))));
+    setMapScaleY((prev) => roundCalibrationValue(Math.max(0.2, Math.min(5, prev + (deltaY * step)))));
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, [scaleStep]);
 
   const saveCalibrationOffsets = useCallback(async () => {
     if (!isAdmin || calibrationSaving) return;
@@ -332,9 +364,12 @@ export default function LiveMap({ isPopout = false }) {
     try {
       await api.put('/api/admin/settings', {
         settings: {
+          live_map_scale_x: String(mapScaleX),
+          live_map_scale_y: String(mapScaleY),
           live_map_offset_x: String(mapOffsetX),
           live_map_offset_y: String(mapOffsetY),
           live_map_calibration_increment: String(parseCalibrationIncrement(calibrationStep, DEFAULT_CALIBRATION_INCREMENT)),
+          live_map_scale_increment: String(parseCalibrationIncrement(scaleStep, DEFAULT_SCALE_INCREMENT)),
         },
       });
       setCalibrationDirty(false);
@@ -345,7 +380,7 @@ export default function LiveMap({ isPopout = false }) {
     } finally {
       setCalibrationSaving(false);
     }
-  }, [isAdmin, calibrationSaving, mapOffsetX, mapOffsetY, calibrationStep, fetchMapConfig]);
+  }, [isAdmin, calibrationSaving, mapScaleX, mapScaleY, mapOffsetX, mapOffsetY, calibrationStep, scaleStep, fetchMapConfig]);
 
   useEffect(() => {
     setLoading(true);
@@ -427,6 +462,7 @@ export default function LiveMap({ isPopout = false }) {
       })
       .filter(Boolean);
   }, [players, mapInstance, tileConfig, calibration, gameBounds]);
+  const outOfBoundsCount = useMemo(() => markers.filter((m) => m?.latLng?.outOfBounds === true).length, [markers]);
 
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;
   const error = mapConfigError || playerError;
@@ -496,13 +532,24 @@ export default function LiveMap({ isPopout = false }) {
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-cad-muted">Calibration</span>
             <label className="inline-flex items-center gap-1 text-cad-muted">
-              Step
+              Move Step
               <input
                 type="number"
                 min="0.001"
                 step="0.1"
                 value={calibrationStep}
                 onChange={(e) => updateCalibrationStep(e.target.value)}
+                className="w-20 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs text-cad-ink focus:outline-none focus:border-cad-accent"
+              />
+            </label>
+            <label className="inline-flex items-center gap-1 text-cad-muted">
+              Scale Step
+              <input
+                type="number"
+                min="0.001"
+                step="0.01"
+                value={scaleStep}
+                onChange={(e) => updateScaleStep(e.target.value)}
                 className="w-20 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs text-cad-ink focus:outline-none focus:border-cad-accent"
               />
             </label>
@@ -536,10 +583,45 @@ export default function LiveMap({ isPopout = false }) {
             </button>
             <button
               type="button"
+              onClick={() => nudgeScale(1, 0)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Scale X+
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeScale(-1, 0)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Scale X-
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeScale(0, 1)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Scale Y+
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeScale(0, -1)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Scale Y-
+            </button>
+            <button
+              type="button"
               onClick={resetCalibrationOffsets}
               className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
             >
               Reset Offsets
+            </button>
+            <button
+              type="button"
+              onClick={resetCalibrationAll}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Reset All
             </button>
             <button
               type="button"
@@ -549,6 +631,9 @@ export default function LiveMap({ isPopout = false }) {
             >
               {calibrationSaving ? 'Saving...' : 'Save'}
             </button>
+            <span className="font-mono text-cad-muted">
+              scaleX {mapScaleX.toFixed(3)} | scaleY {mapScaleY.toFixed(3)} |
+            </span>
             <span className="font-mono text-cad-muted">
               offsetX {mapOffsetX.toFixed(calibrationPrecision)} | offsetY {mapOffsetY.toFixed(calibrationPrecision)}
             </span>
@@ -563,7 +648,7 @@ export default function LiveMap({ isPopout = false }) {
           </div>
           <p className="mt-1 text-[11px] text-cad-muted">
             If markers appear low compared to in-game, use Up. If markers appear high, use Down.
-            If alignment is correct in one area but drifts in another, adjust map scale in Admin &gt; System Settings.
+            If alignment is correct in one area but drifts in another, adjust scale (X/Y) then save.
           </p>
         </div>
       )}
@@ -647,6 +732,11 @@ export default function LiveMap({ isPopout = false }) {
 
       {error && (
         <p className="text-xs text-red-400 whitespace-pre-wrap">{error}</p>
+      )}
+      {!error && outOfBoundsCount > 0 && (
+        <p className="text-xs text-amber-300">
+          {outOfBoundsCount} marker{outOfBoundsCount !== 1 ? 's are' : ' is'} outside tile bounds. This usually means map scale/bounds need recalibration.
+        </p>
       )}
       {staleSinceAt && (
         <p className="text-xs text-amber-300">

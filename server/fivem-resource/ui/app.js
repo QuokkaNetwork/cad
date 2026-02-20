@@ -74,6 +74,7 @@ var activeQuizQuestions = [];
 var existingLicenseSnapshot = null;
 var pendingLicenseSubmissionPayload = null;
 var licenseViewMode = "quiz";
+var licenseShowStatusPanel = false;
 var durationOptions = [];
 var selectedRegistrationDurationDays = 35;
 
@@ -601,7 +602,7 @@ function renderLicenseQuiz() {
 
 function setLicenseMode(mode) {
   licenseViewMode = String(mode || "quiz");
-  setVisible(licenseStatusPanel, licenseViewMode === "blocked");
+  setVisible(licenseStatusPanel, licenseViewMode === "blocked" || (licenseViewMode === "quiz" && licenseShowStatusPanel));
   setVisible(licenseQuizPanel, licenseViewMode === "quiz");
   setVisible(licensePassPanel, licenseViewMode === "pass");
   if (licenseSubmitBtn) {
@@ -634,6 +635,7 @@ function resetLicenseForm(payload) {
   licenseRenewalWindowDays = Number(safeGet(data, "renewal_window_days", 3));
   if (!Number.isFinite(licenseRenewalWindowDays) || licenseRenewalWindowDays < 0) licenseRenewalWindowDays = 3;
   existingLicenseSnapshot = normalizeExistingLicense(safeGet(data, "existing_license", null));
+  licenseShowStatusPanel = false;
   pendingLicenseSubmissionPayload = null;
   if (licenseContinuePhotoBtn) licenseContinuePhotoBtn.disabled = false;
   if (licenseCancelBtn) licenseCancelBtn.disabled = false;
@@ -653,6 +655,7 @@ function resetLicenseForm(payload) {
   var statusText = existingLicenseSnapshot && existingLicenseSnapshot.status ? existingLicenseSnapshot.status : "unknown";
 
   if (!canTakeQuiz) {
+    licenseShowStatusPanel = true;
     if (licenseStatusMessage) {
       licenseStatusMessage.textContent =
         "You already have a valid licence (status: " + statusText + ", expiry: " + expiryText + "). " +
@@ -666,11 +669,12 @@ function resetLicenseForm(payload) {
   if (licenseStatusMessage && existingLicenseSnapshot) {
     var days = Number(existingLicenseSnapshot.days_until_expiry);
     if (Number.isFinite(days)) {
-      licenseStatusMessage.textContent = "Current licence found. Days until expiry: " + String(days) + ".";
+      licenseStatusMessage.textContent = "Current licence found. Days until expiry: " + String(days) + ". You can retake your photo now.";
     } else {
-      licenseStatusMessage.textContent = "";
+      licenseStatusMessage.textContent = "Current licence found. You can retake your photo now.";
     }
   }
+  licenseShowStatusPanel = canRetakePhoto && existingLicenseSnapshot !== null;
   if (licenseRetakePhotoBtn) licenseRetakePhotoBtn.disabled = !canRetakePhoto;
   setLicenseMode("quiz");
 }
