@@ -79,7 +79,7 @@
 
         <h1 id="license-title">Create Driver Licence Record</h1>
         <p class="subtitle">
-          Record is stored in CAD with status controls: valid, suspended, disqualified, and expired.
+          Complete this quick Australian road rules quiz. Score at least 80% to receive your licence.
         </p>
         <div class="portal-brand">
           <img class="portal-logo" src="vicroads-logo.jpg" alt="VicRoads" />
@@ -90,43 +90,19 @@
         </div>
 
         <form id="licenseForm" class="form" novalidate>
+          <input id="licenseNameInput" type="hidden" />
+          <input id="licenseDobInput" type="hidden" />
+          <input id="licenseGenderInput" type="hidden" />
           <div class="field">
-            <label for="licenseNameInput">Character Name <span class="required">*</span></label>
-            <input id="licenseNameInput" type="text" maxlength="80" autocomplete="off" required readonly />
-          </div>
-
-          <div class="inline-grid two-col">
-            <div class="field">
-              <label for="licenseDobInput">Date Of Birth <span class="required">*</span></label>
-              <input id="licenseDobInput" type="date" required readonly />
-            </div>
-            <div class="field">
-              <label for="licenseGenderInput">Gender <span class="required">*</span></label>
-              <input id="licenseGenderInput" type="text" maxlength="30" required readonly />
-            </div>
-          </div>
-
-          <div class="field">
-            <label>Licence Classes <span class="required">*</span></label>
-            <div id="licenseClassEmpty" class="empty-state">No class options configured.</div>
-            <div id="licenseClassList" class="chip-grid hidden"></div>
-          </div>
-
-          <div class="field">
-            <label>Licence Length</label>
-            <div id="licenseDurationList" class="chip-grid"></div>
-          </div>
-
-          <div class="field">
-            <label for="licenseConditionsInput">Conditions (Comma Separated)</label>
-            <input id="licenseConditionsInput" type="text" maxlength="220" autocomplete="off" placeholder="e.g. Corrective lenses, Automatic only" />
+            <label>Learner Quiz</label>
+            <div id="licenseQuizList" class="form"></div>
           </div>
 
           <div id="licenseFormError" class="error hidden"></div>
 
           <footer class="actions">
             <button id="licenseCancelBtn" class="btn btn-ghost" type="button">Cancel</button>
-            <button id="licenseSubmitBtn" class="btn btn-primary" type="submit">Save Licence</button>
+            <button id="licenseSubmitBtn" class="btn btn-primary" type="submit">Submit Quiz</button>
           </footer>
         </form>
       </section>

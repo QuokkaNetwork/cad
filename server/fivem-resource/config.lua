@@ -180,6 +180,44 @@ local function firstNonEmptyList(...)
   return {}
 end
 
+local function parseVec4String(rawValue, fallback)
+  if type(fallback) ~= 'table' then
+    fallback = { x = 0.0, y = 0.0, z = 0.0, w = 0.0 }
+  end
+  local raw = trim(rawValue)
+  if raw == '' then
+    return {
+      x = tonumber(fallback.x) or 0.0,
+      y = tonumber(fallback.y) or 0.0,
+      z = tonumber(fallback.z) or 0.0,
+      w = tonumber(fallback.w) or 0.0,
+    }
+  end
+
+  local numbers = {}
+  for token in raw:gmatch('([^,%s]+)') do
+    local numeric = tonumber(token)
+    if numeric then
+      numbers[#numbers + 1] = numeric
+    end
+  end
+  if #numbers < 4 then
+    return {
+      x = tonumber(fallback.x) or 0.0,
+      y = tonumber(fallback.y) or 0.0,
+      z = tonumber(fallback.z) or 0.0,
+      w = tonumber(fallback.w) or 0.0,
+    }
+  end
+
+  return {
+    x = tonumber(numbers[1]) or 0.0,
+    y = tonumber(numbers[2]) or 0.0,
+    z = tonumber(numbers[3]) or 0.0,
+    w = tonumber(numbers[4]) or 0.0,
+  }
+end
+
 local DEFAULT_RADIO_NAMES = {
   ['1'] = 'DISPATCH (All Units)',
   ['1.%'] = 'DISPATCH (All Units)',
@@ -210,6 +248,51 @@ local DEFAULT_DRIVER_LICENSE_CLASS_OPTIONS = {
 
 local DEFAULT_DRIVER_LICENSE_DEFAULT_CLASSES = { 'CAR' }
 local DEFAULT_DURATION_OPTIONS = { 6, 14, 35, 70 }
+local DEFAULT_DRIVER_LICENSE_PED_COORDS = { x = 240.87, y = -1378.69, z = 32.74, w = 140.89 }
+local DEFAULT_VEHICLE_REGISTRATION_PED_COORDS = { x = -30.67, y = -1096.12, z = 26.27, w = 65.43 }
+local DEFAULT_DOCUMENT_INTERACTION_PEDS = {
+  {
+    id = 'city_hall',
+    model = 's_m_m_dockwork_01',
+    coords = { x = -542.52, y = -197.15, z = 37.24, w = 76.49 },
+    scenario = 'WORLD_HUMAN_CLIPBOARD',
+    allows_license = true,
+    allows_registration = false,
+  },
+  {
+    id = 'pdm',
+    model = 's_m_y_dealer_01',
+    coords = { x = -30.67, y = -1096.12, z = 26.27, w = 65.43 },
+    scenario = 'WORLD_HUMAN_CLIPBOARD',
+    allows_license = false,
+    allows_registration = true,
+    registration_duration_options = { 1 },
+  },
+  {
+    id = 'driving_school',
+    model = 's_m_m_dockwork_01',
+    coords = { x = 240.87, y = -1378.69, z = 32.74, w = 140.89 },
+    scenario = 'WORLD_HUMAN_CLIPBOARD',
+    allows_license = true,
+    allows_registration = true,
+  },
+  {
+    id = 'sandy_pd',
+    model = 's_m_y_cop_01',
+    coords = { x = 1833.16, y = 3679.28, z = 33.19, w = 207.3 },
+    scenario = 'WORLD_HUMAN_CLIPBOARD',
+    allows_license = true,
+    allows_registration = false,
+  },
+  {
+    id = 'paleto_pd',
+    model = 's_m_y_cop_01',
+    coords = { x = -448.35, y = 6014.05, z = 31.29, w = 223.5 },
+    scenario = 'WORLD_HUMAN_CLIPBOARD',
+    allows_license = true,
+    allows_registration = false,
+  },
+}
 
 local DEFAULT_DRIVER_LICENSE_FEES_BY_DAYS = {
   [6] = 1500,
@@ -292,7 +375,8 @@ if type(radioRestrictedOverride) == 'table' then
   Config.RadioRestrictedChannels = radioRestrictedOverride
 end
 
--- Driver license + registration forms.
+-- Driver license + registration documents.
+Config.EnableDocumentCommands = getBoolean('cad_bridge_enable_document_commands', false)
 Config.DriverLicenseCommand = trim(getString('cad_bridge_license_command', 'cadlicense'))
 if Config.DriverLicenseCommand == '' then Config.DriverLicenseCommand = 'cadlicense' end
 Config.VehicleRegistrationCommand = trim(getString('cad_bridge_registration_command', 'cadrego'))
@@ -308,6 +392,14 @@ if Config.ShowIdNearbyDistance < 1.0 then Config.ShowIdNearbyDistance = 1.0 end
 
 Config.DriverLicenseDefaultExpiryDays = math.max(1, math.floor(getNumber('cad_bridge_license_default_expiry_days', 35)))
 Config.VehicleRegistrationDefaultDays = math.max(1, math.floor(getNumber('cad_bridge_registration_default_days', 35)))
+Config.DriverLicenseQuizPassPercent = math.max(1, math.min(100, math.floor(getNumber('cad_bridge_license_quiz_pass_percent', 80))))
+Config.DriverLicenseQuizExpiryDays = math.max(1, math.floor(getNumber('cad_bridge_license_quiz_expiry_days', 30)))
+Config.DocumentPedInteractionDistance = getNumber('cad_bridge_document_ped_interaction_distance', 2.2)
+if Config.DocumentPedInteractionDistance < 1.0 then Config.DocumentPedInteractionDistance = 1.0 end
+Config.DocumentPedPromptDistance = getNumber('cad_bridge_document_ped_prompt_distance', 12.0)
+if Config.DocumentPedPromptDistance < Config.DocumentPedInteractionDistance then
+  Config.DocumentPedPromptDistance = Config.DocumentPedInteractionDistance + 2.0
+end
 
 local driverDurationFromCsv = parseCsvIntegerList(getString('cad_bridge_license_duration_options', ''))
 local regoDurationFromCsv = parseCsvIntegerList(getString('cad_bridge_registration_duration_options', ''))
@@ -322,6 +414,32 @@ local classDefaultsFromCsv = parseCsvList(getString('cad_bridge_license_default_
 end)
 Config.DriverLicenseClassOptions = firstNonEmptyList(classOptionsFromCsv, DEFAULT_DRIVER_LICENSE_CLASS_OPTIONS)
 Config.DriverLicenseDefaultClasses = firstNonEmptyList(classDefaultsFromCsv, DEFAULT_DRIVER_LICENSE_DEFAULT_CLASSES)
+Config.DriverLicenseQuizClasses = firstNonEmptyList(
+  parseCsvList(getString('cad_bridge_license_quiz_classes', 'CAR'), function(item)
+    return item:upper()
+  end),
+  DEFAULT_DRIVER_LICENSE_DEFAULT_CLASSES
+)
+
+Config.DriverLicensePed = {
+  enabled = getBoolean('cad_bridge_license_ped_enabled', true),
+  model = trim(getString('cad_bridge_license_ped_model', 's_m_m_dockwork_01')),
+  coords = parseVec4String(getString('cad_bridge_license_ped_coords', ''), DEFAULT_DRIVER_LICENSE_PED_COORDS),
+  scenario = trim(getString('cad_bridge_license_ped_scenario', 'WORLD_HUMAN_CLIPBOARD')),
+  label = trim(getString('cad_bridge_license_ped_label', 'Press ~INPUT_CONTEXT~ to take the licence quiz')),
+}
+if Config.DriverLicensePed.model == '' then Config.DriverLicensePed.model = 's_m_m_dockwork_01' end
+
+Config.VehicleRegistrationPed = {
+  enabled = getBoolean('cad_bridge_registration_ped_enabled', true),
+  model = trim(getString('cad_bridge_registration_ped_model', 's_m_y_dealer_01')),
+  coords = parseVec4String(getString('cad_bridge_registration_ped_coords', ''), DEFAULT_VEHICLE_REGISTRATION_PED_COORDS),
+  scenario = trim(getString('cad_bridge_registration_ped_scenario', 'WORLD_HUMAN_CLIPBOARD')),
+  label = trim(getString('cad_bridge_registration_ped_label', 'Press ~INPUT_CONTEXT~ to manage vehicle rego')),
+}
+if Config.VehicleRegistrationPed.model == '' then Config.VehicleRegistrationPed.model = 's_m_y_dealer_01' end
+
+Config.DocumentInteractionPeds = DEFAULT_DOCUMENT_INTERACTION_PEDS
 
 Config.DocumentFeeAccount = trim(getString('cad_bridge_document_fee_account', 'bank'))
 if Config.DocumentFeeAccount == '' then Config.DocumentFeeAccount = 'bank' end

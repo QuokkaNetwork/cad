@@ -393,6 +393,14 @@ if SHOW_ID_COMMAND == '' then SHOW_ID_COMMAND = 'showid' end
 local SHOW_ID_KEY = trim(Config.ShowIdKey or 'PAGEDOWN')
 if SHOW_ID_KEY == '' then SHOW_ID_KEY = 'PAGEDOWN' end
 local SHOW_ID_MAX_DISTANCE = tonumber(Config.ShowIdTargetDistance or 4.0) or 4.0
+local documentInteractionDistance = tonumber(Config.DocumentPedInteractionDistance or 2.2) or 2.2
+if documentInteractionDistance < 1.0 then documentInteractionDistance = 1.0 end
+local documentPromptDistance = tonumber(Config.DocumentPedPromptDistance or 12.0) or 12.0
+if documentPromptDistance < documentInteractionDistance then
+  documentPromptDistance = documentInteractionDistance + 2.0
+end
+local lastDocumentInteractAt = 0
+local documentPeds = {}
 
 local function hasAnyCadBridgeModalOpen()
   return emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen
@@ -1402,8 +1410,175 @@ RegisterCommand('test000ui', function()
   })
 end, false)
 
+local function loadPedModel(modelName)
+  local modelHash = modelName
+  if type(modelName) ~= 'number' then
+    modelHash = GetHashKey(tostring(modelName or ''))
+  end
+  if not modelHash or modelHash == 0 or not IsModelInCdimage(modelHash) or not IsModelValid(modelHash) then
+    return nil
+  end
+  RequestModel(modelHash)
+  local waited = 0
+  while not HasModelLoaded(modelHash) and waited < 5000 do
+    Wait(25)
+    waited = waited + 25
+  end
+  if not HasModelLoaded(modelHash) then
+    return nil
+  end
+  return modelHash
+end
+
+local function spawnDocumentPed(pedConfig)
+  if type(pedConfig) ~= 'table' or pedConfig.enabled == false then
+    return
+  end
+  local coords = type(pedConfig.coords) == 'table' and pedConfig.coords or nil
+  if not coords then return end
+  local x = tonumber(coords.x) or 0.0
+  local y = tonumber(coords.y) or 0.0
+  local z = tonumber(coords.z) or 0.0
+  local w = tonumber(coords.w) or 0.0
+
+  local modelHash = loadPedModel(pedConfig.model or '')
+  if not modelHash then
+    print(('[cad_bridge] Failed to load document ped model: %s'):format(tostring(pedConfig.model or '')))
+    return
+  end
+
+  local entity = CreatePed(4, modelHash, x, y, z - 1.0, w, false, true)
+  SetEntityAsMissionEntity(entity, true, true)
+  SetEntityInvincible(entity, true)
+  SetBlockingOfNonTemporaryEvents(entity, true)
+  FreezeEntityPosition(entity, true)
+  SetPedCanRagdoll(entity, false)
+
+  local scenario = trim(pedConfig.scenario or '')
+  if scenario ~= '' then
+    TaskStartScenarioInPlace(entity, scenario, 0, true)
+  end
+
+  SetModelAsNoLongerNeeded(modelHash)
+  documentPeds[#documentPeds + 1] = {
+    id = trim(pedConfig.id or ''),
+    entity = entity,
+    x = x,
+    y = y,
+    z = z,
+    licenseLabel = trim(pedConfig.license_label or ''),
+    registrationLabel = trim(pedConfig.registration_label or ''),
+    allowsLicense = pedConfig.allows_license == true,
+    allowsRegistration = pedConfig.allows_registration == true,
+  }
+end
+
+local function deleteDocumentPeds()
+  for i = 1, #documentPeds do
+    local pedData = documentPeds[i]
+    if type(pedData) == 'table' then
+      local entity = pedData.entity
+      if entity and entity ~= 0 and DoesEntityExist(entity) then
+        DeletePed(entity)
+      end
+    end
+  end
+  documentPeds = {}
+end
+
+local function drawDocumentHelpText(label)
+  BeginTextCommandDisplayHelp('STRING')
+  AddTextComponentSubstringPlayerName(tostring(label or 'Press ~INPUT_CONTEXT~ to interact'))
+  EndTextCommandDisplayHelp(0, false, false, -1)
+end
+
+CreateThread(function()
+  Wait(1000)
+  local interactionPeds = Config.DocumentInteractionPeds or {}
+  if type(interactionPeds) ~= 'table' or #interactionPeds == 0 then
+    interactionPeds = {
+      {
+        id = 'license',
+        enabled = (Config.DriverLicensePed and Config.DriverLicensePed.enabled == true),
+        model = Config.DriverLicensePed and Config.DriverLicensePed.model or '',
+        coords = Config.DriverLicensePed and Config.DriverLicensePed.coords or nil,
+        scenario = Config.DriverLicensePed and Config.DriverLicensePed.scenario or '',
+        allows_license = true,
+        allows_registration = false,
+      },
+      {
+        id = 'registration',
+        enabled = (Config.VehicleRegistrationPed and Config.VehicleRegistrationPed.enabled == true),
+        model = Config.VehicleRegistrationPed and Config.VehicleRegistrationPed.model or '',
+        coords = Config.VehicleRegistrationPed and Config.VehicleRegistrationPed.coords or nil,
+        scenario = Config.VehicleRegistrationPed and Config.VehicleRegistrationPed.scenario or '',
+        allows_license = false,
+        allows_registration = true,
+      }
+    }
+  end
+  for _, pedConfig in ipairs(interactionPeds) do
+    spawnDocumentPed(pedConfig)
+  end
+end)
+
+CreateThread(function()
+  while true do
+    local waitMs = 500
+    local playerPed = PlayerPedId()
+    if playerPed and playerPed ~= 0 then
+      local playerCoords = GetEntityCoords(playerPed)
+      for _, pedData in ipairs(documentPeds) do
+        local entity = pedData and pedData.entity or 0
+        if entity ~= 0 and DoesEntityExist(entity) then
+          local dx = (tonumber(playerCoords.x) or 0.0) - (tonumber(pedData.x) or 0.0)
+          local dy = (tonumber(playerCoords.y) or 0.0) - (tonumber(pedData.y) or 0.0)
+          local dz = (tonumber(playerCoords.z) or 0.0) - (tonumber(pedData.z) or 0.0)
+          local distance = math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+          if distance <= documentPromptDistance then
+            waitMs = 0
+            local promptText = ''
+            if pedData.allowsLicense and pedData.allowsRegistration then
+              promptText = 'Press ~INPUT_CONTEXT~ for licence quiz | Press ~INPUT_DETONATE~ for rego'
+            elseif pedData.allowsLicense then
+              promptText = pedData.licenseLabel ~= '' and pedData.licenseLabel or 'Press ~INPUT_CONTEXT~ for licence quiz'
+            elseif pedData.allowsRegistration then
+              promptText = pedData.registrationLabel ~= '' and pedData.registrationLabel or 'Press ~INPUT_CONTEXT~ for rego'
+            else
+              promptText = 'Document desk unavailable'
+            end
+            drawDocumentHelpText(promptText)
+
+            if distance <= documentInteractionDistance and (IsControlJustPressed(0, 38) or IsControlJustPressed(0, 47)) then
+              local nowMs = tonumber(GetGameTimer() or 0) or 0
+              if (nowMs - lastDocumentInteractAt) >= 1000 then
+                lastDocumentInteractAt = nowMs
+                local useLicense = IsControlJustPressed(0, 38)
+                local useRegistration = IsControlJustPressed(0, 47)
+                if pedData.allowsLicense and pedData.allowsRegistration then
+                  if useRegistration then
+                    TriggerServerEvent('cad_bridge:requestVehicleRegistrationPrompt', pedData.id)
+                  else
+                    TriggerServerEvent('cad_bridge:requestDriverLicensePrompt', pedData.id)
+                  end
+                elseif pedData.allowsLicense and useLicense then
+                  TriggerServerEvent('cad_bridge:requestDriverLicensePrompt', pedData.id)
+                elseif pedData.allowsRegistration and useLicense then
+                  TriggerServerEvent('cad_bridge:requestVehicleRegistrationPrompt', pedData.id)
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+    Wait(waitMs)
+  end
+end)
+
 AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
+  deleteDocumentPeds()
   if idCardUiOpen then
     closeShownIdCard()
   end

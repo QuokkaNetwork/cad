@@ -391,14 +391,16 @@ local function registerEmergencySuggestion(target)
     { name = 'message', help = 'Leave blank to open popup. Optional chat format: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>' },
   })
 
-  local licenseCommand = trim(Config.DriverLicenseCommand or 'cadlicense')
-  if licenseCommand ~= '' then
-    TriggerClientEvent('chat:addSuggestion', target, '/' .. licenseCommand, 'Open CAD driver license form')
-  end
+  if Config.EnableDocumentCommands == true then
+    local licenseCommand = trim(Config.DriverLicenseCommand or 'cadlicense')
+    if licenseCommand ~= '' then
+      TriggerClientEvent('chat:addSuggestion', target, '/' .. licenseCommand, 'Open CAD driver license quiz')
+    end
 
-  local regoCommand = trim(Config.VehicleRegistrationCommand or 'cadrego')
-  if regoCommand ~= '' then
-    TriggerClientEvent('chat:addSuggestion', target, '/' .. regoCommand, 'Open CAD vehicle registration form')
+    local regoCommand = trim(Config.VehicleRegistrationCommand or 'cadrego')
+    if regoCommand ~= '' then
+      TriggerClientEvent('chat:addSuggestion', target, '/' .. regoCommand, 'Open CAD vehicle registration form')
+    end
   end
 
   local showIdCommand = trim(Config.ShowIdCommand or 'showid')
@@ -759,12 +761,17 @@ local function parseDriverLicenseForm(payload)
   local fullName = trim(payload.full_name or payload.character_name or '')
   local dateOfBirth = normalizeDateOnly(payload.date_of_birth or payload.dob or '')
   local gender = trim(payload.gender or '')
+  local quizMode = payload.quiz_mode == true or payload.quiz_mode == 1
   local classes = normalizeList(payload.license_classes or payload.classes or {}, true)
   local conditions = normalizeList(payload.conditions or {}, false)
   local mugshotData = trim(payload.mugshot_data or '')
   local mugshotUrl = trim(payload.mugshot_url or '')
   local licenseNumber = trim(payload.license_number or '')
   local expiryDays = tonumber(payload.expiry_days or payload.duration_days or Config.DriverLicenseDefaultExpiryDays or 35) or (Config.DriverLicenseDefaultExpiryDays or 35)
+  if quizMode then
+    expiryDays = tonumber(Config.DriverLicenseQuizExpiryDays or 30) or 30
+    classes = normalizeList(Config.DriverLicenseQuizClasses or { 'CAR' }, true)
+  end
   if expiryDays < 1 then expiryDays = 1 end
   local expiryAt = normalizeDateOnly(payload.expiry_at or '')
   if expiryAt == '' then
@@ -775,6 +782,13 @@ local function parseDriverLicenseForm(payload)
   if dateOfBirth == '' then return nil, 'Date of birth is required (YYYY-MM-DD).' end
   if gender == '' then return nil, 'Gender is required.' end
   if #classes == 0 then return nil, 'At least one license class is required.' end
+  if quizMode then
+    local scorePercent = tonumber(payload.quiz_score_percent or 0) or 0
+    local passPercent = tonumber(Config.DriverLicenseQuizPassPercent or 80) or 80
+    if scorePercent < passPercent then
+      return nil, ('Quiz pass mark is %s%%.'):format(tostring(passPercent))
+    end
+  end
 
   return {
     full_name = fullName,
@@ -788,6 +802,7 @@ local function parseDriverLicenseForm(payload)
     expiry_days = math.floor(expiryDays),
     expiry_at = expiryAt,
     status = 'valid',
+    quiz_mode = quizMode,
   }
 end
 
@@ -2273,45 +2288,128 @@ RegisterCommand('000', function(src, args)
   submitEmergencyCall(src, report)
 end, false)
 
-RegisterCommand(trim(Config.DriverLicenseCommand or 'cadlicense'), function(src, _args)
+local function getDocumentInteractionPedById(pedId)
+  local target = trim(pedId or '')
+  if target == '' then return nil end
+  local configured = Config.DocumentInteractionPeds
+  if type(configured) ~= 'table' then return nil end
+  for _, ped in ipairs(configured) do
+    if type(ped) == 'table' and trim(ped.id or '') == target then
+      return ped
+    end
+  end
+  return nil
+end
+
+local function openDriverLicensePromptForSource(src, pedId)
   if not src or src == 0 then
-    print('[cad_bridge] Driver license command is in-game only')
+    print('[cad_bridge] Driver license prompt is in-game only')
+    return
+  end
+  local sourcePed = getDocumentInteractionPedById(pedId)
+  if trim(pedId or '') ~= '' and not sourcePed then
+    notifyPlayer(src, 'Invalid document desk.')
+    return
+  end
+  if sourcePed and sourcePed.allows_license ~= true then
+    notifyPlayer(src, 'Licences are not available at this desk.')
     return
   end
 
   local defaults = getCharacterDefaults(src)
-  local defaultExpiryDays = tonumber(Config.DriverLicenseDefaultExpiryDays or 35) or 35
-  if defaultExpiryDays < 1 then defaultExpiryDays = 35 end
+  local defaultExpiryDays = tonumber(Config.DriverLicenseQuizExpiryDays or 30) or 30
+  if defaultExpiryDays < 1 then defaultExpiryDays = 30 end
   TriggerClientEvent('cad_bridge:promptDriverLicense', src, {
     full_name = defaults.full_name,
     date_of_birth = defaults.date_of_birth,
     gender = defaults.gender,
-    class_options = Config.DriverLicenseClassOptions or {},
-    default_classes = Config.DriverLicenseDefaultClasses or {},
+    quiz_pass_percent = tonumber(Config.DriverLicenseQuizPassPercent or 80) or 80,
+    class_options = Config.DriverLicenseQuizClasses or { 'CAR' },
+    default_classes = Config.DriverLicenseQuizClasses or { 'CAR' },
     default_expiry_days = defaultExpiryDays,
-    duration_options = Config.DriverLicenseDurationOptions or { 6, 14, 35, 70 },
+    duration_options = { defaultExpiryDays },
+    quiz_mode = true,
   })
-end, false)
+end
 
-RegisterCommand(trim(Config.VehicleRegistrationCommand or 'cadrego'), function(src, _args)
+local function openVehicleRegistrationPromptForSource(src, pedId)
   if not src or src == 0 then
-    print('[cad_bridge] Vehicle registration command is in-game only')
+    print('[cad_bridge] Vehicle registration prompt is in-game only')
+    return
+  end
+  local sourcePed = getDocumentInteractionPedById(pedId)
+  if trim(pedId or '') ~= '' and not sourcePed then
+    notifyPlayer(src, 'Invalid document desk.')
+    return
+  end
+  if sourcePed and sourcePed.allows_registration ~= true then
+    notifyPlayer(src, 'Vehicle registration is not available at this desk.')
     return
   end
 
   local defaults = getCharacterDefaults(src)
+  local pedDurationOptions = {}
+  if sourcePed and type(sourcePed.registration_duration_options) == 'table' then
+    for _, raw in ipairs(sourcePed.registration_duration_options) do
+      local days = tonumber(raw)
+      if days and days >= 1 then
+        pedDurationOptions[#pedDurationOptions + 1] = math.floor(days)
+      end
+    end
+  end
+  local resolvedDurationOptions = (#pedDurationOptions > 0) and pedDurationOptions or (Config.VehicleRegistrationDurationOptions or { 6, 14, 35, 70 })
+  local defaultDuration = tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
+  if #pedDurationOptions > 0 then
+    defaultDuration = tonumber(pedDurationOptions[1]) or 1
+  end
   TriggerClientEvent('cad_bridge:promptVehicleRegistration', src, {
     owner_name = defaults.full_name,
-    duration_options = Config.VehicleRegistrationDurationOptions or { 6, 14, 35, 70 },
-    default_duration_days = tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35,
+    duration_options = resolvedDurationOptions,
+    default_duration_days = defaultDuration,
   })
-end, false)
+end
+
+RegisterNetEvent('cad_bridge:requestDriverLicensePrompt', function(pedId)
+  local src = source
+  openDriverLicensePromptForSource(src, pedId)
+end)
+
+RegisterNetEvent('cad_bridge:requestVehicleRegistrationPrompt', function(pedId)
+  local src = source
+  openVehicleRegistrationPromptForSource(src, pedId)
+end)
+
+if Config.EnableDocumentCommands == true then
+  RegisterCommand(trim(Config.DriverLicenseCommand or 'cadlicense'), function(src, _args)
+    openDriverLicensePromptForSource(src)
+  end, false)
+
+  RegisterCommand(trim(Config.VehicleRegistrationCommand or 'cadrego'), function(src, _args)
+    openVehicleRegistrationPromptForSource(src)
+  end, false)
+end
 
 local heartbeatInFlight = false
 local heartbeatInFlightSinceMs = 0
 local pollFineJobs = nil
 local pollJailJobs = nil
 local lastFastEnforcementPollMs = 0
+
+local function getServerPedPositionSnapshot(sourceId)
+  local s = tonumber(sourceId) or 0
+  if s <= 0 then return nil end
+  local ped = GetPlayerPed(s)
+  if not ped or ped <= 0 then return nil end
+  local coords = GetEntityCoords(ped)
+  if not coords then return nil end
+  return {
+    x = tonumber(coords.x) or 0.0,
+    y = tonumber(coords.y) or 0.0,
+    z = tonumber(coords.z) or 0.0,
+    heading = tonumber(GetEntityHeading(ped)) or 0.0,
+    speed = tonumber(GetEntitySpeed(ped)) or 0.0,
+  }
+end
 
 local function triggerFastEnforcementPoll()
   local now = nowMs()
@@ -2370,22 +2468,35 @@ CreateThread(function()
       if s then
         local identifiers = GetPlayerIdentifiers(s)
         if Config.PublishAllPlayers or hasTrackedIdentifier(identifiers) then
-          local pos = PlayerPositions[s] or {
-            x = 0.0,
-            y = 0.0,
-            z = 0.0,
-            heading = 0.0,
-            speed = 0.0,
-            street = '',
-            crossing = '',
-            postal = '',
-            location = '',
-            vehicle = '',
-            license_plate = '',
-            has_siren_enabled = false,
-            icon = 6,
-            weapon = '',
-          }
+          local pos = PlayerPositions[s]
+          local fallbackSnapshot = getServerPedPositionSnapshot(s)
+          if fallbackSnapshot and (type(pos) ~= 'table' or ((tonumber(pos.x) or 0.0) == 0.0 and (tonumber(pos.y) or 0.0) == 0.0)) then
+            if type(pos) ~= 'table' then pos = {} end
+            pos.x = fallbackSnapshot.x
+            pos.y = fallbackSnapshot.y
+            pos.z = fallbackSnapshot.z
+            pos.heading = fallbackSnapshot.heading
+            pos.speed = fallbackSnapshot.speed
+            PlayerPositions[s] = pos
+          end
+          if type(pos) ~= 'table' then
+            pos = {
+              x = 0.0,
+              y = 0.0,
+              z = 0.0,
+              heading = 0.0,
+              speed = 0.0,
+              street = '',
+              crossing = '',
+              postal = '',
+              location = '',
+              vehicle = '',
+              license_plate = '',
+              has_siren_enabled = false,
+              icon = 6,
+              weapon = '',
+            }
+          end
           payloadPlayers[#payloadPlayers + 1] = {
             source = s,
             name = getCharacterDisplayName(s),

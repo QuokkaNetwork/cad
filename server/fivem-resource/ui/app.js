@@ -19,10 +19,7 @@ var licenseSubmitBtn = document.getElementById("licenseSubmitBtn");
 var licenseNameInput = document.getElementById("licenseNameInput");
 var licenseDobInput = document.getElementById("licenseDobInput");
 var licenseGenderInput = document.getElementById("licenseGenderInput");
-var licenseDurationList = document.getElementById("licenseDurationList");
-var licenseConditionsInput = document.getElementById("licenseConditionsInput");
-var licenseClassList = document.getElementById("licenseClassList");
-var licenseClassEmpty = document.getElementById("licenseClassEmpty");
+var licenseQuizList = document.getElementById("licenseQuizList");
 var licenseFormError = document.getElementById("licenseFormError");
 
 var registrationOverlay = document.getElementById("registrationOverlay");
@@ -59,10 +56,8 @@ var titleLimit = 80;
 var detailsLimit = 600;
 var departments = [];
 var selectedDepartmentIds = [];
-var classOptions = [];
-var selectedClasses = [];
-var licenseDurationOptions = [];
-var selectedLicenseDurationDays = 35;
+var quizAnswers = {};
+var quizPassPercent = 80;
 var durationOptions = [];
 var selectedRegistrationDurationDays = 35;
 
@@ -365,129 +360,107 @@ function cancelEmergencyForm() {
   closeEmergencyForm();
 }
 
-function normalizeClassOptions(raw) {
-  var list = sanitizeStringArray(Array.isArray(raw) ? raw : [], true);
-  return list;
-}
-
-function isClassSelected(name) {
-  return selectedClasses.indexOf(String(name || "").toUpperCase()) >= 0;
-}
-
-function toggleClass(name) {
-  var target = String(name || "").toUpperCase();
-  if (!target) return;
-  var next = [];
-  var removed = false;
-  for (var i = 0; i < selectedClasses.length; i += 1) {
-    if (selectedClasses[i] === target) {
-      removed = true;
-      continue;
-    }
-    next.push(selectedClasses[i]);
+var LICENSE_QUIZ_QUESTIONS = [
+  {
+    id: "q1",
+    question: "At a STOP sign in Australia, what must you do?",
+    options: [
+      "Slow down and continue if clear",
+      "Come to a complete stop and give way",
+      "Honk and proceed first"
+    ],
+    answer: 1
+  },
+  {
+    id: "q2",
+    question: "What is the default urban speed limit unless signed otherwise?",
+    options: [
+      "40 km/h",
+      "50 km/h",
+      "60 km/h"
+    ],
+    answer: 1
+  },
+  {
+    id: "q3",
+    question: "When turning left at lights with pedestrians crossing, you must:",
+    options: [
+      "Give way to pedestrians",
+      "Drive through if you are first",
+      "Flash headlights to warn them"
+    ],
+    answer: 0
+  },
+  {
+    id: "q4",
+    question: "On multi-lane roads, you should normally keep:",
+    options: [
+      "In the right lane at all times",
+      "In the left lane unless overtaking or turning right",
+      "Any lane regardless of traffic"
+    ],
+    answer: 1
+  },
+  {
+    id: "q5",
+    question: "Using a hand-held phone while driving is:",
+    options: [
+      "Allowed below 40 km/h",
+      "Allowed at traffic lights",
+      "Illegal"
+    ],
+    answer: 2
   }
-  if (!removed) next.push(target);
-  selectedClasses = next;
-}
+];
 
-function renderLicenseClasses() {
-  if (!licenseClassList || !licenseClassEmpty) return;
-  licenseClassList.innerHTML = "";
-  if (classOptions.length === 0) {
-    licenseClassList.classList.add("hidden");
-    licenseClassEmpty.classList.remove("hidden");
-    return;
-  }
-  licenseClassList.classList.remove("hidden");
-  licenseClassEmpty.classList.add("hidden");
+function renderLicenseQuiz() {
+  if (!licenseQuizList) return;
+  licenseQuizList.innerHTML = "";
 
-  for (var i = 0; i < classOptions.length; i += 1) {
-    (function renderClassButton(classCode) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "chip-btn" + (isClassSelected(classCode) ? " active" : "");
-      btn.textContent = classCode;
-      btn.addEventListener("click", function onClassClick() {
-        toggleClass(classCode);
-        renderLicenseClasses();
-      });
-      licenseClassList.appendChild(btn);
-    })(classOptions[i]);
-  }
-}
+  for (var i = 0; i < LICENSE_QUIZ_QUESTIONS.length; i += 1) {
+    (function renderQuestion(questionObj, questionIndex) {
+      var wrapper = document.createElement("div");
+      wrapper.className = "field";
 
-function normalizeLicenseDurationOptions(raw, fallback) {
-  var list = Array.isArray(raw) ? raw : [];
-  var out = [];
-  var seen = {};
-  for (var i = 0; i < list.length; i += 1) {
-    var value = Number(list[i]);
-    if (!Number.isFinite(value) || value < 1) continue;
-    var rounded = Math.floor(value);
-    if (seen[rounded]) continue;
-    seen[rounded] = true;
-    out.push(rounded);
-  }
-  if (out.length === 0) out = [Number(fallback) || 35];
-  out.sort(function sortNumber(a, b) { return a - b; });
-  return out;
-}
+      var title = document.createElement("label");
+      title.textContent = String(questionIndex + 1) + ". " + questionObj.question;
+      wrapper.appendChild(title);
 
-function getLicenseDurationLabel(days) {
-  var value = Number(days) || 0;
-  if (value === 6) return "6 months (6 days)";
-  if (value === 14) return "2 years (2 weeks)";
-  if (value === 35) return "5 years (5 weeks)";
-  if (value === 70) return "10 years (10 weeks)";
-  return String(value) + " day" + (value === 1 ? "" : "s");
-}
+      var optionsGrid = document.createElement("div");
+      optionsGrid.className = "chip-grid";
 
-function renderLicenseDurations(defaultDuration) {
-  if (!licenseDurationList) return;
-  licenseDurationList.innerHTML = "";
-  var fallback = Number(defaultDuration) || 35;
-  licenseDurationOptions = normalizeLicenseDurationOptions(licenseDurationOptions, fallback);
-  if (licenseDurationOptions.indexOf(fallback) < 0) {
-    fallback = licenseDurationOptions.indexOf(35) >= 0 ? 35 : licenseDurationOptions[0];
-  }
-  selectedLicenseDurationDays = fallback;
+      for (var optionIndex = 0; optionIndex < questionObj.options.length; optionIndex += 1) {
+        (function renderOption(index) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          var isActive = Number(quizAnswers[questionObj.id]) === index;
+          btn.className = "chip-btn" + (isActive ? " active" : "");
+          btn.textContent = questionObj.options[index];
+          btn.addEventListener("click", function onQuizAnswerClick() {
+            quizAnswers[questionObj.id] = index;
+            renderLicenseQuiz();
+          });
+          optionsGrid.appendChild(btn);
+        })(optionIndex);
+      }
 
-  for (var i = 0; i < licenseDurationOptions.length; i += 1) {
-    (function renderDurationButton(optionValue) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "chip-btn" + (selectedLicenseDurationDays === optionValue ? " active" : "");
-      btn.textContent = getLicenseDurationLabel(optionValue);
-      btn.addEventListener("click", function onDurationClick() {
-        selectedLicenseDurationDays = optionValue;
-        renderLicenseDurations(optionValue);
-      });
-      licenseDurationList.appendChild(btn);
-    })(licenseDurationOptions[i]);
+      wrapper.appendChild(optionsGrid);
+      licenseQuizList.appendChild(wrapper);
+    })(LICENSE_QUIZ_QUESTIONS[i], i);
   }
 }
 
 function resetLicenseForm(payload) {
   var data = payload || {};
-  classOptions = normalizeClassOptions(safeGet(data, "class_options", []));
-  if (classOptions.length === 0) classOptions = ["CAR"];
-  selectedClasses = sanitizeStringArray(
-    safeGet(data, "default_classes", []),
-    true
-  );
-  if (selectedClasses.length === 0 && classOptions.length > 0) {
-    selectedClasses = [classOptions[0]];
-  }
-  renderLicenseClasses();
-
+  quizAnswers = {};
+  quizPassPercent = Number(safeGet(data, "quiz_pass_percent", 80));
+  if (!Number.isFinite(quizPassPercent) || quizPassPercent < 1) quizPassPercent = 80;
   if (licenseNameInput) licenseNameInput.value = String(safeGet(data, "full_name", "") || "");
   if (licenseDobInput) {
     licenseDobInput.value = normalizeDateForDateInput(safeGet(data, "date_of_birth", ""));
   }
   if (licenseGenderInput) licenseGenderInput.value = String(safeGet(data, "gender", "") || "");
-  if (licenseConditionsInput) licenseConditionsInput.value = "";
-  licenseDurationOptions = Array.isArray(data.duration_options) ? data.duration_options : [6, 14, 35, 70];
-  renderLicenseDurations(Number(safeGet(data, "default_expiry_days", 35)) || 35);
+  renderLicenseQuiz();
   if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
   showErrorNode(licenseFormError, "");
 }
@@ -499,7 +472,7 @@ function openLicenseForm(payload) {
   licenseOpen = true;
   setVisible(licenseOverlay, true);
   setTimeout(function focusLicenseInput() {
-    if (licenseConditionsInput) licenseConditionsInput.focus();
+    if (licenseSubmitBtn) licenseSubmitBtn.focus();
   }, 40);
 }
 
@@ -508,42 +481,53 @@ function closeLicenseForm() {
   setVisible(licenseOverlay, false);
 }
 
-function parseConditionsFromInput() {
-  var text = String(licenseConditionsInput && licenseConditionsInput.value || "").trim();
-  if (!text) return [];
-  var parts = text.split(",");
-  var out = [];
-  var seen = {};
-  for (var i = 0; i < parts.length; i += 1) {
-    var value = String(parts[i] || "").trim();
-    if (!value) continue;
-    if (seen[value]) continue;
-    seen[value] = true;
-    out.push(value);
-  }
-  return out;
-}
-
 async function submitLicenseForm() {
   var fullName = String(licenseNameInput && licenseNameInput.value || "").trim();
   var dateOfBirth = String(licenseDobInput && licenseDobInput.value || "").trim();
   var gender = String(licenseGenderInput && licenseGenderInput.value || "").trim();
-  if (!fullName || !dateOfBirth || !gender || selectedClasses.length === 0) {
-    showErrorNode(licenseFormError, "Name, DOB, gender and at least one class are required.");
+  if (!fullName || !dateOfBirth || !gender) {
+    showErrorNode(licenseFormError, "Character details are missing. Reopen the quiz.");
     return;
   }
+
+  var answered = 0;
+  var correct = 0;
+  for (var i = 0; i < LICENSE_QUIZ_QUESTIONS.length; i += 1) {
+    var questionObj = LICENSE_QUIZ_QUESTIONS[i];
+    var selected = Number(quizAnswers[questionObj.id]);
+    if (!Number.isInteger(selected)) continue;
+    answered += 1;
+    if (selected === Number(questionObj.answer)) correct += 1;
+  }
+
+  if (answered < LICENSE_QUIZ_QUESTIONS.length) {
+    showErrorNode(licenseFormError, "Please answer every question.");
+    return;
+  }
+
+  var scorePercent = Math.floor((correct / LICENSE_QUIZ_QUESTIONS.length) * 100);
+  if (scorePercent < quizPassPercent) {
+    showErrorNode(
+      licenseFormError,
+      "Quiz failed (" + String(scorePercent) + "%). You need " + String(quizPassPercent) + "% or more."
+    );
+    return;
+  }
+
   showErrorNode(licenseFormError, "");
   if (licenseSubmitBtn) licenseSubmitBtn.disabled = true;
 
-  var expiryDays = Number(selectedLicenseDurationDays || 0);
-  if (!Number.isFinite(expiryDays) || expiryDays < 1) expiryDays = 1;
   var payload = {
     full_name: fullName,
     date_of_birth: dateOfBirth,
     gender: gender,
-    license_classes: sanitizeStringArray(selectedClasses, true),
-    conditions: parseConditionsFromInput(),
-    expiry_days: Math.floor(expiryDays),
+    license_classes: ["CAR"],
+    conditions: ["Quiz pass " + String(scorePercent) + "%"],
+    expiry_days: 30,
+    quiz_mode: true,
+    quiz_score_percent: scorePercent,
+    quiz_total_questions: LICENSE_QUIZ_QUESTIONS.length,
+    quiz_correct_answers: correct
   };
 
   try {
@@ -555,13 +539,13 @@ async function submitLicenseForm() {
       result = null;
     }
     if (!response.ok || (result && result.ok === false)) {
-      showErrorNode(licenseFormError, "Unable to submit license form.");
+      showErrorNode(licenseFormError, "Unable to submit quiz result.");
       if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
       return;
     }
     closeLicenseForm();
   } catch (_err2) {
-    showErrorNode(licenseFormError, "Unable to submit license form.");
+    showErrorNode(licenseFormError, "Unable to submit quiz result.");
     if (licenseSubmitBtn) licenseSubmitBtn.disabled = false;
   }
 }
@@ -587,6 +571,16 @@ function normalizeDurationOptions(raw, fallback) {
   if (out.length === 0) out = [Number(fallback) || 35];
   out.sort(function sortNumber(a, b) { return a - b; });
   return out;
+}
+
+function getLicenseDurationLabel(days) {
+  var value = Number(days) || 0;
+  if (value === 1) return "Temporary (1 day)";
+  if (value === 6) return "6 months (6 days)";
+  if (value === 14) return "2 years (2 weeks)";
+  if (value === 35) return "5 years (5 weeks)";
+  if (value === 70) return "10 years (10 weeks)";
+  return String(value) + " day" + (value === 1 ? "" : "s");
 }
 
 function renderRegistrationDurations(defaultDuration) {
