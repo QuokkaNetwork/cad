@@ -1403,12 +1403,17 @@ local function submitDriverLicense(src, formData)
       local okExisting, existingParsed = pcall(json.decode, existingBody or '{}')
       if okExisting and type(existingParsed) == 'table' and type(existingParsed.license) == 'table' then
         local existingLicense = existingParsed.license
+        local existingStatus = trim(existingLicense.status or ''):lower()
         local daysUntilExpiry = daysUntilDateOnly(existingLicense.expiry_at)
         print(('[cad_bridge] Existing license found: expiry_at=%s daysUntilExpiry=%s status=%s'):format(
           tostring(existingLicense.expiry_at or '?'),
           tostring(daysUntilExpiry),
           tostring(existingLicense.status or '?')
         ))
+        if existingStatus == 'suspended' or existingStatus == 'disqualified' then
+          notifyPlayer(s, ('Licence renewal blocked. Your licence status is "%s".'):format(existingStatus))
+          return
+        end
         if photoOnly then
           payload.full_name = trim(existingLicense.full_name or payload.full_name)
           payload.date_of_birth = normalizeDateOnly(existingLicense.date_of_birth or payload.date_of_birth)
@@ -2511,24 +2516,110 @@ local function submitLiveMapCalibration(src, data)
   local payload = type(data) == 'table' and data or {}
   local point1 = type(payload.point1) == 'table' and payload.point1 or {}
   local point2 = type(payload.point2) == 'table' and payload.point2 or {}
+  local shouldResetToDefault = payload.reset == true or payload.reset == 1
+
+  local DEFAULT_GAME_BOUNDS = {
+    x1 = -4000.0,
+    y1 = 8000.0,
+    x2 = 4500.0,
+    y2 = -4000.0,
+  }
+
+  if shouldResetToDefault then
+    request('POST', '/api/integration/fivem/live-map/calibration', {
+      map_game_x1 = DEFAULT_GAME_BOUNDS.x1,
+      map_game_y1 = DEFAULT_GAME_BOUNDS.y1,
+      map_game_x2 = DEFAULT_GAME_BOUNDS.x2,
+      map_game_y2 = DEFAULT_GAME_BOUNDS.y2,
+      source = 'fivem_calibrate_reset',
+      source_player = s,
+    }, function(status, body, _headers)
+      if status >= 200 and status < 300 then
+        notifyCalibration('Live map calibration reset to default GTA bounds. Refresh CAD map.', 'success')
+        return
+      end
+      local err = ''
+      local okParsed, parsed = pcall(json.decode, body or '{}')
+      if okParsed and type(parsed) == 'table' then
+        err = trim(parsed.error or '')
+      end
+      if err ~= '' then
+        notifyCalibration(('Live map reset failed: %s'):format(err), 'error')
+      else
+        notifyCalibration(('Live map reset failed (HTTP %s).'):format(tostring(status)), 'error')
+      end
+    end)
+    return
+  end
 
   if not isFiniteNumber(point1.x) or not isFiniteNumber(point1.y) or not isFiniteNumber(point2.x) or not isFiniteNumber(point2.y) then
     notifyCalibration('Calibration points are invalid. Capture point1 and point2 again.', 'error')
     return
   end
 
-  local x1 = math.min(tonumber(point1.x) or 0.0, tonumber(point2.x) or 0.0)
-  local x2 = math.max(tonumber(point1.x) or 0.0, tonumber(point2.x) or 0.0)
-  local y1 = math.max(tonumber(point1.y) or 0.0, tonumber(point2.y) or 0.0)
-  local y2 = math.min(tonumber(point1.y) or 0.0, tonumber(point2.y) or 0.0)
+  local capturedX1 = tonumber(point1.x) or 0.0
+  local capturedY1 = tonumber(point1.y) or 0.0
+  local capturedX2 = tonumber(point2.x) or 0.0
+  local capturedY2 = tonumber(point2.y) or 0.0
+
+  -- Use the configured auto points as reference anchors and solve map bounds from
+  -- their relative location on the full GTA map. This avoids treating sampled points
+  -- as literal map corners, which caused severe drift/off-map markers.
+  local referencePoint1 = type(Config.LiveMapCalibrationAutoPoint1) == 'table' and Config.LiveMapCalibrationAutoPoint1 or nil
+  local referencePoint2 = type(Config.LiveMapCalibrationAutoPoint2) == 'table' and Config.LiveMapCalibrationAutoPoint2 or nil
+
+  local defaultWidth = DEFAULT_GAME_BOUNDS.x2 - DEFAULT_GAME_BOUNDS.x1
+  local defaultHeight = DEFAULT_GAME_BOUNDS.y1 - DEFAULT_GAME_BOUNDS.y2
+  local solvedByReference = false
+  local x1 = 0.0
+  local x2 = 0.0
+  local y1 = 0.0
+  local y2 = 0.0
+
+  if referencePoint1 and referencePoint2 and defaultWidth > 0.0 and defaultHeight > 0.0 then
+    local refX1 = tonumber(referencePoint1.x) or 0.0
+    local refY1 = tonumber(referencePoint1.y) or 0.0
+    local refX2 = tonumber(referencePoint2.x) or 0.0
+    local refY2 = tonumber(referencePoint2.y) or 0.0
+
+    local u1 = (refX1 - DEFAULT_GAME_BOUNDS.x1) / defaultWidth
+    local u2 = (refX2 - DEFAULT_GAME_BOUNDS.x1) / defaultWidth
+    local v1 = (DEFAULT_GAME_BOUNDS.y1 - refY1) / defaultHeight
+    local v2 = (DEFAULT_GAME_BOUNDS.y1 - refY2) / defaultHeight
+
+    local du = u2 - u1
+    local dv = v2 - v1
+    if math.abs(du) > 0.0001 and math.abs(dv) > 0.0001 then
+      local solvedWidth = (capturedX2 - capturedX1) / du
+      local solvedHeight = (capturedY1 - capturedY2) / dv
+      if solvedWidth > 500.0 and solvedHeight > 500.0 then
+        x1 = capturedX1 - (u1 * solvedWidth)
+        x2 = x1 + solvedWidth
+        y1 = capturedY1 + (v1 * solvedHeight)
+        y2 = y1 - solvedHeight
+        solvedByReference = true
+      end
+    end
+  end
+
+  if not solvedByReference then
+    -- Fallback to legacy corner-mode if reference solving cannot run.
+    x1 = math.min(capturedX1, capturedX2)
+    x2 = math.max(capturedX1, capturedX2)
+    y1 = math.max(capturedY1, capturedY2)
+    y2 = math.min(capturedY1, capturedY2)
+  end
+
   local padding = normalizeFiniteNumber(payload.padding, Config.LiveMapCalibrationPadding or 250.0)
   if padding < 0.0 then padding = 0.0 end
   if padding > 2000.0 then padding = 2000.0 end
 
-  x1 = x1 - padding
-  x2 = x2 + padding
-  y1 = y1 + padding
-  y2 = y2 - padding
+  if not solvedByReference then
+    x1 = x1 - padding
+    x2 = x2 + padding
+    y1 = y1 + padding
+    y2 = y2 - padding
+  end
 
   if (x2 - x1) < 500.0 or (y1 - y2) < 500.0 then
     notifyCalibration('Calibration area is too small. Move further apart before saving.', 'error')
@@ -2540,10 +2631,6 @@ local function submitLiveMapCalibration(src, data)
     map_game_y1 = y1,
     map_game_x2 = x2,
     map_game_y2 = y2,
-    map_scale_x = 1.0,
-    map_scale_y = 1.0,
-    map_offset_x = 0.0,
-    map_offset_y = 0.0,
     source = 'fivem_calibrate_command',
     source_player = s,
   }, function(status, body, _headers)

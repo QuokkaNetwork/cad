@@ -1707,13 +1707,34 @@ router.post('/licenses', requireBridgeAuth, async (req, res) => {
     const defaultExpiryDays = Number.isFinite(defaultExpiryDaysRaw) ? Math.max(1, Math.trunc(defaultExpiryDaysRaw)) : 1095;
     const expiryDaysRaw = Number(payload.expiry_days ?? payload.duration_days ?? defaultExpiryDays);
     const expiryDays = Number.isFinite(expiryDaysRaw) ? Math.max(1, Math.trunc(expiryDaysRaw)) : defaultExpiryDays;
-    const expiryAt = normalizeDateOnly(payload.expiry_at || '') || addDaysDateOnly(expiryDays);
+    const photoOnly = payload.photo_only === true
+      || payload.photo_only === 1
+      || String(payload.photo_only || '').trim().toLowerCase() === 'true';
+    let expiryAt = normalizeDateOnly(payload.expiry_at || '') || addDaysDateOnly(expiryDays);
     let status = normalizeStatus(payload.status, DRIVER_LICENSE_STATUSES, 'valid');
     if (isPastDateOnly(expiryAt)) {
       status = 'expired';
     }
 
     DriverLicenses.markExpiredDue();
+    const existingLicense = DriverLicenses.findByCitizenId(citizenId);
+    const existingStatus = String(existingLicense?.status || '').trim().toLowerCase();
+    if (existingStatus === 'suspended' || existingStatus === 'disqualified') {
+      if (!photoOnly) {
+        logBridgeDocumentReject('license', 403, 'status_blocks_renewal', payloadSummary, {
+          citizenid: citizenId,
+          existing_status: existingStatus,
+        });
+        return res.status(403).json({
+          error: `License renewal is blocked while status is ${existingStatus}`,
+        });
+      }
+      status = existingStatus;
+      const existingExpiryAt = normalizeDateOnly(existingLicense?.expiry_at || '');
+      if (existingExpiryAt) {
+        expiryAt = existingExpiryAt;
+      }
+    }
 
     const providedLicenseNumber = String(payload.license_number || '').trim();
     const generatedLicenseNumber = `VIC-${citizenId.slice(-8).toUpperCase() || String(Date.now()).slice(-8)}`;

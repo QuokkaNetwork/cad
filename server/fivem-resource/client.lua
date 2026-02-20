@@ -1696,7 +1696,7 @@ if LIVE_MAP_CALIBRATION_ENABLED then
   RegisterCommand(LIVE_MAP_CALIBRATION_COMMAND, function(_source, args)
     local action = trim(args and args[1] or ''):lower()
     if action == '' or action == 'help' then
-      notifyLiveMapCalibration(('Usage: /%s start | auto | manual | point1 | point2 | status | save | cancel'):format(LIVE_MAP_CALIBRATION_COMMAND))
+      notifyLiveMapCalibration(('Usage: /%s start | auto | manual | point1 | point2 | status | save | reset | cancel'):format(LIVE_MAP_CALIBRATION_COMMAND))
       return
     end
 
@@ -1750,6 +1750,16 @@ if LIVE_MAP_CALIBRATION_ENABLED then
       liveMapCalibrationPointA = nil
       liveMapCalibrationPointB = nil
       notifyLiveMapCalibration('Calibration cancelled.')
+      return
+    end
+
+    if action == 'reset' then
+      liveMapCalibrationPointA = nil
+      liveMapCalibrationPointB = nil
+      TriggerServerEvent('cad_bridge:saveLiveMapCalibration', {
+        reset = true,
+      })
+      notifyLiveMapCalibration('Calibration reset submitted. Default GTA bounds will be restored if authorised.')
       return
     end
 
