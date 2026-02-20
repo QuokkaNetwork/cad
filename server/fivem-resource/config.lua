@@ -343,8 +343,8 @@ end
 -- Mugshot/photo capture.
 Config.MugshotProvider = trim(getString('cad_bridge_mugshot_provider', 'auto')):lower()
 if Config.MugshotProvider == '' then Config.MugshotProvider = 'auto' end
-Config.ScreenshotResource = trim(getString('cad_bridge_screenshot_resource', 'screenshot-basic'))
-if Config.ScreenshotResource == '' then Config.ScreenshotResource = 'screenshot-basic' end
+Config.ScreenshotResource = trim(getString('cad_bridge_screenshot_resource', 'screencapture'))
+if Config.ScreenshotResource == '' then Config.ScreenshotResource = 'screencapture' end
 Config.ScreenshotEncoding = trim(getString('cad_bridge_screenshot_encoding', 'jpg')):lower()
 if Config.ScreenshotEncoding == '' then Config.ScreenshotEncoding = 'jpg' end
 Config.ScreenshotQuality = getNumber('cad_bridge_screenshot_quality', 0.7)

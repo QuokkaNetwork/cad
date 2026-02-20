@@ -777,6 +777,32 @@ window.addEventListener("message", function onMessage(event) {
   }
   if (message.action === "cadBridgeIdCard:hide") {
     closeIdCard();
+    return;
+  }
+  if (message.action === "cadBridgeHeadshot:capture") {
+    var txdName = String(message.txdName || "").trim();
+    if (!txdName) {
+      postNui("cadBridgeHeadshotCapture", { data: "" }).catch(function ignoreCaptureError() {});
+      return;
+    }
+    var img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = function onHeadshotLoad() {
+      var canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || 256;
+      canvas.height = img.naturalHeight || 256;
+      var ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      var dataUrl = canvas.toDataURL("image/webp", 0.92);
+      postNui("cadBridgeHeadshotCapture", { data: dataUrl }).catch(function ignoreCaptureError() {});
+    };
+    img.onerror = function onHeadshotError() {
+      postNui("cadBridgeHeadshotCapture", { data: "" }).catch(function ignoreCaptureError() {});
+    };
+    img.src = "https://nui-img/" + txdName + "/" + txdName;
+    return;
   }
 });
 

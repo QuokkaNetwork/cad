@@ -387,6 +387,7 @@ local emergencyUiOpenedAtMs = 0
 local driverLicenseUiOpen = false
 local vehicleRegistrationUiOpen = false
 local idCardUiOpen = false
+local headshotCapturePending = nil
 local SHOW_ID_COMMAND = trim(Config.ShowIdCommand or 'showid')
 if SHOW_ID_COMMAND == '' then SHOW_ID_COMMAND = 'showid' end
 local SHOW_ID_KEY = trim(Config.ShowIdKey or 'PAGEDOWN')
@@ -510,7 +511,7 @@ local function normalizeScreenshotResult(result)
 end
 
 local function captureMugshotViaScreenshot()
-  local resourceName = trim(Config.ScreenshotResource or 'screenshot-basic')
+  local resourceName = trim(Config.ScreenshotResource or 'screencapture')
   if resourceName == '' then return '' end
   if GetResourceState(resourceName) ~= 'started' then return '' end
 
@@ -611,9 +612,58 @@ local function captureMugshotViaScreenshot()
   return normalizeScreenshotResult(raw)
 end
 
+local function captureMugshotViaHeadshot()
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then return '' end
+
+  local handle = RegisterPedheadshot(ped)
+  if not handle or handle == 0 then return '' end
+
+  local deadline = GetGameTimer() + 5000
+  while not IsPedHeadshotReady(handle) and GetGameTimer() < deadline do
+    Wait(100)
+  end
+
+  if not IsPedHeadshotReady(handle) then
+    UnregisterPedHeadshot(handle)
+    return ''
+  end
+
+  local txdName = GetPedHeadshotTxdString(handle)
+  if not txdName or trim(txdName) == '' then
+    UnregisterPedHeadshot(handle)
+    return ''
+  end
+
+  local state = { done = false, result = '' }
+  headshotCapturePending = state
+
+  SendNUIMessage({
+    action = 'cadBridgeHeadshot:capture',
+    txdName = txdName,
+  })
+
+  local captureDeadline = GetGameTimer() + 5000
+  while not state.done and GetGameTimer() < captureDeadline do
+    Wait(50)
+  end
+
+  headshotCapturePending = nil
+  UnregisterPedHeadshot(handle)
+  return state.result
+end
+
 local function captureMugshotUrl()
-  local provider = trim(Config.MugshotProvider or 'screenshot-basic'):lower()
-  if provider == '' then provider = 'screenshot-basic' end
+  local provider = trim(Config.MugshotProvider or 'screencapture'):lower()
+  if provider == '' then provider = 'screencapture' end
+
+  if provider == 'screencapture' then
+    local headshot = captureMugshotViaHeadshot()
+    if headshot ~= '' then return headshot end
+    local screenshot = captureMugshotViaScreenshot()
+    if screenshot ~= '' then return screenshot end
+    return captureMugshotViaLegacyExport()
+  end
 
   if provider == 'screenshot-basic' then
     local screenshot = captureMugshotViaScreenshot()
@@ -627,7 +677,9 @@ local function captureMugshotUrl()
     return captureMugshotViaScreenshot()
   end
 
-  -- auto fallback mode
+  -- auto fallback mode: try headshot first, then screencapture, then legacy
+  local headshot = captureMugshotViaHeadshot()
+  if headshot ~= '' then return headshot end
   local screenshot = captureMugshotViaScreenshot()
   if screenshot ~= '' then return screenshot end
   return captureMugshotViaLegacyExport()
@@ -1100,6 +1152,14 @@ end)
 
 RegisterNUICallback('cadBridgeLicenseCancel', function(_data, cb)
   closeDriverLicensePopup()
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeHeadshotCapture', function(data, cb)
+  if headshotCapturePending then
+    headshotCapturePending.result = normalizeScreenshotResult(tostring(data and data.data or ''))
+    headshotCapturePending.done = true
+  end
   if cb then cb({ ok = true }) end
 end)
 
