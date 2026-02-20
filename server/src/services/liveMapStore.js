@@ -25,6 +25,9 @@ function upsertPlayer(identifier, payload = {}) {
   playersByIdentifier.set(key, {
     identifier: key,
     name: normalizeString(payload.name) || 'Unknown',
+    gameId: normalizeString(payload.gameId || payload.game_id || payload.source),
+    source: Math.max(0, Math.trunc(normalizeNumber(payload.source, 0))),
+    playerId: Math.max(0, Math.trunc(normalizeNumber(payload.playerId || payload.player_id, 0))),
     pos: {
       x: normalizeNumber(pos.x, 0),
       y: normalizeNumber(pos.y, 0),

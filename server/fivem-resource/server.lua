@@ -2713,7 +2713,7 @@ end
 
 local function clearStuckHeartbeatIfNeeded()
   if not heartbeatInFlight then return false end
-  local timeoutMs = math.max(10000, math.floor((tonumber(Config.HeartbeatIntervalMs) or 1500) * 8))
+  local timeoutMs = math.max(10000, math.floor((tonumber(Config.HeartbeatIntervalMs) or 500) * 8))
   if heartbeatInFlightSinceMs <= 0 then
     heartbeatInFlightSinceMs = nowMs()
     return false
@@ -2729,7 +2729,7 @@ end
 
 CreateThread(function()
   while true do
-    Wait(math.max(1000, tonumber(Config.HeartbeatIntervalMs) or 1500))
+    Wait(math.max(250, tonumber(Config.HeartbeatIntervalMs) or 500))
     if not hasBridgeConfig() then
       goto continue
     end
@@ -2775,13 +2775,25 @@ CreateThread(function()
               weapon = '',
             }
           end
+          local platformName = trim(GetPlayerName(s) or '')
+          local characterName = getCharacterDisplayName(s)
+          local displayName = platformName ~= '' and platformName or characterName
           payloadPlayers[#payloadPlayers + 1] = {
             source = s,
-            name = getCharacterDisplayName(s),
-            platform_name = trim(GetPlayerName(s) or ''),
+            player_id = s,
+            playerId = s,
+            name = displayName,
+            player_name = platformName,
+            platform_name = platformName,
+            character_name = characterName,
             identifiers = identifiers,
             citizenid = getCitizenId(s),
             position = {
+              x = pos.x,
+              y = pos.y,
+              z = pos.z,
+            },
+            pos = {
               x = pos.x,
               y = pos.y,
               z = pos.z,
@@ -2794,7 +2806,9 @@ CreateThread(function()
             location = pos.location,
             vehicle = pos.vehicle,
             license_plate = pos.license_plate,
+            licensePlate = pos.license_plate,
             has_siren_enabled = pos.has_siren_enabled,
+            hasSirenEnabled = pos.has_siren_enabled,
             icon = pos.icon,
             weapon = pos.weapon,
           }

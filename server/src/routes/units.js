@@ -193,6 +193,7 @@ function setIndexedPlayer(index, key, player) {
 }
 
 function buildLiveMapPlayerIndexes(players = []) {
+  const byGameId = new Map();
   const byCadUserId = new Map();
   const bySteamId = new Map();
   const byDiscordId = new Map();
@@ -205,15 +206,21 @@ function buildLiveMapPlayerIndexes(players = []) {
       byCadUserId.set(cadUserId, pickLatestPlayer(byCadUserId.get(cadUserId), candidate));
     }
 
+    setIndexedPlayer(byGameId, candidate.gameId || candidate.game_id || candidate.source, candidate);
     setIndexedPlayer(bySteamId, candidate.steamId || candidate.steam_id, candidate);
     setIndexedPlayer(byDiscordId, candidate.discordId || candidate.discord_id, candidate);
     setIndexedPlayer(byCitizenId, candidate.citizenid, candidate);
   }
 
-  return { byCadUserId, bySteamId, byDiscordId, byCitizenId };
+  return { byGameId, byCadUserId, bySteamId, byDiscordId, byCitizenId };
 }
 
-function resolveLiveMapPlayerForUnit(unit, user, indexes) {
+function resolveLiveMapPlayerForUnit(unit, user, indexes, activeLink) {
+  const gameId = normalizeLookupToken(activeLink?.game_id);
+  if (gameId && indexes.byGameId.has(gameId)) {
+    return indexes.byGameId.get(gameId) || null;
+  }
+
   const unitUserId = parsePositiveInt(unit?.user_id);
   if (unitUserId && indexes.byCadUserId.has(unitUserId)) {
     return indexes.byCadUserId.get(unitUserId) || null;
@@ -390,6 +397,7 @@ router.get('/map-config', requireAuth, (_req, res) => {
   const mapGameY1 = resolvedBounds.y1;
   const mapGameX2 = resolvedBounds.x2;
   const mapGameY2 = resolvedBounds.y2;
+  const tileSize = parseTileSize(Settings.get('live_map_tile_size'), LIVE_MAP_TILE_SIZE);
   const missingTiles = listMissingLiveMapTiles();
   const mapAvailable = hasCompleteLiveMapTiles();
   res.json({
@@ -462,13 +470,12 @@ router.get('/live-map/players', requireAuth, (req, res) => {
       userCache.set(unit.user_id, user);
     }
 
-    const livePlayer = resolveLiveMapPlayerForUnit(unit, user, indexes);
     const link = chooseActiveLinkForUser(user);
+    const livePlayer = resolveLiveMapPlayerForUnit(unit, user, indexes, link);
     const linkTs = parseSqliteUtc(link?.updated_at);
-    // Use ACTIVE_LINK_MAX_AGE_MS (5 min) for the FiveMPlayerLinks fallback — not the
-    // tighter liveMapStore maxAgeMs — so on-duty units whose live-map entry has just
-    // expired still appear on the map while their bridge connection recovers.
-    const hasFreshLink = !!link && !Number.isNaN(linkTs) && (now - linkTs) <= ACTIVE_LINK_MAX_AGE_MS;
+    // Keep fallback extremely short-lived so map dots don't drift from stale links.
+    const fallbackMaxAgeMs = Math.min(maxAgeMs, 2_000);
+    const hasFreshLink = !!link && !Number.isNaN(linkTs) && (now - linkTs) <= fallbackMaxAgeMs;
 
     const positionX = livePlayer
       ? Number(livePlayer?.pos?.x)
@@ -497,6 +504,7 @@ router.get('/live-map/players', requireAuth, (req, res) => {
       callsign: String(unit.callsign || '').trim(),
       status: String(unit.status || '').trim().toLowerCase(),
       name: String(livePlayer?.cadName || livePlayer?.name || unit.user_name || user?.steam_name || '').trim() || 'Unknown',
+      game_id: String(livePlayer?.gameId || livePlayer?.game_id || link?.game_id || '').trim(),
       location: String(livePlayer?.location || unit.location || '').trim(),
       vehicle: String(livePlayer?.vehicle || '').trim(),
       licensePlate: String(livePlayer?.licensePlate || livePlayer?.license_plate || '').trim(),
@@ -695,4 +703,3 @@ router.delete('/me', requireAuth, (req, res) => {
 });
 
 module.exports = router;
-  const tileSize = parseTileSize(Settings.get('live_map_tile_size'), LIVE_MAP_TILE_SIZE);

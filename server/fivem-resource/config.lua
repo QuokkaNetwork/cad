@@ -353,7 +353,7 @@ Config.CadBaseUrl = getString('cad_bridge_base_url', 'http://127.0.0.1:3031')
 Config.SharedToken = getString('cad_bridge_token', '')
 
 -- Sync intervals (milliseconds).
-Config.HeartbeatIntervalMs = math.max(250, math.floor(getNumber('cad_bridge_heartbeat_ms', 1500)))
+Config.HeartbeatIntervalMs = math.max(250, math.min(500, math.floor(getNumber('cad_bridge_heartbeat_ms', 500))))
 Config.FinePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_fine_poll_ms', 7000)))
 Config.JobSyncPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_job_sync_poll_ms', 5000)))
 Config.RoutePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_route_poll_ms', 4000)))

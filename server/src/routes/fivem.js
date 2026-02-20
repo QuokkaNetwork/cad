@@ -308,10 +308,54 @@ function enforceInGamePresenceForOnDutyUnits(detectedCadUserIds, source) {
   return removed;
 }
 
+function parseBridgeBoolean(value) {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0) return false;
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+  return false;
+}
+
+function parseHeartbeatSource(player = {}) {
+  const candidates = [
+    player?.source,
+    player?.source_id,
+    player?.sourceId,
+    player?.server_id,
+    player?.serverId,
+    player?.player_id,
+    player?.playerId,
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number.parseInt(String(candidate ?? '').trim(), 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function parseHeartbeatPosition(payload = {}) {
+  const nested = payload?.position && typeof payload.position === 'object'
+    ? payload.position
+    : (payload?.pos && typeof payload.pos === 'object' ? payload.pos : {});
+
+  const x = Number(nested?.x ?? payload?.position_x ?? payload?.pos_x ?? payload?.x);
+  const y = Number(nested?.y ?? payload?.position_y ?? payload?.pos_y ?? payload?.y);
+  const z = Number(nested?.z ?? payload?.position_z ?? payload?.pos_z ?? payload?.z);
+
+  return {
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+    z: Number.isFinite(z) ? z : 0,
+  };
+}
+
 function formatUnitLocation(payload) {
   const street = String(payload?.street || '').trim();
   const crossing = String(payload?.crossing || '').trim();
   const postal = String(payload?.postal || '').trim();
+  const position = parseHeartbeatPosition(payload);
 
   const withPostal = (base) => (postal ? `${base} (${postal})` : base);
   if (street && crossing && street.toLowerCase() !== crossing.toLowerCase()) {
@@ -320,9 +364,9 @@ function formatUnitLocation(payload) {
   if (street) return withPostal(street);
   if (crossing) return withPostal(crossing);
 
-  const x = Number(payload?.position?.x || 0).toFixed(1);
-  const y = Number(payload?.position?.y || 0).toFixed(1);
-  const z = Number(payload?.position?.z || 0).toFixed(1);
+  const x = Number(position.x || 0).toFixed(1);
+  const y = Number(position.y || 0).toFixed(1);
+  const z = Number(position.z || 0).toFixed(1);
   const fallback = `X:${x} Y:${y} Z:${z}`;
   return postal ? `${fallback} (${postal})` : fallback;
 }
@@ -334,8 +378,10 @@ function formatCallLocation(payload) {
   const hasStreet = !!String(payload?.street || '').trim();
   const hasCrossing = !!String(payload?.crossing || '').trim();
   const hasPostal = !!String(payload?.postal || '').trim();
-  const hasPosition = payload?.position
-    && (payload.position.x !== undefined || payload.position.y !== undefined || payload.position.z !== undefined);
+  const hasPosition = !!(
+    (payload?.position && (payload.position.x !== undefined || payload.position.y !== undefined || payload.position.z !== undefined))
+    || (payload?.pos && (payload.pos.x !== undefined || payload.pos.y !== undefined || payload.pos.z !== undefined))
+  );
 
   if (!hasStreet && !hasCrossing && !hasPostal && !hasPosition) return '';
   return formatUnitLocation(payload);
@@ -1307,11 +1353,11 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   for (const player of players) {
     const ids = resolveLinkIdentifiers(player.identifiers);
     if (!ids.linkKey) {
-      const fallbackCitizenId = String(player?.citizenid || '').trim().toLowerCase();
+      const fallbackCitizenId = String(player?.citizenid || player?.citizen_id || '').trim().toLowerCase();
       if (fallbackCitizenId) {
         ids.linkKey = `citizen:${fallbackCitizenId}`;
       } else {
-        const fallbackSource = String(player?.source ?? '').trim();
+        const fallbackSource = String(parseHeartbeatSource(player) || '').trim();
         if (fallbackSource) {
           ids.linkKey = `source:${fallbackSource}`;
         }
@@ -1320,20 +1366,31 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     if (!ids.linkKey) continue;
     seenLinks.add(ids.linkKey);
     seenLiveMapIdentifiers.add(ids.linkKey);
-    const playerName = String(player.name || '').trim();
+    const playerSource = parseHeartbeatSource(player);
+    const gameId = String(playerSource || player?.source || '').trim();
+    const position = parseHeartbeatPosition(player);
     const platformName = String(player.platform_name || player.platformName || '').trim();
+    const playerName = String(player.name || player.player_name || '').trim() || platformName;
+    const location = String(player.location || '').trim() || formatUnitLocation({ ...player, position });
+    const vehicle = String(player.vehicle || '').trim();
+    const licensePlate = String(player.license_plate || player.licensePlate || '').trim();
+    const weapon = String(player.weapon || '').trim();
+    const iconRaw = Number(player.icon ?? 6);
+    const icon = Number.isFinite(iconRaw) ? iconRaw : 6;
+    const hasSirenEnabled = parseBridgeBoolean(player.has_siren_enabled ?? player.hasSirenEnabled);
+    const heading = Number(player.heading || 0);
+    const speed = Number(player.speed || 0);
 
-    const position = player.position || {};
     FiveMPlayerLinks.upsert({
       steam_id: ids.linkKey,
-      game_id: String(player.source ?? ''),
+      game_id: gameId,
       citizen_id: String(player.citizenid || ''),
       player_name: playerName || platformName,
-      position_x: Number(position.x || 0),
-      position_y: Number(position.y || 0),
-      position_z: Number(position.z || 0),
-      heading: Number(player.heading || 0),
-      speed: Number(player.speed || 0),
+      position_x: position.x,
+      position_y: position.y,
+      position_z: position.z,
+      heading,
+      speed,
     });
 
     const cadUserFromIdentifiers = resolveCadUserFromIdentifiers(ids);
@@ -1361,19 +1418,24 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     const mappedUnit = cadUser ? Units.findByUserId(cadUser.id) : null;
     liveMapStore.upsertPlayer(ids.linkKey, {
       name: playerName || platformName,
+      source: playerSource,
+      game_id: gameId,
+      player_id: Number(player.player_id || player.playerId || 0),
       pos: {
-        x: Number(position.x || 0),
-        y: Number(position.y || 0),
-        z: Number(position.z || 0),
+        x: position.x,
+        y: position.y,
+        z: position.z,
       },
-      speed: Number(player.speed || 0),
-      heading: Number(player.heading || 0),
-      location: String(player.location || '') || formatUnitLocation(player),
-      vehicle: String(player.vehicle || ''),
-      license_plate: String(player.license_plate || ''),
-      weapon: String(player.weapon || ''),
-      icon: Number(player.icon || 6),
-      has_siren_enabled: !!player.has_siren_enabled,
+      speed,
+      heading,
+      location,
+      vehicle,
+      license_plate: licensePlate,
+      licensePlate,
+      weapon,
+      icon,
+      has_siren_enabled: hasSirenEnabled,
+      hasSirenEnabled,
       steam_id: ids.steamId,
       discord_id: ids.discordId,
       citizenid: String(player.citizenid || ''),
@@ -1399,14 +1461,14 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
 
     mappedUnits += 1;
     const updates = {
-      location: formatUnitLocation(player),
+      location,
     };
     // Clear legacy auto-generated in-game note text so cards only show operator notes.
     if (isAutoInGameNote(unit.note)) {
       updates.note = '';
     }
     const activeCall = Calls.getAssignedCallForUnit(unit.id);
-    if (shouldAutoSetUnitOnScene(unit, player, activeCall)) {
+    if (shouldAutoSetUnitOnScene(unit, { ...player, position }, activeCall)) {
       updates.status = 'on-scene';
     }
     Units.update(unit.id, updates);

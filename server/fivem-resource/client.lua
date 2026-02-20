@@ -2207,7 +2207,7 @@ end)
 
 CreateThread(function()
   while true do
-    Wait(math.max(1000, Config.HeartbeatIntervalMs))
+    Wait(math.max(250, tonumber(Config.HeartbeatIntervalMs) or 500))
 
     local ped = PlayerPedId()
     if ped and ped ~= 0 then

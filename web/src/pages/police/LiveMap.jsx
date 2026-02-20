@@ -7,10 +7,10 @@ import { useAuth } from '../../context/AuthContext';
 import { useDepartment } from '../../context/DepartmentContext';
 import { formatTimeAU } from '../../utils/dateTime';
 
-const MAP_POLL_INTERVAL_MS = 1500;
-const MAP_ACTIVE_MAX_AGE_MS = 30_000;
-const MAP_RECOVERY_MAX_AGE_MS = 5 * 60 * 1000;
-const MAP_STALE_THRESHOLD_MS = 15_000;
+const MAP_POLL_INTERVAL_MS = 500;
+const MAP_ACTIVE_MAX_AGE_MS = 5_000;
+const MAP_RECOVERY_MAX_AGE_MS = 30_000;
+const MAP_STALE_THRESHOLD_MS = 4_000;
 const MAP_STALE_CHECK_INTERVAL_MS = 2_000;
 const MAP_RECOVERY_COOLDOWN_MS = 8_000;
 
