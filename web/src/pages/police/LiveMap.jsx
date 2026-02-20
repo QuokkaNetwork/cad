@@ -241,7 +241,13 @@ export default function LiveMap({ isPopout = false }) {
         setScaleStep(parseCalibrationIncrement(cfg?.map_scale_increment, DEFAULT_SCALE_INCREMENT));
       }
       setAdminCalibrationVisible(false);
-      setGameBounds(DEFAULT_GAME_BOUNDS);
+      const cfgBounds = cfg?.map_game_bounds || {};
+      setGameBounds({
+        x1: parseMapNumber(cfgBounds?.x1 ?? cfg?.map_game_x1, DEFAULT_GAME_BOUNDS.x1),
+        y1: parseMapNumber(cfgBounds?.y1 ?? cfg?.map_game_y1, DEFAULT_GAME_BOUNDS.y1),
+        x2: parseMapNumber(cfgBounds?.x2 ?? cfg?.map_game_x2, DEFAULT_GAME_BOUNDS.x2),
+        y2: parseMapNumber(cfgBounds?.y2 ?? cfg?.map_game_y2, DEFAULT_GAME_BOUNDS.y2),
+      });
 
       if (!mapAvailable) {
         const missingText = missingTiles.length > 0 ? ` Missing: ${missingTiles.join(', ')}` : '';
