@@ -1453,6 +1453,48 @@ router.post('/offline', requireBridgeAuth, (req, res) => {
   res.json({ ok: true, auto_off_duty: autoOffDuty });
 });
 
+router.post('/live-map/calibration', requireBridgeAuth, (req, res) => {
+  const body = req.body || {};
+  const x1 = Number(body.map_game_x1);
+  const y1 = Number(body.map_game_y1);
+  const x2 = Number(body.map_game_x2);
+  const y2 = Number(body.map_game_y2);
+
+  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) {
+    return res.status(400).json({ error: 'map_game_x1/map_game_y1/map_game_x2/map_game_y2 must be numbers' });
+  }
+  if (!(x2 > x1) || !(y1 > y2)) {
+    return res.status(400).json({ error: 'Invalid map bounds ordering' });
+  }
+  if ((x2 - x1) < 500 || (y1 - y2) < 500) {
+    return res.status(400).json({ error: 'Map bounds area too small' });
+  }
+
+  Settings.set('live_map_game_x1', String(x1));
+  Settings.set('live_map_game_y1', String(y1));
+  Settings.set('live_map_game_x2', String(x2));
+  Settings.set('live_map_game_y2', String(y2));
+
+  const scaleX = Number(body.map_scale_x);
+  const scaleY = Number(body.map_scale_y);
+  const offsetX = Number(body.map_offset_x);
+  const offsetY = Number(body.map_offset_y);
+
+  if (Number.isFinite(scaleX) && scaleX > 0) Settings.set('live_map_scale_x', String(scaleX));
+  if (Number.isFinite(scaleY) && scaleY > 0) Settings.set('live_map_scale_y', String(scaleY));
+  if (Number.isFinite(offsetX)) Settings.set('live_map_offset_x', String(offsetX));
+  if (Number.isFinite(offsetY)) Settings.set('live_map_offset_y', String(offsetY));
+
+  return res.json({
+    ok: true,
+    map_game_bounds: { x1, y1, x2, y2 },
+    map_scale_x: Number.isFinite(scaleX) ? scaleX : undefined,
+    map_scale_y: Number.isFinite(scaleY) ? scaleY : undefined,
+    map_offset_x: Number.isFinite(offsetX) ? offsetX : undefined,
+    map_offset_y: Number.isFinite(offsetY) ? offsetY : undefined,
+  });
+});
+
 // List dispatch-visible non-dispatch departments for in-game /000 UI department selection.
 router.get('/departments', requireBridgeAuth, (_req, res) => {
   const departments = getDispatchVisibleDepartments().map((dept) => ({

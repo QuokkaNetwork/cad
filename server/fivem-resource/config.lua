@@ -391,6 +391,13 @@ Config.ShowIdTargetDistance = getNumber('cad_bridge_show_id_target_distance', 4.
 if Config.ShowIdTargetDistance < 0.5 then Config.ShowIdTargetDistance = 0.5 end
 Config.ShowIdNearbyDistance = getNumber('cad_bridge_show_id_nearby_distance', Config.ShowIdTargetDistance)
 if Config.ShowIdNearbyDistance < 1.0 then Config.ShowIdNearbyDistance = 1.0 end
+Config.LiveMapCalibrationEnabled = getBoolean('cad_bridge_live_map_calibration_enabled', true)
+Config.LiveMapCalibrationCommand = trim(getString('cad_bridge_live_map_calibration_command', 'calibrate'))
+if Config.LiveMapCalibrationCommand == '' then Config.LiveMapCalibrationCommand = 'calibrate' end
+Config.LiveMapCalibrationPadding = getNumber('cad_bridge_live_map_calibration_padding', 250.0)
+if Config.LiveMapCalibrationPadding < 0.0 then Config.LiveMapCalibrationPadding = 0.0 end
+Config.LiveMapCalibrationAce = trim(getString('cad_bridge_live_map_calibration_ace', 'cad_bridge.calibrate'))
+if Config.LiveMapCalibrationAce == '' then Config.LiveMapCalibrationAce = 'cad_bridge.calibrate' end
 
 Config.DriverLicenseDefaultExpiryDays = math.max(1, math.floor(getNumber('cad_bridge_license_default_expiry_days', 35)))
 Config.VehicleRegistrationDefaultDays = math.max(1, math.floor(getNumber('cad_bridge_registration_default_days', 35)))

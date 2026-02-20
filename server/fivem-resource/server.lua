@@ -408,6 +408,13 @@ local function registerEmergencySuggestion(target)
     TriggerClientEvent('chat:addSuggestion', target, '/' .. showIdCommand, 'Show your driver licence to nearby players')
   end
 
+  if Config.LiveMapCalibrationEnabled == true then
+    local calibrationCommand = trim(Config.LiveMapCalibrationCommand or 'calibrate')
+    if calibrationCommand ~= '' then
+      TriggerClientEvent('chat:addSuggestion', target, '/' .. calibrationCommand, 'Capture map calibration points (point1/point2/save)')
+    end
+  end
+
   TriggerClientEvent('chat:addSuggestion', target, '/radio', 'Open CAD radio UI or join/leave channel', {
     { name = 'channel', help = 'Optional channel number. Example: /radio 1. Use /radio off to leave.' },
   })
@@ -2450,6 +2457,107 @@ end)
 RegisterNetEvent('cad_bridge:requestVehicleRegistrationPrompt', function(pedId)
   local src = source
   openVehicleRegistrationPromptForSource(src, pedId)
+end)
+
+local function isFiniteNumber(value)
+  local num = tonumber(value)
+  if not num then return false end
+  if num ~= num then return false end
+  if num == math.huge or num == -math.huge then return false end
+  return true
+end
+
+local function normalizeFiniteNumber(value, fallback)
+  if isFiniteNumber(value) then
+    return tonumber(value) + 0.0
+  end
+  return tonumber(fallback) or 0.0
+end
+
+local function canUseLiveMapCalibration(src)
+  if not src or src == 0 then return true end
+  local ace = trim(Config.LiveMapCalibrationAce or 'cad_bridge.calibrate')
+  if ace == '' then return true end
+  local ok, allowed = pcall(function()
+    return IsPlayerAceAllowed(src, ace)
+  end)
+  return ok and allowed == true
+end
+
+local function submitLiveMapCalibration(src, data)
+  local s = tonumber(src) or 0
+  if s <= 0 then return end
+
+  if Config.LiveMapCalibrationEnabled ~= true then
+    notifyPlayer(s, 'Live map calibration is disabled.')
+    return
+  end
+
+  if not canUseLiveMapCalibration(s) then
+    notifyPlayer(s, 'You are not authorised to calibrate the live map.')
+    return
+  end
+
+  local payload = type(data) == 'table' and data or {}
+  local point1 = type(payload.point1) == 'table' and payload.point1 or {}
+  local point2 = type(payload.point2) == 'table' and payload.point2 or {}
+
+  if not isFiniteNumber(point1.x) or not isFiniteNumber(point1.y) or not isFiniteNumber(point2.x) or not isFiniteNumber(point2.y) then
+    notifyPlayer(s, 'Calibration points are invalid. Capture point1 and point2 again.')
+    return
+  end
+
+  local x1 = math.min(tonumber(point1.x) or 0.0, tonumber(point2.x) or 0.0)
+  local x2 = math.max(tonumber(point1.x) or 0.0, tonumber(point2.x) or 0.0)
+  local y1 = math.max(tonumber(point1.y) or 0.0, tonumber(point2.y) or 0.0)
+  local y2 = math.min(tonumber(point1.y) or 0.0, tonumber(point2.y) or 0.0)
+  local padding = normalizeFiniteNumber(payload.padding, Config.LiveMapCalibrationPadding or 250.0)
+  if padding < 0.0 then padding = 0.0 end
+  if padding > 2000.0 then padding = 2000.0 end
+
+  x1 = x1 - padding
+  x2 = x2 + padding
+  y1 = y1 + padding
+  y2 = y2 - padding
+
+  if (x2 - x1) < 500.0 or (y1 - y2) < 500.0 then
+    notifyPlayer(s, 'Calibration area is too small. Move further apart before saving.')
+    return
+  end
+
+  request('POST', '/api/integration/fivem/live-map/calibration', {
+    map_game_x1 = x1,
+    map_game_y1 = y1,
+    map_game_x2 = x2,
+    map_game_y2 = y2,
+    map_scale_x = 1.0,
+    map_scale_y = 1.0,
+    map_offset_x = 0.0,
+    map_offset_y = 0.0,
+    source = 'fivem_calibrate_command',
+    source_player = s,
+  }, function(status, body, _headers)
+    if status >= 200 and status < 300 then
+      notifyPlayer(s, ('Live map calibration saved (x1=%.1f y1=%.1f x2=%.1f y2=%.1f)'):format(x1, y1, x2, y2))
+      return
+    end
+
+    local err = ''
+    local okParsed, parsed = pcall(json.decode, body or '{}')
+    if okParsed and type(parsed) == 'table' then
+      err = trim(parsed.error or '')
+    end
+    if err ~= '' then
+      notifyPlayer(s, ('Live map calibration failed: %s'):format(err))
+    else
+      notifyPlayer(s, ('Live map calibration failed (HTTP %s).'):format(tostring(status)))
+    end
+  end)
+end
+
+RegisterNetEvent('cad_bridge:saveLiveMapCalibration', function(data)
+  local src = source
+  submitLiveMapCalibration(src, data)
 end)
 
 if Config.EnableDocumentCommands == true then

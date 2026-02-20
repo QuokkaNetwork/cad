@@ -848,7 +848,7 @@ local function distanceBetweenVec3(a, b)
   return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
 end
 
-local function findNearestVehicle(origin, radius)
+local function findNearestParkedVehicle(origin, radius)
   local vehicles = GetGamePool('CVehicle')
   if type(vehicles) ~= 'table' or not origin then return 0, 999999.0 end
 
@@ -859,11 +859,14 @@ local function findNearestVehicle(origin, radius)
 
   for _, vehicle in ipairs(vehicles) do
     if vehicle and vehicle ~= 0 and DoesEntityExist(vehicle) then
-      local coords = GetEntityCoords(vehicle)
-      local dist = distanceBetweenVec3(coords, origin)
-      if dist <= maxRadius and dist < bestDistance then
-        bestDistance = dist
-        bestVehicle = vehicle
+      local speed = tonumber(GetEntitySpeed(vehicle)) or 0.0
+      if speed <= 1.5 then
+        local coords = GetEntityCoords(vehicle)
+        local dist = distanceBetweenVec3(coords, origin)
+        if dist <= maxRadius and dist < bestDistance then
+          bestDistance = dist
+          bestVehicle = vehicle
+        end
       end
     end
   end
@@ -889,40 +892,13 @@ local function getCurrentVehicleRegistrationDefaults(registrationParking)
   local parking = type(registrationParking) == 'table' and registrationParking or {}
   local zoneCoords = type(parking.coords) == 'table' and parking.coords or nil
   local zoneRadius = tonumber(parking.radius or 0) or 0
-  if zoneCoords and zoneRadius > 0 then
-    local zoneDistance = distanceBetweenVec3(playerCoords, zoneCoords)
-    if zoneDistance > zoneRadius then
-      payload.error_message = ('Move to the registration carpark first (within %sm).'):format(tostring(math.floor(zoneRadius)))
-      return payload
-    end
-  end
 
   local searchOrigin = zoneCoords or playerCoords
   local searchRadius = zoneRadius > 0 and math.max(8.0, zoneRadius) or 10.0
-  local vehicle = 0
-
-  if IsPedInAnyVehicle(ped, false) then
-    local currentVehicle = GetVehiclePedIsIn(ped, false)
-    if currentVehicle and currentVehicle ~= 0 then
-      local currentCoords = GetEntityCoords(currentVehicle)
-      if not zoneCoords or distanceBetweenVec3(currentCoords, zoneCoords) <= searchRadius then
-        vehicle = currentVehicle
-      end
-    end
-  end
-
-  if not vehicle or vehicle == 0 then
-    local nearestVehicle = nil
-    nearestVehicle = select(1, findNearestVehicle(searchOrigin, searchRadius))
-    vehicle = nearestVehicle or 0
-  end
+  local vehicle = select(1, findNearestParkedVehicle(searchOrigin, searchRadius))
 
   if not vehicle or vehicle == 0 then
     payload.error_message = 'No parked vehicle found in the registration area.'
-    return payload
-  end
-  if (tonumber(GetEntitySpeed(vehicle)) or 0.0) > 1.5 then
-    payload.error_message = 'Vehicle must be parked before registration.'
     return payload
   end
 
