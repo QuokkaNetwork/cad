@@ -23,10 +23,10 @@ const DEFAULT_MAX_ZOOM = 4;
 const DEFAULT_NATIVE_ZOOM = 0;
 const DEFAULT_CALIBRATION_INCREMENT = 0.1;
 const DEFAULT_GAME_BOUNDS = Object.freeze({
-  x1: -4230,
-  y1: 8420,
-  x2: 370,
-  y2: -640,
+  x1: -4000,
+  y1: 8000,
+  x2: 4500,
+  y2: -4000,
 });
 
 function parseMapNumber(value, fallback) {

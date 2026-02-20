@@ -16,6 +16,7 @@ ui_page 'ui/index.html'
 files {
   'config.cfg',
   'ui/index.html',
+  'ui/license-card.html',
   'ui/styles.css',
   'ui/app.js',
   'ui/cad_radio.css',

@@ -1540,6 +1540,27 @@ local function loadPedModel(modelName)
   return modelHash
 end
 
+local function resolveGroundZForPed(x, y, fallbackZ)
+  local baseZ = tonumber(fallbackZ) or 0.0
+  local probes = {
+    baseZ + 1.0,
+    baseZ + 4.0,
+    baseZ + 10.0,
+    baseZ + 25.0,
+    baseZ + 50.0,
+    baseZ + 100.0,
+  }
+
+  for _, probeZ in ipairs(probes) do
+    local foundGround, groundZ = GetGroundZFor_3dCoord(x + 0.0, y + 0.0, probeZ + 0.0, false)
+    if foundGround and type(groundZ) == 'number' then
+      return groundZ
+    end
+  end
+
+  return baseZ
+end
+
 local function spawnDocumentPed(pedConfig)
   if type(pedConfig) ~= 'table' or pedConfig.enabled == false then
     return
@@ -1550,12 +1571,7 @@ local function spawnDocumentPed(pedConfig)
   local y = tonumber(coords.y) or 0.0
   local z = tonumber(coords.z) or 0.0
   local w = tonumber(coords.w) or 0.0
-  local spawnZ = z
-
-  local okGround, groundZ = GetGroundZFor_3dCoord(x + 0.0, y + 0.0, z + 2.0, false)
-  if okGround and type(groundZ) == 'number' then
-    spawnZ = groundZ
-  end
+  local spawnZ = resolveGroundZForPed(x, y, z)
 
   local modelHash = loadPedModel(pedConfig.model or '')
   if not modelHash then
@@ -1565,8 +1581,7 @@ local function spawnDocumentPed(pedConfig)
 
   local entity = CreatePed(4, modelHash, x, y, spawnZ, w, false, true)
   SetEntityAsMissionEntity(entity, true, true)
-  PlaceEntityOnGroundProperly(entity)
-  SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, GetEntityCoords(entity).z + 0.0, false, false, false)
+  SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ + 0.0, false, false, false)
   SetEntityHeading(entity, w + 0.0)
   SetEntityInvincible(entity, true)
   SetBlockingOfNonTemporaryEvents(entity, true)

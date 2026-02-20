@@ -25,10 +25,10 @@ const DEFAULT_MAP_OFFSET = 0;
 const DEFAULT_MAP_CALIBRATION_INCREMENT = 0.1;
 const DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE = true;
 const DEFAULT_MAP_GAME_BOUNDS = Object.freeze({
-  x1: -4230,
-  y1: 8420,
-  x2: 370,
-  y2: -640,
+  x1: -4000,
+  y1: 8000,
+  x2: 4500,
+  y2: -4000,
 });
 
 function parseMapNumber(value, fallback) {
@@ -50,6 +50,24 @@ function parseMapBoolean(value, fallback) {
   if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return true;
   if (['0', 'false', 'no', 'n', 'off'].includes(text)) return false;
   return fallback;
+}
+
+function sanitizeMapBounds(bounds) {
+  const x1 = Number(bounds?.x1);
+  const y1 = Number(bounds?.y1);
+  const x2 = Number(bounds?.x2);
+  const y2 = Number(bounds?.y2);
+  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) {
+    return { ...DEFAULT_MAP_GAME_BOUNDS };
+  }
+  if (!(x2 > x1) || !(y1 > y2)) {
+    return { ...DEFAULT_MAP_GAME_BOUNDS };
+  }
+  // Guard against accidentally-saved tiny calibration windows.
+  if ((x2 - x1) < 2000 || (y1 - y2) < 2000) {
+    return { ...DEFAULT_MAP_GAME_BOUNDS };
+  }
+  return { x1, y1, x2, y2 };
 }
 
 function parseSqliteUtc(value) {
@@ -346,10 +364,16 @@ router.get('/map-config', requireAuth, (_req, res) => {
     Settings.get('live_map_admin_calibration_visible'),
     DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE
   );
-  const mapGameX1 = parseMapNumber(Settings.get('live_map_game_x1'), DEFAULT_MAP_GAME_BOUNDS.x1);
-  const mapGameY1 = parseMapNumber(Settings.get('live_map_game_y1'), DEFAULT_MAP_GAME_BOUNDS.y1);
-  const mapGameX2 = parseMapNumber(Settings.get('live_map_game_x2'), DEFAULT_MAP_GAME_BOUNDS.x2);
-  const mapGameY2 = parseMapNumber(Settings.get('live_map_game_y2'), DEFAULT_MAP_GAME_BOUNDS.y2);
+  const resolvedBounds = sanitizeMapBounds({
+    x1: parseMapNumber(Settings.get('live_map_game_x1'), DEFAULT_MAP_GAME_BOUNDS.x1),
+    y1: parseMapNumber(Settings.get('live_map_game_y1'), DEFAULT_MAP_GAME_BOUNDS.y1),
+    x2: parseMapNumber(Settings.get('live_map_game_x2'), DEFAULT_MAP_GAME_BOUNDS.x2),
+    y2: parseMapNumber(Settings.get('live_map_game_y2'), DEFAULT_MAP_GAME_BOUNDS.y2),
+  });
+  const mapGameX1 = resolvedBounds.x1;
+  const mapGameY1 = resolvedBounds.y1;
+  const mapGameX2 = resolvedBounds.x2;
+  const mapGameY2 = resolvedBounds.y2;
   const missingTiles = listMissingLiveMapTiles();
   const mapAvailable = hasCompleteLiveMapTiles();
   res.json({

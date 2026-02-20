@@ -41,18 +41,22 @@ var regoColourInput = document.getElementById("regoColourInput");
 var regoDurationList = document.getElementById("regoDurationList");
 var registrationFormError = document.getElementById("registrationFormError");
 
-var idCardOverlay = document.getElementById("idCardOverlay");
-var idCardCloseBtn = document.getElementById("idCardCloseBtn");
-var idCardViewerNote = document.getElementById("idCardViewerNote");
-var idCardPhoto = document.getElementById("idCardPhoto");
-var idCardName = document.getElementById("idCardName");
-var idCardDob = document.getElementById("idCardDob");
-var idCardGender = document.getElementById("idCardGender");
-var idCardNumber = document.getElementById("idCardNumber");
-var idCardClasses = document.getElementById("idCardClasses");
-var idCardStatus = document.getElementById("idCardStatus");
-var idCardExpiry = document.getElementById("idCardExpiry");
-var idCardConditions = document.getElementById("idCardConditions");
+var idCardMount = document.getElementById("idCardMount");
+var idCardOverlay = null;
+var idCardCloseBtn = null;
+var idCardViewerNote = null;
+var idCardPhoto = null;
+var idCardName = null;
+var idCardDob = null;
+var idCardGender = null;
+var idCardNumber = null;
+var idCardClasses = null;
+var idCardStatus = null;
+var idCardExpiry = null;
+var idCardConditions = null;
+var idCardTemplateReady = false;
+var idCardTemplatePromise = null;
+var queuedIdCardPayload = null;
 
 var emergencyOpen = false;
 var licenseOpen = false;
@@ -72,6 +76,55 @@ var pendingLicenseSubmissionPayload = null;
 var licenseViewMode = "quiz";
 var durationOptions = [];
 var selectedRegistrationDurationDays = 35;
+
+function bindIdCardNodes() {
+  idCardOverlay = document.getElementById("idCardOverlay");
+  idCardCloseBtn = document.getElementById("idCardCloseBtn");
+  idCardViewerNote = document.getElementById("idCardViewerNote");
+  idCardPhoto = document.getElementById("idCardPhoto");
+  idCardName = document.getElementById("idCardName");
+  idCardDob = document.getElementById("idCardDob");
+  idCardGender = document.getElementById("idCardGender");
+  idCardNumber = document.getElementById("idCardNumber");
+  idCardClasses = document.getElementById("idCardClasses");
+  idCardStatus = document.getElementById("idCardStatus");
+  idCardExpiry = document.getElementById("idCardExpiry");
+  idCardConditions = document.getElementById("idCardConditions");
+  if (idCardCloseBtn && idCardCloseBtn.dataset.bound !== "1") {
+    idCardCloseBtn.dataset.bound = "1";
+    idCardCloseBtn.addEventListener("click", requestCloseIdCard);
+  }
+  idCardTemplateReady = Boolean(idCardOverlay);
+}
+
+function ensureIdCardTemplateLoaded() {
+  if (idCardTemplateReady) return Promise.resolve(true);
+  if (idCardTemplatePromise) return idCardTemplatePromise;
+  idCardTemplatePromise = fetch("license-card.html", { cache: "no-store" })
+    .then(function onTemplateResponse(response) {
+      if (!response.ok) throw new Error("license-card template request failed");
+      return response.text();
+    })
+    .then(function onTemplateHtml(html) {
+      if (idCardMount) idCardMount.innerHTML = String(html || "");
+      bindIdCardNodes();
+      return idCardTemplateReady;
+    })
+    .catch(function onTemplateLoadError(err) {
+      console.error("[CAD UI] Failed loading license-card.html:", err);
+      bindIdCardNodes();
+      return idCardTemplateReady;
+    })
+    .finally(function afterTemplateLoad() {
+      idCardTemplatePromise = null;
+      if (queuedIdCardPayload && idCardTemplateReady) {
+        var payload = queuedIdCardPayload;
+        queuedIdCardPayload = null;
+        openIdCard(payload);
+      }
+    });
+  return idCardTemplatePromise;
+}
 
 function safeGet(obj, key, fallback) {
   if (!obj || typeof obj !== "object") return fallback;
@@ -896,6 +949,45 @@ function setTextNode(node, value, fallback) {
   node.textContent = text || String(fallback || "");
 }
 
+function setIdCardField(fieldName, value, fallback, legacyNode) {
+  var text = String(value || "").trim();
+  var resolved = text || String(fallback || "");
+  var wrotePlaceholder = false;
+  if (idCardOverlay) {
+    var selector = '[data-license-field="' + String(fieldName || "") + '"]';
+    var nodes = idCardOverlay.querySelectorAll(selector);
+    for (var i = 0; i < nodes.length; i += 1) {
+      nodes[i].textContent = resolved;
+      wrotePlaceholder = true;
+    }
+  }
+  if (legacyNode) {
+    legacyNode.textContent = resolved;
+    return;
+  }
+  if (!wrotePlaceholder) return;
+}
+
+function setIdCardImage(fieldName, src, legacyNode) {
+  var imageSrc = String(src || "").trim();
+  var wrotePlaceholder = false;
+  if (idCardOverlay) {
+    var selector = '[data-license-image="' + String(fieldName || "") + '"]';
+    var nodes = idCardOverlay.querySelectorAll(selector);
+    for (var i = 0; i < nodes.length; i += 1) {
+      if (imageSrc) nodes[i].setAttribute("src", imageSrc);
+      else nodes[i].removeAttribute("src");
+      wrotePlaceholder = true;
+    }
+  }
+  if (legacyNode) {
+    if (imageSrc) legacyNode.setAttribute("src", imageSrc);
+    else legacyNode.removeAttribute("src");
+    return;
+  }
+  if (!wrotePlaceholder) return;
+}
+
 function normalizeStatusLabel(value) {
   var normalized = String(value || "").trim().toLowerCase();
   if (!normalized) return "Unknown";
@@ -923,25 +1015,23 @@ function requestCloseIdCard() {
 }
 
 function openIdCard(payload) {
+  if (!idCardTemplateReady || !idCardOverlay) {
+    queuedIdCardPayload = payload || {};
+    ensureIdCardTemplateLoaded();
+    return;
+  }
   var data = payload || {};
   var mugshot = String(safeGet(data, "mugshot_url", "") || "").trim();
-  if (idCardPhoto) {
-    if (mugshot) {
-      idCardPhoto.src = mugshot;
-    } else {
-      idCardPhoto.removeAttribute("src");
-    }
-  }
-
-  setTextNode(idCardViewerNote, safeGet(data, "viewer_note", ""), "");
-  setTextNode(idCardName, safeGet(data, "full_name", ""), "Unknown");
-  setTextNode(idCardDob, safeGet(data, "date_of_birth", ""), "Unknown");
-  setTextNode(idCardGender, safeGet(data, "gender", ""), "Unknown");
-  setTextNode(idCardNumber, safeGet(data, "license_number", ""), "Auto");
-  setTextNode(idCardClasses, listToText(safeGet(data, "license_classes", []), "None"), "None");
-  setTextNode(idCardStatus, normalizeStatusLabel(safeGet(data, "status", "")), "Unknown");
-  setTextNode(idCardExpiry, safeGet(data, "expiry_at", ""), "None");
-  setTextNode(idCardConditions, listToText(safeGet(data, "conditions", []), "None"), "None");
+  setIdCardImage("mugshot_url", mugshot, idCardPhoto);
+  setIdCardField("viewer_note", safeGet(data, "viewer_note", ""), "", idCardViewerNote);
+  setIdCardField("full_name", safeGet(data, "full_name", ""), "Unknown", idCardName);
+  setIdCardField("date_of_birth", safeGet(data, "date_of_birth", ""), "Unknown", idCardDob);
+  setIdCardField("gender", safeGet(data, "gender", ""), "Unknown", idCardGender);
+  setIdCardField("license_number", safeGet(data, "license_number", ""), "Auto", idCardNumber);
+  setIdCardField("license_classes", listToText(safeGet(data, "license_classes", []), "None"), "None", idCardClasses);
+  setIdCardField("status", normalizeStatusLabel(safeGet(data, "status", "")), "Unknown", idCardStatus);
+  setIdCardField("expiry_at", safeGet(data, "expiry_at", ""), "None", idCardExpiry);
+  setIdCardField("conditions", listToText(safeGet(data, "conditions", []), "None"), "None", idCardConditions);
 
   idCardOpen = true;
   setVisible(idCardOverlay, true);
@@ -1028,6 +1118,9 @@ window.force000Open = function force000Open(departmentsPayload) {
 };
 
 function initialize() {
+  bindIdCardNodes();
+  ensureIdCardTemplateLoaded();
+
   setVisible(overlay, false);
   setVisible(licenseOverlay, false);
   setVisible(registrationOverlay, false);
@@ -1079,7 +1172,6 @@ function initialize() {
   }
   if (registrationCloseBtn) registrationCloseBtn.addEventListener("click", cancelRegistrationForm);
   if (registrationCancelBtn) registrationCancelBtn.addEventListener("click", cancelRegistrationForm);
-  if (idCardCloseBtn) idCardCloseBtn.addEventListener("click", requestCloseIdCard);
 
   window.addEventListener("keydown", function onKeyDown(event) {
     if (!anyModalOpen()) return;
