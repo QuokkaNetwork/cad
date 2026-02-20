@@ -538,7 +538,7 @@ select {
 }
 
 .id-card {
-  width: min(760px, 96vw);
+  width: min(620px, 94vw);
   max-height: 88vh;
   overflow: auto;
   border-radius: 18px;
@@ -548,7 +548,7 @@ select {
     repeating-linear-gradient(168deg, rgba(93, 145, 78, 0.26) 0px, rgba(93, 145, 78, 0.26) 2px, rgba(226, 244, 216, 0.16) 2px, rgba(226, 244, 216, 0.16) 8px),
     linear-gradient(160deg, #dbeec9 0%, #c4e1a8 45%, #d8ecc6 100%);
   box-shadow: 0 18px 40px rgba(5, 24, 13, 0.32);
-  padding: 0.9rem 1rem 0.95rem;
+  padding: 0.72rem 0.8rem 0.78rem;
 }
 
 .id-card-header {
@@ -565,12 +565,12 @@ select {
   background: linear-gradient(135deg, #044497, #1c5dab);
   color: #ffffff;
   text-align: center;
-  padding: 0.5rem 0.8rem 0.44rem;
+  padding: 0.42rem 0.68rem 0.38rem;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .id-card-banner-line1 {
-  font-size: 1.75rem;
+  font-size: 1.42rem;
   line-height: 1;
   font-weight: 900;
   letter-spacing: 0.06em;
@@ -578,15 +578,15 @@ select {
 
 .id-card-banner-line2 {
   margin-top: 0.08rem;
-  font-size: 1.52rem;
+  font-size: 1.25rem;
   line-height: 1;
   font-weight: 800;
   letter-spacing: 0.04em;
 }
 
 .id-card-title {
-  margin: 0.48rem 0 0.2rem;
-  font-size: 0.98rem;
+  margin: 0.38rem 0 0.16rem;
+  font-size: 0.86rem;
   color: #1d2a1a;
   text-transform: uppercase;
   letter-spacing: 0.09em;
@@ -594,15 +594,15 @@ select {
 }
 
 .id-card-note {
-  margin: 0 0 0.68rem;
-  font-size: 0.85rem;
+  margin: 0 0 0.52rem;
+  font-size: 0.76rem;
   color: #2e4634;
 }
 
 .id-card-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 210px;
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) 170px;
+  gap: 0.75rem;
   align-items: stretch;
 }
 
@@ -634,7 +634,7 @@ select {
 .id-card-name {
   display: block;
   margin-top: 0.12rem;
-  font-size: 2rem;
+  font-size: 1.62rem;
   line-height: 1.03;
   color: #0f2215;
   font-weight: 800;
@@ -646,7 +646,7 @@ select {
 .id-card-licence-no {
   display: block;
   margin-top: 0.12rem;
-  font-size: 2rem;
+  font-size: 1.62rem;
   line-height: 1.03;
   color: #0f2215;
   font-weight: 800;
@@ -654,8 +654,8 @@ select {
 }
 
 .id-card-bottom-grid {
-  margin-top: 0.8rem;
-  padding-top: 0.52rem;
+  margin-top: 0.6rem;
+  padding-top: 0.42rem;
   border-top: 1px solid rgba(24, 56, 36, 0.26);
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -667,7 +667,7 @@ select {
 }
 
 .id-card-meta {
-  margin-top: 0.6rem;
+  margin-top: 0.45rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
@@ -691,8 +691,8 @@ select {
 }
 
 .id-card-photo {
-  width: 210px;
-  height: 250px;
+  width: 170px;
+  height: 204px;
   object-fit: cover;
   object-position: top;
   border-radius: 8px;
@@ -701,7 +701,7 @@ select {
 }
 
 .id-card-vicroads-logo {
-  width: 152px;
+  width: 126px;
   height: auto;
   border: 1px solid rgba(24, 56, 36, 0.35);
   border-radius: 4px;
@@ -716,13 +716,13 @@ select {
 
 .id-row {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr);
-  gap: 0.55rem;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 0.4rem;
   align-items: baseline;
 }
 
 .id-label {
-  font-size: 0.78rem;
+  font-size: 0.7rem;
   color: #32493a;
   text-transform: uppercase;
   letter-spacing: 0.055em;
@@ -730,7 +730,7 @@ select {
 }
 
 .id-value {
-  font-size: 1.36rem;
+  font-size: 1.14rem;
   line-height: 1.03;
   color: #0f2215;
   font-weight: 800;
@@ -738,8 +738,8 @@ select {
 }
 
 .id-card-footer {
-  margin-top: 0.82rem;
-  font-size: 0.8rem;
+  margin-top: 0.62rem;
+  font-size: 0.74rem;
   color: #2f4635;
   border-top: 1px solid rgba(24, 56, 36, 0.22);
   padding-top: 0.58rem;
