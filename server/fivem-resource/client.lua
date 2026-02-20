@@ -540,42 +540,60 @@ local function captureMugshotViaScreenshot()
     pedWasFrozen = IsEntityPositionFrozen(ped) == true
   end
   local originalHeading = GetEntityHeading(ped)
+  local originalCoords = GetEntityCoords(ped)
 
-  -- Immediately freeze the ped in place (position + heading).
+  -- Immediately freeze the ped in place.
   if type(FreezeEntityPosition) == 'function' then
     FreezeEntityPosition(ped, true)
   end
 
-  -- Clear all tasks/animations so the ped stands still in an idle pose.
-  ClearPedTasks(ped)
+  -- Clear ALL tasks and animations so the ped stands completely still.
+  ClearPedTasksImmediately(ped)
   ClearPedSecondaryTask(ped)
-  Wait(50)
+
+  -- Force the ped into a neutral standing animation.
+  RequestAnimDict('mp_sleep')
+  local animDeadline = GetGameTimer() + 2000
+  while not HasAnimDictLoaded('mp_sleep') and GetGameTimer() < animDeadline do
+    Wait(10)
+  end
+  -- Stand still task — duration -1 means indefinite.
+  TaskStandStill(ped, -1)
 
   -- Lock heading so ped faces a consistent direction.
-  local forward = GetEntityForwardVector(ped)
   SetEntityHeading(ped, originalHeading)
+  Wait(100)
 
-  -- Position camera in front of the ped's face for a tight portrait-style headshot.
-  local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.75
-  local camY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.75
-  local camZ = (headPos.z or 0.0) + 0.06
-  local lookX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.02
-  local lookY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.02
-  local lookZ = (headPos.z or 0.0) - 0.02
+  local forward = GetEntityForwardVector(ped)
+
+  -- Camera positioned further back with wider FOV for a passport-style head+shoulders shot.
+  -- 1.2 units forward, at head height for a natural eye-level framing.
+  local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 1.2
+  local camY = (headPos.y or 0.0) + (forward.y or 0.0) * 1.2
+  local camZ = (headPos.z or 0.0) + 0.02
+  -- Look point centred on the face.
+  local lookX = (headPos.x or 0.0)
+  local lookY = (headPos.y or 0.0)
+  local lookZ = (headPos.z or 0.0) - 0.04
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
   PointCamAtCoord(cam, lookX, lookY, lookZ)
-  SetCamFov(cam, 28.0)
+  -- Wider FOV (40) for a head+shoulders passport-style framing.
+  SetCamFov(cam, 40.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  -- Force the ped to look directly at the camera.
-  if type(TaskLookAtCoord) == 'function' then
-    TaskLookAtCoord(ped, camX, camY, camZ, -1, 0, 2)
-  end
+  -- Force the ped to look directly at the camera lens.
+  TaskLookAtCoord(ped, camX, camY, camZ, -1, 0, 2)
+  SetEntityHeading(ped, originalHeading)
 
-  -- Place a white backdrop behind the ped for a clean background.
-  local backdropHash = GetHashKey('prop_tv_flat_01')
+  -- Use timecycle modifier to wash out the background to white/bright.
+  SetTimecycleModifier('hud_def_blur')
+  SetTimecycleModifierStrength(1.0)
+
+  -- Also place a large white prop behind the ped as a physical backdrop.
+  -- prop_tv_flat_03b is a large flat screen that provides solid coverage.
+  local backdropHash = GetHashKey('hei_prop_hei_wboard_01')
   RequestModel(backdropHash)
   local modelDeadline = GetGameTimer() + 3000
   while not HasModelLoaded(backdropHash) and GetGameTimer() < modelDeadline do
@@ -583,19 +601,21 @@ local function captureMugshotViaScreenshot()
   end
   local backdrop = nil
   if HasModelLoaded(backdropHash) then
-    local behindX = (headPos.x or 0.0) - (forward.x or 0.0) * 0.3
-    local behindY = (headPos.y or 0.0) - (forward.y or 0.0) * 0.3
-    local behindZ = (headPos.z or 0.0) - 0.1
+    -- Position the backdrop right behind the ped's head, facing the camera.
+    local behindX = (headPos.x or 0.0) - (forward.x or 0.0) * 0.15
+    local behindY = (headPos.y or 0.0) - (forward.y or 0.0) * 0.15
+    local behindZ = (headPos.z or 0.0) - 0.5
     backdrop = CreateObject(backdropHash, behindX, behindY, behindZ, false, false, false)
     if backdrop and backdrop ~= 0 then
-      SetEntityHeading(backdrop, originalHeading)
+      -- Rotate 90 degrees so the flat face of the board faces the camera.
+      SetEntityHeading(backdrop, originalHeading + 180.0)
       FreezeEntityPosition(backdrop, true)
       SetEntityVisible(backdrop, true, false)
     end
     SetModelAsNoLongerNeeded(backdropHash)
   end
 
-  -- Hide HUD elements during capture.
+  -- Hide HUD elements during capture and draw a white background rect.
   local hideUi = true
   CreateThread(function()
     while hideUi do
@@ -612,12 +632,10 @@ local function captureMugshotViaScreenshot()
     end
   end)
 
-  -- Allow time for the ped to settle, camera to render, and backdrop to appear.
-  Wait(500)
+  -- Allow time for ped to settle into standing pose, camera to render, timecycle to apply.
+  Wait(800)
 
   -- Tell the server to capture via the screencapture server-side export.
-  -- The server will call serverCapture(source, options, callback) and store
-  -- the result. It notifies us when done via cad_bridge:mugshotCaptureResult.
   mugshotCaptureResult = nil
   print('[cad_bridge] [screencapture] Requesting server-side capture...')
   TriggerServerEvent('cad_bridge:requestMugshotCapture')
@@ -630,8 +648,9 @@ local function captureMugshotViaScreenshot()
     Wait(50)
   end
 
-  -- Cleanup: restore ped state and remove backdrop.
+  -- Cleanup: restore ped state, remove backdrop, clear timecycle.
   hideUi = false
+  ClearTimecycleModifier()
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
 
@@ -639,10 +658,7 @@ local function captureMugshotViaScreenshot()
     DeleteObject(backdrop)
   end
 
-  if type(ClearPedSecondaryTask) == 'function' then
-    ClearPedSecondaryTask(ped)
-  end
-  ClearPedTasks(ped)
+  ClearPedTasksImmediately(ped)
   SetEntityHeading(ped, originalHeading)
   if not pedWasFrozen and type(FreezeEntityPosition) == 'function' then
     FreezeEntityPosition(ped, false)
@@ -655,7 +671,6 @@ local function captureMugshotViaScreenshot()
 
   if mugshotCaptureResult then
     print('[cad_bridge] [screencapture] Server capture succeeded — mugshot stored server-side')
-    -- Return a marker so the submission flow knows a server-side mugshot is available.
     return 'SERVER_CAPTURE'
   end
 
