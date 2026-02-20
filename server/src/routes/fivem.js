@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const express = require('express');
 const config = require('../config');
 const {
@@ -574,7 +575,7 @@ function decodeMugshotBase64Payload(rawValue, rawMimeHint = '') {
   };
 }
 
-function persistBridgeMugshot(payload = {}, citizenId = '') {
+async function persistBridgeMugshot(payload = {}, citizenId = '') {
   const mugshotDataInput = String(payload.mugshot_data || payload.mugshotData || '').trim();
   const mugshotUrlInput = String(payload.mugshot_url || '').trim();
   const dataCandidate = mugshotDataInput || (/^data:image\//i.test(mugshotUrlInput) ? mugshotUrlInput : '');
@@ -625,15 +626,35 @@ function persistBridgeMugshot(payload = {}, citizenId = '') {
 
   const uploadDir = ensureBridgeMugshotUploadDir();
   const safeCitizenId = sanitizeFileToken(citizenId, 'unknown');
-  const fileName = `${safeCitizenId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${parsed.extension}`;
+  // Fixed filename per citizen — renewals overwrite the previous photo automatically.
+  const fileName = `${safeCitizenId}.webp`;
   const filePath = path.join(uploadDir, fileName);
 
-  fs.writeFileSync(filePath, parsed.imageBuffer);
+  // Remove any old timestamped mugshot files for this citizen (previous format).
+  try {
+    const entries = fs.readdirSync(uploadDir);
+    for (const entry of entries) {
+      const nameWithoutExt = path.parse(entry).name;
+      if (nameWithoutExt === safeCitizenId || nameWithoutExt.startsWith(`${safeCitizenId}-`)) {
+        const oldPath = path.join(uploadDir, entry);
+        if (oldPath !== filePath) fs.unlinkSync(oldPath);
+      }
+    }
+  } catch (_cleanupErr) {
+    // Non-fatal: stale files may remain but the new photo will take precedence.
+  }
+
+  // Always transcode to WebP for consistent format and compact file size.
+  const webpBuffer = await sharp(parsed.imageBuffer)
+    .webp({ quality: 90 })
+    .toBuffer();
+
+  fs.writeFileSync(filePath, webpBuffer);
   return {
     mugshot_url: `/uploads/fivem-mugshots/${fileName}`,
     persisted: true,
-    bytes: parsed.imageBuffer.length,
-    mime_type: parsed.mimeType,
+    bytes: webpBuffer.length,
+    mime_type: 'image/webp',
   };
 }
 
@@ -1546,7 +1567,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
 });
 
 // Create/update a driver license from in-game CAD bridge UI.
-router.post('/licenses', requireBridgeAuth, (req, res) => {
+router.post('/licenses', requireBridgeAuth, async (req, res) => {
   try {
     const payload = req.body || {};
     const payloadSummary = summarizeBridgeLicensePayload(payload);
@@ -1621,7 +1642,7 @@ router.post('/licenses', requireBridgeAuth, (req, res) => {
     let mugshotBytes = 0;
     let mugshotMimeType = '';
     try {
-      const persistedMugshot = persistBridgeMugshot(payload, citizenId);
+      const persistedMugshot = await persistBridgeMugshot(payload, citizenId);
       mugshotUrl = persistedMugshot.mugshot_url;
       mugshotPersisted = persistedMugshot.persisted === true;
       mugshotBytes = Number(persistedMugshot.bytes || 0) || 0;

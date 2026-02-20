@@ -795,7 +795,7 @@ window.addEventListener("message", function onMessage(event) {
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
-      var dataUrl = canvas.toDataURL("image/jpeg", 0.95);
+      var dataUrl = canvas.toDataURL("image/webp", 0.92);
       postNui("cadBridgeHeadshotCapture", { data: dataUrl }).catch(function ignoreCaptureError() {});
     };
     img.onerror = function onHeadshotError() {
