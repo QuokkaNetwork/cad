@@ -512,8 +512,13 @@ end
 
 local function captureMugshotViaScreenshot()
   local resourceName = trim(Config.ScreenshotResource or 'screencapture')
+  print(('[cad_bridge] [screencapture] captureMugshotViaScreenshot() — resource=%q state=%q'):format(
+    resourceName, GetResourceState(resourceName) or 'nil'))
   if resourceName == '' then return '' end
-  if GetResourceState(resourceName) ~= 'started' then return '' end
+  if GetResourceState(resourceName) ~= 'started' then
+    print('[cad_bridge] [screencapture] Resource not started, skipping screencapture')
+    return ''
+  end
 
   local ped = PlayerPedId()
   if not ped or ped == 0 then return '' end
@@ -616,12 +621,24 @@ local function captureMugshotViaScreenshot()
     maxHeight = 512,
   }
 
-  local ok = pcall(function()
+  print(('[cad_bridge] [screencapture] Requesting screenshot from resource=%q encoding=%s quality=%s maxWidth=%s maxHeight=%s'):format(
+    resourceName, screenshotOptions.encoding, tostring(screenshotOptions.quality),
+    tostring(screenshotOptions.maxWidth), tostring(screenshotOptions.maxHeight)))
+
+  local ok, callErr = pcall(function()
     exports[resourceName]:requestScreenshot(screenshotOptions, function(data)
+      local dataLen = type(data) == 'string' and #data or 0
+      print(('[cad_bridge] [screencapture] Callback fired — data type=%s length=%d'):format(type(data), dataLen))
       raw = data or ''
       done = true
     end)
   end)
+
+  if not ok then
+    print(('[cad_bridge] [screencapture] ERROR calling requestScreenshot: %s'):format(tostring(callErr)))
+  else
+    print('[cad_bridge] [screencapture] requestScreenshot called successfully, waiting for callback...')
+  end
 
   if ok then
     local timeoutMs = tonumber(Config.ScreenshotTimeoutMs or 8000) or 8000
@@ -629,6 +646,9 @@ local function captureMugshotViaScreenshot()
     local deadline = GetGameTimer() + timeoutMs
     while not done and GetGameTimer() < deadline do
       Wait(0)
+    end
+    if not done then
+      print(('[cad_bridge] [screencapture] WARNING: Callback did not fire within %dms timeout'):format(timeoutMs))
     end
   end
 
@@ -651,9 +671,12 @@ local function captureMugshotViaScreenshot()
   end
 
   if not ok or not done then
+    print(('[cad_bridge] [screencapture] Capture failed — ok=%s done=%s raw_len=%d'):format(tostring(ok), tostring(done), #raw))
     return ''
   end
-  return normalizeScreenshotResult(raw)
+  local result = normalizeScreenshotResult(raw)
+  print(('[cad_bridge] [screencapture] Capture complete — raw_len=%d result_len=%d'):format(#raw, #result))
+  return result
 end
 
 local function captureMugshotViaHeadshot()
