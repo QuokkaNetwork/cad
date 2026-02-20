@@ -610,7 +610,7 @@ select {
   object-position: top;
   border-radius: 10px;
   border: 1px solid #bad5c5;
-  background: #ffffff;
+  background: transparent;
 }
 
 .id-card-fields {
