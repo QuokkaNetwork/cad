@@ -70,7 +70,7 @@ function MugshotPreview({ url }) {
       <img
         src={value}
         alt="Character mugshot"
-        className="w-32 h-40 object-cover rounded border border-cad-border"
+        className="w-32 h-40 object-cover object-top rounded border border-cad-border"
       />
     </div>
   );

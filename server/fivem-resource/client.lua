@@ -573,24 +573,25 @@ local function captureMugshotViaScreenshot()
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
 
-  -- Camera 0.90m in front of ped head, slightly above eye level to include full head.
-  local camDist = 0.90
+  -- Camera 1.0m in front of ped head, framed to include head + shoulders.
+  local camDist = 1.0
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
-  local camZ = headPos.z + 0.05  -- slightly above eye line so top of head isn't cut off
+  local camZ = headPos.z - 0.05  -- slightly below eye line to center head+shoulders
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
-  -- Look at the head center — the +0.05 camera offset ensures full head is in frame.
-  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z)
-  -- FOV 28 = tight but with enough margin to include full head + shoulders.
-  SetCamFov(cam, 28.0)
+  -- Aim below the head center to include shoulders/upper chest in the frame.
+  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.15)
+  -- FOV 35 = wider to include shoulders while keeping a portrait feel.
+  SetCamFov(cam, 35.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  -- 4) White backdrop: 3D markers behind the ped, stacked for solid opacity.
+  -- 4) Green-screen backdrop: 3D markers behind the ped, stacked for solid opacity.
+  --    Server-side chroma key removes the green and produces a transparent PNG.
   local backdropX = headPos.x - forwardX * 0.3
   local backdropY = headPos.y - forwardY * 0.3
-  local backdropZ = headPos.z - 0.10
+  local backdropZ = headPos.z - 0.25
 
   local drawBackdrop = true
   CreateThread(function()
@@ -604,7 +605,7 @@ local function captureMugshotViaScreenshot()
           0.0, 0.0, 0.0,
           0.0, 0.0, 0.0,
           10.0, 10.0, 10.0,
-          255, 255, 255, 255,
+          0, 255, 0, 255,
           false, true, 2,
           false, nil, nil, false)
       end

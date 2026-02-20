@@ -575,6 +575,29 @@ function decodeMugshotBase64Payload(rawValue, rawMimeHint = '') {
   };
 }
 
+/**
+ * Chroma-key: replace bright green pixels with transparency.
+ * Tolerances are generous to handle GTA lighting variation on the green-screen.
+ */
+async function chromaKeyGreen(inputBuffer) {
+  const image = sharp(inputBuffer).ensureAlpha();
+  const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    // Green-screen pixel: green channel dominant, red and blue low.
+    if (g > 100 && r < 150 && b < 150 && g > r && g > b) {
+      data[i + 3] = 0; // fully transparent
+    }
+  }
+
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png()
+    .toBuffer();
+}
+
 async function persistBridgeMugshot(payload = {}, citizenId = '') {
   const mugshotDataInput = String(payload.mugshot_data || payload.mugshotData || '').trim();
   const mugshotUrlInput = String(payload.mugshot_url || '').trim();
@@ -627,10 +650,10 @@ async function persistBridgeMugshot(payload = {}, citizenId = '') {
   const uploadDir = ensureBridgeMugshotUploadDir();
   const safeCitizenId = sanitizeFileToken(citizenId, 'unknown');
   // Fixed filename per citizen — renewals overwrite the previous photo automatically.
-  const fileName = `${safeCitizenId}.webp`;
+  const fileName = `${safeCitizenId}.png`;
   const filePath = path.join(uploadDir, fileName);
 
-  // Remove any old timestamped mugshot files for this citizen (previous format).
+  // Remove any old mugshot files for this citizen (previous format or old .webp).
   try {
     const entries = fs.readdirSync(uploadDir);
     for (const entry of entries) {
@@ -644,17 +667,15 @@ async function persistBridgeMugshot(payload = {}, citizenId = '') {
     // Non-fatal: stale files may remain but the new photo will take precedence.
   }
 
-  // Always transcode to WebP for consistent format and compact file size.
-  const webpBuffer = await sharp(parsed.imageBuffer)
-    .webp({ quality: 90 })
-    .toBuffer();
+  // Chroma-key the green backdrop to transparency, then save as PNG.
+  const pngBuffer = await chromaKeyGreen(parsed.imageBuffer);
 
-  fs.writeFileSync(filePath, webpBuffer);
+  fs.writeFileSync(filePath, pngBuffer);
   return {
     mugshot_url: `/uploads/fivem-mugshots/${fileName}`,
     persisted: true,
-    bytes: webpBuffer.length,
-    mime_type: 'image/webp',
+    bytes: pngBuffer.length,
+    mime_type: 'image/png',
   };
 }
 
