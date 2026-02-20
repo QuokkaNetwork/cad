@@ -2096,6 +2096,14 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
 
     local license = parsed.license
     local fullName = trim(license.full_name or defaults.full_name or getCharacterDisplayName(src) or '')
+
+    -- Resolve mugshot URL: relative paths need the CAD base URL prepended
+    -- so the NUI browser can actually load the image.
+    local rawMugshot = trim(license.mugshot_url or '')
+    if rawMugshot ~= '' and rawMugshot:sub(1, 1) == '/' then
+      rawMugshot = getCadUrl(rawMugshot)
+    end
+
     local payload = {
       full_name = fullName,
       date_of_birth = trim(license.date_of_birth or defaults.date_of_birth or ''),
@@ -2105,7 +2113,7 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
       conditions = normalizeList(license.conditions or {}, false),
       status = trim(license.status or ''),
       expiry_at = trim(license.expiry_at or ''),
-      mugshot_url = trim(license.mugshot_url or ''),
+      mugshot_url = rawMugshot,
     }
 
     TriggerClientEvent('cad_bridge:showIdCard', src, {
