@@ -538,53 +538,53 @@ local function captureMugshotViaScreenshot()
   end
   local originalHeading = GetEntityHeading(ped)
 
-  -- 1) Freeze ped, clear tasks, lock heading.
+  -- 1) Freeze ped in place, clear ALL tasks so the ped stands naturally.
+  --    No animations — the default frozen idle pose is the cleanest for an ID photo.
   FreezeEntityPosition(ped, true)
   ClearPedTasksImmediately(ped)
   ClearPedSecondaryTask(ped)
   SetEntityHeading(ped, originalHeading)
 
-  -- 2) Play a neutral idle anim so the ped has a clean standing pose.
-  --    We use the ambient idle which keeps arms at sides, head forward.
-  local idleDict = 'anim@heists@heist_corona@single_team'
-  local idleAnim = 'single_team_loop_boss'
-  RequestAnimDict(idleDict)
-  local animDeadline = GetGameTimer() + 3000
-  while not HasAnimDictLoaded(idleDict) and GetGameTimer() < animDeadline do
-    Wait(10)
-  end
-  if HasAnimDictLoaded(idleDict) then
-    -- Flag 1 = loop. Ped plays a calm standing idle animation.
-    TaskPlayAnim(ped, idleDict, idleAnim, 8.0, -8.0, -1, 1, 0, false, false, false)
-  end
+  -- Let the ped settle into its frozen idle pose.
+  Wait(300)
 
-  -- Re-lock heading and wait for anim to settle.
+  -- Re-assert heading after settle (some natives can drift heading).
   SetEntityHeading(ped, originalHeading)
-  Wait(500)
+  Wait(100)
 
-  -- 3) Get head position AFTER settling for accurate camera placement.
+  -- 2) Get head bone position for camera framing.
   local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
   if not headPos then
-    ClearPedTasksImmediately(ped)
     if not pedWasFrozen then FreezeEntityPosition(ped, false) end
     return ''
   end
 
-  local forward = GetEntityForwardVector(ped)
+  -- 3) Calculate camera position using heading-based trig (more reliable than GetEntityForwardVector).
+  --    Camera goes directly in FRONT of where the ped is facing.
+  local headingRad = math.rad(originalHeading)
+  local forwardX = -math.sin(headingRad)
+  local forwardY =  math.cos(headingRad)
 
-  -- 4) Position camera for a passport-style head+shoulders shot.
-  local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 1.0
-  local camY = (headPos.y or 0.0) + (forward.y or 0.0) * 1.0
-  local camZ = (headPos.z or 0.0) + 0.0
-  local lookX = (headPos.x or 0.0)
-  local lookY = (headPos.y or 0.0)
-  local lookZ = (headPos.z or 0.0) - 0.05
+  -- Camera distance 1.0m in front of ped head, at eye level.
+  local camDist = 1.0
+  local camX = headPos.x + forwardX * camDist
+  local camY = headPos.y + forwardY * camDist
+  local camZ = headPos.z  -- eye level
+
+  -- Look point slightly below head center for a natural passport-style framing.
+  local lookX = headPos.x
+  local lookY = headPos.y
+  local lookZ = headPos.z - 0.05
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
   PointCamAtCoord(cam, lookX, lookY, lookZ)
   SetCamFov(cam, 36.0)
   RenderScriptCams(true, false, 0, true, true)
+
+  -- 4) Show NUI white backdrop (NUI renders BEHIND the 3D world, so the ped
+  --    appears in front of the white background — perfect for ID photo).
+  SendNUIMessage({ action = 'cadBridgeMugshot:showBackdrop' })
 
   -- 5) Hide HUD during capture.
   local hideUi = true
@@ -603,8 +603,8 @@ local function captureMugshotViaScreenshot()
     end
   end)
 
-  -- Let the camera render a few frames.
-  Wait(500)
+  -- Let the camera + backdrop render a few frames.
+  Wait(600)
 
   -- 6) Tell the server to capture.
   mugshotCaptureResult = nil
@@ -619,12 +619,11 @@ local function captureMugshotViaScreenshot()
     Wait(50)
   end
 
-  -- 7) Cleanup: restore ped state.
+  -- 7) Cleanup: hide backdrop, restore camera, restore ped state.
+  SendNUIMessage({ action = 'cadBridgeMugshot:hideBackdrop' })
   hideUi = false
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
-  ClearPedTasksImmediately(ped)
-  StopAnimTask(ped, idleDict, idleAnim, 1.0)
   SetEntityHeading(ped, originalHeading)
   if not pedWasFrozen then
     FreezeEntityPosition(ped, false)

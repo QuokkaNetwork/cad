@@ -779,6 +779,16 @@ window.addEventListener("message", function onMessage(event) {
     closeIdCard();
     return;
   }
+  if (message.action === "cadBridgeMugshot:showBackdrop") {
+    var bd = document.getElementById("mugshotBackdrop");
+    if (bd) bd.style.display = "block";
+    return;
+  }
+  if (message.action === "cadBridgeMugshot:hideBackdrop") {
+    var bd2 = document.getElementById("mugshotBackdrop");
+    if (bd2) bd2.style.display = "none";
+    return;
+  }
   if (message.action === "cadBridgeHeadshot:capture") {
     var txdName = String(message.txdName || "").trim();
     if (!txdName) {
