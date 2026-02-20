@@ -1492,6 +1492,55 @@ local function requestShowIdCard()
   TriggerServerEvent('cad_bridge:requestShowId', targetSource)
 end
 
+local LIVE_MAP_CALIBRATION_ENABLED = Config.LiveMapCalibrationEnabled == true
+local LIVE_MAP_CALIBRATION_COMMAND = trim(Config.LiveMapCalibrationCommand or 'calibrate')
+if LIVE_MAP_CALIBRATION_COMMAND == '' then LIVE_MAP_CALIBRATION_COMMAND = 'calibrate' end
+local liveMapCalibrationPointA = nil
+local liveMapCalibrationPointB = nil
+
+local function notifyLiveMapCalibration(message, notifyType)
+  local title = 'Live Map Calibration'
+  local description = tostring(message or '')
+  local nType = trim(notifyType or '')
+  if nType == '' then nType = 'inform' end
+
+  if triggerCadOxNotify({
+    title = title,
+    description = description,
+    type = nType,
+  }) then
+    return
+  end
+
+  if GetResourceState('chat') == 'started' then
+    TriggerEvent('chat:addMessage', {
+      color = { 0, 170, 255 },
+      args = { 'CAD', description ~= '' and description or title },
+    })
+  end
+end
+
+local function getCalibrationPointFromPlayer()
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then return nil end
+  local coords = GetEntityCoords(ped)
+  if not coords then return nil end
+  return {
+    x = tonumber(coords.x) or 0.0,
+    y = tonumber(coords.y) or 0.0,
+    z = tonumber(coords.z) or 0.0,
+  }
+end
+
+local function formatCalibrationPoint(point)
+  if type(point) ~= 'table' then return 'unset' end
+  return ('x=%.2f y=%.2f z=%.2f'):format(
+    tonumber(point.x) or 0.0,
+    tonumber(point.y) or 0.0,
+    tonumber(point.z) or 0.0
+  )
+end
+
 RegisterCommand(SHOW_ID_COMMAND, function()
   requestShowIdCard()
 end, false)
@@ -1507,6 +1556,76 @@ RegisterCommand('cadbridgeidtoggle', function()
   end
   requestShowIdCard()
 end, false)
+
+if LIVE_MAP_CALIBRATION_ENABLED then
+  RegisterCommand(LIVE_MAP_CALIBRATION_COMMAND, function(_source, args)
+    local action = trim(args and args[1] or ''):lower()
+    if action == '' or action == 'help' then
+      notifyLiveMapCalibration(('Usage: /%s start | point1 | point2 | status | save | cancel'):format(LIVE_MAP_CALIBRATION_COMMAND))
+      return
+    end
+
+    if action == 'start' then
+      liveMapCalibrationPointA = nil
+      liveMapCalibrationPointB = nil
+      notifyLiveMapCalibration('Calibration started. Move to first reference point and use /' .. LIVE_MAP_CALIBRATION_COMMAND .. ' point1')
+      return
+    end
+
+    if action == 'point1' or action == 'p1' or action == 'a' then
+      local point = getCalibrationPointFromPlayer()
+      if not point then
+        notifyLiveMapCalibration('Unable to capture point 1.', 'error')
+        return
+      end
+      liveMapCalibrationPointA = point
+      notifyLiveMapCalibration('Point 1 captured: ' .. formatCalibrationPoint(point))
+      return
+    end
+
+    if action == 'point2' or action == 'p2' or action == 'b' then
+      local point = getCalibrationPointFromPlayer()
+      if not point then
+        notifyLiveMapCalibration('Unable to capture point 2.', 'error')
+        return
+      end
+      liveMapCalibrationPointB = point
+      notifyLiveMapCalibration('Point 2 captured: ' .. formatCalibrationPoint(point))
+      return
+    end
+
+    if action == 'status' then
+      notifyLiveMapCalibration(('Point 1: %s | Point 2: %s'):format(
+        formatCalibrationPoint(liveMapCalibrationPointA),
+        formatCalibrationPoint(liveMapCalibrationPointB)
+      ))
+      return
+    end
+
+    if action == 'cancel' then
+      liveMapCalibrationPointA = nil
+      liveMapCalibrationPointB = nil
+      notifyLiveMapCalibration('Calibration cancelled.')
+      return
+    end
+
+    if action == 'save' then
+      if type(liveMapCalibrationPointA) ~= 'table' or type(liveMapCalibrationPointB) ~= 'table' then
+        notifyLiveMapCalibration('Capture point1 and point2 before saving.', 'error')
+        return
+      end
+      TriggerServerEvent('cad_bridge:saveLiveMapCalibration', {
+        point1 = liveMapCalibrationPointA,
+        point2 = liveMapCalibrationPointB,
+        padding = tonumber(Config.LiveMapCalibrationPadding or 250.0) or 250.0,
+      })
+      notifyLiveMapCalibration('Calibration submitted to server. If authorised, map bounds will be updated.')
+      return
+    end
+
+    notifyLiveMapCalibration(('Unknown action: %s. Use /%s help'):format(action, LIVE_MAP_CALIBRATION_COMMAND), 'error')
+  end, false)
+end
 
 RegisterKeyMapping('cadbridgeidtoggle', 'Show or hide your ID card', 'keyboard', SHOW_ID_KEY)
 
@@ -1572,6 +1691,7 @@ local function spawnDocumentPed(pedConfig)
   local z = tonumber(coords.z) or 0.0
   local w = tonumber(coords.w) or 0.0
   local spawnZ = resolveGroundZForPed(x, y, z)
+  local spawnOffsetZ = 0.08
 
   local modelHash = loadPedModel(pedConfig.model or '')
   if not modelHash then
@@ -1579,9 +1699,15 @@ local function spawnDocumentPed(pedConfig)
     return
   end
 
-  local entity = CreatePed(4, modelHash, x, y, spawnZ, w, false, true)
+  RequestCollisionAtCoord(x + 0.0, y + 0.0, spawnZ + 0.0)
+  local entity = CreatePed(4, modelHash, x, y, spawnZ + 1.0, w, false, true)
   SetEntityAsMissionEntity(entity, true, true)
-  SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ + 0.0, false, false, false)
+  SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ + spawnOffsetZ, false, false, false)
+  local settledGroundZ = resolveGroundZForPed(x, y, spawnZ)
+  if type(settledGroundZ) == 'number' then
+    spawnZ = settledGroundZ
+    SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ + spawnOffsetZ, false, false, false)
+  end
   SetEntityHeading(entity, w + 0.0)
   SetEntityInvincible(entity, true)
   SetBlockingOfNonTemporaryEvents(entity, true)
@@ -1599,7 +1725,7 @@ local function spawnDocumentPed(pedConfig)
     entity = entity,
     x = x,
     y = y,
-    z = z,
+    z = spawnZ + spawnOffsetZ,
     licenseLabel = trim(pedConfig.license_label or ''),
     registrationLabel = trim(pedConfig.registration_label or ''),
     allowsLicense = pedConfig.allows_license == true,
