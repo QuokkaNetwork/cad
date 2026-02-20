@@ -521,7 +521,27 @@ local function captureMugshotViaScreenshot()
   local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
   if not headPos then return '' end
 
+  -- Save original ped state for restoration.
+  local pedWasFrozen = false
+  if type(IsEntityPositionFrozen) == 'function' then
+    pedWasFrozen = IsEntityPositionFrozen(ped) == true
+  end
+  local originalHeading = GetEntityHeading(ped)
+
+  -- Immediately freeze the ped in place (position + heading).
+  if type(FreezeEntityPosition) == 'function' then
+    FreezeEntityPosition(ped, true)
+  end
+
+  -- Clear all tasks/animations so the ped stands still in an idle pose.
+  ClearPedTasks(ped)
+  ClearPedSecondaryTask(ped)
+  Wait(50)
+
+  -- Lock heading so ped faces a consistent direction.
   local forward = GetEntityForwardVector(ped)
+  SetEntityHeading(ped, originalHeading)
+
   -- Position camera in front of the ped's face for a tight portrait-style headshot.
   -- 0.75 units forward, slightly above eye level for a flattering angle.
   local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.75
@@ -539,23 +559,35 @@ local function captureMugshotViaScreenshot()
   SetCamFov(cam, 28.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  local pedWasFrozen = false
-  if type(IsEntityPositionFrozen) == 'function' then
-    pedWasFrozen = IsEntityPositionFrozen(ped) == true
-  end
-  if not pedWasFrozen and type(FreezeEntityPosition) == 'function' then
-    FreezeEntityPosition(ped, true)
+  -- Force the ped to look directly at the camera.
+  if type(TaskLookAtCoord) == 'function' then
+    TaskLookAtCoord(ped, camX, camY, camZ, -1, 0, 2)
   end
 
-  -- Force the player to face and look at the camera for a clean mugshot.
-  if type(TaskTurnPedToFaceCoord) == 'function' then
-    TaskTurnPedToFaceCoord(ped, camX, camY, camZ, 700)
+  -- Place a white backdrop behind the ped for a clean background.
+  -- Uses prop_tv_flat_01 (a flat white panel) positioned behind the ped's head.
+  local backdropHash = GetHashKey('prop_tv_flat_01')
+  RequestModel(backdropHash)
+  local modelDeadline = GetGameTimer() + 3000
+  while not HasModelLoaded(backdropHash) and GetGameTimer() < modelDeadline do
+    Wait(10)
   end
-  if type(TaskLookAtCoord) == 'function' then
-    TaskLookAtCoord(ped, camX, camY, camZ, 2200, 0, 2)
+  local backdrop = nil
+  if HasModelLoaded(backdropHash) then
+    local behindX = (headPos.x or 0.0) - (forward.x or 0.0) * 0.3
+    local behindY = (headPos.y or 0.0) - (forward.y or 0.0) * 0.3
+    local behindZ = (headPos.z or 0.0) - 0.1
+    backdrop = CreateObject(backdropHash, behindX, behindY, behindZ, false, false, false)
+    if backdrop and backdrop ~= 0 then
+      SetEntityHeading(backdrop, originalHeading)
+      FreezeEntityPosition(backdrop, true)
+      SetEntityVisible(backdrop, true, false)
+    end
+    SetModelAsNoLongerNeeded(backdropHash)
   end
-  -- Allow time for the ped to turn and settle into position before capturing.
-  Wait(350)
+
+  -- Allow time for the ped to settle, camera to render, and backdrop to appear.
+  Wait(500)
 
   local done = false
   local raw = ''
@@ -596,12 +628,20 @@ local function captureMugshotViaScreenshot()
     end
   end
 
+  -- Cleanup: restore ped state and remove backdrop.
   hideUi = false
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
+
+  if backdrop and backdrop ~= 0 and DoesEntityExist(backdrop) then
+    DeleteObject(backdrop)
+  end
+
   if type(ClearPedSecondaryTask) == 'function' then
     ClearPedSecondaryTask(ped)
   end
+  ClearPedTasks(ped)
+  SetEntityHeading(ped, originalHeading)
   if not pedWasFrozen and type(FreezeEntityPosition) == 'function' then
     FreezeEntityPosition(ped, false)
   end
@@ -659,17 +699,11 @@ local function captureMugshotUrl()
   local provider = trim(Config.MugshotProvider or 'screencapture'):lower()
   if provider == '' then provider = 'screencapture' end
 
-  if provider == 'screencapture' then
+  if provider == 'screencapture' or provider == 'screenshot-basic' then
+    local screenshot = captureMugshotViaScreenshot()
+    if screenshot ~= '' then return screenshot end
     local headshot = captureMugshotViaHeadshot()
     if headshot ~= '' then return headshot end
-    local screenshot = captureMugshotViaScreenshot()
-    if screenshot ~= '' then return screenshot end
-    return captureMugshotViaLegacyExport()
-  end
-
-  if provider == 'screenshot-basic' then
-    local screenshot = captureMugshotViaScreenshot()
-    if screenshot ~= '' then return screenshot end
     return captureMugshotViaLegacyExport()
   end
 
@@ -679,11 +713,11 @@ local function captureMugshotUrl()
     return captureMugshotViaScreenshot()
   end
 
-  -- auto fallback mode: try headshot first, then screencapture, then legacy
-  local headshot = captureMugshotViaHeadshot()
-  if headshot ~= '' then return headshot end
+  -- auto fallback mode: try screencapture first, then headshot, then legacy
   local screenshot = captureMugshotViaScreenshot()
   if screenshot ~= '' then return screenshot end
+  local headshot = captureMugshotViaHeadshot()
+  if headshot ~= '' then return headshot end
   return captureMugshotViaLegacyExport()
 end
 
