@@ -538,10 +538,22 @@ local function captureMugshotViaScreenshot()
   end
   local originalHeading = GetEntityHeading(ped)
 
-  -- 1) Freeze ped in place, clear ALL tasks so the ped stands naturally.
+  -- 1) Freeze ped, kill ALL movement: tasks, animations, scenarios, physics.
   FreezeEntityPosition(ped, true)
   ClearPedTasksImmediately(ped)
   ClearPedSecondaryTask(ped)
+  if type(ClearPedTasks) == 'function' then ClearPedTasks(ped) end
+  SetPedCurrentWeaponVisible(ped, false, true, true, true)
+  -- Stop any ambient scenario the ped might be playing.
+  if type(SetPedCanPlayAmbientAnims) == 'function' then SetPedCanPlayAmbientAnims(ped, false) end
+  if type(SetPedCanPlayAmbientBaseAnims) == 'function' then SetPedCanPlayAmbientBaseAnims(ped, false) end
+  SetEntityHeading(ped, originalHeading)
+
+  -- TaskStandStill locks the body completely — no fidgeting, weight shifting, etc.
+  TaskStandStill(ped, 15000)
+  Wait(200)
+
+  -- Re-assert heading after stand still takes effect.
   SetEntityHeading(ped, originalHeading)
   Wait(100)
 
@@ -553,13 +565,12 @@ local function captureMugshotViaScreenshot()
   end
 
   -- 3) Calculate camera position using heading-based trig.
-  --    Camera goes directly in FRONT of where the ped is facing.
   local headingRad = math.rad(originalHeading)
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
 
-  -- Camera 1.05m in front of ped head, at eye level.
-  local camDist = 1.05
+  -- Camera 0.85m in front of ped head — closer for a tighter ID crop.
+  local camDist = 0.85
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
   local camZ = headPos.z
@@ -567,21 +578,19 @@ local function captureMugshotViaScreenshot()
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
   PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.05)
-  SetCamFov(cam, 36.0)
+  -- FOV 25 = tighter zoom for a real ID/passport photo crop.
+  SetCamFov(cam, 25.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  -- 4) Force the ped to look directly at the camera.
-  --    TaskLookAtCoord makes the ped turn their head/eyes toward the camera position.
-  --    Re-assert heading first so only the head turns, not the whole body.
+  -- 4) Force ped head to look directly at the camera.
+  --    Heading is already locked; TaskLookAtCoord only rotates the head.
   SetEntityHeading(ped, originalHeading)
   TaskLookAtCoord(ped, camX, camY, camZ, -1, 2048 + 16, 2)
-  --    2048 = only head movement (no body turn), 16 = slow/smooth look
-  --    duration = -1 (indefinite), p5 = 2 (priority)
 
   -- Wait for head to turn toward camera and settle.
   Wait(800)
 
-  -- Re-lock heading one more time (TaskLookAtCoord can sometimes rotate the body slightly).
+  -- Re-lock heading (TaskLookAtCoord can sometimes drift the body slightly).
   SetEntityHeading(ped, originalHeading)
 
   -- 5) White backdrop: place a large flat 3D marker BEHIND the ped.
@@ -653,8 +662,10 @@ local function captureMugshotViaScreenshot()
   hideUi = false
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
-  -- Stop the look-at task and restore ped to normal.
+  -- Stop all tasks, re-enable ambient anims, restore ped to normal.
   ClearPedTasksImmediately(ped)
+  if type(SetPedCanPlayAmbientAnims) == 'function' then SetPedCanPlayAmbientAnims(ped, true) end
+  if type(SetPedCanPlayAmbientBaseAnims) == 'function' then SetPedCanPlayAmbientBaseAnims(ped, true) end
   SetEntityHeading(ped, originalHeading)
   if not pedWasFrozen then
     FreezeEntityPosition(ped, false)
