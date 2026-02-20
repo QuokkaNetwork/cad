@@ -539,80 +539,76 @@ local function captureMugshotViaScreenshot()
   local originalHeading = GetEntityHeading(ped)
 
   -- 1) Freeze ped in place, clear ALL tasks so the ped stands naturally.
-  --    No animations — the default frozen idle pose is the cleanest for an ID photo.
   FreezeEntityPosition(ped, true)
   ClearPedTasksImmediately(ped)
   ClearPedSecondaryTask(ped)
   SetEntityHeading(ped, originalHeading)
-
-  -- Let the ped settle into its frozen idle pose.
-  Wait(300)
-
-  -- Re-assert heading after settle (some natives can drift heading).
-  SetEntityHeading(ped, originalHeading)
   Wait(100)
 
   -- 2) Get head bone position for camera framing.
-  --    Use SKEL_Head (31086) for the head center.
   local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
   if not headPos then
     if not pedWasFrozen then FreezeEntityPosition(ped, false) end
     return ''
   end
 
-  -- Also get ped root position to help with centering.
-  local pedPos = GetEntityCoords(ped, true)
-
-  -- 3) Calculate camera position using heading-based trig (more reliable than GetEntityForwardVector).
+  -- 3) Calculate camera position using heading-based trig.
   --    Camera goes directly in FRONT of where the ped is facing.
   local headingRad = math.rad(originalHeading)
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
 
-  -- Camera distance 1.05m in front of ped head, at eye level.
+  -- Camera 1.05m in front of ped head, at eye level.
   local camDist = 1.05
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
-  local camZ = headPos.z  -- eye level
-
-  -- Look target: use ped root X/Y for perfect horizontal centering,
-  -- head Z with a slight downward offset for a natural passport framing.
-  local lookX = pedPos.x
-  local lookY = pedPos.y
-  local lookZ = headPos.z - 0.05
+  local camZ = headPos.z
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
-  PointCamAtCoord(cam, lookX, lookY, lookZ)
+  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.05)
   SetCamFov(cam, 36.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  -- 4) White backdrop: place a large flat 3D marker BEHIND the ped (relative to camera).
-  --    DrawMarker type 43 is a flat square plane that renders in the 3D world,
-  --    so screencapture will capture it (unlike NUI which is a separate layer).
-  --    Position it 0.5m behind the ped's head (opposite direction from camera).
-  local backdropX = headPos.x - forwardX * 0.5
-  local backdropY = headPos.y - forwardY * 0.5
-  local backdropZ = headPos.z  -- centered on head height
+  -- 4) Force the ped to look directly at the camera.
+  --    TaskLookAtCoord makes the ped turn their head/eyes toward the camera position.
+  --    Re-assert heading first so only the head turns, not the whole body.
+  SetEntityHeading(ped, originalHeading)
+  TaskLookAtCoord(ped, camX, camY, camZ, -1, 2048 + 16, 2)
+  --    2048 = only head movement (no body turn), 16 = slow/smooth look
+  --    duration = -1 (indefinite), p5 = 2 (priority)
+
+  -- Wait for head to turn toward camera and settle.
+  Wait(800)
+
+  -- Re-lock heading one more time (TaskLookAtCoord can sometimes rotate the body slightly).
+  SetEntityHeading(ped, originalHeading)
+
+  -- 5) White backdrop: place a large flat 3D marker BEHIND the ped.
+  --    DrawMarker type 43 is a flat plane that renders in the 3D world.
+  --    Position 0.3m behind the ped's head (opposite direction from camera).
+  --    Lower it slightly so it covers from above head down to chest/shoulders.
+  local backdropX = headPos.x - forwardX * 0.3
+  local backdropY = headPos.y - forwardY * 0.3
+  local backdropZ = headPos.z - 0.15  -- shift down slightly to cover shoulders
 
   local drawBackdrop = true
   CreateThread(function()
     while drawBackdrop do
-      -- Type 43 = debug flat plane. Scale 3x3m to fill the frame behind the ped.
-      -- White colour (255,255,255,255), no bobbing/rotation.
+      -- Scale 10x10x10 — massively oversized to guarantee full frame coverage.
       DrawMarker(43,
         backdropX, backdropY, backdropZ,
-        0.0, 0.0, 0.0,           -- direction
-        0.0, 0.0, 0.0,           -- rotation
-        3.0, 3.0, 3.0,           -- scale X, Y, Z — large enough to fill frame
-        255, 255, 255, 255,      -- RGBA white
-        false, true, 2,          -- bobUpAndDown, faceCamera=true, p19 (2 = no depth test)
-        false, nil, nil, false)  -- rotate, textureDict, textureName, drawOnEnts
+        0.0, 0.0, 0.0,            -- direction
+        0.0, 0.0, 0.0,            -- rotation
+        10.0, 10.0, 10.0,         -- scale X, Y, Z — very large to fill entire frame
+        255, 255, 255, 255,       -- RGBA white
+        false, true, 2,           -- bobUpAndDown, faceCamera=true, p19 (2)
+        false, nil, nil, false)   -- rotate, textureDict, textureName, drawOnEnts
       Wait(0)
     end
   end)
 
-  -- 5) Hide HUD during capture.
+  -- 6) Hide HUD during capture.
   local hideUi = true
   CreateThread(function()
     while hideUi do
@@ -629,7 +625,7 @@ local function captureMugshotViaScreenshot()
     end
   end)
 
-  -- Let the camera + backdrop render a few frames.
+  -- Let the camera + backdrop + head look render a few frames.
   Wait(600)
 
   -- 6) Tell the server to capture.
@@ -650,6 +646,8 @@ local function captureMugshotViaScreenshot()
   hideUi = false
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
+  -- Stop the look-at task and restore ped to normal.
+  ClearPedTasksImmediately(ped)
   SetEntityHeading(ped, originalHeading)
   if not pedWasFrozen then
     FreezeEntityPosition(ped, false)
