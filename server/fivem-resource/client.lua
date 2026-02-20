@@ -402,6 +402,8 @@ end
 local lastDocumentInteractAt = 0
 local documentPeds = {}
 local documentPedBlips = {}
+local documentPedTargetEntities = {}
+local useOxTargetForDocuments = GetResourceState('ox_target') == 'started'
 
 local function hasAnyCadBridgeModalOpen()
   return emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen
@@ -604,33 +606,7 @@ local function captureMugshotViaScreenshot()
   SetCamFov(cam, 30.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  -- 4) Green-screen backdrop: 3D markers behind the ped, stacked for solid opacity.
-  --    Server-side chroma key removes the green and produces a transparent PNG.
-  local backdropX = headPos.x - forwardX * 0.3
-  local backdropY = headPos.y - forwardY * 0.3
-  local backdropZ = headPos.z - 0.25
-
-  local drawBackdrop = true
-  CreateThread(function()
-    while drawBackdrop do
-      for layer = 1, 3 do
-        local off = 0.02 * layer
-        DrawMarker(43,
-          backdropX - forwardX * off,
-          backdropY - forwardY * off,
-          backdropZ,
-          0.0, 0.0, 0.0,
-          0.0, 0.0, 0.0,
-          10.0, 10.0, 10.0,
-          0, 255, 0, 255,
-          false, true, 2,
-          false, nil, nil, false)
-      end
-      Wait(0)
-    end
-  end)
-
-  -- 5) Hide HUD during capture.
+  -- 4) Hide HUD during capture.
   local hideUi = true
   CreateThread(function()
     while hideUi do
@@ -647,7 +623,7 @@ local function captureMugshotViaScreenshot()
     end
   end)
 
-  -- Let camera + backdrop render a few frames.
+  -- Let camera render a few frames.
   Wait(600)
 
   -- 6) Tell the server to capture.
@@ -663,8 +639,7 @@ local function captureMugshotViaScreenshot()
     Wait(50)
   end
 
-  -- 7) Cleanup: stop backdrop + HUD threads, cancel emote, restore ped.
-  drawBackdrop = false
+  -- 7) Cleanup: stop HUD thread, cancel emote, restore ped.
   hideUi = false
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
@@ -1613,11 +1588,17 @@ local function deleteDocumentPeds()
     local pedData = documentPeds[i]
     if type(pedData) == 'table' then
       local entity = pedData.entity
+      if useOxTargetForDocuments and entity and entity ~= 0 then
+        pcall(function()
+          exports.ox_target:removeLocalEntity(entity)
+        end)
+      end
       if entity and entity ~= 0 and DoesEntityExist(entity) then
         DeletePed(entity)
       end
     end
   end
+  documentPedTargetEntities = {}
   documentPeds = {}
 end
 
@@ -1650,6 +1631,56 @@ local function createDocumentPedBlip(pedConfig)
   AddTextComponentString('VicRoads')
   EndTextCommandSetBlipName(blip)
   documentPedBlips[#documentPedBlips + 1] = blip
+end
+
+local function registerDocumentPedTarget(pedData)
+  if not useOxTargetForDocuments then return end
+  if type(pedData) ~= 'table' then return end
+  local entity = pedData.entity
+  if not entity or entity == 0 then return end
+
+  local options = {}
+  if pedData.allowsLicense then
+    options[#options + 1] = {
+      name = ('cad_bridge_license_%s'):format(trim(pedData.id or tostring(entity))),
+      icon = 'fa-solid fa-id-card',
+      label = 'Driver License',
+      distance = documentInteractionDistance,
+      onSelect = function()
+        local nowMs = tonumber(GetGameTimer() or 0) or 0
+        if (nowMs - lastDocumentInteractAt) < 750 then return end
+        lastDocumentInteractAt = nowMs
+        TriggerServerEvent('cad_bridge:requestDriverLicensePrompt', pedData.id)
+      end,
+    }
+  end
+  if pedData.allowsRegistration then
+    options[#options + 1] = {
+      name = ('cad_bridge_registration_%s'):format(trim(pedData.id or tostring(entity))),
+      icon = 'fa-solid fa-car',
+      label = 'Registration',
+      distance = documentInteractionDistance,
+      onSelect = function()
+        local nowMs = tonumber(GetGameTimer() or 0) or 0
+        if (nowMs - lastDocumentInteractAt) < 750 then return end
+        lastDocumentInteractAt = nowMs
+        TriggerServerEvent('cad_bridge:requestVehicleRegistrationPrompt', pedData.id)
+      end,
+    }
+  end
+  if #options == 0 then return end
+
+  local ok, err = pcall(function()
+    exports.ox_target:addLocalEntity(entity, options)
+  end)
+  if not ok then
+    print(('[cad_bridge] Failed to register ox_target options for document ped %s: %s'):format(
+      tostring(pedData.id or entity),
+      tostring(err)
+    ))
+    return
+  end
+  documentPedTargetEntities[#documentPedTargetEntities + 1] = entity
 end
 
 local function drawDocumentHelpText(label)
@@ -1687,10 +1718,16 @@ CreateThread(function()
   for _, pedConfig in ipairs(interactionPeds) do
     spawnDocumentPed(pedConfig)
     createDocumentPedBlip(pedConfig)
+    if #documentPeds > 0 then
+      registerDocumentPedTarget(documentPeds[#documentPeds])
+    end
   end
 end)
 
 CreateThread(function()
+  if useOxTargetForDocuments then
+    return
+  end
   while true do
     local waitMs = 500
     local playerPed = PlayerPedId()
