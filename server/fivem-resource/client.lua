@@ -613,6 +613,8 @@ local function captureMugshotViaScreenshot()
 end
 
 local function captureMugshotViaHeadshot()
+  if type(RegisterPedheadshot) ~= 'function' or type(IsPedHeadshotReady) ~= 'function' then return '' end
+
   local ped = PlayerPedId()
   if not ped or ped == 0 then return '' end
 

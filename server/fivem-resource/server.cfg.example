@@ -36,5 +36,5 @@ setr voice_enableRadios 0
 # STEP 3: Ensure the resource starts
 # =============================================================================
 
-ensure screenshot-basic
+ensure screencapture
 ensure cad_bridge
