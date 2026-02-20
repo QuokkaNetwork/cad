@@ -1116,6 +1116,78 @@ local function saveMugshotFile(citizenid, base64Data)
   return fileName
 end
 
+-- ---------------------------------------------------------------------------
+-- Server-side screencapture via serverCapture export
+-- ---------------------------------------------------------------------------
+-- Stores pending mugshot data per source so the license submission can
+-- retrieve it without sending it over TriggerServerEvent.
+-- ---------------------------------------------------------------------------
+local pendingMugshots = {}
+
+RegisterNetEvent('cad_bridge:requestMugshotCapture', function()
+  local src = source
+  if not src or src == 0 then return end
+
+  local resourceName = trim(Config.ScreenshotResource or 'screencapture')
+  print(('[cad_bridge] [screencapture] Server capture requested by src=%s resource=%q'):format(tostring(src), resourceName))
+
+  if GetResourceState(resourceName) ~= 'started' then
+    print(('[cad_bridge] [screencapture] Resource %q not started (state=%s), aborting capture'):format(
+      resourceName, tostring(GetResourceState(resourceName))))
+    TriggerClientEvent('cad_bridge:mugshotCaptureResult', src, false)
+    return
+  end
+
+  local captureOptions = {
+    encoding = trim(Config.ScreenshotEncoding or 'jpg'):lower(),
+    quality = tonumber(Config.ScreenshotQuality or 0.7) or 0.7,
+    maxWidth = 512,
+    maxHeight = 512,
+  }
+
+  print(('[cad_bridge] [screencapture] Calling serverCapture for src=%s encoding=%s quality=%s'):format(
+    tostring(src), captureOptions.encoding, tostring(captureOptions.quality)))
+
+  local ok, callErr = pcall(function()
+    exports[resourceName]:serverCapture(src, captureOptions, function(data)
+      local dataLen = 0
+      if type(data) == 'string' then
+        dataLen = #data
+      end
+      print(('[cad_bridge] [screencapture] serverCapture callback — src=%s type=%s length=%d'):format(
+        tostring(src), type(data), dataLen))
+
+      if dataLen > 0 then
+        -- Encode binary data to base64 data URI for consistency with existing pipeline.
+        local encoding = captureOptions.encoding
+        if encoding == 'jpg' then encoding = 'jpeg' end
+        local base64Data = data
+        -- If the data doesn't already have a data URI prefix, it's raw base64 from serverCapture.
+        if not base64Data:match('^data:image/') then
+          base64Data = ('data:image/%s;base64,%s'):format(encoding, data)
+        end
+        pendingMugshots[src] = base64Data
+        print(('[cad_bridge] [screencapture] Mugshot stored for src=%s (base64 len=%d)'):format(tostring(src), #base64Data))
+        TriggerClientEvent('cad_bridge:mugshotCaptureResult', src, true)
+      else
+        print(('[cad_bridge] [screencapture] No data returned for src=%s'):format(tostring(src)))
+        TriggerClientEvent('cad_bridge:mugshotCaptureResult', src, false)
+      end
+    end, 'base64')
+  end)
+
+  if not ok then
+    print(('[cad_bridge] [screencapture] ERROR calling serverCapture: %s'):format(tostring(callErr)))
+    TriggerClientEvent('cad_bridge:mugshotCaptureResult', src, false)
+  end
+end)
+
+local function consumePendingMugshot(src)
+  local data = pendingMugshots[src]
+  pendingMugshots[src] = nil
+  return data or ''
+end
+
 local function summarizeLicensePayloadForLog(payload)
   local data = type(payload) == 'table' and payload or {}
   local mugshotData = trim(data.mugshot_data or '')
@@ -1254,6 +1326,14 @@ local function submitDriverLicense(src, formData)
     expiry_at = normalizeDateOnly(formData.expiry_at or ''),
     status = 'valid',
   }
+
+  -- Check for server-side captured mugshot (from serverCapture export).
+  local serverMugshot = consumePendingMugshot(s)
+  if serverMugshot ~= '' then
+    print(('[cad_bridge] Using server-side captured mugshot for src=%s (len=%d)'):format(tostring(s), #serverMugshot))
+    payload.mugshot_data = serverMugshot
+  end
+
   print(('[cad_bridge] License payload: citizenid=%q name=%q dob=%q mugshot_data_len=%d mugshot_url_len=%d'):format(
     trim(payload.citizenid or ''), trim(payload.full_name or ''),
     trim(payload.date_of_birth or ''), #trim(payload.mugshot_data or ''), #trim(payload.mugshot_url or '')))

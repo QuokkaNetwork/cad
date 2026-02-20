@@ -510,15 +510,23 @@ local function normalizeScreenshotResult(result)
   return normalizeMugshotValue(text)
 end
 
+-- ---------------------------------------------------------------------------
+-- Server-side screencapture via serverCapture export
+-- ---------------------------------------------------------------------------
+-- The client sets up the ped (freeze, camera, backdrop) then asks the server
+-- to perform the actual capture using the screencapture server export. This
+-- avoids the TriggerServerEvent payload size limit and keeps the image data
+-- server-side where it can be saved to disk and included in the API request.
+-- ---------------------------------------------------------------------------
+
+local mugshotCaptureResult = nil
+
+RegisterNetEvent('cad_bridge:mugshotCaptureResult', function(success)
+  mugshotCaptureResult = success == true
+end)
+
 local function captureMugshotViaScreenshot()
-  local resourceName = trim(Config.ScreenshotResource or 'screencapture')
-  print(('[cad_bridge] [screencapture] captureMugshotViaScreenshot() — resource=%q state=%q'):format(
-    resourceName, GetResourceState(resourceName) or 'nil'))
-  if resourceName == '' then return '' end
-  if GetResourceState(resourceName) ~= 'started' then
-    print('[cad_bridge] [screencapture] Resource not started, skipping screencapture')
-    return ''
-  end
+  print('[cad_bridge] [screencapture] captureMugshotViaScreenshot() — using server-side capture')
 
   local ped = PlayerPedId()
   if not ped or ped == 0 then return '' end
@@ -548,11 +556,9 @@ local function captureMugshotViaScreenshot()
   SetEntityHeading(ped, originalHeading)
 
   -- Position camera in front of the ped's face for a tight portrait-style headshot.
-  -- 0.75 units forward, slightly above eye level for a flattering angle.
   local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.75
   local camY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.75
   local camZ = (headPos.z or 0.0) + 0.06
-  -- Look point centred on the face, slightly below head bone for a natural framing.
   local lookX = (headPos.x or 0.0) + (forward.x or 0.0) * 0.02
   local lookY = (headPos.y or 0.0) + (forward.y or 0.0) * 0.02
   local lookZ = (headPos.z or 0.0) - 0.02
@@ -560,7 +566,6 @@ local function captureMugshotViaScreenshot()
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
   PointCamAtCoord(cam, lookX, lookY, lookZ)
-  -- Tight FOV (28) gives a telephoto look — less barrel distortion, more flattering face.
   SetCamFov(cam, 28.0)
   RenderScriptCams(true, false, 0, true, true)
 
@@ -570,7 +575,6 @@ local function captureMugshotViaScreenshot()
   end
 
   -- Place a white backdrop behind the ped for a clean background.
-  -- Uses prop_tv_flat_01 (a flat white panel) positioned behind the ped's head.
   local backdropHash = GetHashKey('prop_tv_flat_01')
   RequestModel(backdropHash)
   local modelDeadline = GetGameTimer() + 3000
@@ -591,11 +595,7 @@ local function captureMugshotViaScreenshot()
     SetModelAsNoLongerNeeded(backdropHash)
   end
 
-  -- Allow time for the ped to settle, camera to render, and backdrop to appear.
-  Wait(500)
-
-  local done = false
-  local raw = ''
+  -- Hide HUD elements during capture.
   local hideUi = true
   CreateThread(function()
     while hideUi do
@@ -612,44 +612,22 @@ local function captureMugshotViaScreenshot()
     end
   end)
 
-  local screenshotOptions = {
-    encoding = trim(Config.ScreenshotEncoding or 'jpg'):lower(),
-    quality = tonumber(Config.ScreenshotQuality or 0.7) or 0.7,
-    -- Cap resolution for mugshots — a face photo does not need 1080p.
-    -- Keeps base64 size under FiveM's ~1MB TriggerServerEvent limit.
-    maxWidth = 512,
-    maxHeight = 512,
-  }
+  -- Allow time for the ped to settle, camera to render, and backdrop to appear.
+  Wait(500)
 
-  print(('[cad_bridge] [screencapture] Requesting screenshot from resource=%q encoding=%s quality=%s maxWidth=%s maxHeight=%s'):format(
-    resourceName, screenshotOptions.encoding, tostring(screenshotOptions.quality),
-    tostring(screenshotOptions.maxWidth), tostring(screenshotOptions.maxHeight)))
+  -- Tell the server to capture via the screencapture server-side export.
+  -- The server will call serverCapture(source, options, callback) and store
+  -- the result. It notifies us when done via cad_bridge:mugshotCaptureResult.
+  mugshotCaptureResult = nil
+  print('[cad_bridge] [screencapture] Requesting server-side capture...')
+  TriggerServerEvent('cad_bridge:requestMugshotCapture')
 
-  local ok, callErr = pcall(function()
-    exports[resourceName]:requestScreenshot(screenshotOptions, function(data)
-      local dataLen = type(data) == 'string' and #data or 0
-      print(('[cad_bridge] [screencapture] Callback fired — data type=%s length=%d'):format(type(data), dataLen))
-      raw = data or ''
-      done = true
-    end)
-  end)
-
-  if not ok then
-    print(('[cad_bridge] [screencapture] ERROR calling requestScreenshot: %s'):format(tostring(callErr)))
-  else
-    print('[cad_bridge] [screencapture] requestScreenshot called successfully, waiting for callback...')
-  end
-
-  if ok then
-    local timeoutMs = tonumber(Config.ScreenshotTimeoutMs or 8000) or 8000
-    if timeoutMs < 1000 then timeoutMs = 1000 end
-    local deadline = GetGameTimer() + timeoutMs
-    while not done and GetGameTimer() < deadline do
-      Wait(0)
-    end
-    if not done then
-      print(('[cad_bridge] [screencapture] WARNING: Callback did not fire within %dms timeout'):format(timeoutMs))
-    end
+  -- Wait for the server to complete the capture.
+  local timeoutMs = tonumber(Config.ScreenshotTimeoutMs or 8000) or 8000
+  if timeoutMs < 1000 then timeoutMs = 1000 end
+  local deadline = GetGameTimer() + timeoutMs
+  while mugshotCaptureResult == nil and GetGameTimer() < deadline do
+    Wait(50)
   end
 
   -- Cleanup: restore ped state and remove backdrop.
@@ -670,13 +648,19 @@ local function captureMugshotViaScreenshot()
     FreezeEntityPosition(ped, false)
   end
 
-  if not ok or not done then
-    print(('[cad_bridge] [screencapture] Capture failed — ok=%s done=%s raw_len=%d'):format(tostring(ok), tostring(done), #raw))
+  if mugshotCaptureResult == nil then
+    print('[cad_bridge] [screencapture] Server capture timed out')
     return ''
   end
-  local result = normalizeScreenshotResult(raw)
-  print(('[cad_bridge] [screencapture] Capture complete — raw_len=%d result_len=%d'):format(#raw, #result))
-  return result
+
+  if mugshotCaptureResult then
+    print('[cad_bridge] [screencapture] Server capture succeeded — mugshot stored server-side')
+    -- Return a marker so the submission flow knows a server-side mugshot is available.
+    return 'SERVER_CAPTURE'
+  end
+
+  print('[cad_bridge] [screencapture] Server capture failed')
+  return ''
 end
 
 local function captureMugshotViaHeadshot()
@@ -1192,10 +1176,17 @@ RegisterNUICallback('cadBridgeLicenseSubmit', function(data, cb)
   CreateThread(function()
     -- Release NUI focus before taking mugshot so the PED is captured, not the form UI.
     Wait(80)
-    print('[cad_bridge] Capturing mugshot...')
+    print('[cad_bridge] Capturing mugshot via server-side screencapture...')
     local capturedMugshot = captureMugshotUrl()
-    local mugshotData, mugshotUrl = splitMugshotPayload(capturedMugshot)
-    print(('[cad_bridge] Mugshot captured (data_len=%d url_len=%d). Triggering submitDriverLicense server event...'):format(
+    -- When using server-side capture, mugshot data is stored on the server.
+    -- We don't need to send it via TriggerServerEvent (avoids payload limit).
+    local mugshotData = ''
+    local mugshotUrl = ''
+    if capturedMugshot ~= 'SERVER_CAPTURE' then
+      mugshotData, mugshotUrl = splitMugshotPayload(capturedMugshot)
+    end
+    print(('[cad_bridge] Mugshot result=%q (data_len=%d url_len=%d). Triggering submitDriverLicense server event...'):format(
+      capturedMugshot == 'SERVER_CAPTURE' and 'SERVER_CAPTURE' or 'client',
       #mugshotData, #mugshotUrl))
     TriggerServerEvent('cad_bridge:submitDriverLicense', {
       full_name = fullName,
