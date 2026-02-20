@@ -2493,13 +2493,18 @@ local function submitLiveMapCalibration(src, data)
   local s = tonumber(src) or 0
   if s <= 0 then return end
 
+  local function notifyCalibration(message, level)
+    notifyAlert(s, 'Live Map Calibration', tostring(message or ''), tostring(level or 'inform'))
+    notifyPlayer(s, tostring(message or ''))
+  end
+
   if Config.LiveMapCalibrationEnabled ~= true then
-    notifyPlayer(s, 'Live map calibration is disabled.')
+    notifyCalibration('Live map calibration is disabled.', 'error')
     return
   end
 
   if not canUseLiveMapCalibration(s) then
-    notifyPlayer(s, 'You are not authorised to calibrate the live map.')
+    notifyCalibration('You are not authorised to calibrate the live map.', 'error')
     return
   end
 
@@ -2508,7 +2513,7 @@ local function submitLiveMapCalibration(src, data)
   local point2 = type(payload.point2) == 'table' and payload.point2 or {}
 
   if not isFiniteNumber(point1.x) or not isFiniteNumber(point1.y) or not isFiniteNumber(point2.x) or not isFiniteNumber(point2.y) then
-    notifyPlayer(s, 'Calibration points are invalid. Capture point1 and point2 again.')
+    notifyCalibration('Calibration points are invalid. Capture point1 and point2 again.', 'error')
     return
   end
 
@@ -2526,7 +2531,7 @@ local function submitLiveMapCalibration(src, data)
   y2 = y2 - padding
 
   if (x2 - x1) < 500.0 or (y1 - y2) < 500.0 then
-    notifyPlayer(s, 'Calibration area is too small. Move further apart before saving.')
+    notifyCalibration('Calibration area is too small. Move further apart before saving.', 'error')
     return
   end
 
@@ -2543,7 +2548,7 @@ local function submitLiveMapCalibration(src, data)
     source_player = s,
   }, function(status, body, _headers)
     if status >= 200 and status < 300 then
-      notifyPlayer(s, ('Live map calibration saved (x1=%.1f y1=%.1f x2=%.1f y2=%.1f)'):format(x1, y1, x2, y2))
+      notifyCalibration(('Live map calibration saved (x1=%.1f y1=%.1f x2=%.1f y2=%.1f). Refresh CAD map.'):format(x1, y1, x2, y2), 'success')
       return
     end
 
@@ -2553,9 +2558,9 @@ local function submitLiveMapCalibration(src, data)
       err = trim(parsed.error or '')
     end
     if err ~= '' then
-      notifyPlayer(s, ('Live map calibration failed: %s'):format(err))
+      notifyCalibration(('Live map calibration failed: %s'):format(err), 'error')
     else
-      notifyPlayer(s, ('Live map calibration failed (HTTP %s).'):format(tostring(status)))
+      notifyCalibration(('Live map calibration failed (HTTP %s).'):format(tostring(status)), 'error')
     end
   end)
 end

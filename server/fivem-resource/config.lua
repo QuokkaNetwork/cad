@@ -434,8 +434,7 @@ Config.LiveMapCalibrationCommand = trim(getString('cad_bridge_live_map_calibrati
 if Config.LiveMapCalibrationCommand == '' then Config.LiveMapCalibrationCommand = 'calibrate' end
 Config.LiveMapCalibrationPadding = getNumber('cad_bridge_live_map_calibration_padding', 250.0)
 if Config.LiveMapCalibrationPadding < 0.0 then Config.LiveMapCalibrationPadding = 0.0 end
-Config.LiveMapCalibrationAce = trim(getString('cad_bridge_live_map_calibration_ace', 'cad_bridge.calibrate'))
-if Config.LiveMapCalibrationAce == '' then Config.LiveMapCalibrationAce = 'cad_bridge.calibrate' end
+Config.LiveMapCalibrationAce = trim(getString('cad_bridge_live_map_calibration_ace', ''))
 Config.LiveMapCalibrationAutoPoint1 = parseVec3String(
   getString('cad_bridge_live_map_calibration_auto_point1', ''),
   DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT1
