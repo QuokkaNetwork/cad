@@ -581,8 +581,8 @@ local function captureMugshotViaScreenshot()
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
 
-  -- Camera 0.95m in front of ped, tight portrait: shoulders fill the frame edges.
-  local camDist = 0.95
+  -- Camera 0.82m in front of ped, tight portrait: shoulders crop into frame edges.
+  local camDist = 0.82
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
   local camZ = headPos.z + 0.03  -- above eye level so top of head has clearance
