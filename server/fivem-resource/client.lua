@@ -1563,8 +1563,25 @@ local function resolveGroundZQuick(x, y, fallbackZ)
     if foundGround and type(groundZ) == 'number' then
       return groundZ
     end
+    local foundWaterGround, waterGroundZ = GetGroundZFor_3dCoord((tonumber(x) or 0.0) + 0.0, (tonumber(y) or 0.0) + 0.0, probeZ + 0.0, true)
+    if foundWaterGround and type(waterGroundZ) == 'number' then
+      return waterGroundZ
+    end
   end
   return baseZ
+end
+
+local function setCalibrationEntityFreezeState(enabled)
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then return end
+  local shouldFreeze = enabled == true
+  FreezeEntityPosition(ped, shouldFreeze)
+  if IsPedInAnyVehicle(ped, false) then
+    local vehicle = GetVehiclePedIsIn(ped, false)
+    if vehicle and vehicle ~= 0 and GetPedInVehicleSeat(vehicle, -1) == ped then
+      FreezeEntityPosition(vehicle, shouldFreeze)
+    end
+  end
 end
 
 local function teleportCalibrationPoint(point)
@@ -1609,28 +1626,61 @@ local function runAutoLiveMapCalibration()
   local delayMs = tonumber(Config.LiveMapCalibrationAutoTeleportDelayMs or 1200) or 1200
   if delayMs < 400 then delayMs = 400 end
 
+  local ped = PlayerPedId()
+  local returnEntity = ped
+  if IsPedInAnyVehicle(ped, false) then
+    local currentVehicle = GetVehiclePedIsIn(ped, false)
+    if currentVehicle and currentVehicle ~= 0 and GetPedInVehicleSeat(currentVehicle, -1) == ped then
+      returnEntity = currentVehicle
+    end
+  end
+  local returnCoords = GetEntityCoords(returnEntity)
+  local returnHeading = GetEntityHeading(returnEntity)
+
+  local function teleportBackToStart()
+    if not returnEntity or returnEntity == 0 or not DoesEntityExist(returnEntity) then return end
+    local rx = tonumber(returnCoords and returnCoords.x) or 0.0
+    local ry = tonumber(returnCoords and returnCoords.y) or 0.0
+    local rz = tonumber(returnCoords and returnCoords.z) or 0.0
+    DoScreenFadeOut(200)
+    while not IsScreenFadedOut() do Wait(0) end
+    RequestCollisionAtCoord(rx + 0.0, ry + 0.0, rz + 0.0)
+    SetEntityCoordsNoOffset(returnEntity, rx + 0.0, ry + 0.0, rz + 0.0, false, false, false)
+    SetEntityHeading(returnEntity, (tonumber(returnHeading) or 0.0) + 0.0)
+    Wait(250)
+    DoScreenFadeIn(200)
+  end
+
+  local function abortAutoCalibration(message)
+    teleportBackToStart()
+    setCalibrationEntityFreezeState(false)
+    notifyLiveMapCalibration(tostring(message or 'Auto calibration failed.'), 'error')
+  end
+
+  setCalibrationEntityFreezeState(true)
+
   notifyLiveMapCalibration('Auto calibration started. Teleporting to point 1...')
   if not teleportCalibrationPoint(point1) then
-    notifyLiveMapCalibration('Failed to teleport to point 1.', 'error')
+    abortAutoCalibration('Failed to teleport to point 1.')
     return
   end
   Wait(delayMs)
   liveMapCalibrationPointA = getCalibrationPointFromPlayer()
   if type(liveMapCalibrationPointA) ~= 'table' then
-    notifyLiveMapCalibration('Failed to capture point 1.', 'error')
+    abortAutoCalibration('Failed to capture point 1.')
     return
   end
   notifyLiveMapCalibration('Point 1 captured: ' .. formatCalibrationPoint(liveMapCalibrationPointA))
 
   notifyLiveMapCalibration('Teleporting to point 2...')
   if not teleportCalibrationPoint(point2) then
-    notifyLiveMapCalibration('Failed to teleport to point 2.', 'error')
+    abortAutoCalibration('Failed to teleport to point 2.')
     return
   end
   Wait(delayMs)
   liveMapCalibrationPointB = getCalibrationPointFromPlayer()
   if type(liveMapCalibrationPointB) ~= 'table' then
-    notifyLiveMapCalibration('Failed to capture point 2.', 'error')
+    abortAutoCalibration('Failed to capture point 2.')
     return
   end
   notifyLiveMapCalibration('Point 2 captured: ' .. formatCalibrationPoint(liveMapCalibrationPointB))
@@ -1640,6 +1690,8 @@ local function runAutoLiveMapCalibration()
     point2 = liveMapCalibrationPointB,
     padding = tonumber(Config.LiveMapCalibrationPadding or 250.0) or 250.0,
   })
+  teleportBackToStart()
+  setCalibrationEntityFreezeState(false)
   notifyLiveMapCalibration('Auto calibration submitted.')
 end
 
@@ -1663,14 +1715,23 @@ if LIVE_MAP_CALIBRATION_ENABLED then
   RegisterCommand(LIVE_MAP_CALIBRATION_COMMAND, function(_source, args)
     local action = trim(args and args[1] or ''):lower()
     if action == '' or action == 'help' then
-      notifyLiveMapCalibration(('Usage: /%s start | point1 | point2 | status | save | auto | cancel'):format(LIVE_MAP_CALIBRATION_COMMAND))
+      notifyLiveMapCalibration(('Usage: /%s start | auto | manual | point1 | point2 | status | save | cancel'):format(LIVE_MAP_CALIBRATION_COMMAND))
       return
     end
 
     if action == 'start' then
       liveMapCalibrationPointA = nil
       liveMapCalibrationPointB = nil
-      notifyLiveMapCalibration('Calibration started. Move to first reference point and use /' .. LIVE_MAP_CALIBRATION_COMMAND .. ' point1')
+      CreateThread(function()
+        runAutoLiveMapCalibration()
+      end)
+      return
+    end
+
+    if action == 'manual' then
+      liveMapCalibrationPointA = nil
+      liveMapCalibrationPointB = nil
+      notifyLiveMapCalibration('Manual calibration started. Move to first reference point and use /' .. LIVE_MAP_CALIBRATION_COMMAND .. ' point1')
       return
     end
 
