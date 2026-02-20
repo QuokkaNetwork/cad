@@ -581,18 +581,18 @@ local function captureMugshotViaScreenshot()
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
 
-  -- Camera 1.1m in front of ped, at nose level to center the head+shoulders frame.
-  local camDist = 1.1
+  -- Camera 0.95m in front of ped, tight portrait: shoulders fill the frame edges.
+  local camDist = 0.95
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
-  local camZ = headPos.z - 0.10  -- nose level: head above, shoulders below
+  local camZ = headPos.z - 0.08  -- just below eye level
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
-  -- Aim at neck/chin area so head has headroom and shoulders are included.
-  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.10)
-  -- FOV 35 = wide enough for shoulders while keeping a portrait feel.
-  SetCamFov(cam, 35.0)
+  -- Aim at chin/neck so the head has a little headroom and shoulders fill the bottom.
+  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z - 0.08)
+  -- FOV 30 = tight portrait crop, shoulders overlap the frame edges.
+  SetCamFov(cam, 30.0)
   RenderScriptCams(true, false, 0, true, true)
 
   -- 4) Green-screen backdrop: 3D markers behind the ped, stacked for solid opacity.

@@ -2097,11 +2097,11 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
     local license = parsed.license
     local fullName = trim(license.full_name or defaults.full_name or getCharacterDisplayName(src) or '')
 
-    -- Resolve mugshot URL: relative paths need the CAD base URL prepended
-    -- so the NUI browser can actually load the image.
+    -- Resolve mugshot URL to a full URL for fetching the image server-side.
     local rawMugshot = trim(license.mugshot_url or '')
+    local mugshotFullUrl = rawMugshot
     if rawMugshot ~= '' and rawMugshot:sub(1, 1) == '/' then
-      rawMugshot = getCadUrl(rawMugshot)
+      mugshotFullUrl = getCadUrl(rawMugshot)
     end
 
     local payload = {
@@ -2113,26 +2113,15 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
       conditions = normalizeList(license.conditions or {}, false),
       status = trim(license.status or ''),
       expiry_at = trim(license.expiry_at or ''),
-      mugshot_url = rawMugshot,
+      mugshot_url = '',
     }
 
-    TriggerClientEvent('cad_bridge:showIdCard', src, {
-      full_name = payload.full_name,
-      date_of_birth = payload.date_of_birth,
-      gender = payload.gender,
-      license_number = payload.license_number,
-      license_classes = payload.license_classes,
-      conditions = payload.conditions,
-      status = payload.status,
-      expiry_at = payload.expiry_at,
-      mugshot_url = payload.mugshot_url,
-      viewer_note = 'Your licence record',
-    })
+    -- Fetch the mugshot image server-side and convert to a data URI so the NUI
+    -- doesn't hit mixed-content blocks (cfx-nui is HTTPS, CAD is HTTP).
+    local function broadcastIdCard(mugshotDataUri)
+      payload.mugshot_url = mugshotDataUri or ''
 
-    local shownCount = 0
-    for _, viewerSource in ipairs(viewerTargets) do
-      if tonumber(viewerSource) and viewerSource ~= src and GetPlayerName(viewerSource) then
-        TriggerClientEvent('cad_bridge:showIdCard', viewerSource, {
+      TriggerClientEvent('cad_bridge:showIdCard', src, {
         full_name = payload.full_name,
         date_of_birth = payload.date_of_birth,
         gender = payload.gender,
@@ -2142,21 +2131,100 @@ RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)
         status = payload.status,
         expiry_at = payload.expiry_at,
         mugshot_url = payload.mugshot_url,
-        viewer_note = ('Shown by %s'):format(getCharacterDisplayName(src)),
+        viewer_note = 'Your licence record',
       })
-        shownCount = shownCount + 1
+
+      local shownCount = 0
+      for _, viewerSource in ipairs(viewerTargets) do
+        if tonumber(viewerSource) and viewerSource ~= src and GetPlayerName(viewerSource) then
+          TriggerClientEvent('cad_bridge:showIdCard', viewerSource, {
+          full_name = payload.full_name,
+          date_of_birth = payload.date_of_birth,
+          gender = payload.gender,
+          license_number = payload.license_number,
+          license_classes = payload.license_classes,
+          conditions = payload.conditions,
+          status = payload.status,
+          expiry_at = payload.expiry_at,
+          mugshot_url = payload.mugshot_url,
+          viewer_note = ('Shown by %s'):format(getCharacterDisplayName(src)),
+        })
+          shownCount = shownCount + 1
+        end
       end
+
+      if shownCount > 0 then
+        notifyPlayer(src, ('Licence shown to %s nearby player%s.'):format(
+          tostring(shownCount),
+          shownCount == 1 and '' or 's'
+        ))
+        return
+      end
+
+      notifyPlayer(src, 'No nearby player found. Licence shown to yourself only.')
     end
 
-    if shownCount > 0 then
-      notifyPlayer(src, ('Licence shown to %s nearby player%s.'):format(
-        tostring(shownCount),
-        shownCount == 1 and '' or 's'
-      ))
+    if mugshotFullUrl == '' or rawMugshot == '' then
+      broadcastIdCard('')
       return
     end
 
-    notifyPlayer(src, 'No nearby player found. Licence shown to yourself only.')
+    -- Fetch the image binary from the CAD server, base64-encode it as a data URI.
+    PerformHttpRequest(mugshotFullUrl, function(imgStatus, imgBody, imgHeaders)
+      if imgStatus < 200 or imgStatus >= 300 or not imgBody or #imgBody == 0 then
+        print(('[cad_bridge] WARNING: Failed to fetch mugshot image (HTTP %s) from %s'):format(tostring(imgStatus), mugshotFullUrl))
+        broadcastIdCard('')
+        return
+      end
+
+      -- Determine MIME type from the URL extension, default to png.
+      local mime = 'image/png'
+      if mugshotFullUrl:match('%.jpe?g$') then mime = 'image/jpeg'
+      elseif mugshotFullUrl:match('%.webp$') then mime = 'image/webp'
+      end
+
+      local b64 = ''
+      if type(imgBody) == 'string' and #imgBody > 0 then
+        -- FiveM's Lua doesn't have a built-in base64 encoder, but we can
+        -- build one from the standard bit operations.
+        local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+        local len = #imgBody
+        local parts = {}
+        for i = 1, len, 3 do
+          local a = string.byte(imgBody, i) or 0
+          local b2 = (i + 1 <= len) and string.byte(imgBody, i + 1) or 0
+          local c = (i + 2 <= len) and string.byte(imgBody, i + 2) or 0
+          local n = a * 65536 + b2 * 256 + c
+
+          local c1 = math.floor(n / 262144) % 64
+          local c2 = math.floor(n / 4096) % 64
+          local c3 = math.floor(n / 64) % 64
+          local c4 = n % 64
+
+          parts[#parts + 1] = b64chars:sub(c1 + 1, c1 + 1)
+          parts[#parts + 1] = b64chars:sub(c2 + 1, c2 + 1)
+          if i + 1 <= len then
+            parts[#parts + 1] = b64chars:sub(c3 + 1, c3 + 1)
+          else
+            parts[#parts + 1] = '='
+          end
+          if i + 2 <= len then
+            parts[#parts + 1] = b64chars:sub(c4 + 1, c4 + 1)
+          else
+            parts[#parts + 1] = '='
+          end
+        end
+        b64 = table.concat(parts)
+      end
+
+      if b64 ~= '' then
+        broadcastIdCard('data:' .. mime .. ';base64,' .. b64)
+      else
+        broadcastIdCard('')
+      end
+    end, 'GET', '', {
+      ['Accept'] = 'image/*',
+    })
   end)
 end)
 
