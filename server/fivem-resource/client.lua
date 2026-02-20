@@ -553,11 +553,15 @@ local function captureMugshotViaScreenshot()
   Wait(100)
 
   -- 2) Get head bone position for camera framing.
+  --    Use SKEL_Head (31086) for the head center.
   local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
   if not headPos then
     if not pedWasFrozen then FreezeEntityPosition(ped, false) end
     return ''
   end
+
+  -- Also get ped root position to help with centering.
+  local pedPos = GetEntityCoords(ped, true)
 
   -- 3) Calculate camera position using heading-based trig (more reliable than GetEntityForwardVector).
   --    Camera goes directly in FRONT of where the ped is facing.
@@ -565,15 +569,16 @@ local function captureMugshotViaScreenshot()
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
 
-  -- Camera distance 1.0m in front of ped head, at eye level.
-  local camDist = 1.0
+  -- Camera distance 1.05m in front of ped head, at eye level.
+  local camDist = 1.05
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
   local camZ = headPos.z  -- eye level
 
-  -- Look point slightly below head center for a natural passport-style framing.
-  local lookX = headPos.x
-  local lookY = headPos.y
+  -- Look target: use ped root X/Y for perfect horizontal centering,
+  -- head Z with a slight downward offset for a natural passport framing.
+  local lookX = pedPos.x
+  local lookY = pedPos.y
   local lookZ = headPos.z - 0.05
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
@@ -582,9 +587,30 @@ local function captureMugshotViaScreenshot()
   SetCamFov(cam, 36.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  -- 4) Show NUI white backdrop (NUI renders BEHIND the 3D world, so the ped
-  --    appears in front of the white background — perfect for ID photo).
-  SendNUIMessage({ action = 'cadBridgeMugshot:showBackdrop' })
+  -- 4) White backdrop: place a large flat 3D marker BEHIND the ped (relative to camera).
+  --    DrawMarker type 43 is a flat square plane that renders in the 3D world,
+  --    so screencapture will capture it (unlike NUI which is a separate layer).
+  --    Position it 0.5m behind the ped's head (opposite direction from camera).
+  local backdropX = headPos.x - forwardX * 0.5
+  local backdropY = headPos.y - forwardY * 0.5
+  local backdropZ = headPos.z  -- centered on head height
+
+  local drawBackdrop = true
+  CreateThread(function()
+    while drawBackdrop do
+      -- Type 43 = debug flat plane. Scale 3x3m to fill the frame behind the ped.
+      -- White colour (255,255,255,255), no bobbing/rotation.
+      DrawMarker(43,
+        backdropX, backdropY, backdropZ,
+        0.0, 0.0, 0.0,           -- direction
+        0.0, 0.0, 0.0,           -- rotation
+        3.0, 3.0, 3.0,           -- scale X, Y, Z — large enough to fill frame
+        255, 255, 255, 255,      -- RGBA white
+        false, true, 2,          -- bobUpAndDown, faceCamera=true, p19 (2 = no depth test)
+        false, nil, nil, false)  -- rotate, textureDict, textureName, drawOnEnts
+      Wait(0)
+    end
+  end)
 
   -- 5) Hide HUD during capture.
   local hideUi = true
@@ -619,8 +645,8 @@ local function captureMugshotViaScreenshot()
     Wait(50)
   end
 
-  -- 7) Cleanup: hide backdrop, restore camera, restore ped state.
-  SendNUIMessage({ action = 'cadBridgeMugshot:hideBackdrop' })
+  -- 7) Cleanup: stop backdrop + HUD threads, restore camera, restore ped state.
+  drawBackdrop = false
   hideUi = false
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
