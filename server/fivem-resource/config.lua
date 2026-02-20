@@ -306,7 +306,7 @@ local DEFAULT_DOCUMENT_INTERACTION_PEDS = {
   {
     id = 'driving_school',
     model = 's_m_m_dockwork_01',
-    coords = { x = 240.87, y = -1378.69, z = 32.74, w = 140.89 },
+    coords = { x = 240.46, y = -1379.81, z = 32.74, w = 136.77 },
     scenario = 'WORLD_HUMAN_CLIPBOARD',
     allows_license = true,
     allows_registration = true,

@@ -102,7 +102,7 @@ function getMapBounds(map, tileConfig) {
   return latLngBounds(southWest, northEast);
 }
 
-function convertToMapLatLng(rawX, rawY, map, tileConfig, gameBounds) {
+function convertToMapLatLng(rawX, rawY, map, tileConfig, calibration, gameBounds) {
   const x = Number(rawX);
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !map) return null;
@@ -118,11 +118,21 @@ function convertToMapLatLng(rawX, rawY, map, tileConfig, gameBounds) {
 
   const projectedLng = latLng1.lng + ((x - Number(gameBounds.x1)) * (latLng1.lng - latLng2.lng)) / denomX;
   const projectedLat = latLng1.lat + ((y - Number(gameBounds.y1)) * (latLng1.lat - latLng2.lat)) / denomY;
-  const adjustedLatLng = { lat: projectedLat, lng: projectedLng };
+  const baseLatLng = { lat: projectedLat, lng: projectedLng };
+  const baseProjected = map.project(baseLatLng, 0);
+  let projectedX = baseProjected.x;
+  let projectedY = baseProjected.y;
 
-  // Keep these debug fields for existing UI warning logic.
-  const projectedX = ((x - Number(gameBounds.x1)) / (Number(gameBounds.x2) - Number(gameBounds.x1))) * width;
-  const projectedY = ((Number(gameBounds.y1) - y) / (Number(gameBounds.y1) - Number(gameBounds.y2))) * height;
+  const hasCalibration = calibration.scaleX !== 1
+    || calibration.scaleY !== 1
+    || calibration.offsetX !== 0
+    || calibration.offsetY !== 0;
+  if (hasCalibration) {
+    projectedX = (projectedX * calibration.scaleX) + calibration.offsetX;
+    projectedY = (projectedY * calibration.scaleY) + calibration.offsetY;
+  }
+
+  const adjustedLatLng = map.unproject([projectedX, projectedY], 0);
   return {
     lat: adjustedLatLng.lat,
     lng: adjustedLatLng.lng,
@@ -233,10 +243,10 @@ export default function LiveMap({ isPopout = false }) {
       });
 
       if (!calibrationDirty) {
-        setMapScaleX(1);
-        setMapScaleY(1);
-        setMapOffsetX(0);
-        setMapOffsetY(0);
+        setMapScaleX(parseMapNumber(cfg?.map_scale_x, 1));
+        setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
+        setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
+        setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
         setCalibrationStep(parseCalibrationIncrement(cfg?.map_calibration_increment, DEFAULT_CALIBRATION_INCREMENT));
         setScaleStep(parseCalibrationIncrement(cfg?.map_scale_increment, DEFAULT_SCALE_INCREMENT));
       }
@@ -438,16 +448,23 @@ export default function LiveMap({ isPopout = false }) {
     return () => clearInterval(id);
   }, [deptId, fetchMapConfig, fetchPlayers, recoveringStaleFeed]);
 
+  const calibration = useMemo(() => ({
+    scaleX: mapScaleX,
+    scaleY: mapScaleY,
+    offsetX: mapOffsetX,
+    offsetY: mapOffsetY,
+  }), [mapOffsetX, mapOffsetY, mapScaleX, mapScaleY]);
+
   const markers = useMemo(() => {
     if (!mapInstance) return [];
     return players
       .map((player) => {
-        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, gameBounds);
+        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, calibration, gameBounds);
         if (!latLng) return null;
         return { player, latLng };
       })
       .filter(Boolean);
-  }, [players, mapInstance, tileConfig, gameBounds]);
+  }, [players, mapInstance, tileConfig, calibration, gameBounds]);
   const outOfBoundsCount = useMemo(() => markers.filter((m) => m?.latLng?.outOfBounds === true).length, [markers]);
 
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;
