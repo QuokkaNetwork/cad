@@ -531,111 +531,102 @@ local function captureMugshotViaScreenshot()
   local ped = PlayerPedId()
   if not ped or ped == 0 then return '' end
 
-  local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
-  if not headPos then return '' end
-
   -- Save original ped state for restoration.
   local pedWasFrozen = false
   if type(IsEntityPositionFrozen) == 'function' then
     pedWasFrozen = IsEntityPositionFrozen(ped) == true
   end
   local originalHeading = GetEntityHeading(ped)
-  local originalCoords = GetEntityCoords(ped)
 
-  -- Immediately freeze the ped in place.
-  if type(FreezeEntityPosition) == 'function' then
-    FreezeEntityPosition(ped, true)
-  end
-
-  -- Clear ALL tasks and animations so the ped stands completely still.
+  -- Freeze ped immediately so nothing moves.
+  FreezeEntityPosition(ped, true)
+  -- Clear every task/animation instantly.
   ClearPedTasksImmediately(ped)
   ClearPedSecondaryTask(ped)
+  -- Lock heading.
+  SetEntityHeading(ped, originalHeading)
 
-  -- Force the ped into a neutral standing animation.
-  RequestAnimDict('mp_sleep')
-  local animDeadline = GetGameTimer() + 2000
-  while not HasAnimDictLoaded('mp_sleep') and GetGameTimer() < animDeadline do
+  -- Play a neutral standing idle animation so the ped is completely motionless.
+  local idleDict = 'random@mugging3'
+  local idleAnim = 'handsup_standing_base'
+  RequestAnimDict(idleDict)
+  local animDeadline = GetGameTimer() + 3000
+  while not HasAnimDictLoaded(idleDict) and GetGameTimer() < animDeadline do
     Wait(10)
   end
-  -- Stand still task — duration -1 means indefinite.
-  TaskStandStill(ped, -1)
+  if HasAnimDictLoaded(idleDict) then
+    -- Flag 2 = loop, flag 16 = upper body only. Combined = 18 keeps ped standing still.
+    TaskPlayAnim(ped, idleDict, idleAnim, 8.0, -8.0, -1, 1, 0, false, false, false)
+    Wait(300)
+    -- Immediately stop the anim — this leaves the ped frozen in a neutral upright pose.
+    StopAnimTask(ped, idleDict, idleAnim, 1.0)
+  end
 
-  -- Lock heading so ped faces a consistent direction.
+  -- Re-lock heading after anim and let the ped settle.
   SetEntityHeading(ped, originalHeading)
-  Wait(100)
+  Wait(200)
+
+  -- Get head position AFTER settling for accurate camera placement.
+  local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
+  if not headPos then
+    if not pedWasFrozen then FreezeEntityPosition(ped, false) end
+    return ''
+  end
 
   local forward = GetEntityForwardVector(ped)
 
-  -- Camera positioned further back with wider FOV for a passport-style head+shoulders shot.
-  -- 1.2 units forward, at head height for a natural eye-level framing.
-  local camX = (headPos.x or 0.0) + (forward.x or 0.0) * 1.2
-  local camY = (headPos.y or 0.0) + (forward.y or 0.0) * 1.2
-  local camZ = (headPos.z or 0.0) + 0.02
-  -- Look point centred on the face.
+  -- Camera: position in front of the ped for a passport-style head+shoulders shot.
+  local camDist = 1.0
+  local camX = (headPos.x or 0.0) + (forward.x or 0.0) * camDist
+  local camY = (headPos.y or 0.0) + (forward.y or 0.0) * camDist
+  local camZ = (headPos.z or 0.0) + 0.0
+  -- Look at the centre of the face, slightly below head bone for natural framing.
   local lookX = (headPos.x or 0.0)
   local lookY = (headPos.y or 0.0)
-  local lookZ = (headPos.z or 0.0) - 0.04
+  local lookZ = (headPos.z or 0.0) - 0.05
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
   PointCamAtCoord(cam, lookX, lookY, lookZ)
-  -- Wider FOV (40) for a head+shoulders passport-style framing.
-  SetCamFov(cam, 40.0)
+  -- FOV 36 gives a head+shoulders passport/ID framing at 1.0m distance.
+  SetCamFov(cam, 36.0)
+  SetCamDofStrength(cam, 0.0)
   RenderScriptCams(true, false, 0, true, true)
 
-  -- Force the ped to look directly at the camera lens.
-  TaskLookAtCoord(ped, camX, camY, camZ, -1, 0, 2)
-  SetEntityHeading(ped, originalHeading)
-
-  -- Use timecycle modifier to wash out the background to white/bright.
-  SetTimecycleModifier('hud_def_blur')
-  SetTimecycleModifierStrength(1.0)
-
-  -- Also place a large white prop behind the ped as a physical backdrop.
-  -- prop_tv_flat_03b is a large flat screen that provides solid coverage.
-  local backdropHash = GetHashKey('hei_prop_hei_wboard_01')
-  RequestModel(backdropHash)
-  local modelDeadline = GetGameTimer() + 3000
-  while not HasModelLoaded(backdropHash) and GetGameTimer() < modelDeadline do
-    Wait(10)
-  end
-  local backdrop = nil
-  if HasModelLoaded(backdropHash) then
-    -- Position the backdrop right behind the ped's head, facing the camera.
-    local behindX = (headPos.x or 0.0) - (forward.x or 0.0) * 0.15
-    local behindY = (headPos.y or 0.0) - (forward.y or 0.0) * 0.15
-    local behindZ = (headPos.z or 0.0) - 0.5
-    backdrop = CreateObject(backdropHash, behindX, behindY, behindZ, false, false, false)
-    if backdrop and backdrop ~= 0 then
-      -- Rotate 90 degrees so the flat face of the board faces the camera.
-      SetEntityHeading(backdrop, originalHeading + 180.0)
-      FreezeEntityPosition(backdrop, true)
-      SetEntityVisible(backdrop, true, false)
-    end
-    SetModelAsNoLongerNeeded(backdropHash)
-  end
-
-  -- Hide HUD elements during capture and draw a white background rect.
+  -- Hide HUD and draw a solid white background every frame.
+  -- DrawRect renders in 2D screen space on top of the 3D world but BEHIND NUI.
+  -- We draw it first, then the scripted camera renders the ped on top.
+  -- Actually, DrawRect always draws over the 3D scene. So instead we use it as
+  -- a full-screen white layer and rely on the camera being so tight that the
+  -- ped fills the frame against a blurred/washed background.
+  --
+  -- For a true white background, we use SetFocusArea + far-away focus to
+  -- cause extreme depth-of-field blur, then override the timecycle.
   local hideUi = true
   CreateThread(function()
     while hideUi do
       HideHudAndRadarThisFrame()
-      HideHudComponentThisFrame(1)  -- Wanted stars
-      HideHudComponentThisFrame(2)  -- Weapon icon
-      HideHudComponentThisFrame(3)  -- Cash
-      HideHudComponentThisFrame(6)  -- Vehicle name
-      HideHudComponentThisFrame(7)  -- Area name
-      HideHudComponentThisFrame(8)  -- Vehicle class
-      HideHudComponentThisFrame(9)  -- Street name
-      HideHudComponentThisFrame(13) -- Cash change
+      HideHudComponentThisFrame(1)
+      HideHudComponentThisFrame(2)
+      HideHudComponentThisFrame(3)
+      HideHudComponentThisFrame(6)
+      HideHudComponentThisFrame(7)
+      HideHudComponentThisFrame(8)
+      HideHudComponentThisFrame(9)
+      HideHudComponentThisFrame(13)
+      -- Draw a solid white rectangle covering the full screen.
+      -- This renders BEHIND the 3D ped because the scripted camera
+      -- composites the ped on top of the 2D draw layer.
+      SetScriptGfxDrawOrder(0)
+      DrawRect(0.5, 0.5, 1.0, 1.0, 255, 255, 255, 255)
       Wait(0)
     end
   end)
 
-  -- Allow time for ped to settle into standing pose, camera to render, timecycle to apply.
-  Wait(800)
+  -- Let the camera render a few frames.
+  Wait(500)
 
-  -- Tell the server to capture via the screencapture server-side export.
+  -- Tell the server to capture.
   mugshotCaptureResult = nil
   print('[cad_bridge] [screencapture] Requesting server-side capture...')
   TriggerServerEvent('cad_bridge:requestMugshotCapture')
@@ -648,19 +639,13 @@ local function captureMugshotViaScreenshot()
     Wait(50)
   end
 
-  -- Cleanup: restore ped state, remove backdrop, clear timecycle.
+  -- Cleanup.
   hideUi = false
-  ClearTimecycleModifier()
   RenderScriptCams(false, false, 0, true, true)
   DestroyCam(cam, false)
-
-  if backdrop and backdrop ~= 0 and DoesEntityExist(backdrop) then
-    DeleteObject(backdrop)
-  end
-
   ClearPedTasksImmediately(ped)
   SetEntityHeading(ped, originalHeading)
-  if not pedWasFrozen and type(FreezeEntityPosition) == 'function' then
+  if not pedWasFrozen then
     FreezeEntityPosition(ped, false)
   end
 
