@@ -138,15 +138,12 @@ function getConfiguredLiveMapTileSize() {
   return parsePositiveIntWithFallback(Settings.get('live_map_tile_size'), LIVE_MAP_TILE_SIZE);
 }
 
-function getConfiguredLiveMapTransform(tileSize) {
-  const safeTileSize = Number.isFinite(tileSize) && tileSize > 0 ? tileSize : LIVE_MAP_TILE_SIZE;
-  const scaleFactor = safeTileSize / LIVE_MAP_TILE_SIZE;
-
-  // Defaults are tuned for 1024px tile size and then scaled to the active tile size.
-  const defaultScaleX = (0.02072 * 8) * scaleFactor;
-  const defaultScaleY = (0.0205 * 8) * scaleFactor;
-  const defaultOffsetX = (117.3 * 8) * scaleFactor;
-  const defaultOffsetY = 2005 * scaleFactor;
+function getConfiguredLiveMapTransform() {
+  // Defaults are tuned for the canonical 1024px logical tile grid.
+  const defaultScaleX = 0.02072 * 8;
+  const defaultScaleY = 0.0205 * 8;
+  const defaultOffsetX = 117.3 * 8;
+  const defaultOffsetY = 2005;
 
   const scaleX = parsePositiveNumberOrNull(Settings.get('live_map_scale_x')) ?? defaultScaleX;
   const scaleY = parsePositiveNumberOrNull(Settings.get('live_map_scale_y')) ?? defaultScaleY;
@@ -387,7 +384,7 @@ router.get('/map-config', requireAuth, (_req, res) => {
   const tileGrid = getLiveMapTileGrid();
   const tileRows = parsePositiveIntWithFallback(tileGrid?.tileRows, LIVE_MAP_TILE_ROWS);
   const tileColumns = parsePositiveIntWithFallback(tileGrid?.tileColumns, LIVE_MAP_TILE_COLUMNS);
-  const transform = getConfiguredLiveMapTransform(tileSize);
+  const transform = getConfiguredLiveMapTransform();
 
   res.json({
     map_available: mapAvailable,

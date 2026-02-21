@@ -72,15 +72,14 @@ function parseGameBounds(value) {
 }
 
 function normalizeMapLayoutConfig(cfg) {
-  const tileSize = parsePositiveInt(cfg?.tile_size, DEFAULT_TILE_SIZE);
+  // Keep Leaflet's logical tile grid stable at 1024 regardless of source image dimensions.
+  const tileSize = DEFAULT_TILE_SIZE;
   const tileRows = parsePositiveInt(cfg?.tile_rows, DEFAULT_TILE_ROWS);
   const tileColumns = parsePositiveInt(cfg?.tile_columns, DEFAULT_TILE_COLUMNS);
-  const tileScale = tileSize / DEFAULT_TILE_SIZE;
-
-  const defaultScaleX = BASE_SCALE_X * tileScale;
-  const defaultScaleY = BASE_SCALE_Y * tileScale;
-  const defaultOffsetX = BASE_OFFSET_X * tileScale;
-  const defaultOffsetY = BASE_OFFSET_Y * tileScale;
+  const defaultScaleX = BASE_SCALE_X;
+  const defaultScaleY = BASE_SCALE_Y;
+  const defaultOffsetX = BASE_OFFSET_X;
+  const defaultOffsetY = BASE_OFFSET_Y;
 
   const rawTransform = cfg?.transform || {};
   const transformMode = String(rawTransform?.mode || '').trim().toLowerCase();
