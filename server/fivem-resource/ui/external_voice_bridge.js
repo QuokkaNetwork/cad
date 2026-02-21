@@ -199,12 +199,42 @@
     throw new Error('Local track does not support setEnabled or mute/unmute');
   }
 
+  async function ensureLocalTrackPublished() {
+    if (state.localTrack) return;
+    if (!state.room || !state.connected) return;
+
+    const livekit = await ensureLivekitLoaded();
+    const localTrack = await livekit.createLocalAudioTrack({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1,
+    });
+    await state.room.localParticipant.publishTrack(localTrack, {
+      source: livekit.Track.Source.Microphone,
+    });
+    await setTrackTransmitState(localTrack, false);
+    state.localTrack = localTrack;
+  }
+
   async function syncLocalTrackEnabled() {
-    if (!state.localTrack) return;
     const shouldTransmit = state.connected && state.pttActive === true;
+    if (shouldTransmit && !state.localTrack) {
+      try {
+        await ensureLocalTrackPublished();
+      } catch (err) {
+        state.pttActive = false;
+        const message = err && err.message ? err.message : 'microphone access required for transmit';
+        log(`local track init failed: ${message}`);
+        emitStatus('ptt_error', message);
+        return;
+      }
+    }
+    if (!state.localTrack) return;
     try {
       await setTrackTransmitState(state.localTrack, shouldTransmit);
     } catch (err) {
+      state.pttActive = false;
       const message = err && err.message ? err.message : 'unable to toggle local track';
       log(`local track state sync failed: ${message}`);
       emitStatus('ptt_error', message);
@@ -371,18 +401,8 @@
 
       await room.connect(session.url, session.token, { autoSubscribe: true });
 
-      state.localTrack = await livekit.createLocalAudioTrack({
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-      });
-      await room.localParticipant.publishTrack(state.localTrack, {
-        source: livekit.Track.Source.Microphone,
-      });
-      await setTrackTransmitState(state.localTrack, false);
       await syncLocalTrackEnabled();
-      emitStatus('ready', `session ready channel ${session.channelNumber}`);
+      emitStatus('ready', `session ready channel ${session.channelNumber} (mic on first transmit)`);
     })();
 
     try {

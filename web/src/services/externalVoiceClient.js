@@ -54,6 +54,24 @@ class ExternalVoiceClient {
     throw new Error('External voice local track does not support setEnabled or mute/unmute');
   }
 
+  async ensureLocalTrackPublished() {
+    if (this.localTrack) return;
+    if (!this.room || !this.isConnected) {
+      throw new Error('External voice is not connected');
+    }
+    const track = await createLocalAudioTrack({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1,
+    });
+    await this.room.localParticipant.publishTrack(track, {
+      source: Track.Source.Microphone,
+    });
+    await this.setTrackTransmitState(track, false);
+    this.localTrack = track;
+  }
+
   async connect(rawSession) {
     const session = normalizeSession(rawSession);
     if (session.provider !== 'livekit') {
@@ -136,16 +154,6 @@ class ExternalVoiceClient {
 
     try {
       await room.connect(session.url, session.token, { autoSubscribe: true });
-      this.localTrack = await createLocalAudioTrack({
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-      });
-      await room.localParticipant.publishTrack(this.localTrack, {
-        source: Track.Source.Microphone,
-      });
-      await this.setTrackTransmitState(this.localTrack, false);
       this.isPTTActive = false;
       if (typeof this.onTalkingChange === 'function') this.onTalkingChange(false);
     } catch (error) {
@@ -216,7 +224,20 @@ class ExternalVoiceClient {
   }
 
   async setPushToTalk(enabled) {
-    const next = !!enabled && this.isConnected && !!this.localTrack;
+    const wantsTransmit = !!enabled && this.isConnected;
+    if (wantsTransmit && !this.localTrack) {
+      try {
+        await this.ensureLocalTrackPublished();
+      } catch (error) {
+        this.isPTTActive = false;
+        if (typeof this.onTalkingChange === 'function') this.onTalkingChange(false);
+        if (typeof this.onError === 'function') {
+          this.onError(error?.message || 'Microphone permission is required to transmit');
+        }
+        throw error;
+      }
+    }
+    const next = wantsTransmit && !!this.localTrack;
     if (this.isPTTActive === next) return;
     try {
       await this.setTrackTransmitState(this.localTrack, next);
