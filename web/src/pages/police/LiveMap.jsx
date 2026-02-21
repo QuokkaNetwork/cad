@@ -13,31 +13,93 @@ const MAP_STALE_THRESHOLD_MS = 4_000;
 const MAP_STALE_CHECK_INTERVAL_MS = 2_000;
 const MAP_RECOVERY_COOLDOWN_MS = 8_000;
 
-const TILE_SIZE = 1024;
-const TILE_ROWS = 3;
-const TILE_COLUMNS = 2;
-const MAP_WIDTH = TILE_SIZE * TILE_COLUMNS;   // 2048
-const MAP_HEIGHT = TILE_SIZE * TILE_ROWS;     // 3072
+const DEFAULT_TILE_SIZE = 1024;
+const DEFAULT_TILE_ROWS = 3;
+const DEFAULT_TILE_COLUMNS = 2;
 const TILE_URL_TEMPLATE = '/tiles/minimap_sea_{y}_{x}.webp';
 const MIN_ZOOM = -2;
 const MAX_ZOOM = 2;
 const NATIVE_ZOOM = 0;
 
-// Affine transformation from GTA V game coordinates to pixel coordinates
-// in our 2048×3072 tile grid.
-//
-// Horizontal values derived from the well-known FiveM/Leaflet CRS
-// constants (scale_x=0.02072, center_x=117.3) scaled ×8 for our
-// 1024px-tile grid.  Vertical offset tuned to align the standard
-// minimap_sea postal-code tile set with in-game positions.
-//
-// Formula:
-//   pixelX =  SCALE_X * gameX + OFFSET_X
-//   pixelY = -SCALE_Y * gameY + OFFSET_Y
-const SCALE_X  = 0.02072 * 8;   // 0.16576
-const SCALE_Y  = 0.0205  * 8;   // 0.164
-const OFFSET_X = 117.3   * 8;   // 938.4
-const OFFSET_Y = 2005;
+// Base affine transform for GTA V game coordinates to map pixels.
+// Values are calibrated for 1024px tiles and scaled up/down by tile size.
+const BASE_SCALE_X = 0.02072 * 8;
+const BASE_SCALE_Y = 0.0205 * 8;
+const BASE_OFFSET_X = 117.3 * 8;
+const BASE_OFFSET_Y = 2005;
+
+const DEFAULT_MAP_LAYOUT = Object.freeze({
+  tileSize: DEFAULT_TILE_SIZE,
+  tileRows: DEFAULT_TILE_ROWS,
+  tileColumns: DEFAULT_TILE_COLUMNS,
+  transform: {
+    mode: 'affine',
+    gameBounds: null,
+    scaleX: BASE_SCALE_X,
+    scaleY: BASE_SCALE_Y,
+    offsetX: BASE_OFFSET_X,
+    offsetY: BASE_OFFSET_Y,
+  },
+});
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function parseFiniteNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parsePositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function parseGameBounds(value) {
+  const x1 = parseFiniteNumber(value?.x1, NaN);
+  const y1 = parseFiniteNumber(value?.y1, NaN);
+  const x2 = parseFiniteNumber(value?.x2, NaN);
+  const y2 = parseFiniteNumber(value?.y2, NaN);
+  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) {
+    return null;
+  }
+  if (!(x2 > x1) || !(y1 > y2)) return null;
+  return { x1, y1, x2, y2 };
+}
+
+function normalizeMapLayoutConfig(cfg) {
+  const tileSize = parsePositiveInt(cfg?.tile_size, DEFAULT_TILE_SIZE);
+  const tileRows = parsePositiveInt(cfg?.tile_rows, DEFAULT_TILE_ROWS);
+  const tileColumns = parsePositiveInt(cfg?.tile_columns, DEFAULT_TILE_COLUMNS);
+  const tileScale = tileSize / DEFAULT_TILE_SIZE;
+
+  const defaultScaleX = BASE_SCALE_X * tileScale;
+  const defaultScaleY = BASE_SCALE_Y * tileScale;
+  const defaultOffsetX = BASE_OFFSET_X * tileScale;
+  const defaultOffsetY = BASE_OFFSET_Y * tileScale;
+
+  const rawTransform = cfg?.transform || {};
+  const transformMode = String(rawTransform?.mode || '').trim().toLowerCase();
+  const gameBounds = parseGameBounds(rawTransform?.game_bounds);
+
+  return {
+    tileSize,
+    tileRows,
+    tileColumns,
+    transform: {
+      mode: transformMode === 'game_bounds' && gameBounds ? 'game_bounds' : 'affine',
+      gameBounds,
+      scaleX: parsePositiveNumber(rawTransform?.scale_x, defaultScaleX),
+      scaleY: parsePositiveNumber(rawTransform?.scale_y, defaultScaleY),
+      offsetX: parseFiniteNumber(rawTransform?.offset_x, defaultOffsetX),
+      offsetY: parseFiniteNumber(rawTransform?.offset_y, defaultOffsetY),
+    },
+  };
+}
 
 function normalizeMapPlayer(entry) {
   const unitId = Number(entry?.unit_id || 0);
@@ -79,21 +141,39 @@ function normalizePlayers(payload) {
   return players;
 }
 
-function getMapBounds(map) {
-  const southWest = map.unproject([0, MAP_HEIGHT], 0);
-  const northEast = map.unproject([MAP_WIDTH, 0], 0);
+function getMapBounds(map, mapWidth, mapHeight) {
+  const southWest = map.unproject([0, mapHeight], 0);
+  const northEast = map.unproject([mapWidth, 0], 0);
   return latLngBounds(southWest, northEast);
 }
 
 // Convert GTA V game coordinates to Leaflet lat/lng for our tile grid.
-// Uses an affine pixel transformation then Leaflet unproject.
-function convertToMapLatLng(rawX, rawY, map) {
+// Uses either game bounds mapping or an affine pixel transform.
+function convertToMapLatLng(rawX, rawY, map, mapLayout) {
   const x = Number(rawX);
   const y = Number(rawY);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !map) return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !map || !mapLayout) return null;
 
-  const pixelX = SCALE_X * x + OFFSET_X;
-  const pixelY = -(SCALE_Y * y) + OFFSET_Y;
+  const mapWidth = mapLayout.tileSize * mapLayout.tileColumns;
+  const mapHeight = mapLayout.tileSize * mapLayout.tileRows;
+  const transform = mapLayout.transform || {};
+  const gameBounds = transform?.gameBounds;
+  let pixelX = NaN;
+  let pixelY = NaN;
+
+  if (transform.mode === 'game_bounds' && gameBounds) {
+    const xSpan = gameBounds.x2 - gameBounds.x1;
+    const ySpan = gameBounds.y1 - gameBounds.y2;
+    if (xSpan > 0 && ySpan > 0) {
+      pixelX = ((x - gameBounds.x1) / xSpan) * mapWidth;
+      pixelY = ((gameBounds.y1 - y) / ySpan) * mapHeight;
+    }
+  } else {
+    pixelX = transform.scaleX * x + transform.offsetX;
+    pixelY = -(transform.scaleY * y) + transform.offsetY;
+  }
+
+  if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY)) return null;
 
   return map.unproject([pixelX, pixelY], 0);
 }
@@ -106,7 +186,7 @@ function markerColor(player) {
   return '#22c55e';
 }
 
-function MapBoundsController({ resetSignal, onMapReady }) {
+function MapBoundsController({ resetSignal, onMapReady, mapWidth, mapHeight }) {
   const map = useMap();
   const appliedRef = useRef('');
 
@@ -114,8 +194,10 @@ function MapBoundsController({ resetSignal, onMapReady }) {
     if (!map) return;
     onMapReady(map);
 
-    const bounds = getMapBounds(map);
-    const key = `bounds:${resetSignal}`;
+    if (!Number.isFinite(mapWidth) || !Number.isFinite(mapHeight) || mapWidth <= 0 || mapHeight <= 0) return;
+
+    const bounds = getMapBounds(map, mapWidth, mapHeight);
+    const key = `bounds:${resetSignal}:${mapWidth}x${mapHeight}`;
     if (appliedRef.current === key) return;
 
     map.setMaxBounds(bounds);
@@ -125,7 +207,7 @@ function MapBoundsController({ resetSignal, onMapReady }) {
     map.setZoom(MIN_ZOOM);
 
     appliedRef.current = key;
-  }, [map, resetSignal, onMapReady]);
+  }, [map, resetSignal, onMapReady, mapWidth, mapHeight]);
 
   return null;
 }
@@ -135,6 +217,7 @@ export default function LiveMap({ isPopout = false }) {
   const { activeDepartment } = useDepartment();
   const [mapAvailable, setMapAvailable] = useState(false);
   const [missingTiles, setMissingTiles] = useState([]);
+  const [mapLayout, setMapLayout] = useState(DEFAULT_MAP_LAYOUT);
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [mapConfigError, setMapConfigError] = useState('');
@@ -151,10 +234,13 @@ export default function LiveMap({ isPopout = false }) {
 
   const deptId = Number(activeDepartment?.id || 0);
   const isDispatchDepartment = !!activeDepartment?.is_dispatch;
+  const mapWidth = mapLayout.tileSize * mapLayout.tileColumns;
+  const mapHeight = mapLayout.tileSize * mapLayout.tileRows;
 
   const fetchMapConfig = useCallback(async () => {
     try {
       const cfg = await api.get('/api/units/map-config');
+      setMapLayout(normalizeMapLayoutConfig(cfg));
       const tiles = Array.isArray(cfg?.missing_tiles)
         ? cfg.missing_tiles.map((t) => String(t || '').trim()).filter(Boolean)
         : [];
@@ -290,12 +376,12 @@ export default function LiveMap({ isPopout = false }) {
     if (!mapInstance) return [];
     return players
       .map((player) => {
-        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance);
+        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, mapLayout);
         if (!latLng) return null;
         return { player, latLng };
       })
       .filter(Boolean);
-  }, [players, mapInstance]);
+  }, [players, mapInstance, mapLayout]);
 
   const error = mapConfigError || playerError;
   const staleFeedAgeSeconds = staleSinceAt
@@ -388,10 +474,12 @@ export default function LiveMap({ isPopout = false }) {
             <MapBoundsController
               resetSignal={resetSignal}
               onMapReady={setMapInstance}
+              mapWidth={mapWidth}
+              mapHeight={mapHeight}
             />
             <TileLayer
               url={TILE_URL_TEMPLATE}
-              tileSize={TILE_SIZE}
+              tileSize={mapLayout.tileSize}
               minZoom={MIN_ZOOM}
               maxZoom={MAX_ZOOM}
               minNativeZoom={NATIVE_ZOOM}

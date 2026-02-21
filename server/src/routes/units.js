@@ -1,12 +1,16 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls } = require('../db/sqlite');
+const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const liveMapStore = require('../services/liveMapStore');
 const {
+  LIVE_MAP_TILE_SIZE,
+  LIVE_MAP_TILE_ROWS,
+  LIVE_MAP_TILE_COLUMNS,
   listMissingLiveMapTiles,
   hasCompleteLiveMapTiles,
+  getLiveMapTileGrid,
 } = require('../services/liveMapTiles');
 
 const router = express.Router();
@@ -103,6 +107,73 @@ function parsePositiveInt(value) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) return 0;
   return parsed;
+}
+
+function parsePositiveIntWithFallback(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function parseFiniteNumberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parsePositiveNumberOrNull(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function parseBooleanSetting(value, fallback = false) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function getConfiguredLiveMapTileSize() {
+  return parsePositiveIntWithFallback(Settings.get('live_map_tile_size'), LIVE_MAP_TILE_SIZE);
+}
+
+function getConfiguredLiveMapTransform(tileSize) {
+  const safeTileSize = Number.isFinite(tileSize) && tileSize > 0 ? tileSize : LIVE_MAP_TILE_SIZE;
+  const scaleFactor = safeTileSize / LIVE_MAP_TILE_SIZE;
+
+  // Defaults are tuned for 1024px tile size and then scaled to the active tile size.
+  const defaultScaleX = (0.02072 * 8) * scaleFactor;
+  const defaultScaleY = (0.0205 * 8) * scaleFactor;
+  const defaultOffsetX = (117.3 * 8) * scaleFactor;
+  const defaultOffsetY = 2005 * scaleFactor;
+
+  const scaleX = parsePositiveNumberOrNull(Settings.get('live_map_scale_x')) ?? defaultScaleX;
+  const scaleY = parsePositiveNumberOrNull(Settings.get('live_map_scale_y')) ?? defaultScaleY;
+  const offsetX = parseFiniteNumberOrNull(Settings.get('live_map_offset_x')) ?? defaultOffsetX;
+  const offsetY = parseFiniteNumberOrNull(Settings.get('live_map_offset_y')) ?? defaultOffsetY;
+
+  const useCustomBounds = parseBooleanSetting(Settings.get('live_map_use_custom_bounds'));
+  const x1 = parseFiniteNumberOrNull(Settings.get('live_map_game_x1'));
+  const y1 = parseFiniteNumberOrNull(Settings.get('live_map_game_y1'));
+  const x2 = parseFiniteNumberOrNull(Settings.get('live_map_game_x2'));
+  const y2 = parseFiniteNumberOrNull(Settings.get('live_map_game_y2'));
+  const hasGameBounds = useCustomBounds
+    && Number.isFinite(x1)
+    && Number.isFinite(y1)
+    && Number.isFinite(x2)
+    && Number.isFinite(y2)
+    && x2 > x1
+    && y1 > y2;
+
+  return {
+    mode: hasGameBounds ? 'game_bounds' : 'affine',
+    game_bounds: hasGameBounds ? { x1, y1, x2, y2 } : null,
+    scale_x: scaleX,
+    scale_y: scaleY,
+    offset_x: offsetX,
+    offset_y: offsetY,
+  };
 }
 
 function normalizeLookupToken(value) {
@@ -312,9 +383,21 @@ router.get('/map', requireAuth, (req, res) => {
 router.get('/map-config', requireAuth, (_req, res) => {
   const missingTiles = listMissingLiveMapTiles();
   const mapAvailable = hasCompleteLiveMapTiles();
+  const tileSize = getConfiguredLiveMapTileSize();
+  const tileGrid = getLiveMapTileGrid();
+  const tileRows = parsePositiveIntWithFallback(tileGrid?.tileRows, LIVE_MAP_TILE_ROWS);
+  const tileColumns = parsePositiveIntWithFallback(tileGrid?.tileColumns, LIVE_MAP_TILE_COLUMNS);
+  const transform = getConfiguredLiveMapTransform(tileSize);
+
   res.json({
     map_available: mapAvailable,
     missing_tiles: missingTiles,
+    tile_size: tileSize,
+    tile_rows: tileRows,
+    tile_columns: tileColumns,
+    map_width: tileSize * tileColumns,
+    map_height: tileSize * tileRows,
+    transform,
   });
 });
 
