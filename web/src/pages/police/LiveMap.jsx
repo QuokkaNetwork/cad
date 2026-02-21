@@ -37,7 +37,7 @@ const NATIVE_ZOOM = 0;
 const SCALE_X  = 0.02072 * 8;   // 0.16576
 const SCALE_Y  = 0.0205  * 8;   // 0.164
 const OFFSET_X = 117.3   * 8;   // 938.4
-const OFFSET_Y = 1920;
+const OFFSET_Y = 2005;
 
 function normalizeMapPlayer(entry) {
   const unitId = Number(entry?.unit_id || 0);
