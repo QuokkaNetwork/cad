@@ -179,7 +179,11 @@ app.use((err, req, res, next) => {
     }
     return res.status(400).json({ error: err.message || 'Upload error' });
   }
-  if (err?.message === 'Only image files are allowed' || err?.message === 'Only image tile files are allowed') {
+  if (
+    err?.message === 'Only image files are allowed'
+    || err?.message === 'Only image tile files are allowed'
+    || err?.message === 'Only PNG, JPG, WEBP, GIF, or DDS tile files are allowed'
+  ) {
     return res.status(400).json({ error: err.message });
   }
   res.status(500).json({ error: 'Internal server error' });

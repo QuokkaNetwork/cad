@@ -19,7 +19,11 @@ function formatErr(err) {
   if (Array.isArray(err.details?.errors) && err.details.errors.length > 0) {
     return `${base}\n- ${err.details.errors.join('\n- ')}`;
   }
-  return base;
+  try {
+    return `${base}\n${JSON.stringify(err.details, null, 2)}`;
+  } catch {
+    return base;
+  }
 }
 
 export default function AdminSystemSettings() {
@@ -32,7 +36,9 @@ export default function AdminSystemSettings() {
   const [bridgeStatus, setBridgeStatus] = useState(null);
   const [mapTileFiles, setMapTileFiles] = useState(null);
   const [uploadingMapTiles, setUploadingMapTiles] = useState(false);
+  const [importingLocalMapTiles, setImportingLocalMapTiles] = useState(false);
   const [removingMapTiles, setRemovingMapTiles] = useState(false);
+  const [localTileDirectory, setLocalTileDirectory] = useState('');
   const [mapTileUploadResult, setMapTileUploadResult] = useState(null);
   const [purgingLicenses, setPurgingLicenses] = useState(false);
   const [purgingRegistrations, setPurgingRegistrations] = useState(false);
@@ -165,6 +171,31 @@ export default function AdminSystemSettings() {
       });
     } finally {
       setRemovingMapTiles(false);
+    }
+  }
+
+  async function importLiveMapTilesFromLocalDirectory() {
+    setImportingLocalMapTiles(true);
+    setMapTileUploadResult(null);
+    try {
+      const payload = {};
+      const directory = String(localTileDirectory || '').trim();
+      if (directory) payload.directory = directory;
+      const result = await api.post('/api/admin/live-map/tiles/import-local', payload);
+      const sourceDir = String(result?.source_directory || '').trim();
+      setMapTileUploadResult({
+        success: true,
+        message: `Imported ${Number(result?.imported || LIVE_MAP_TILE_NAMES.length)} live map tiles${sourceDir ? ` from ${sourceDir}` : ''}.`,
+      });
+      setMapTileFiles(null);
+      if (tileInputRef.current) tileInputRef.current.value = '';
+    } catch (err) {
+      setMapTileUploadResult({
+        success: false,
+        message: formatErr(err),
+      });
+    } finally {
+      setImportingLocalMapTiles(false);
     }
   }
 
@@ -314,26 +345,47 @@ export default function AdminSystemSettings() {
               ref={tileInputRef}
               type="file"
               multiple
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept=".dds,image/png,image/jpeg,image/webp,image/gif"
               onChange={e => setMapTileFiles(e.target.files)}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-xs text-cad-muted file:mr-3 file:rounded file:border file:border-cad-border file:bg-cad-card file:px-2 file:py-1 file:text-xs file:text-cad-ink"
             />
             <p className="text-xs text-cad-muted mt-1">
               Required file names: <span className="font-mono">{LIVE_MAP_TILE_NAMES.join(', ')}</span>
             </p>
+            <p className="text-xs text-cad-muted mt-1">
+              Supported formats: <span className="font-mono">.dds (DXT1/DXT3/DXT5), .png, .jpg, .webp, .gif</span>
+            </p>
+            <div className="mt-2">
+              <label className="block text-xs text-cad-muted mb-1">Or import from server directory (optional)</label>
+              <input
+                type="text"
+                value={localTileDirectory}
+                onChange={e => setLocalTileDirectory(e.target.value)}
+                placeholder="Defaults to server user's Downloads folder if left blank"
+                className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-xs font-mono focus:outline-none focus:border-cad-accent"
+              />
+            </div>
             <div className="mt-2 flex items-center gap-2">
               <button
                 type="button"
                 onClick={uploadLiveMapTiles}
-                disabled={uploadingMapTiles || removingMapTiles}
+                disabled={uploadingMapTiles || importingLocalMapTiles || removingMapTiles}
                 className="px-3 py-1.5 text-xs bg-cad-accent hover:bg-cad-accent-light text-white rounded border border-cad-accent/40 transition-colors disabled:opacity-50"
               >
                 {uploadingMapTiles ? 'Uploading Tiles...' : 'Upload Map Tiles'}
               </button>
               <button
                 type="button"
+                onClick={importLiveMapTilesFromLocalDirectory}
+                disabled={uploadingMapTiles || importingLocalMapTiles || removingMapTiles}
+                className="px-3 py-1.5 text-xs bg-cad-surface hover:bg-cad-card text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
+              >
+                {importingLocalMapTiles ? 'Importing Local Tiles...' : 'Import Local Tiles'}
+              </button>
+              <button
+                type="button"
                 onClick={removeLiveMapTiles}
-                disabled={uploadingMapTiles || removingMapTiles}
+                disabled={uploadingMapTiles || importingLocalMapTiles || removingMapTiles}
                 className="px-3 py-1.5 text-xs bg-red-700 hover:bg-red-600 text-white rounded border border-red-500/40 transition-colors disabled:opacity-50"
               >
                 {removingMapTiles ? 'Removing Tiles...' : 'Remove Custom Tiles'}
@@ -419,6 +471,17 @@ export default function AdminSystemSettings() {
           <div className="col-span-2">
             <h4 className="text-xs font-semibold text-cad-muted uppercase tracking-wider mb-2">Live Map Game Bounds</h4>
             <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="block text-xs text-cad-muted mb-1">Use Custom Bounds</label>
+                <select
+                  value={settings.live_map_use_custom_bounds || 'true'}
+                  onChange={e => updateSetting('live_map_use_custom_bounds', e.target.value)}
+                  className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                >
+                  <option value="true">Enabled (Recommended)</option>
+                  <option value="false">Disabled (Snaily Defaults)</option>
+                </select>
+              </div>
               <div>
                 <label className="block text-xs text-cad-muted mb-1">X1</label>
                 <input

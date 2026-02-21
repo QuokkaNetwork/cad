@@ -1,5 +1,6 @@
 const express = require('express');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const multer = require('multer');
 const sharp = require('sharp');
@@ -25,6 +26,11 @@ const {
   getStatus: getFiveMResourceStatus,
   startFiveMResourceAutoSync,
 } = require('../services/fivemResourceManager');
+const {
+  isSupportedTileUpload,
+  inspectTileInput,
+  convertTileInputToWebpBuffer,
+} = require('../services/liveMapTileIngest');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -32,6 +38,7 @@ const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const OFFENCE_CATEGORIES = new Set(['infringement', 'summary', 'indictment']);
 const IDENTIFIER_RE = /^[A-Za-z0-9_]+$/;
 const LIVE_MAP_TILE_NAMES_SET = new Set(LIVE_MAP_TILE_NAMES);
+const LOCAL_TILE_IMPORT_EXTENSIONS = Object.freeze(['.dds', '.png', '.jpg', '.jpeg', '.webp', '.gif']);
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -110,11 +117,173 @@ const mapTilesUpload = multer({
     files: LIVE_MAP_TILE_NAMES.length,
   },
   fileFilter: (_req, file, cb) => {
-    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-    if (allowed.has(file.mimetype)) return cb(null, true);
-    cb(new Error('Only image tile files are allowed'));
+    if (isSupportedTileUpload(file?.originalname || '', file?.mimetype || '')) return cb(null, true);
+    if (String(file?.mimetype || '').trim().toLowerCase() === 'application/octet-stream') return cb(null, true);
+    cb(new Error('Only PNG, JPG, WEBP, GIF, or DDS tile files are allowed'));
   },
 });
+
+function createRouteError(status, payload) {
+  const err = new Error(String(payload?.error || 'Request failed'));
+  err.statusCode = Number(status) || 500;
+  err.payload = payload || { error: 'Request failed' };
+  return err;
+}
+
+function sendRouteError(res, err) {
+  if (!err || !err.statusCode || !err.payload) return false;
+  res.status(err.statusCode).json(err.payload);
+  return true;
+}
+
+function indexTileUploadFiles(files) {
+  const filesByName = new Map();
+  const invalidNames = [];
+  const duplicateNames = [];
+
+  for (const file of files) {
+    const baseName = normalizeTileBaseName(file?.originalname || '').toLowerCase();
+    if (!LIVE_MAP_TILE_NAMES_SET.has(baseName)) {
+      invalidNames.push(String(file?.originalname || '').trim());
+      continue;
+    }
+    if (filesByName.has(baseName)) {
+      duplicateNames.push(baseName);
+      continue;
+    }
+    filesByName.set(baseName, file);
+  }
+
+  if (invalidNames.length > 0) {
+    throw createRouteError(400, {
+      error: 'Invalid tile file names',
+      details: {
+        invalid_names: invalidNames,
+        expected_names: LIVE_MAP_TILE_NAMES,
+      },
+    });
+  }
+
+  if (duplicateNames.length > 0) {
+    throw createRouteError(400, {
+      error: 'Duplicate tile file names',
+      details: { duplicates: duplicateNames },
+    });
+  }
+
+  const missing = LIVE_MAP_TILE_NAMES.filter((name) => !filesByName.has(name));
+  if (missing.length > 0) {
+    throw createRouteError(400, {
+      error: 'Missing required map tile files',
+      details: { missing, expected_names: LIVE_MAP_TILE_NAMES },
+    });
+  }
+
+  return filesByName;
+}
+
+function getDefaultLocalTileDirectory() {
+  const userDownloads = path.resolve(os.homedir(), 'Downloads');
+  return userDownloads;
+}
+
+function buildDirectoryFileIndex(directoryPath) {
+  const index = new Map();
+  const entries = fs.readdirSync(directoryPath, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry || !entry.isFile || !entry.isFile()) continue;
+    index.set(String(entry.name || '').toLowerCase(), path.join(directoryPath, entry.name));
+  }
+  return index;
+}
+
+function findLocalTilePath(fileIndex, tileName) {
+  for (const extension of LOCAL_TILE_IMPORT_EXTENSIONS) {
+    const key = `${tileName}${extension}`.toLowerCase();
+    const found = fileIndex.get(key);
+    if (found) return found;
+  }
+  return '';
+}
+
+async function ingestAndPersistLiveMapTiles(inputsByName) {
+  const invalidDimensions = [];
+  const validatedInputs = [];
+  let detectedTileSize = 0;
+
+  for (const tileName of LIVE_MAP_TILE_NAMES) {
+    const input = inputsByName.get(tileName);
+    if (!input) continue;
+
+    const inspected = await inspectTileInput(input);
+    const width = Number(inspected?.width || 0);
+    const height = Number(inspected?.height || 0);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1 || width !== height) {
+      invalidDimensions.push({
+        tile: tileName,
+        width,
+        height,
+        reason: 'tiles must be square and non-zero',
+      });
+      continue;
+    }
+    if (detectedTileSize === 0) {
+      detectedTileSize = width;
+    } else if (width !== detectedTileSize) {
+      invalidDimensions.push({
+        tile: tileName,
+        width,
+        height,
+        reason: `all tiles must match the same dimensions (${detectedTileSize}x${detectedTileSize})`,
+      });
+    }
+
+    validatedInputs.push({
+      tileName,
+      input,
+      inspected,
+    });
+  }
+
+  if (invalidDimensions.length > 0) {
+    throw createRouteError(400, {
+      error: 'Invalid tile dimensions',
+      details: {
+        note: 'All tiles must be the same square dimensions (e.g. 1024x1024 or 3072x3072).',
+        invalid: invalidDimensions,
+      },
+    });
+  }
+
+  if (!detectedTileSize || !Number.isFinite(detectedTileSize)) {
+    throw createRouteError(400, { error: 'Unable to determine tile dimensions' });
+  }
+
+  const sourceFormats = {};
+  let totalInputBytes = 0;
+
+  for (const item of validatedInputs) {
+    const { tileName, input, inspected } = item;
+    const webpBuffer = await convertTileInputToWebpBuffer(input, 80);
+    await fs.promises.writeFile(getLiveMapTilePath(tileName), webpBuffer);
+
+    const sourceFormatKey = inspected?.sourceFormat === 'dds'
+      ? `dds:${String(inspected?.compression || 'unknown').toLowerCase()}`
+      : String(inspected?.sourceFormat || 'image').toLowerCase();
+    sourceFormats[sourceFormatKey] = Number(sourceFormats[sourceFormatKey] || 0) + 1;
+    totalInputBytes += Number(input?.size || 0);
+  }
+
+  const missingAfterUpload = listMissingLiveMapTiles();
+  Settings.set('live_map_tile_size', String(Math.round(detectedTileSize)));
+
+  return {
+    detectedTileSize,
+    missingAfterUpload,
+    sourceFormats,
+    totalInputBytes,
+  };
+}
 
 router.post('/departments/upload-icon', upload.single('icon'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'icon file is required' });
@@ -144,106 +313,31 @@ router.post('/live-map/tiles', mapTilesUpload.array('tiles', LIVE_MAP_TILE_NAMES
   }
 
   try {
-    const filesByName = new Map();
-    const invalidNames = [];
-    const duplicateNames = [];
-
-    for (const file of files) {
-      const baseName = normalizeTileBaseName(file?.originalname || '').toLowerCase();
-      if (!LIVE_MAP_TILE_NAMES_SET.has(baseName)) {
-        invalidNames.push(String(file?.originalname || '').trim());
-        continue;
-      }
-      if (filesByName.has(baseName)) {
-        duplicateNames.push(baseName);
-        continue;
-      }
-      filesByName.set(baseName, file);
-    }
-
-    if (invalidNames.length > 0) {
-      return res.status(400).json({
-        error: 'Invalid tile file names',
-        details: {
-          invalid_names: invalidNames,
-          expected_names: LIVE_MAP_TILE_NAMES,
-        },
-      });
-    }
-
-    if (duplicateNames.length > 0) {
-      return res.status(400).json({
-        error: 'Duplicate tile file names',
-        details: { duplicates: duplicateNames },
-      });
-    }
-
-    const missing = LIVE_MAP_TILE_NAMES.filter((name) => !filesByName.has(name));
-    if (missing.length > 0) {
-      return res.status(400).json({
-        error: 'Missing required map tile files',
-        details: { missing, expected_names: LIVE_MAP_TILE_NAMES },
-      });
-    }
-
-    const invalidDimensions = [];
-    let detectedTileSize = 0;
+    const filesByName = indexTileUploadFiles(files);
+    const inputsByName = new Map();
     for (const tileName of LIVE_MAP_TILE_NAMES) {
       const file = filesByName.get(tileName);
       if (!file) continue;
-      const metadata = await sharp(file.buffer).metadata();
-      const width = Number(metadata?.width || 0);
-      const height = Number(metadata?.height || 0);
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1 || width !== height) {
-        invalidDimensions.push({
-          tile: tileName,
-          width,
-          height,
-          reason: 'tiles must be square and non-zero',
-        });
-        continue;
-      }
-      if (detectedTileSize === 0) {
-        detectedTileSize = width;
-      } else if (width !== detectedTileSize) {
-        invalidDimensions.push({
-          tile: tileName,
-          width,
-          height,
-          reason: `all tiles must match the same dimensions (${detectedTileSize}x${detectedTileSize})`,
-        });
-      }
-    }
-    if (invalidDimensions.length > 0) {
-      return res.status(400).json({
-        error: 'Invalid tile dimensions',
-        details: {
-          note: 'All tiles must be the same square dimensions (e.g. 1024x1024 or 3072x3072).',
-          invalid: invalidDimensions,
-        },
+      inputsByName.set(tileName, {
+        tileName,
+        fileName: String(file?.originalname || tileName),
+        mimeType: String(file?.mimetype || ''),
+        size: Number(file?.size || 0),
+        buffer: file?.buffer,
       });
     }
-    if (!detectedTileSize || !Number.isFinite(detectedTileSize)) {
-      return res.status(400).json({ error: 'Unable to determine tile dimensions' });
-    }
 
-    for (const tileName of LIVE_MAP_TILE_NAMES) {
-      const file = filesByName.get(tileName);
-      if (!file) continue;
-      await sharp(file.buffer)
-        .rotate()
-        .webp({ quality: 80 })
-        .toFile(getLiveMapTilePath(tileName));
-    }
+    const ingestionResult = await ingestAndPersistLiveMapTiles(inputsByName);
+    const detectedTileSize = Number(ingestionResult?.detectedTileSize || 0);
+    const missingAfterUpload = Array.isArray(ingestionResult?.missingAfterUpload) ? ingestionResult.missingAfterUpload : [];
 
-    const missingAfterUpload = listMissingLiveMapTiles();
-    Settings.set('live_map_tile_size', String(Math.round(detectedTileSize)));
     audit(req.user.id, 'live_map_tiles_uploaded', {
       tile_count: LIVE_MAP_TILE_NAMES.length,
       tile_names: LIVE_MAP_TILE_NAMES,
       tile_size: detectedTileSize,
+      source_formats: ingestionResult?.sourceFormats || {},
       missing_after_upload: missingAfterUpload,
-      total_size_bytes: files.reduce((acc, file) => acc + Number(file?.size || 0), 0),
+      total_size_bytes: Number(ingestionResult?.totalInputBytes || 0),
     });
 
     res.json({
@@ -251,10 +345,87 @@ router.post('/live-map/tiles', mapTilesUpload.array('tiles', LIVE_MAP_TILE_NAMES
       uploaded: LIVE_MAP_TILE_NAMES.length,
       tile_names: LIVE_MAP_TILE_NAMES,
       tile_size: detectedTileSize,
+      source_formats: ingestionResult?.sourceFormats || {},
       missing: missingAfterUpload,
       map_available: missingAfterUpload.length === 0,
     });
   } catch (err) {
+    if (sendRouteError(res, err)) return;
+    next(err);
+  }
+});
+
+router.post('/live-map/tiles/import-local', async (req, res, next) => {
+  try {
+    const requestedDirectory = String(req.body?.directory || '').trim();
+    const sourceDirectory = requestedDirectory !== '' ? requestedDirectory : getDefaultLocalTileDirectory();
+    const resolvedDirectory = path.resolve(sourceDirectory);
+
+    if (!fs.existsSync(resolvedDirectory) || !fs.statSync(resolvedDirectory).isDirectory()) {
+      return res.status(400).json({
+        error: 'Live map tile directory was not found',
+        details: { directory: resolvedDirectory },
+      });
+    }
+
+    const fileIndex = buildDirectoryFileIndex(resolvedDirectory);
+    const inputsByName = new Map();
+    const missing = [];
+
+    for (const tileName of LIVE_MAP_TILE_NAMES) {
+      const foundPath = findLocalTilePath(fileIndex, tileName);
+      if (!foundPath) {
+        missing.push(tileName);
+        continue;
+      }
+      const buffer = await fs.promises.readFile(foundPath);
+      inputsByName.set(tileName, {
+        tileName,
+        fileName: path.basename(foundPath),
+        mimeType: '',
+        size: Number(buffer.length || 0),
+        buffer,
+      });
+    }
+
+    if (missing.length > 0) {
+      return res.status(400).json({
+        error: 'Missing required map tile files in local directory',
+        details: {
+          directory: resolvedDirectory,
+          missing,
+          expected_names: LIVE_MAP_TILE_NAMES,
+          extensions_checked: LOCAL_TILE_IMPORT_EXTENSIONS,
+        },
+      });
+    }
+
+    const ingestionResult = await ingestAndPersistLiveMapTiles(inputsByName);
+    const detectedTileSize = Number(ingestionResult?.detectedTileSize || 0);
+    const missingAfterUpload = Array.isArray(ingestionResult?.missingAfterUpload) ? ingestionResult.missingAfterUpload : [];
+
+    audit(req.user.id, 'live_map_tiles_imported_local', {
+      tile_count: LIVE_MAP_TILE_NAMES.length,
+      tile_names: LIVE_MAP_TILE_NAMES,
+      tile_size: detectedTileSize,
+      source_directory: resolvedDirectory,
+      source_formats: ingestionResult?.sourceFormats || {},
+      missing_after_upload: missingAfterUpload,
+      total_size_bytes: Number(ingestionResult?.totalInputBytes || 0),
+    });
+
+    return res.json({
+      success: true,
+      imported: LIVE_MAP_TILE_NAMES.length,
+      tile_names: LIVE_MAP_TILE_NAMES,
+      tile_size: detectedTileSize,
+      source_directory: resolvedDirectory,
+      source_formats: ingestionResult?.sourceFormats || {},
+      missing: missingAfterUpload,
+      map_available: missingAfterUpload.length === 0,
+    });
+  } catch (err) {
+    if (sendRouteError(res, err)) return;
     next(err);
   }
 });

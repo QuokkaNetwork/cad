@@ -1687,6 +1687,7 @@ router.post('/live-map/calibration', requireBridgeAuth, (req, res) => {
   Settings.set('live_map_game_y1', String(y1));
   Settings.set('live_map_game_x2', String(x2));
   Settings.set('live_map_game_y2', String(y2));
+  Settings.set('live_map_use_custom_bounds', 'true');
 
   const scaleX = Number(body.map_scale_x);
   const scaleY = Number(body.map_scale_y);
@@ -1701,6 +1702,7 @@ router.post('/live-map/calibration', requireBridgeAuth, (req, res) => {
   return res.json({
     ok: true,
     map_game_bounds: { x1, y1, x2, y2 },
+    map_use_custom_bounds: true,
     map_scale_x: Number.isFinite(scaleX) ? scaleX : undefined,
     map_scale_y: Number.isFinite(scaleY) ? scaleY : undefined,
     map_offset_x: Number.isFinite(offsetX) ? offsetX : undefined,
