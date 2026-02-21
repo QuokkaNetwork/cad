@@ -1,86 +1,16 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Settings, Calls } = require('../db/sqlite');
+const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 const liveMapStore = require('../services/liveMapStore');
 const {
-  LIVE_MAP_TILE_NAMES,
-  LIVE_MAP_TILE_URL_TEMPLATE,
-  LIVE_MAP_TILE_SIZE,
-  LIVE_MAP_MIN_ZOOM,
-  LIVE_MAP_MAX_ZOOM,
-  LIVE_MAP_MIN_NATIVE_ZOOM,
-  LIVE_MAP_MAX_NATIVE_ZOOM,
-  getLiveMapTileGrid,
   listMissingLiveMapTiles,
   hasCompleteLiveMapTiles,
 } = require('../services/liveMapTiles');
 
 const router = express.Router();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
-const DEFAULT_MAP_SCALE = 1;
-const DEFAULT_MAP_OFFSET = 0;
-const DEFAULT_MAP_CALIBRATION_INCREMENT = 0.1;
-const DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE = true;
-const DEFAULT_MAP_USE_CUSTOM_BOUNDS = true;
-const DEFAULT_MAP_GAME_BOUNDS = Object.freeze({
-  x1: -4230,
-  y1: 8420,
-  x2: 370,
-  y2: -640,
-});
-
-function parseMapNumber(value, fallback) {
-  const text = String(value ?? '').trim();
-  if (!text) return fallback;
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
-}
-
-function parseMapCalibrationIncrement(value, fallback = DEFAULT_MAP_CALIBRATION_INCREMENT) {
-  const parsed = parseMapNumber(value, fallback);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.max(0.001, Math.min(100, parsed));
-}
-
-function parseMapScale(value, fallback = DEFAULT_MAP_SCALE) {
-  const parsed = parseMapNumber(value, fallback);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.max(0.2, Math.min(5, parsed));
-}
-
-function parseTileSize(value, fallback = LIVE_MAP_TILE_SIZE) {
-  const parsed = Math.round(parseMapNumber(value, fallback));
-  if (!Number.isFinite(parsed) || parsed < 128) return fallback;
-  return Math.min(8192, parsed);
-}
-
-function parseMapBoolean(value, fallback) {
-  const text = String(value ?? '').trim().toLowerCase();
-  if (!text) return fallback;
-  if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return true;
-  if (['0', 'false', 'no', 'n', 'off'].includes(text)) return false;
-  return fallback;
-}
-
-function sanitizeMapBounds(bounds) {
-  const x1 = Number(bounds?.x1);
-  const y1 = Number(bounds?.y1);
-  const x2 = Number(bounds?.x2);
-  const y2 = Number(bounds?.y2);
-  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) {
-    return { ...DEFAULT_MAP_GAME_BOUNDS };
-  }
-  if (!(x2 > x1) || !(y1 > y2)) {
-    return { ...DEFAULT_MAP_GAME_BOUNDS };
-  }
-  // Guard against accidentally-saved tiny calibration windows.
-  if ((x2 - x1) < 2000 || (y1 - y2) < 2000) {
-    return { ...DEFAULT_MAP_GAME_BOUNDS };
-  }
-  return { x1, y1, x2, y2 };
-}
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -380,76 +310,10 @@ router.get('/map', requireAuth, (req, res) => {
 });
 
 router.get('/map-config', requireAuth, (_req, res) => {
-  const directUrl = String(Settings.get('live_map_url') || '').trim();
-  const socketUrl = String(Settings.get('live_map_socket_url') || '').trim();
-  const mapScaleX = parseMapScale(Settings.get('live_map_scale_x'), DEFAULT_MAP_SCALE);
-  const mapScaleY = parseMapScale(Settings.get('live_map_scale_y'), DEFAULT_MAP_SCALE);
-  const mapOffsetX = parseMapNumber(Settings.get('live_map_offset_x'), DEFAULT_MAP_OFFSET);
-  const mapOffsetY = parseMapNumber(Settings.get('live_map_offset_y'), DEFAULT_MAP_OFFSET);
-  const mapCalibrationIncrement = parseMapCalibrationIncrement(
-    Settings.get('live_map_calibration_increment'),
-    DEFAULT_MAP_CALIBRATION_INCREMENT
-  );
-  const mapScaleIncrement = parseMapCalibrationIncrement(
-    Settings.get('live_map_scale_increment'),
-    0.01
-  );
-  const adminCalibrationVisible = parseMapBoolean(
-    Settings.get('live_map_admin_calibration_visible'),
-    DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE
-  );
-  const persistedBounds = sanitizeMapBounds({
-    x1: parseMapNumber(Settings.get('live_map_game_x1'), DEFAULT_MAP_GAME_BOUNDS.x1),
-    y1: parseMapNumber(Settings.get('live_map_game_y1'), DEFAULT_MAP_GAME_BOUNDS.y1),
-    x2: parseMapNumber(Settings.get('live_map_game_x2'), DEFAULT_MAP_GAME_BOUNDS.x2),
-    y2: parseMapNumber(Settings.get('live_map_game_y2'), DEFAULT_MAP_GAME_BOUNDS.y2),
-  });
-  const useCustomBounds = parseMapBoolean(
-    Settings.get('live_map_use_custom_bounds'),
-    DEFAULT_MAP_USE_CUSTOM_BOUNDS
-  );
-  const resolvedBounds = useCustomBounds ? persistedBounds : { ...DEFAULT_MAP_GAME_BOUNDS };
-  const mapGameX1 = resolvedBounds.x1;
-  const mapGameY1 = resolvedBounds.y1;
-  const mapGameX2 = resolvedBounds.x2;
-  const mapGameY2 = resolvedBounds.y2;
-  const tileGrid = getLiveMapTileGrid();
-  const tileSize = parseTileSize(Settings.get('live_map_tile_size'), LIVE_MAP_TILE_SIZE);
   const missingTiles = listMissingLiveMapTiles();
   const mapAvailable = hasCompleteLiveMapTiles();
   res.json({
-    live_map_url: directUrl,
-    map_image_url: '',
     map_available: mapAvailable,
-    map_source: mapAvailable ? 'server_resource_tiles' : 'none',
-    live_map_socket_url: socketUrl,
-    map_scale_x: mapScaleX,
-    map_scale_y: mapScaleY,
-    map_offset_x: mapOffsetX,
-    map_offset_y: mapOffsetY,
-    map_calibration_increment: mapCalibrationIncrement,
-    map_scale_increment: mapScaleIncrement,
-    admin_calibration_visible: adminCalibrationVisible,
-    map_game_x1: mapGameX1,
-    map_game_y1: mapGameY1,
-    map_game_x2: mapGameX2,
-    map_game_y2: mapGameY2,
-    map_game_bounds: {
-      x1: mapGameX1,
-      y1: mapGameY1,
-      x2: mapGameX2,
-      y2: mapGameY2,
-    },
-    map_use_custom_bounds: useCustomBounds,
-    tile_url_template: LIVE_MAP_TILE_URL_TEMPLATE,
-    tile_names: tileGrid.tileNames.length > 0 ? tileGrid.tileNames : LIVE_MAP_TILE_NAMES,
-    tile_size: tileSize,
-    tile_rows: tileGrid.tileRows,
-    tile_columns: tileGrid.tileColumns,
-    min_zoom: LIVE_MAP_MIN_ZOOM,
-    max_zoom: LIVE_MAP_MAX_ZOOM,
-    min_native_zoom: LIVE_MAP_MIN_NATIVE_ZOOM,
-    max_native_zoom: LIVE_MAP_MAX_NATIVE_ZOOM,
     missing_tiles: missingTiles,
   });
 });
