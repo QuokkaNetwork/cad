@@ -1808,6 +1808,23 @@ local function submitVehicleRegistration(src, formData)
         end
         return
       end
+
+      if status == 403 then
+        local parsedErrorLower = string.lower(trim(parsedError or ''))
+        if parsedErrorLower:find('do not own', 1, true)
+          or parsedErrorLower:find('ownership', 1, true)
+          or parsedErrorLower:find('player_vehicles', 1, true) then
+          logDocumentFailure('registration-create-rejected', {
+            reason = 'ownership_mismatch',
+            http_status = tonumber(status) or 0,
+            api_error = parsedError,
+            payload = summarizeRegistrationPayloadForLog(payload),
+          })
+          notifyPlayer(s, 'Vehicle detected in the registration area, but you cannot register it because you do not own it.')
+          return
+        end
+      end
+
       logDocumentFailure('registration-create-failed', {
         http_status = tonumber(status) or 0,
         api_error = parsedError,

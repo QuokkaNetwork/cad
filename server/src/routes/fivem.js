@@ -1967,7 +1967,9 @@ router.post('/registrations', requireBridgeAuth, async (req, res) => {
         plate: normalizedPlate,
         citizenid: citizenId,
       });
-      return res.status(403).json({ error: 'You do not own this vehicle in player_vehicles' });
+      return res.status(403).json({
+        error: 'Vehicle detected in the registration area, but you cannot register it because you do not own it.',
+      });
     }
 
     const ownerName = String(payload.owner_name || payload.character_name || payload.full_name || playerName).trim();
