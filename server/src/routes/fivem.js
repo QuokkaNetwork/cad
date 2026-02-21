@@ -62,9 +62,24 @@ router.use((req, res, next) => {
 const liveLinkUserCache = new Map();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const pendingRouteJobs = new Map();
+const pendingClosestCallPrompts = new Map();
+const closestCallDeclines = new Map();
 const pendingVoiceEvents = new Map();
 let nextVoiceEventId = 1;
 const VOICE_EVENT_RETRY_LIMIT = 5;
+const CLOSEST_CALL_DECLINE_COOLDOWN_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.FIVEM_CLOSEST_CALL_DECLINE_COOLDOWN_MS || '90000', 10) || 90_000
+);
+const CLOSEST_CALL_PROMPT_REFRESH_INTERVAL_MS = Math.max(
+  2_000,
+  Number.parseInt(process.env.FIVEM_CLOSEST_CALL_PROMPT_REFRESH_INTERVAL_MS || '3000', 10) || 3_000
+);
+const CLOSEST_CALL_PROMPT_RESEND_INTERVAL_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.FIVEM_CLOSEST_CALL_PROMPT_RESEND_INTERVAL_MS || '20000', 10) || 20_000
+);
+let lastClosestCallPromptRefreshAtMs = 0;
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
 const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
 const BRIDGE_MUGSHOT_MAX_CHARS = Math.max(
@@ -948,20 +963,34 @@ function chooseActiveLinkForUser(user) {
     candidates.push(FiveMPlayerLinks.findBySteamId(`discord:${String(user.discord_id).trim()}`));
   }
 
-  let selected = null;
+  let selectedPreferred = null;
+  let selectedFallback = null;
   for (const candidate of candidates) {
     if (!candidate || !isActiveFiveMLink(candidate)) continue;
-    if (preferredCitizenId && String(candidate.citizen_id || '').trim() !== preferredCitizenId) continue;
-    if (!selected) {
-      selected = candidate;
+    const candidateCitizen = String(candidate.citizen_id || '').trim();
+    const candidateScore = (candidateCitizen ? 2 : 0) + (String(candidate.game_id || '').trim() ? 1 : 0);
+
+    const isPreferred = !!preferredCitizenId && candidateCitizen === preferredCitizenId;
+    if (isPreferred) {
+      if (!selectedPreferred) {
+        selectedPreferred = candidate;
+      } else {
+        const selectedPreferredScore = (String(selectedPreferred.citizen_id || '').trim() ? 2 : 0)
+          + (String(selectedPreferred.game_id || '').trim() ? 1 : 0);
+        if (candidateScore > selectedPreferredScore) selectedPreferred = candidate;
+      }
       continue;
     }
 
-    const candidateScore = (String(candidate.citizen_id || '').trim() ? 2 : 0) + (String(candidate.game_id || '').trim() ? 1 : 0);
-    const selectedScore = (String(selected.citizen_id || '').trim() ? 2 : 0) + (String(selected.game_id || '').trim() ? 1 : 0);
-    if (candidateScore > selectedScore) selected = candidate;
+    if (!selectedFallback) {
+      selectedFallback = candidate;
+      continue;
+    }
+    const selectedFallbackScore = (String(selectedFallback.citizen_id || '').trim() ? 2 : 0)
+      + (String(selectedFallback.game_id || '').trim() ? 1 : 0);
+    if (candidateScore > selectedFallbackScore) selectedFallback = candidate;
   }
-  return selected;
+  return selectedPreferred || selectedFallback || null;
 }
 
 function findActiveLinkByCitizenId(citizenId) {
@@ -1067,12 +1096,47 @@ function clearRouteJobsForAssignment(callId, unitId) {
   }
 }
 
-function resolveRouteCitizenIdForUnit(unit) {
-  if (!unit) return '';
+function resolveRouteTargetForUnit(unit) {
+  if (!unit) return null;
   const user = Users.findById(unit.user_id);
-  if (!user) return '';
+  if (!user) return null;
   const activeLink = chooseActiveLinkForUser(user);
-  return String(activeLink?.citizen_id || user.preferred_citizen_id || '').trim();
+
+  return {
+    user_id: Number(user.id || 0),
+    steam_id: String(activeLink?.steam_id || user.steam_id || '').trim(),
+    discord_id: String(user.discord_id || '').trim(),
+    citizen_id: String(activeLink?.citizen_id || user.preferred_citizen_id || '').trim(),
+    game_id: String(activeLink?.game_id || '').trim(),
+    player_name: String(activeLink?.player_name || '').trim(),
+    target_position_x: Number(activeLink?.position_x),
+    target_position_y: Number(activeLink?.position_y),
+  };
+}
+
+function hasRouteTarget(target) {
+  if (!target || typeof target !== 'object') return false;
+  return !!(
+    String(target.game_id || '').trim()
+    || String(target.citizen_id || '').trim()
+    || String(target.discord_id || '').trim()
+    || String(target.steam_id || '').trim()
+  );
+}
+
+function enrichRouteJobWithTarget(baseJob, target) {
+  const resolved = target && typeof target === 'object' ? target : {};
+  return {
+    ...baseJob,
+    user_id: Number(resolved.user_id || 0) || 0,
+    steam_id: String(resolved.steam_id || '').trim(),
+    discord_id: String(resolved.discord_id || '').trim(),
+    citizen_id: String(resolved.citizen_id || '').trim(),
+    game_id: String(resolved.game_id || '').trim(),
+    player_name: String(resolved.player_name || '').trim(),
+    target_position_x: Number(resolved.target_position_x),
+    target_position_y: Number(resolved.target_position_y),
+  };
 }
 
 function queueRouteJobForAssignment(call, unit) {
@@ -1080,8 +1144,8 @@ function queueRouteJobForAssignment(call, unit) {
   const unitId = Number(unit?.id || 0);
   if (!callId || !unitId) return;
 
-  const citizenId = resolveRouteCitizenIdForUnit(unit);
-  if (!citizenId) return;
+  const routeTarget = resolveRouteTargetForUnit(unit);
+  if (!hasRouteTarget(routeTarget)) return;
 
   const postal = String(resolveCallPostal(call) || '').trim();
   const positionX = Number(call?.position_x);
@@ -1092,14 +1156,13 @@ function queueRouteJobForAssignment(call, unit) {
 
   clearRouteJobsForAssignment(callId, unitId);
   const routeJobId = getRouteJobId(unitId, callId, 'set');
-  pendingRouteJobs.set(routeJobId, {
+  pendingRouteJobs.set(routeJobId, enrichRouteJobWithTarget({
     id: routeJobId,
     unit_id: unitId,
     call_id: callId,
     action: 'set',
     clear_waypoint: 0,
     call_title: String(call?.title || ''),
-    citizen_id: citizenId,
     location: String(call?.location || ''),
     postal,
     position_x: hasPosition ? positionX : null,
@@ -1107,7 +1170,7 @@ function queueRouteJobForAssignment(call, unit) {
     position_z: Number.isFinite(positionZ) ? positionZ : null,
     created_at: Date.now(),
     updated_at: Date.now(),
-  });
+  }, routeTarget));
 }
 
 function queueRouteClearJob(call, unit, fallbackUnitId = 0) {
@@ -1115,19 +1178,18 @@ function queueRouteClearJob(call, unit, fallbackUnitId = 0) {
   if (!unitId) return;
 
   const callId = Number(call?.id || 0);
-  const citizenId = resolveRouteCitizenIdForUnit(unit);
-  if (!citizenId) return;
+  const routeTarget = resolveRouteTargetForUnit(unit);
+  if (!hasRouteTarget(routeTarget)) return;
 
   clearRouteJobsForAssignment(callId, unitId);
   const routeJobId = getRouteJobId(unitId, callId, 'clear');
-  pendingRouteJobs.set(routeJobId, {
+  pendingRouteJobs.set(routeJobId, enrichRouteJobWithTarget({
     id: routeJobId,
     unit_id: unitId,
     call_id: callId,
     action: 'clear',
     clear_waypoint: 1,
     call_title: String(call?.title || ''),
-    citizen_id: citizenId,
     location: String(call?.location || ''),
     postal: '',
     position_x: null,
@@ -1135,7 +1197,7 @@ function queueRouteClearJob(call, unit, fallbackUnitId = 0) {
     position_z: null,
     created_at: Date.now(),
     updated_at: Date.now(),
-  });
+  }, routeTarget));
 }
 
 function clearRouteJobsForUnit(unitId) {
@@ -1157,6 +1219,244 @@ function clearRouteJobsForCall(callId, keepClearJobs = true) {
       pendingRouteJobs.delete(key);
     }
   }
+}
+
+function normalizeRequestedDepartmentIdsFromCall(call) {
+  if (Array.isArray(call?.requested_department_ids)) {
+    return Array.from(new Set(
+      call.requested_department_ids
+        .map(item => Number(item))
+        .filter(item => Number.isInteger(item) && item > 0)
+    ));
+  }
+
+  const raw = String(call?.requested_department_ids_json || '').trim();
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return Array.from(new Set(
+          parsed
+            .map(item => Number(item))
+            .filter(item => Number.isInteger(item) && item > 0)
+        ));
+      }
+    } catch {
+      // ignore malformed JSON
+    }
+  }
+
+  const fallback = Number(call?.department_id || 0);
+  return Number.isInteger(fallback) && fallback > 0 ? [fallback] : [];
+}
+
+function getCallPromptId(callId) {
+  return `closest:${Number(callId || 0)}`;
+}
+
+function getDeclineKey(callId, unitId) {
+  return `${Number(callId || 0)}:${Number(unitId || 0)}`;
+}
+
+function pruneClosestCallDeclines(now = Date.now()) {
+  const cutoff = Number(now) - CLOSEST_CALL_DECLINE_COOLDOWN_MS;
+  for (const [key, declinedAt] of closestCallDeclines.entries()) {
+    if (Number(declinedAt || 0) < cutoff) {
+      closestCallDeclines.delete(key);
+    }
+  }
+}
+
+function clearClosestCallPrompt(callId) {
+  const id = getCallPromptId(callId);
+  pendingClosestCallPrompts.delete(id);
+}
+
+function clearClosestCallPromptsForUnit(unitId) {
+  const normalizedUnitId = Number(unitId || 0);
+  if (!normalizedUnitId) return;
+  for (const [id, job] of pendingClosestCallPrompts.entries()) {
+    if (Number(job?.unit_id || 0) === normalizedUnitId) {
+      pendingClosestCallPrompts.delete(id);
+    }
+  }
+}
+
+function clearClosestCallDeclines(callId) {
+  const normalizedCallId = Number(callId || 0);
+  if (!normalizedCallId) return;
+  for (const [key] of closestCallDeclines.entries()) {
+    if (key.startsWith(`${normalizedCallId}:`)) {
+      closestCallDeclines.delete(key);
+    }
+  }
+}
+
+function hasActiveDispatcherOnline() {
+  const dispatchDeptIds = Departments.list()
+    .filter(dept => dept.is_dispatch)
+    .map(dept => Number(dept.id))
+    .filter(id => Number.isInteger(id) && id > 0);
+
+  if (dispatchDeptIds.length === 0) return false;
+  return Units.listByDepartmentIds(dispatchDeptIds).length > 0;
+}
+
+function parseCallPosition(call) {
+  const x = Number(call?.position_x);
+  const y = Number(call?.position_y);
+  const z = Number(call?.position_z);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y, z: Number.isFinite(z) ? z : 0 };
+}
+
+function queueClosestCallPromptForCall(call, { force = false } = {}) {
+  const callId = Number(call?.id || 0);
+  if (!callId) return null;
+
+  const resolvedCall = Calls.findById(callId) || call;
+  if (!resolvedCall || String(resolvedCall.status || '').trim().toLowerCase() === 'closed') {
+    clearClosestCallPrompt(callId);
+    clearClosestCallDeclines(callId);
+    return null;
+  }
+
+  const callPosition = parseCallPosition(resolvedCall);
+  if (!callPosition) {
+    clearClosestCallPrompt(callId);
+    return null;
+  }
+
+  if (hasActiveDispatcherOnline()) {
+    clearClosestCallPrompt(callId);
+    return null;
+  }
+
+  const assignedUnits = Array.isArray(resolvedCall.assigned_units) ? resolvedCall.assigned_units : [];
+  if (assignedUnits.length > 0) {
+    clearClosestCallPrompt(callId);
+    return null;
+  }
+
+  const requestedDeptIds = normalizeRequestedDepartmentIdsFromCall(resolvedCall);
+  if (requestedDeptIds.length === 0) return null;
+
+  pruneClosestCallDeclines();
+  const availableUnits = Units.listByDepartmentIds(requestedDeptIds)
+    .filter(unit => String(unit?.status || '').trim().toLowerCase() === 'available');
+
+  let best = null;
+  for (const unit of availableUnits) {
+    const unitId = Number(unit?.id || 0);
+    if (!unitId) continue;
+    if (assignedUnits.some(assigned => Number(assigned?.id || 0) === unitId)) continue;
+
+    const target = resolveRouteTargetForUnit(unit);
+    if (!hasRouteTarget(target)) continue;
+
+    let unitX = Number(target.target_position_x);
+    let unitY = Number(target.target_position_y);
+
+    if ((!Number.isFinite(unitX) || !Number.isFinite(unitY)) && String(target.citizen_id || '').trim()) {
+      const byCitizen = findActiveLinkByCitizenId(target.citizen_id);
+      unitX = Number(byCitizen?.position_x);
+      unitY = Number(byCitizen?.position_y);
+    }
+    if (!Number.isFinite(unitX) || !Number.isFinite(unitY)) continue;
+
+    const declineKey = getDeclineKey(callId, unitId);
+    const declinedAt = Number(closestCallDeclines.get(declineKey) || 0);
+    if (!force && declinedAt > 0 && (Date.now() - declinedAt) < CLOSEST_CALL_DECLINE_COOLDOWN_MS) {
+      continue;
+    }
+
+    const dx = unitX - callPosition.x;
+    const dy = unitY - callPosition.y;
+    const distance = Math.sqrt((dx * dx) + (dy * dy));
+    if (!Number.isFinite(distance)) continue;
+
+    if (!best || distance < best.distance) {
+      best = {
+        unit,
+        target,
+        distance,
+      };
+    }
+  }
+
+  if (!best) {
+    clearClosestCallPrompt(callId);
+    return null;
+  }
+
+  const promptId = getCallPromptId(callId);
+  const existingJob = pendingClosestCallPrompts.get(promptId) || null;
+  if (
+    !force
+    && existingJob
+    && Number(existingJob.unit_id || 0) === Number(best.unit.id || 0)
+    && Number(existingJob.dispatched_at || 0) > 0
+  ) {
+    return existingJob;
+  }
+
+  const routePostal = String(resolveCallPostal(resolvedCall) || '').trim();
+  const job = {
+    id: promptId,
+    call_id: callId,
+    unit_id: Number(best.unit.id || 0),
+    distance_meters: Number(best.distance.toFixed(2)),
+    title: String(resolvedCall.title || '').trim(),
+    priority: String(resolvedCall.priority || '').trim(),
+    location: String(resolvedCall.location || '').trim(),
+    postal: routePostal,
+    position_x: callPosition.x,
+    position_y: callPosition.y,
+    position_z: callPosition.z,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    dispatched_at: 0,
+  };
+
+  pendingClosestCallPrompts.set(promptId, enrichRouteJobWithTarget(job, best.target));
+  return pendingClosestCallPrompts.get(promptId) || null;
+}
+
+function resolveActiveLinkForBridgeJob(job = {}) {
+  const gameId = String(job.game_id || '').trim();
+  if (gameId) {
+    const byGameId = findActiveLinkByGameId(gameId);
+    if (byGameId) return byGameId;
+  }
+
+  const citizenId = String(job.citizen_id || '').trim();
+  if (citizenId) {
+    const byCitizenId = findActiveLinkByCitizenId(citizenId);
+    if (byCitizenId) return byCitizenId;
+  }
+
+  const discordId = String(job.discord_id || '').trim();
+  if (discordId) {
+    const byDiscord = FiveMPlayerLinks.findBySteamId(`discord:${discordId}`);
+    if (byDiscord && isActiveFiveMLink(byDiscord)) return byDiscord;
+  }
+
+  const steamId = String(job.steam_id || '').trim();
+  if (steamId) {
+    const bySteam = FiveMPlayerLinks.findBySteamId(steamId);
+    if (bySteam && isActiveFiveMLink(bySteam)) return bySteam;
+  }
+
+  const userId = Number(job.user_id || 0);
+  if (userId > 0) {
+    const user = Users.findById(userId);
+    if (user) {
+      const activeLink = chooseActiveLinkForUser(user);
+      if (activeLink) return activeLink;
+    }
+  }
+
+  return null;
 }
 
 function queueVoiceEvent(eventType, options = {}) {
@@ -1267,7 +1567,25 @@ function shouldAutoSetUnitOnScene(unit, playerPayload, assignedCall) {
   return targetPostal === currentPostal;
 }
 
+function refreshClosestPromptForCall(call, options = {}) {
+  try {
+    queueClosestCallPromptForCall(call, options);
+  } catch (err) {
+    console.warn('[FiveMBridge] Could not evaluate closest-unit prompt:', err?.message || err);
+  }
+}
+
+bus.on('call:create', ({ call }) => {
+  refreshClosestPromptForCall(call);
+});
+
+bus.on('call:update', ({ call }) => {
+  refreshClosestPromptForCall(call);
+});
+
 bus.on('call:assign', ({ call, unit }) => {
+  clearClosestCallPrompt(call?.id);
+  clearClosestCallPromptsForUnit(unit?.id);
   try {
     queueRouteJobForAssignment(call, unit);
   } catch (err) {
@@ -1287,10 +1605,14 @@ bus.on('call:unassign', ({ call, unit, unit_id, removed }) => {
   } catch (err) {
     console.warn('[FiveMBridge] Could not queue clear route job on call unassign:', err?.message || err);
   }
+
+  refreshClosestPromptForCall(call, { force: true });
 });
 
 bus.on('call:close', ({ call }) => {
   const callId = Number(call?.id || 0);
+  clearClosestCallPrompt(callId);
+  clearClosestCallDeclines(callId);
   const resolvedCall = (callId && Array.isArray(call?.assigned_units))
     ? call
     : (callId ? (Calls.findById(callId) || call) : call);
@@ -1316,6 +1638,7 @@ bus.on('call:close', ({ call }) => {
 
 bus.on('unit:offline', ({ unit }) => {
   clearRouteJobsForUnit(unit?.id);
+  clearClosestCallPromptsForUnit(unit?.id);
 });
 
 bus.on('unit:status_available', ({ unit, call }) => {
@@ -1330,6 +1653,8 @@ bus.on('unit:status_available', ({ unit, call }) => {
   } catch (err) {
     console.warn('[FiveMBridge] Could not queue clear route job on status available:', err?.message || err);
   }
+
+  refreshClosestPromptForCall(resolvedCall, { force: true });
 });
 
 bus.on('voice:join', (payload = {}) => {
@@ -1514,6 +1839,21 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   }
 
   liveMapStore.retainOnly(seenLiveMapIdentifiers);
+
+  // Keep closest-unit prompt queue current as fresh unit positions arrive.
+  const nowMs = Date.now();
+  if ((nowMs - Number(lastClosestCallPromptRefreshAtMs || 0)) >= CLOSEST_CALL_PROMPT_REFRESH_INTERVAL_MS) {
+    lastClosestCallPromptRefreshAtMs = nowMs;
+    const dispatchVisibleIds = getDispatchVisibleDepartments()
+      .map(d => Number(d.id))
+      .filter(id => Number.isInteger(id) && id > 0);
+    if (dispatchVisibleIds.length > 0) {
+      for (const activeCall of Calls.listByDepartmentIds(dispatchVisibleIds, false)) {
+        if (String(activeCall?.status || '').trim().toLowerCase() === 'closed') continue;
+        refreshClosestPromptForCall(activeCall);
+      }
+    }
+  }
 
   const autoOffDutyCount = enforceInGamePresenceForOnDutyUnits(detectedCadUserIds, 'heartbeat');
   res.json({
@@ -2183,13 +2523,13 @@ router.get('/route-jobs', requireBridgeAuth, (req, res) => {
   const jobs = [];
   for (const job of pendingRouteJobs.values()) {
     if (jobs.length >= limit) break;
-    const activeLink = findActiveLinkByCitizenId(job.citizen_id);
-    if (!activeLink) continue;
+    const activeLink = resolveActiveLinkForBridgeJob(job);
     jobs.push({
       ...job,
-      game_id: String(activeLink.game_id || ''),
-      steam_id: String(activeLink.steam_id || ''),
-      player_name: String(activeLink.player_name || ''),
+      game_id: String(job.game_id || activeLink?.game_id || ''),
+      steam_id: String(job.steam_id || activeLink?.steam_id || ''),
+      citizen_id: String(job.citizen_id || activeLink?.citizen_id || ''),
+      player_name: String(job.player_name || activeLink?.player_name || ''),
     });
   }
   res.json(jobs);
@@ -2208,6 +2548,268 @@ router.post('/route-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   const error = String(req.body?.error || 'Route delivery failed');
   pendingRouteJobs.delete(id);
   console.warn('[FiveMBridge] Route job failed:', id, error);
+  res.json({ ok: true });
+});
+
+router.get('/call-prompts', requireBridgeAuth, (req, res) => {
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+  const jobs = [];
+  const now = Date.now();
+
+  for (const [id, job] of pendingClosestCallPrompts.entries()) {
+    if (jobs.length >= limit) break;
+
+    const callId = Number(job?.call_id || 0);
+    const call = callId ? Calls.findById(callId) : null;
+    if (!call || String(call.status || '').trim().toLowerCase() === 'closed') {
+      pendingClosestCallPrompts.delete(id);
+      continue;
+    }
+    const dispatchedAt = Number(job?.dispatched_at || 0);
+    if (dispatchedAt > 0 && (now - dispatchedAt) < CLOSEST_CALL_PROMPT_RESEND_INTERVAL_MS) {
+      continue;
+    }
+
+    const activeLink = resolveActiveLinkForBridgeJob(job);
+    jobs.push({
+      ...job,
+      game_id: String(job.game_id || activeLink?.game_id || ''),
+      steam_id: String(job.steam_id || activeLink?.steam_id || ''),
+      citizen_id: String(job.citizen_id || activeLink?.citizen_id || ''),
+      player_name: String(job.player_name || activeLink?.player_name || ''),
+    });
+  }
+
+  return res.json(jobs);
+});
+
+router.post('/call-prompts/:id/sent', requireBridgeAuth, (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ error: 'Invalid call prompt id' });
+  const job = pendingClosestCallPrompts.get(id);
+  if (!job) return res.status(404).json({ error: 'Call prompt not found' });
+
+  pendingClosestCallPrompts.set(id, {
+    ...job,
+    dispatched_at: Date.now(),
+    updated_at: Date.now(),
+  });
+  return res.json({ ok: true });
+});
+
+router.post('/call-prompts/:id/accept', requireBridgeAuth, (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ error: 'Invalid call prompt id' });
+
+  const job = pendingClosestCallPrompts.get(id);
+  if (!job) return res.status(404).json({ error: 'Call prompt not found' });
+
+  const requestGameId = String(req.body?.game_id || '').trim();
+  const requestCitizenId = String(req.body?.citizen_id || '').trim();
+  if (requestGameId && String(job.game_id || '').trim() && requestGameId !== String(job.game_id || '').trim()) {
+    return res.status(403).json({ error: 'Call prompt does not belong to this player' });
+  }
+  if (requestCitizenId && String(job.citizen_id || '').trim() && requestCitizenId.toLowerCase() !== String(job.citizen_id || '').trim().toLowerCase()) {
+    return res.status(403).json({ error: 'Call prompt does not belong to this character' });
+  }
+
+  const callId = Number(job.call_id || 0);
+  const unitId = Number(job.unit_id || 0);
+  const call = callId ? Calls.findById(callId) : null;
+  const unit = unitId ? Units.findById(unitId) : null;
+
+  if (!call || String(call.status || '').trim().toLowerCase() === 'closed') {
+    pendingClosestCallPrompts.delete(id);
+    return res.status(409).json({ error: 'Call is no longer active' });
+  }
+  if (!unit) {
+    pendingClosestCallPrompts.delete(id);
+    refreshClosestPromptForCall({ id: callId }, { force: true });
+    return res.status(409).json({ error: 'Unit is no longer available' });
+  }
+
+  const alreadyAssigned = Array.isArray(call.assigned_units)
+    && call.assigned_units.some(assigned => Number(assigned?.id || 0) === unitId);
+  if (!alreadyAssigned && String(unit.status || '').trim().toLowerCase() !== 'available') {
+    pendingClosestCallPrompts.delete(id);
+    refreshClosestPromptForCall({ id: callId }, { force: true });
+    return res.status(409).json({ error: 'Unit is no longer available for assignment' });
+  }
+
+  const assignmentChanges = Calls.assignUnit(call.id, unit.id);
+  Calls.update(call.id, {
+    status: 'active',
+    was_ever_assigned: 1,
+  });
+  Units.update(unit.id, { status: 'enroute' });
+
+  const refreshedUnit = Units.findById(unit.id) || unit;
+  const updatedCall = Calls.findById(call.id) || call;
+  pendingClosestCallPrompts.delete(id);
+  clearClosestCallDeclines(call.id);
+
+  bus.emit('unit:update', { departmentId: refreshedUnit.department_id, unit: refreshedUnit });
+  bus.emit('call:assign', { departmentId: call.department_id, call: updatedCall, unit: refreshedUnit });
+  audit(null, 'fivem_call_prompt_accepted', {
+    callId: call.id,
+    unitId: unit.id,
+    callsign: refreshedUnit?.callsign || '',
+    assignment_created: assignmentChanges > 0,
+    source: 'fivem_bridge_prompt',
+  });
+
+  return res.json({ ok: true, call: updatedCall, unit: refreshedUnit });
+});
+
+router.post('/call-prompts/:id/decline', requireBridgeAuth, (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ error: 'Invalid call prompt id' });
+
+  const job = pendingClosestCallPrompts.get(id);
+  if (!job) return res.status(404).json({ error: 'Call prompt not found' });
+
+  const requestGameId = String(req.body?.game_id || '').trim();
+  const requestCitizenId = String(req.body?.citizen_id || '').trim();
+  if (requestGameId && String(job.game_id || '').trim() && requestGameId !== String(job.game_id || '').trim()) {
+    return res.status(403).json({ error: 'Call prompt does not belong to this player' });
+  }
+  if (requestCitizenId && String(job.citizen_id || '').trim() && requestCitizenId.toLowerCase() !== String(job.citizen_id || '').trim().toLowerCase()) {
+    return res.status(403).json({ error: 'Call prompt does not belong to this character' });
+  }
+
+  const callId = Number(job.call_id || 0);
+  const unitId = Number(job.unit_id || 0);
+  pendingClosestCallPrompts.delete(id);
+  if (callId > 0 && unitId > 0) {
+    closestCallDeclines.set(getDeclineKey(callId, unitId), Date.now());
+  }
+
+  audit(null, 'fivem_call_prompt_declined', {
+    callId,
+    unitId,
+    source: 'fivem_bridge_prompt',
+  });
+  refreshClosestPromptForCall({ id: callId }, { force: true });
+  return res.json({ ok: true });
+});
+
+// MiniCAD: Return active call details for a unit identified by game_id (source).
+router.get('/unit-active-call', requireBridgeAuth, (req, res) => {
+  const gameId = String(req.query.game_id || '').trim();
+  if (!gameId) return res.status(400).json({ error: 'game_id is required' });
+
+  // Resolve the CAD user from game_id via live map store.
+  const allPlayers = liveMapStore.listPlayers();
+  let cadUserId = 0;
+  for (const player of allPlayers) {
+    const pg = String(player?.gameId || player?.source || '').trim();
+    if (pg === gameId) {
+      cadUserId = Number(player?.cadUserId || 0);
+      break;
+    }
+  }
+  if (!cadUserId) return res.json(null);
+
+  const unit = Units.findByUserId(cadUserId);
+  if (!unit) return res.json(null);
+
+  const assigned = Calls.getAssignedCallForUnit(unit.id);
+  if (!assigned) return res.json(null);
+
+  const call = Calls.findById(assigned.id) || assigned;
+  const department = Departments.findById(Number(call.department_id));
+
+  // Build a list of all active (non-closed) calls this unit is assigned to for navigation.
+  const allAssignedCalls = [];
+  const dispatchVisibleIds = getDispatchVisibleDepartments().map(d => Number(d.id)).filter(id => Number.isInteger(id) && id > 0);
+  if (dispatchVisibleIds.length > 0) {
+    const allCalls = Calls.listByDepartmentIds(dispatchVisibleIds, false);
+    for (const c of allCalls) {
+      if (String(c?.status || '').trim().toLowerCase() === 'closed') continue;
+      const isAssigned = Array.isArray(c?.assigned_units) && c.assigned_units.some(u => Number(u.id) === Number(unit.id));
+      if (isAssigned) {
+        allAssignedCalls.push({
+          id: c.id,
+          title: c.title || '',
+          priority: c.priority || '3',
+          job_code: c.job_code || '',
+          location: c.location || '',
+          postal: c.postal || '',
+          status: c.status || 'active',
+        });
+      }
+    }
+  }
+
+  const assignedUnitBadges = Array.isArray(call.assigned_units)
+    ? call.assigned_units.map(u => ({
+      callsign: String(u.callsign || ''),
+      status: String(u.status || ''),
+      department_color: String(u.department_color || ''),
+    }))
+    : [];
+
+  res.json({
+    call_id: call.id,
+    title: call.title || '',
+    priority: call.priority || '3',
+    job_code: call.job_code || '',
+    location: call.location || '',
+    postal: call.postal || '',
+    description: call.description || '',
+    status: call.status || 'active',
+    department_name: department?.name || '',
+    department_short_name: department?.short_name || '',
+    department_color: department?.color || '',
+    assigned_units: assignedUnitBadges,
+    all_assigned_calls: allAssignedCalls,
+    unit_callsign: unit.callsign || '',
+    unit_id: unit.id,
+  });
+});
+
+// MiniCAD: Detach a unit from a call, identified by game_id.
+router.post('/unit-detach-call', requireBridgeAuth, (req, res) => {
+  const gameId = String(req.body?.game_id || '').trim();
+  const callId = Number(req.body?.call_id || 0);
+  if (!gameId || !callId) return res.status(400).json({ error: 'game_id and call_id are required' });
+
+  // Resolve the CAD user from game_id via live map store.
+  const allPlayers = liveMapStore.listPlayers();
+  let cadUserId = 0;
+  for (const player of allPlayers) {
+    const pg = String(player?.gameId || player?.source || '').trim();
+    if (pg === gameId) {
+      cadUserId = Number(player?.cadUserId || 0);
+      break;
+    }
+  }
+  if (!cadUserId) return res.status(404).json({ error: 'Player not found' });
+
+  const unit = Units.findByUserId(cadUserId);
+  if (!unit) return res.status(404).json({ error: 'Unit not found' });
+
+  const call = Calls.findById(callId);
+  if (!call) return res.status(404).json({ error: 'Call not found' });
+
+  const isAssigned = Array.isArray(call?.assigned_units)
+    && call.assigned_units.some(u => Number(u.id) === Number(unit.id));
+  if (!isAssigned) return res.status(400).json({ error: 'Unit is not assigned to this call' });
+
+  Calls.unassignUnit(callId, unit.id);
+  Units.update(unit.id, { status: 'busy' });
+  const refreshedUnit = Units.findById(unit.id) || unit;
+  const updated = Calls.findById(callId);
+
+  bus.emit('unit:update', { departmentId: refreshedUnit.department_id, unit: refreshedUnit });
+  bus.emit('call:unassign', {
+    departmentId: call.department_id,
+    call: updated,
+    unit: refreshedUnit,
+    unit_id: unit.id,
+    removed: true,
+  });
+
   res.json({ ok: true });
 });
 

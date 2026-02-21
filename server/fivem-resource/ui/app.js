@@ -1086,6 +1086,18 @@ window.addEventListener("message", function onMessage(event) {
     closeIdCard();
     return;
   }
+  if (message.action === "cadBridgeMiniCad:update") {
+    updateMiniCad(message.payload || null);
+    return;
+  }
+  if (message.action === "cadBridgeMiniCad:show") {
+    if (miniCadData && miniCadData.call_id) showMiniCad();
+    return;
+  }
+  if (message.action === "cadBridgeMiniCad:hide") {
+    hideMiniCad();
+    return;
+  }
   if (message.action === "cadBridgeMugshot:showBackdrop") {
     var bd = document.getElementById("mugshotBackdrop");
     if (bd) bd.style.display = "none";
@@ -1122,6 +1134,151 @@ window.addEventListener("message", function onMessage(event) {
     return;
   }
 });
+
+// ─── Mini-CAD Popup ───
+var miniCadPopup = document.getElementById("miniCadPopup");
+var miniCadCallIndex = document.getElementById("miniCadCallIndex");
+var miniCadJobCode = document.getElementById("miniCadJobCode");
+var miniCadTitle = document.getElementById("miniCadTitle");
+var miniCadLocation = document.getElementById("miniCadLocation");
+var miniCadPostal = document.getElementById("miniCadPostal");
+var miniCadUnits = document.getElementById("miniCadUnits");
+var miniCadDescription = document.getElementById("miniCadDescription");
+var miniCadPrevBtn = document.getElementById("miniCadPrev");
+var miniCadNextBtn = document.getElementById("miniCadNext");
+var miniCadDetachBtn = document.getElementById("miniCadDetach");
+var miniCadHideBtn = document.getElementById("miniCadHideBtn");
+var miniCadOpen = false;
+var miniCadData = null;
+var miniCadCurrentIndex = 0;
+
+function showMiniCad() {
+  if (!miniCadPopup) return;
+  miniCadOpen = true;
+  miniCadPopup.classList.remove("hidden");
+}
+
+function hideMiniCad() {
+  if (!miniCadPopup) return;
+  miniCadOpen = false;
+  miniCadPopup.classList.add("hidden");
+  postNui("cadBridgeMiniCadHidden", {}).catch(function ignore() {});
+}
+
+function updateMiniCad(payload) {
+  miniCadData = payload || null;
+  if (!miniCadData || !miniCadData.call_id) {
+    if (miniCadOpen) hideMiniCad();
+    return;
+  }
+
+  var allCalls = Array.isArray(miniCadData.all_assigned_calls) ? miniCadData.all_assigned_calls : [];
+  var totalCalls = Math.max(1, allCalls.length);
+
+  // Find current call index in the list.
+  var foundIndex = -1;
+  for (var i = 0; i < allCalls.length; i++) {
+    if (Number(allCalls[i].id) === Number(miniCadData.call_id)) {
+      foundIndex = i;
+      break;
+    }
+  }
+  if (foundIndex >= 0) {
+    miniCadCurrentIndex = foundIndex;
+  } else {
+    miniCadCurrentIndex = 0;
+  }
+
+  renderMiniCadCall();
+}
+
+function renderMiniCadCall() {
+  if (!miniCadData) return;
+
+  var allCalls = Array.isArray(miniCadData.all_assigned_calls) ? miniCadData.all_assigned_calls : [];
+  var totalCalls = Math.max(1, allCalls.length);
+  var displayIndex = miniCadCurrentIndex + 1;
+  var currentCall = allCalls[miniCadCurrentIndex] || miniCadData;
+
+  if (miniCadCallIndex) miniCadCallIndex.textContent = String(displayIndex) + "/" + String(totalCalls);
+
+  var jobCode = String(currentCall.job_code || "").trim();
+  var title = String(currentCall.title || "").trim();
+  var priority = String(currentCall.priority || "").trim();
+  if (miniCadJobCode) {
+    var headerParts = [];
+    if (jobCode) headerParts.push(jobCode);
+    if (priority) headerParts.push("P" + priority);
+    miniCadJobCode.textContent = headerParts.length > 0 ? headerParts.join(" | ") : "";
+    miniCadJobCode.style.display = headerParts.length > 0 ? "" : "none";
+  }
+  if (miniCadTitle) {
+    miniCadTitle.textContent = title.toUpperCase();
+  }
+
+  if (miniCadLocation) {
+    miniCadLocation.textContent = String(currentCall.location || "").trim() || "No location set";
+  }
+
+  if (miniCadPostal) {
+    var postalVal = String(currentCall.postal || "").trim();
+    miniCadPostal.textContent = postalVal;
+  }
+
+  // Render assigned unit badges.
+  if (miniCadUnits) {
+    miniCadUnits.innerHTML = "";
+    var units = Array.isArray(miniCadData.assigned_units) ? miniCadData.assigned_units : [];
+    for (var u = 0; u < units.length; u++) {
+      var badge = document.createElement("span");
+      badge.className = "minicad-unit-badge";
+      badge.textContent = String(units[u].callsign || "?");
+      var color = String(units[u].department_color || "").trim();
+      if (color) badge.style.backgroundColor = color;
+      miniCadUnits.appendChild(badge);
+    }
+  }
+
+  // Description: for the current call being viewed use the main description if it's the primary call.
+  if (miniCadDescription) {
+    var desc = "";
+    if (Number(currentCall.id || currentCall.call_id) === Number(miniCadData.call_id)) {
+      desc = String(miniCadData.description || "").trim();
+    } else {
+      desc = String(currentCall.description || "").trim();
+    }
+    miniCadDescription.textContent = desc;
+  }
+
+  // Prev/next buttons.
+  if (miniCadPrevBtn) miniCadPrevBtn.disabled = miniCadCurrentIndex <= 0;
+  if (miniCadNextBtn) miniCadNextBtn.disabled = miniCadCurrentIndex >= totalCalls - 1;
+}
+
+function miniCadPrev() {
+  if (miniCadCurrentIndex > 0) {
+    miniCadCurrentIndex -= 1;
+    renderMiniCadCall();
+  }
+}
+
+function miniCadNext() {
+  var allCalls = miniCadData && Array.isArray(miniCadData.all_assigned_calls) ? miniCadData.all_assigned_calls : [];
+  if (miniCadCurrentIndex < allCalls.length - 1) {
+    miniCadCurrentIndex += 1;
+    renderMiniCadCall();
+  }
+}
+
+function miniCadDetach() {
+  if (!miniCadData) return;
+  var allCalls = Array.isArray(miniCadData.all_assigned_calls) ? miniCadData.all_assigned_calls : [];
+  var currentCall = allCalls[miniCadCurrentIndex] || miniCadData;
+  var callId = Number(currentCall.id || currentCall.call_id || 0);
+  if (callId > 0) {
+    postNui("cadBridgeMiniCadDetach", { call_id: callId }).catch(function ignore() {});
+  }
+}
 
 window.force000Open = function force000Open(departmentsPayload) {
   openEmergencyForm({
@@ -1186,6 +1343,12 @@ function initialize() {
   }
   if (registrationCloseBtn) registrationCloseBtn.addEventListener("click", cancelRegistrationForm);
   if (registrationCancelBtn) registrationCancelBtn.addEventListener("click", cancelRegistrationForm);
+
+  // Mini-CAD bindings.
+  if (miniCadHideBtn) miniCadHideBtn.addEventListener("click", hideMiniCad);
+  if (miniCadPrevBtn) miniCadPrevBtn.addEventListener("click", miniCadPrev);
+  if (miniCadNextBtn) miniCadNextBtn.addEventListener("click", miniCadNext);
+  if (miniCadDetachBtn) miniCadDetachBtn.addEventListener("click", miniCadDetach);
 
   window.addEventListener("keydown", function onKeyDown(event) {
     if (!anyModalOpen()) return;

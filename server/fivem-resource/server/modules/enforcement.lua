@@ -1,0 +1,1317 @@
+          payloadPlayers[#payloadPlayers + 1] = {
+            source = s,
+            player_id = s,
+            playerId = s,
+            name = displayName,
+            player_name = platformName,
+            platform_name = platformName,
+            character_name = characterName,
+            identifiers = identifiers,
+            citizenid = getCitizenId(s),
+            position = {
+              x = pos.x,
+              y = pos.y,
+              z = pos.z,
+            },
+            pos = {
+              x = pos.x,
+              y = pos.y,
+              z = pos.z,
+            },
+            heading = pos.heading,
+            speed = pos.speed,
+            street = pos.street,
+            crossing = pos.crossing,
+            postal = pos.postal,
+            location = pos.location,
+            vehicle = pos.vehicle,
+            license_plate = pos.license_plate,
+            licensePlate = pos.license_plate,
+            has_siren_enabled = pos.has_siren_enabled,
+            hasSirenEnabled = pos.has_siren_enabled,
+            icon = pos.icon,
+            weapon = pos.weapon,
+          }
+        end
+      end
+    end
+
+    heartbeatInFlight = true
+    heartbeatInFlightSinceMs = nowMs()
+    request('POST', '/api/integration/fivem/heartbeat', {
+      players = payloadPlayers,
+      timestamp = os.time(),
+    }, function(status, _body, responseHeaders)
+      resetHeartbeatInFlight('')
+      if status == 429 then
+        setBridgeBackoff('heartbeat', responseHeaders, 15000, 'heartbeat')
+        return
+      end
+      if status == 0 then
+        setBridgeBackoff('heartbeat', responseHeaders, 3000, 'heartbeat transport')
+        print('[cad_bridge] heartbeat transport failed (status 0)')
+        return
+      end
+      if status >= 400 then
+        if status >= 500 then
+          setBridgeBackoff('heartbeat', responseHeaders, 5000, 'heartbeat error')
+        end
+        print(('[cad_bridge] heartbeat failed with status %s'):format(tostring(status)))
+        return
+      end
+
+      if status >= 200 and status < 300 then
+        -- Nudge enforcement queues so record-created fines/jails apply quickly.
+        triggerFastEnforcementPoll()
+      end
+    end)
+
+    ::continue::
+  end
+end)
+
+local function shellEscape(value)
+  value = tostring(value or '')
+  if value:find('%s') then
+    return '"' .. value:gsub('"', '\\"') .. '"'
+  end
+  return value
+end
+
+local function commandExists(commandName)
+  commandName = tostring(commandName or ''):gsub('^/', ''):lower()
+  if commandName == '' then return false end
+
+  local ok, commands = pcall(GetRegisteredCommands)
+  if not ok or type(commands) ~= 'table' then
+    -- If the runtime cannot provide command metadata, do not hard-fail here.
+    return true
+  end
+
+  for _, entry in ipairs(commands) do
+    local name = ''
+    if type(entry) == 'table' then
+      name = tostring(entry.name or '')
+    elseif type(entry) == 'string' then
+      name = entry
+    end
+    if name:gsub('^/', ''):lower() == commandName then
+      return true
+    end
+  end
+  return false
+end
+
+local function normalizeCitizenId(citizenId)
+  return trim(citizenId):lower()
+end
+
+local function findPlayerByCitizenId(citizenId)
+  local target = normalizeCitizenId(citizenId)
+  if target == '' then return nil end
+
+  for _, src in ipairs(GetPlayers()) do
+    local s = tonumber(src)
+    if s and normalizeCitizenId(getCitizenId(s)) == target then
+      return s
+    end
+  end
+  return nil
+end
+
+local function findPlayerByIdentifier(prefix, value)
+  local target = trim(value):lower()
+  if target == '' then return nil end
+  local expectedPrefix = tostring(prefix or ''):lower() .. ':'
+
+  for _, src in ipairs(GetPlayers()) do
+    local s = tonumber(src)
+    if s then
+      for _, identifier in ipairs(GetPlayerIdentifiers(s)) do
+        local id = tostring(identifier or ''):lower()
+        if id == (expectedPrefix .. target) then
+          return s
+        end
+      end
+    end
+  end
+  return nil
+end
+
+local function resolvePlayerSourceForJob(job)
+  local sourceId = tonumber(job.game_id or job.source or 0)
+  if sourceId and sourceId > 0 and GetPlayerName(sourceId) then
+    return sourceId
+  end
+
+  local byCitizen = findPlayerByCitizenId(job.citizen_id)
+  if byCitizen then return byCitizen end
+
+  local byDiscord = findPlayerByIdentifier('discord', job.discord_id)
+  if byDiscord then return byDiscord end
+
+  return nil
+end
+
+local function resolveFineSource(job, citizenId)
+  local sourceId = tonumber(job.game_id or job.source or 0)
+  local normalizedCitizen = normalizeCitizenId(citizenId)
+  if sourceId and sourceId > 0 and GetPlayerName(sourceId) then
+    if normalizedCitizen == '' or normalizeCitizenId(getCitizenId(sourceId)) == normalizedCitizen then
+      return sourceId
+    end
+  end
+
+  local byCitizen = findPlayerByCitizenId(citizenId)
+  if byCitizen then return byCitizen end
+
+  local discordId = trim(job.discord_id or '')
+  if discordId ~= '' then
+    local byDiscord = findPlayerByIdentifier('discord', discordId)
+    if byDiscord then return byDiscord end
+  end
+
+  local steamKey = trim(job.steam_id or ''):lower()
+  if steamKey:sub(1, 8) == 'discord:' then
+    local byDiscord = findPlayerByIdentifier('discord', steamKey:sub(9))
+    if byDiscord then return byDiscord end
+  elseif steamKey:sub(1, 6) == 'steam:' then
+    local bySteamPrefixed = findPlayerByIdentifier('steam', steamKey:sub(7))
+    if bySteamPrefixed then return bySteamPrefixed end
+  elseif steamKey:sub(1, 8) == 'license:' then
+    local byLicense = findPlayerByIdentifier('license', steamKey:sub(9))
+    if byLicense then return byLicense end
+  elseif steamKey:sub(1, 9) == 'license2:' then
+    local byLicense2 = findPlayerByIdentifier('license2', steamKey:sub(10))
+    if byLicense2 then return byLicense2 end
+  elseif steamKey ~= '' then
+    local bySteam = findPlayerByIdentifier('steam', steamKey)
+    if bySteam then return bySteam end
+  end
+
+  return nil
+end
+
+local function toMoneyNumber(value)
+  local n = tonumber(value)
+  if not n then return nil end
+  if n ~= n then return nil end
+  return n
+end
+
+local function getPlayerMoneyBalance(player, account)
+  if type(player) ~= 'table' then return nil end
+  local playerData = player.PlayerData
+  if type(playerData) ~= 'table' then return nil end
+  local money = playerData.money
+  if type(money) ~= 'table' then return nil end
+  return toMoneyNumber(money[account])
+end
+
+local function getQbxMoneyBalance(sourceId, player, account)
+  if GetResourceState('qbx_core') == 'started' and sourceId and sourceId > 0 then
+    local ok, amount = pcall(function()
+      return exports.qbx_core:GetMoney(sourceId, account)
+    end)
+    if ok then
+      local normalized = toMoneyNumber(amount)
+      if normalized ~= nil then
+        return normalized
+      end
+    end
+  end
+  return getPlayerMoneyBalance(player, account)
+end
+
+local function hasExpectedDeduction(beforeBalance, afterBalance, amount)
+  local before = toMoneyNumber(beforeBalance)
+  local after = toMoneyNumber(afterBalance)
+  if not before or not after then return nil end
+  local expected = before - (tonumber(amount) or 0)
+  return after <= (expected + 0.01)
+end
+
+local function verifyDeductionWithRetries(readBalance, beforeBalance, amount, retries, delayMs)
+  local attempts = math.max(0, math.floor(tonumber(retries) or 0))
+  local waitMs = math.max(0, math.floor(tonumber(delayMs) or 0))
+
+  local afterBalance = readBalance()
+  local deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+  if deducted ~= false then
+    return deducted, afterBalance
+  end
+
+  for _ = 1, attempts do
+    if waitMs > 0 then
+      Wait(waitMs)
+    end
+    afterBalance = readBalance()
+    deducted = hasExpectedDeduction(beforeBalance, afterBalance, amount)
+    if deducted ~= false then
+      return deducted, afterBalance
+    end
+  end
+
+  return deducted, afterBalance
+end
+
+local function applyJobSyncAuto(sourceId, jobName, jobGrade)
+  if GetResourceState('qbx_core') == 'started' then
+    local ok, xPlayer = pcall(function()
+      return exports.qbx_core:GetPlayer(sourceId)
+    end)
+    if ok and xPlayer then
+      if xPlayer.Functions and type(xPlayer.Functions.SetJob) == 'function' then
+        local setOk, err = pcall(function()
+          xPlayer.Functions.SetJob(jobName, jobGrade)
+        end)
+        if setOk then return true, '' end
+        return false, ('qbx_core SetJob failed: %s'):format(tostring(err))
+      end
+      if type(xPlayer.SetJob) == 'function' then
+        local setOk, err = pcall(function()
+          xPlayer:SetJob(jobName, jobGrade)
+        end)
+        if setOk then return true, '' end
+        return false, ('qbx_core SetJob failed: %s'):format(tostring(err))
+      end
+      return false, 'qbx_core player object has no SetJob method'
+    end
+  end
+
+  if GetResourceState('qb-core') == 'started' then
+    local ok, core = pcall(function()
+      return exports['qb-core']:GetCoreObject()
+    end)
+    if ok and core and core.Functions and core.Functions.GetPlayer then
+      local player = core.Functions.GetPlayer(sourceId)
+      if player and player.Functions and type(player.Functions.SetJob) == 'function' then
+        local setOk, err = pcall(function()
+          player.Functions.SetJob(jobName, jobGrade)
+        end)
+        if setOk then return true, '' end
+        return false, ('qb-core SetJob failed: %s'):format(tostring(err))
+      end
+      return false, 'qb-core player object has no SetJob method'
+    end
+  end
+
+  return false, 'No supported framework for auto job sync (qbx_core/qb-core)'
+end
+
+local function applyJobSync(job)
+  if Config.JobSyncAdapter == 'none' then
+    return false, 'Job sync adapter disabled (Config.JobSyncAdapter=none)', false
+  end
+
+  local jobName = trim(job.job_name or '')
+  if jobName == '' then
+    return false, 'Job name is empty', false
+  end
+  local jobGrade = math.max(0, math.floor(tonumber(job.job_grade) or 0))
+  local sourceId = resolvePlayerSourceForJob(job)
+
+  if not sourceId then
+    return false, 'Target player is no longer online', true
+  end
+
+  if Config.JobSyncAdapter == 'command' then
+    local cmdTemplate = tostring(Config.JobSyncCommandTemplate or '')
+    if cmdTemplate == '' then
+      return false, 'Job sync command template is empty', false
+    end
+
+    local commandName = cmdTemplate:match('^%s*([^%s]+)') or ''
+    if commandName == '' then
+      return false, 'Job sync command template has no command name', false
+    end
+    if not commandExists(commandName) then
+      return false, ('Job sync command not registered: %s'):format(commandName), false
+    end
+
+    local cmd = cmdTemplate
+    cmd = cmd:gsub('{source}', shellEscape(sourceId))
+    cmd = cmd:gsub('{citizenid}', shellEscape(job.citizen_id or ''))
+    cmd = cmd:gsub('{job}', shellEscape(jobName))
+    cmd = cmd:gsub('{grade}', shellEscape(jobGrade))
+    ExecuteCommand(cmd)
+    return true, '', false
+  end
+
+  if Config.JobSyncAdapter == 'auto' then
+    local ok, err = applyJobSyncAuto(sourceId, jobName, jobGrade)
+    return ok, err or '', false
+  end
+
+  return false, ('Unknown job sync adapter: %s'):format(tostring(Config.JobSyncAdapter)), false
+end
+
+local jobPollInFlight = false
+CreateThread(function()
+  while true do
+    Wait(math.max(2000, tonumber(Config.JobSyncPollIntervalMs) or 5000))
+    if Config.JobSyncAdapter == 'none' then
+      goto continue
+    end
+    if not hasBridgeConfig() then
+      goto continue
+    end
+    if jobPollInFlight or isBridgeBackoffActive('job_poll') then
+      goto continue
+    end
+
+    jobPollInFlight = true
+    request('GET', '/api/integration/fivem/job-jobs?limit=25', nil, function(status, body, responseHeaders)
+      jobPollInFlight = false
+      if status == 429 then
+        setBridgeBackoff('job_poll', responseHeaders, 10000, 'job poll')
+        return
+      end
+      if status ~= 200 then
+        return
+      end
+
+      local ok, jobs = pcall(json.decode, body)
+      if not ok or type(jobs) ~= 'table' then
+        return
+      end
+
+      for _, job in ipairs(jobs) do
+        local success, err, transient = applyJobSync(job)
+        if success then
+          request('POST', ('/api/integration/fivem/job-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+        elseif transient then
+          -- Keep pending so it can be retried automatically when player is available.
+        else
+          request('POST', ('/api/integration/fivem/job-jobs/%s/failed'):format(tostring(job.id)), {
+            error = err or 'Job sync adapter failed',
+          }, function() end)
+        end
+      end
+    end)
+
+    ::continue::
+  end
+end)
+
+local function applyRouteJob(job)
+  local citizenId = trim(job.citizen_id or '')
+  local sourceId = resolveFineSource(job, citizenId)
+  if not sourceId then
+    return false, 'Target character is not currently online', true
+  end
+
+  local action = trim(job.action or 'set'):lower()
+  local clearWaypoint = job.clear_waypoint == true or tonumber(job.clear_waypoint or 0) == 1 or action == 'clear'
+  local payload = {
+    id = tostring(job.id or ''),
+    call_id = tonumber(job.call_id) or 0,
+    action = action ~= '' and action or 'set',
+    clear_waypoint = clearWaypoint,
+    call_title = tostring(job.call_title or ''),
+    location = tostring(job.location or ''),
+    postal = tostring(job.postal or ''),
+  }
+
+  if not clearWaypoint then
+    local x = tonumber(job.position_x)
+    local y = tonumber(job.position_y)
+    local z = tonumber(job.position_z)
+    if x and y then
+      payload.position = {
+        x = x,
+        y = y,
+        z = z or 0.0,
+      }
+    end
+  end
+
+  TriggerClientEvent('cad_bridge:setCallRoute', sourceId, payload)
+  return true, '', false
+end
+
+local routePollInFlight = false
+CreateThread(function()
+  while true do
+    Wait(math.max(2000, tonumber(Config.RoutePollIntervalMs) or 5000))
+    if not hasBridgeConfig() then
+      goto continue
+    end
+    if routePollInFlight or isBridgeBackoffActive('route_poll') then
+      goto continue
+    end
+
+    routePollInFlight = true
+    request('GET', '/api/integration/fivem/route-jobs?limit=25', nil, function(status, body, responseHeaders)
+      routePollInFlight = false
+      if status == 429 then
+        setBridgeBackoff('route_poll', responseHeaders, 10000, 'route poll')
+        return
+      end
+      if status ~= 200 then
+        return
+      end
+
+      local ok, jobs = pcall(json.decode, body)
+      if not ok or type(jobs) ~= 'table' then
+        return
+      end
+
+      for _, job in ipairs(jobs) do
+        local success, err, transient = applyRouteJob(job)
+        if success then
+          request('POST', ('/api/integration/fivem/route-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+        elseif transient then
+          -- Keep pending and retry when the target character is online.
+        else
+          request('POST', ('/api/integration/fivem/route-jobs/%s/failed'):format(tostring(job.id)), {
+            error = err or 'Route delivery failed',
+          }, function() end)
+        end
+      end
+    end)
+
+    ::continue::
+  end
+end)
+
+local function clearActiveCallPromptForSource(sourceId, promptId)
+  local s = tonumber(sourceId) or 0
+  if s <= 0 then return end
+  local existing = activeCallPromptBySource[s]
+  if type(existing) ~= 'table' then return end
+  if promptId and trim(existing.id or '') ~= trim(promptId) then
+    return
+  end
+  activeCallPromptBySource[s] = nil
+end
+
+local function applyCallPromptJob(job)
+  local citizenId = trim(job.citizen_id or '')
+  local sourceId = resolveFineSource(job, citizenId)
+  if not sourceId then
+    return false, 'Target unit is not currently online', true
+  end
+
+  local payload = {
+    id = tostring(job.id or ''),
+    call_id = tonumber(job.call_id) or 0,
+    title = tostring(job.title or job.call_title or ''),
+    priority = tostring(job.priority or ''),
+    location = tostring(job.location or ''),
+    postal = tostring(job.postal or ''),
+    distance_meters = tonumber(job.distance_meters) or 0,
+    expires_in_ms = math.max(6000, tonumber(Config.ClosestCallPromptTimeoutMs) or 15000),
+  }
+
+  activeCallPromptBySource[sourceId] = {
+    id = payload.id,
+    call_id = payload.call_id,
+    source = sourceId,
+    game_id = tostring(job.game_id or ''),
+    citizen_id = citizenId,
+    offered_at = nowMs(),
+  }
+
+  TriggerClientEvent('cad_bridge:showClosestCallPrompt', sourceId, payload)
+  return true, '', false
+end
+
+RegisterNetEvent('cad_bridge:closestCallPromptDecision', function(data)
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+  local activePrompt = activeCallPromptBySource[src]
+  if type(activePrompt) ~= 'table' then return end
+
+  local payload = type(data) == 'table' and data or {}
+  local promptId = trim(payload.id or payload.prompt_id or '')
+  if promptId == '' then
+    promptId = trim(activePrompt.id or '')
+  end
+  if promptId == '' then return end
+
+  if trim(activePrompt.id or '') ~= '' and trim(activePrompt.id or '') ~= promptId then
+    return
+  end
+
+  local action = trim(payload.action or payload.decision or ''):lower()
+  if action ~= 'accept' and action ~= 'decline' then
+    action = 'decline'
+  end
+  local reason = trim(payload.reason or '')
+
+  clearActiveCallPromptForSource(src, promptId)
+  request('POST', ('/api/integration/fivem/call-prompts/%s/%s'):format(urlEncode(promptId), action), {
+    game_id = tostring(src),
+    citizen_id = getCitizenId(src),
+    reason = reason,
+  }, function(status, body, _responseHeaders)
+    if status >= 200 and status < 300 then
+      return
+    end
+    if tonumber(status) == 404 then
+      return
+    end
+
+    local parsedError = ''
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if ok and type(parsed) == 'table' then
+      parsedError = trim(parsed.error or '')
+    end
+
+    local err = parsedError ~= '' and parsedError or ('HTTP ' .. tostring(status))
+    notifyAlert(src, 'CAD Dispatch', ('Call prompt %s failed: %s'):format(action, err), 'warning')
+  end)
+end)
+
+local callPromptPollInFlight = false
+CreateThread(function()
+  while true do
+    Wait(math.max(1500, tonumber(Config.ClosestCallPromptPollIntervalMs) or 2500))
+    if not hasBridgeConfig() then
+      goto continue
+    end
+    if callPromptPollInFlight or isBridgeBackoffActive('call_prompt_poll') then
+      goto continue
+    end
+
+    callPromptPollInFlight = true
+    request('GET', '/api/integration/fivem/call-prompts?limit=25', nil, function(status, body, responseHeaders)
+      callPromptPollInFlight = false
+      if status == 429 then
+        setBridgeBackoff('call_prompt_poll', responseHeaders, 10000, 'call prompt poll')
+        return
+      end
+      if status ~= 200 then
+        return
+      end
+
+      local ok, jobs = pcall(json.decode, body)
+      if not ok or type(jobs) ~= 'table' then
+        return
+      end
+
+      for _, job in ipairs(jobs) do
+        local success, err, transient = applyCallPromptJob(job)
+        if success then
+          request('POST', ('/api/integration/fivem/call-prompts/%s/sent'):format(urlEncode(tostring(job.id))), {}, function() end)
+        elseif transient then
+          -- Keep pending and retry when target unit is online.
+        else
+          request('POST', ('/api/integration/fivem/call-prompts/%s/decline'):format(urlEncode(tostring(job.id))), {
+            reason = err or 'Prompt delivery failed',
+            game_id = tostring(job.game_id or ''),
+            citizen_id = tostring(job.citizen_id or ''),
+          }, function() end)
+        end
+      end
+    end)
+
+    ::continue::
+  end
+end)
+
+local function applyFine(job)
+  if Config.FineAdapter == 'none' then
+    return false, 'Fine adapter disabled (Config.FineAdapter=none)', false
+  end
+
+  local citizenId = trim(job.citizen_id or '')
+  local amount = tonumber(job.amount) or 0
+  local reason = trim(job.reason or '')
+  local account = trim(job.account or 'bank'):lower()
+  if citizenId == '' then
+    return false, 'Fine citizen_id is empty', false
+  end
+  if amount <= 0 then
+    return false, 'Fine amount must be greater than 0', false
+  end
+
+  local function notifyFineApplied(sourceId)
+    local message = ('You have been fined $%s'):format(tostring(math.floor(amount)))
+    if reason ~= '' then
+      message = message .. (' (%s)'):format(reason)
+    end
+    TriggerClientEvent('cad_bridge:notifyFine', sourceId, {
+      title = 'CAD Fine Issued',
+      description = message,
+      amount = tonumber(amount) or 0,
+      reason = reason,
+    })
+  end
+
+  if Config.FineAdapter == 'auto' then
+    local sourceId = resolveFineSource(job, citizenId)
+    if not sourceId then
+      return false, 'Target character is not currently online', true
+    end
+
+    if GetResourceState('qbx_core') == 'started' then
+      local ok, xPlayer = pcall(function()
+        return exports.qbx_core:GetPlayer(sourceId)
+      end)
+      if ok and xPlayer then
+        local fineReason = reason ~= '' and reason or 'CAD fine'
+        local beforeBalance = getQbxMoneyBalance(sourceId, xPlayer, account)
+        local attemptedAdapters = {}
+        local attemptErrors = {}
+        local balanceVerifyRetries = 3
+        local balanceVerifyDelayMs = 150
+        local function recordAttempt(label, err)
+          attemptedAdapters[#attemptedAdapters + 1] = label
+          if err and err ~= '' then
+            attemptErrors[#attemptErrors + 1] = ('%s -> %s'):format(label, err)
+          end
+        end
+
+        local function getAfterBalance()
+          local refreshed = xPlayer
+          local refreshedOk, refreshedPlayer = pcall(function()
+            return exports.qbx_core:GetPlayer(sourceId)
+          end)
+          if refreshedOk and refreshedPlayer then
+            refreshed = refreshedPlayer
+          end
+          return getQbxMoneyBalance(sourceId, refreshed, account)
+        end
+
+        local function tryAdapter(label, fn)
+          local callOk, result = pcall(fn)
+          if not callOk then
+            recordAttempt(label, ('error: %s'):format(tostring(result)))
+            return false
+          end
+
+          if result == false then
+            recordAttempt(label, 'returned false')
+            return false
+          end
+
+          local deducted = nil
+          if beforeBalance ~= nil then
+            deducted = select(1, verifyDeductionWithRetries(
+              getAfterBalance,
+              beforeBalance,
+              amount,
+              balanceVerifyRetries,
+              balanceVerifyDelayMs
+            ))
+          end
+
+          if deducted == true then
+            recordAttempt(label)
+            return true
+          end
+
+          if result == true then
+            -- Some QBX implementations return true before balance replication catches up.
+            if deducted == false then
+              recordAttempt(label, 'returned true but balance check did not reflect deduction yet')
+            else
+              recordAttempt(label)
+            end
+            return true
+          end
+
+          -- Some framework adapters do not return a status; accept on no-error when balance cannot be verified.
+          if deducted == false then
+            recordAttempt(label, ('no deduction verified (result=%s)'):format(tostring(result)))
+            return false
+          end
+          recordAttempt(label)
+          return true
+        end
+
+        local adapters = {
+          {
+            label = 'qbx export RemoveMoney(source, account, amount, reason)',
+            fn = function()
+              return exports.qbx_core:RemoveMoney(sourceId, account, amount, fineReason)
+            end,
+          },
+          {
+            label = 'qbx export RemoveMoney(source, account, amount)',
+            fn = function()
+              return exports.qbx_core:RemoveMoney(sourceId, account, amount)
+            end,
+          },
+        }
+
+        if citizenId ~= '' then
+          adapters[#adapters + 1] = {
+            label = 'qbx export RemoveMoney(citizenid, account, amount, reason)',
+            fn = function()
+              return exports.qbx_core:RemoveMoney(citizenId, account, amount, fineReason)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'qbx export RemoveMoney(citizenid, account, amount)',
+            fn = function()
+              return exports.qbx_core:RemoveMoney(citizenId, account, amount)
+            end,
+          }
+        end
+
+        if xPlayer.Functions and type(xPlayer.Functions.RemoveMoney) == 'function' then
+          adapters[#adapters + 1] = {
+            label = 'xPlayer.Functions.RemoveMoney(account, amount, reason)',
+            fn = function()
+              return xPlayer.Functions.RemoveMoney(account, amount, fineReason)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'xPlayer.Functions.RemoveMoney(account, amount)',
+            fn = function()
+              return xPlayer.Functions.RemoveMoney(account, amount)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'xPlayer.Functions.RemoveMoney(amount, account, reason)',
+            fn = function()
+              return xPlayer.Functions.RemoveMoney(amount, account, fineReason)
+            end,
+          }
+        end
+
+        if type(xPlayer.RemoveMoney) == 'function' then
+          adapters[#adapters + 1] = {
+            label = 'xPlayer:RemoveMoney(account, amount, reason)',
+            fn = function()
+              return xPlayer:RemoveMoney(account, amount, fineReason)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'xPlayer:RemoveMoney(account, amount)',
+            fn = function()
+              return xPlayer:RemoveMoney(account, amount)
+            end,
+          }
+          adapters[#adapters + 1] = {
+            label = 'xPlayer.RemoveMoney(xPlayer, account, amount, reason)',
+            fn = function()
+              return xPlayer.RemoveMoney(xPlayer, account, amount, fineReason)
+            end,
+          }
+        end
+
+        for _, adapter in ipairs(adapters) do
+          if tryAdapter(adapter.label, adapter.fn) then
+            notifyFineApplied(sourceId)
+            return true, '', false
+          end
+        end
+
+        local err = 'qbx_core RemoveMoney failed'
+        if #attemptErrors > 0 then
+          err = err .. ': ' .. attemptErrors[#attemptErrors]
+        end
+        if #attemptedAdapters > 0 then
+          err = err .. (' (attempted: %s)'):format(table.concat(attemptedAdapters, ', '))
+        end
+        return false, err, false
+      end
+    end
+
+    if GetResourceState('qb-core') == 'started' then
+      local ok, core = pcall(function()
+        return exports['qb-core']:GetCoreObject()
+      end)
+      if ok and core and core.Functions and core.Functions.GetPlayer then
+        local player = core.Functions.GetPlayer(sourceId)
+        if player and player.Functions and type(player.Functions.RemoveMoney) == 'function' then
+          local beforeBalance = getPlayerMoneyBalance(player, account)
+          local success, removed = pcall(function()
+            return player.Functions.RemoveMoney(account, amount, reason ~= '' and reason or 'CAD fine')
+          end)
+          if not success then
+            return false, ('qb-core RemoveMoney failed: %s'):format(tostring(removed)), false
+          end
+          if removed == false then
+            return false, 'qb-core rejected fine removal', false
+          end
+
+          local deducted = nil
+          if beforeBalance ~= nil then
+            deducted = select(1, verifyDeductionWithRetries(
+              function()
+                return getPlayerMoneyBalance(player, account)
+              end,
+              beforeBalance,
+              amount,
+              3,
+              150
+            ))
+          end
+
+          if removed == nil and deducted ~= true then
+            return false, 'qb-core RemoveMoney returned no status and deduction could not be verified', false
+          end
+          if removed == true and deducted == false then
+            print(('[cad_bridge] qb-core RemoveMoney reported success but balance verification did not update immediately (source=%s, account=%s, amount=%s)'):format(
+              tostring(sourceId),
+              tostring(account),
+              tostring(amount)
+            ))
+          end
+          notifyFineApplied(sourceId)
+          return true, '', false
+        end
+        return false, 'qb-core player object has no RemoveMoney method', false
+      end
+    end
+
+    return false, 'No supported framework for auto fine adapter (qbx_core/qb-core)', false
+  end
+
+  if Config.FineAdapter == 'command' then
+    local cmdTemplate = tostring(Config.FineCommandTemplate or '')
+    if cmdTemplate == '' then
+      return false, 'Fine command template is empty', false
+    end
+
+    local commandName = cmdTemplate:match('^%s*([^%s]+)') or ''
+    if commandName == '' then
+      return false, 'Fine command template has no command name', false
+    end
+    if not commandExists(commandName) then
+      return false, ('Fine command not registered: %s'):format(commandName), false
+    end
+    local sourceId = resolveFineSource(job, citizenId)
+    if not sourceId then
+      return false, 'Target character is not currently online for command fine', true
+    end
+    local cmd = cmdTemplate
+    cmd = cmd:gsub('{source}', shellEscape(sourceId or 0))
+    cmd = cmd:gsub('{citizenid}', shellEscape(citizenId))
+    cmd = cmd:gsub('{amount}', shellEscape(amount))
+    cmd = cmd:gsub('{reason}', shellEscape(reason))
+
+    ExecuteCommand(cmd)
+    if sourceId then
+      notifyFineApplied(sourceId)
+    end
+    return true, '', false
+  end
+
+  return false, ('Unknown fine adapter: %s'):format(tostring(Config.FineAdapter)), false
+end
+
+local finePollInFlight = false
+pollFineJobs = function()
+  if not hasBridgeConfig() then
+    return
+  end
+  if finePollInFlight or isBridgeBackoffActive('fine_poll') then
+    return
+  end
+
+  finePollInFlight = true
+  request('GET', '/api/integration/fivem/fine-jobs?limit=25', nil, function(status, body, responseHeaders)
+    finePollInFlight = false
+    if status == 429 then
+      setBridgeBackoff('fine_poll', responseHeaders, 10000, 'fine poll')
+      return
+    end
+    if status ~= 200 then
+      return
+    end
+
+    local ok, jobs = pcall(json.decode, body)
+    if not ok or type(jobs) ~= 'table' then
+      return
+    end
+
+    for _, job in ipairs(jobs) do
+      local success, err, transient = applyFine(job)
+      if success then
+        request('POST', ('/api/integration/fivem/fine-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+      elseif transient then
+        -- Keep pending and retry when the target character is online.
+      else
+        request('POST', ('/api/integration/fivem/fine-jobs/%s/failed'):format(tostring(job.id)), {
+          error = err or 'Fine adapter failed',
+        }, function() end)
+      end
+    end
+  end)
+end
+
+CreateThread(function()
+  while true do
+    Wait(math.max(2000, tonumber(Config.FinePollIntervalMs) or 7000))
+    pollFineJobs()
+  end
+end)
+
+local function applyJail(job)
+  local adapter = trim(Config.JailAdapter or 'wasabi'):lower()
+  if adapter == '' then adapter = 'wasabi' end
+  if adapter == 'none' then
+    return false, 'Jail adapter disabled (Config.JailAdapter=none)', false
+  end
+
+  local citizenId = trim(job.citizen_id or '')
+  local minutes = math.max(0, math.floor(tonumber(job.jail_minutes or job.minutes or 0) or 0))
+  local reason = trim(job.reason or '')
+  if citizenId == '' then
+    return false, 'Jail citizen_id is empty', false
+  end
+  if minutes <= 0 then
+    return false, 'Jail minutes must be greater than 0', false
+  end
+
+  local sourceId = resolveFineSource(job, citizenId)
+  if not sourceId then
+    return false, 'Target character is not currently online', true
+  end
+
+  if adapter == 'wasabi' then
+    if GetResourceState('wasabi_police') ~= 'started' then
+      return false, 'wasabi_police is not started', false
+    end
+
+    local attempts = {}
+    local function recordAttempt(label, ok, err)
+      if ok then
+        attempts[#attempts + 1] = ('%s -> ok'):format(label)
+      else
+        attempts[#attempts + 1] = ('%s -> %s'):format(label, tostring(err or 'failed'))
+      end
+      return ok
+    end
+
+    -- For exports: only treat an explicit true return as success.
+    -- wasabi_police exports return true on success; nil means the export
+    -- ran but did nothing (wrong signature, wrong version, etc.).
+    local function invokeExport(label, fn)
+      local ok, result = pcall(fn)
+      if not ok then
+        return recordAttempt(label, false, result)
+      end
+      if result ~= true then
+        return recordAttempt(label, false, result == false and 'returned false' or 'returned nil')
+      end
+      return recordAttempt(label, true)
+    end
+
+    -- For server/client events: Lua events never return a value, so we
+    -- fire the event and treat a clean pcall as success. Only reached
+    -- when all export variants have already failed.
+    local function invokeEvent(label, fn)
+      local ok, err = pcall(fn)
+      if not ok then
+        return recordAttempt(label, false, err)
+      end
+      return recordAttempt(label, true)
+    end
+
+    local invoked = false
+
+    -- Try wasabi export variants first as these do not rely on event "source" context.
+    local exportAttempts = {
+      {
+        label = 'exports.wasabi_police:sendToJail(source, minutes, reason)',
+        fn = function()
+          return exports.wasabi_police:sendToJail(sourceId, minutes, reason)
+        end,
+      },
+      {
+        label = 'exports.wasabi_police:sendToJail(source, minutes)',
+        fn = function()
+          return exports.wasabi_police:sendToJail(sourceId, minutes)
+        end,
+      },
+      {
+        label = 'exports.wasabi_police:SendToJail(source, minutes, reason)',
+        fn = function()
+          return exports.wasabi_police:SendToJail(sourceId, minutes, reason)
+        end,
+      },
+      {
+        label = 'exports.wasabi_police:SendToJail(source, minutes)',
+        fn = function()
+          return exports.wasabi_police:SendToJail(sourceId, minutes)
+        end,
+      },
+    }
+
+    for _, adapterTry in ipairs(exportAttempts) do
+      if invokeExport(adapterTry.label, adapterTry.fn) then
+        invoked = true
+        break
+      end
+    end
+
+    if not invoked then
+      local eventAttempts = {
+        {
+          label = 'TriggerEvent wasabi_police:server:sendToJail(source, minutes)',
+          fn = function()
+            TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes)
+          end,
+        },
+        {
+          label = 'TriggerEvent wasabi_police:server:sendToJail(source, minutes, reason)',
+          fn = function()
+            TriggerEvent('wasabi_police:server:sendToJail', sourceId, minutes, reason)
+          end,
+        },
+        {
+          label = 'TriggerEvent wasabi_police:qbPrisonJail(source, minutes)',
+          fn = function()
+            TriggerEvent('wasabi_police:qbPrisonJail', sourceId, minutes)
+          end,
+        },
+        {
+          label = 'TriggerClientEvent wasabi_police:jailPlayer(source, minutes)',
+          fn = function()
+            TriggerClientEvent('wasabi_police:jailPlayer', sourceId, minutes)
+          end,
+        },
+        {
+          label = 'TriggerClientEvent wasabi_police:jailPlayer(source, minutes, reason)',
+          fn = function()
+            TriggerClientEvent('wasabi_police:jailPlayer', sourceId, minutes, reason)
+          end,
+        },
+        {
+          label = 'TriggerEvent wasabi_police:sendToJail(source, minutes)',
+          fn = function()
+            TriggerEvent('wasabi_police:sendToJail', sourceId, minutes)
+          end,
+        },
+        {
+          label = 'TriggerEvent wasabi_police:sendToJail(source, minutes, reason)',
+          fn = function()
+            TriggerEvent('wasabi_police:sendToJail', sourceId, minutes, reason)
+          end,
+        },
+      }
+
+      for _, eventTry in ipairs(eventAttempts) do
+        if invokeEvent(eventTry.label, eventTry.fn) then
+          invoked = true
+          break
+        end
+      end
+    end
+    if not invoked then
+      return false, table.concat(attempts, ' | '), false
+    end
+
+    local message = ('You have been sentenced to %s minute(s)'):format(tostring(minutes))
+    if reason ~= '' then
+      message = message .. (' | %s'):format(reason)
+    end
+    notifyAlert(sourceId, 'CAD Sentence', message, 'error')
+    return true, '', false
+  end
+
+  if adapter == 'command' then
+    local cmdTemplate = tostring(Config.JailCommandTemplate or '')
+    if cmdTemplate == '' then
+      return false, 'Jail command template is empty', false
+    end
+
+    local commandName = cmdTemplate:match('^%s*([^%s]+)') or ''
+    if commandName == '' then
+      return false, 'Jail command template has no command name', false
+    end
+    if not commandExists(commandName) then
+      return false, ('Jail command not registered: %s'):format(commandName), false
+    end
+
+    local cmd = cmdTemplate
+    cmd = cmd:gsub('{source}', shellEscape(sourceId))
+    cmd = cmd:gsub('{citizenid}', shellEscape(citizenId))
+    cmd = cmd:gsub('{minutes}', shellEscape(minutes))
+    cmd = cmd:gsub('{reason}', shellEscape(reason))
+    ExecuteCommand(cmd)
+
+    local message = ('You have been sentenced to %s minute(s)'):format(tostring(minutes))
+    if reason ~= '' then
+      message = message .. (' | %s'):format(reason)
+    end
+    notifyAlert(sourceId, 'CAD Sentence', message, 'error')
+    return true, '', false
+  end
+
+  return false, ('Unknown jail adapter: %s'):format(tostring(adapter)), false
+end
+
+local jailPollInFlight = false
+pollJailJobs = function()
+  if not hasBridgeConfig() then
+    return
+  end
+  if jailPollInFlight or isBridgeBackoffActive('jail_poll') then
+    return
+  end
+
+  jailPollInFlight = true
+  request('GET', '/api/integration/fivem/jail-jobs?limit=25', nil, function(status, body, responseHeaders)
+    jailPollInFlight = false
+    if status == 429 then
+      setBridgeBackoff('jail_poll', responseHeaders, 10000, 'jail poll')
+      return
+    end
+    if status ~= 200 then
+      return
+    end
+
+    local ok, jobs = pcall(json.decode, body)
+    if not ok or type(jobs) ~= 'table' then
+      return
+    end
+
+    for _, job in ipairs(jobs) do
+      local success, err, transient = applyJail(job)
+      if success then
+        request('POST', ('/api/integration/fivem/jail-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+      elseif transient then
+        -- Keep pending and retry when the target character is online.
+      else
+        request('POST', ('/api/integration/fivem/jail-jobs/%s/failed'):format(tostring(job.id)), {
+          error = err or 'Jail adapter failed',
+        }, function() end)
+      end
+    end
+  end)
+end
+
+CreateThread(function()
+  while true do
+    Wait(math.max(2000, Config.JailPollIntervalMs or 7000))
+    pollJailJobs()
+  end
+end)
+
+local wraithLookupCooldownBySource = {}
+
+local function normalizePlateKey(value)
+  return trim(value):upper():gsub('[^A-Z0-9]', '')
+end
+
+local function shouldThrottleWraithLookup(source, plateKey)
+  local src = tonumber(source) or 0
+  if src <= 0 or plateKey == '' then return true end
+  local cooldownMs = math.max(250, math.floor(tonumber(Config.WraithLookupCooldownMs) or 8000))
+  local now = nowMs()
+  local cache = wraithLookupCooldownBySource[src]
+  if type(cache) ~= 'table' then
+    cache = {}
+    wraithLookupCooldownBySource[src] = cache
+  end
+
+  local blockedUntil = tonumber(cache[plateKey] or 0) or 0
+  if blockedUntil > now then
+    return true
+  end
+
+  cache[plateKey] = now + cooldownMs
+  return false
+end
+
+local function lookupWraithPlateStatus(source, camera, plateRaw)
+  if Config.WraithCadLookupEnabled ~= true then return end
+  if not hasBridgeConfig() then return end
+  if isBridgeBackoffActive('wraith_plate_lookup') then return end
+
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+  if not GetPlayerName(src) then return end
+
+  local plateKey = normalizePlateKey(plateRaw)
+  if plateKey == '' then return end
+  if shouldThrottleWraithLookup(src, plateKey) then return end
+
+  request('GET', '/api/integration/fivem/plate-status/' .. urlEncode(plateKey), nil, function(status, body, responseHeaders)
+    if status == 429 then
+      setBridgeBackoff('wraith_plate_lookup', responseHeaders, 5000, 'wraith plate lookup')
+      return
+    end
+    if status ~= 200 then
+      return
+    end
+
+    local ok, payload = pcall(json.decode, body or '{}')
+    if not ok or type(payload) ~= 'table' then
+      return
+    end
+    if payload.alert ~= true then
+      return
+    end
+
+    local cam = trim(camera):lower()
+    local camLabel = cam == 'rear' and 'Rear LPR' or 'Front LPR'
+    local plate = trim(payload.plate or plateKey)
+    local statusText = trim(payload.message or '')
+    local model = trim(payload.vehicle_model or '')
+    local owner = trim(payload.owner_name or '')
+    local boloFlags = {}
+    if type(payload.bolo_flags) == 'table' then
+      for _, rawFlag in ipairs(payload.bolo_flags) do
+        local normalized = trim(rawFlag):lower()
+        if normalized ~= '' then
+          local pretty = normalized:gsub('_', ' ')
+          pretty = pretty:gsub('(%a)([%w_]*)', function(first, rest)
+            return string.upper(first) .. string.lower(rest)
+          end)
+          boloFlags[#boloFlags + 1] = pretty
+        end
+      end
+    end
+
+    local details = {}
+    if statusText ~= '' then details[#details + 1] = statusText end
+    if model ~= '' then details[#details + 1] = model end
+    if owner ~= '' then details[#details + 1] = owner end
+    local statusHasBolo = statusText:lower():find('bolo', 1, true) ~= nil
+    if payload.bolo_alert == true then
+      if #boloFlags > 0 and not statusHasBolo then
+        details[#details + 1] = 'BOLO: ' .. table.concat(boloFlags, ', ')
+      elseif #boloFlags == 0 and not statusHasBolo then
+        details[#details + 1] = 'BOLO match'
+      end
+    end
+
+    local message = ('%s hit: %s'):format(camLabel, plate)
+    if #details > 0 then
+      message = message .. ' | ' .. table.concat(details, ' | ')
+    end
+
+    local severity = (payload.registration_status == 'unregistered' and payload.bolo_alert ~= true) and 'warning' or 'error'
+    notifyAlert(src, 'CAD Plate Alert', message, severity)
+  end)
+end
+
+RegisterNetEvent('wk:onPlateScanned', function(camera, plate, _index)
+  local src = source
+  if not src or src == 0 then return end
+  lookupWraithPlateStatus(src, camera, plate)
+end)
+
+RegisterNetEvent('wk:onPlateLocked', function(camera, plate, _index)
+  local src = source
+  if not src or src == 0 then return end
+  lookupWraithPlateStatus(src, camera, plate)
+end)
+
+AddEventHandler('playerDropped', function()
+  local src = source
+  wraithLookupCooldownBySource[src] = nil
+  activeCallPromptBySource[src] = nil
+end)
+
+-- ============================================================================
+-- Radio/Voice integration removed from cad_bridge.
+-- Use your third-party radio resource instead.
+-- ============================================================================
+
+exports('setPlayerRadio', function()
+  return false, 'cad_bridge_radio_removed'
+end)
+
+exports('setPlayerCall', function()
+  return false, 'cad_bridge_radio_removed'
+end)

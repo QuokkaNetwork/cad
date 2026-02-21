@@ -8,13 +8,18 @@ description 'Bridge between CAD and FiveM/QBox'
 version '0.1.0'
 
 shared_script 'config.lua'
-client_script 'client.lua'
+client_scripts {
+  'client.lua',
+  'client/modules/call_prompt.lua',
+  'client/modules/call_popup.lua',
+}
 server_script 'server.lua'
 
 ui_page 'ui/index.html'
 
 files {
   'config.cfg',
+  'client/modules/*.lua',
   'ui/index.html',
   'ui/license-card.html',
   'ui/styles.css',

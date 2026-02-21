@@ -112,6 +112,18 @@ export default function Units() {
     }
   }
 
+  async function closeMyCall(callId) {
+    if (!myUnit || !callId) return;
+    if (!confirm('Close this call?')) return;
+    try {
+      await api.patch(`/api/calls/${callId}`, { status: 'closed' });
+      fetchData();
+      if (selectedCall?.id === callId) setSelectedCall(null);
+    } catch (err) {
+      alert('Failed to close call: ' + err.message);
+    }
+  }
+
   useEffect(() => {
     if (!selectedCall?.id) return;
     const refreshedFromList = calls.find(call => call.id === selectedCall.id);
@@ -175,6 +187,14 @@ export default function Units() {
                       className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
                     >
                       Leave Call
+                    </button>
+                  )}
+                  {currentCall.status !== 'closed' && canSelfDispatch && (
+                    <button
+                      onClick={() => closeMyCall(currentCall.id)}
+                      className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+                    >
+                      Close Call
                     </button>
                   )}
                 </div>
@@ -243,12 +263,22 @@ export default function Units() {
                             </button>
                             <StatusBadge status={call.status} />
                             {assigned ? (
-                              <button
-                                onClick={() => unassignMyUnit(call.id)}
-                                className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
-                              >
-                                Leave
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => unassignMyUnit(call.id)}
+                                  className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+                                >
+                                  Leave
+                                </button>
+                                {canSelfDispatch && (
+                                  <button
+                                    onClick={() => closeMyCall(call.id)}
+                                    className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+                                  >
+                                    Close
+                                  </button>
+                                )}
+                              </>
                             ) : (
                               <button
                                 onClick={() => assignMyUnit(call.id)}
@@ -322,6 +352,14 @@ export default function Units() {
                   className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
                 >
                   Leave Call
+                </button>
+              )}
+              {myUnit && selectedCall.status !== 'closed' && canSelfDispatch && selectedCall.assigned_units?.some(u => u.id === myUnit.id) && (
+                <button
+                  onClick={() => closeMyCall(selectedCall.id)}
+                  className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+                >
+                  Close Call
                 </button>
               )}
               {myUnit && selectedCall.status !== 'closed' && !selectedCall.assigned_units?.some(u => u.id === myUnit.id) && (

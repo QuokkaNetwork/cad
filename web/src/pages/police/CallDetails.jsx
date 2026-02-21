@@ -15,22 +15,27 @@ export default function CallDetails() {
   const [loading, setLoading] = useState(true);
   const [myUnit, setMyUnit] = useState(null);
   const [activeCall, setActiveCall] = useState(null);
+  const [canSelfDispatchClose, setCanSelfDispatchClose] = useState(false);
 
   const fetchData = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [unit, call] = await Promise.all([
-        api.get('/api/units/me').catch((err) => {
-          if (err?.status === 404) return null;
-          throw err;
-        }),
+      const unit = await api.get('/api/units/me').catch((err) => {
+        if (err?.status === 404) return null;
+        throw err;
+      });
+      const [call, dispatcherStatus] = await Promise.all([
         api.get('/api/units/me/active-call').catch((err) => {
           if (err?.status === 404) return null;
           throw err;
         }),
+        unit?.department_id
+          ? api.get(`/api/units/dispatcher-status?department_id=${unit.department_id}`).catch(() => null)
+          : Promise.resolve(null),
       ]);
       setMyUnit(unit);
       setActiveCall(unit && call ? call : null);
+      setCanSelfDispatchClose(!!unit && !!call && !(dispatcherStatus?.dispatcher_online || dispatcherStatus?.is_dispatch_department));
     } catch (err) {
       console.error('Failed to refresh call details:', err);
     } finally {
@@ -118,6 +123,17 @@ export default function CallDetails() {
     }
   }
 
+  async function closeCall() {
+    if (!activeCall?.id || !canSelfDispatchClose) return;
+    if (!confirm('Close this call?')) return;
+    try {
+      await api.patch(`/api/calls/${activeCall.id}`, { status: 'closed' });
+      fetchData();
+    } catch (err) {
+      alert('Failed to close call: ' + err.message);
+    }
+  }
+
   if (loading) {
     return <p className="text-sm text-cad-muted">Loading call details...</p>;
   }
@@ -170,12 +186,22 @@ export default function CallDetails() {
 
         {activeCall.status !== 'closed' && (
           <div className="mt-4">
-            <button
-              onClick={leaveCall}
-              className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
-            >
-              Leave Call
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={leaveCall}
+                className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+              >
+                Leave Call
+              </button>
+              {canSelfDispatchClose && (
+                <button
+                  onClick={closeCall}
+                  className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+                >
+                  Close Call
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

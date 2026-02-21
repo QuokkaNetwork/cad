@@ -183,6 +183,39 @@
 
     <div id="idCardMount"></div>
 
+    <div id="miniCadPopup" class="minicad hidden">
+      <header class="minicad-header">
+        <span id="miniCadCallIndex" class="minicad-index">1/1</span>
+        <span class="minicad-brand">Mini-CAD</span>
+        <div class="minicad-header-btns">
+          <button id="miniCadHideBtn" class="minicad-icon-btn" type="button" title="Hide (PageUp)">x</button>
+        </div>
+      </header>
+
+      <div class="minicad-body">
+        <div class="minicad-call-header">
+          <div id="miniCadJobCode" class="minicad-job-code"></div>
+          <div id="miniCadTitle" class="minicad-title"></div>
+        </div>
+        <div id="miniCadLocation" class="minicad-location"></div>
+        <div class="minicad-badges">
+          <span id="miniCadPostal" class="minicad-postal"></span>
+        </div>
+        <div id="miniCadUnits" class="minicad-units"></div>
+
+        <nav class="minicad-nav">
+          <button id="miniCadPrev" class="minicad-nav-btn" type="button"><i class="fas fa-chevron-left"></i> Prev</button>
+          <button id="miniCadDetach" class="minicad-nav-btn" type="button">Detach</button>
+          <button id="miniCadNext" class="minicad-nav-btn" type="button">Next <i class="fas fa-chevron-right"></i></button>
+        </nav>
+
+        <section class="minicad-section">
+          <h4 class="minicad-section-label">DESCRIPTION:</h4>
+          <div id="miniCadDescription" class="minicad-description"></div>
+        </section>
+      </div>
+    </div>
+
     <div id="mugshotBackdrop" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:#fff;z-index:0;"></div>
 
     <div id="app"></div>

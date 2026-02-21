@@ -357,6 +357,8 @@ Config.HeartbeatIntervalMs = math.max(250, math.min(500, math.floor(getNumber('c
 Config.FinePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_fine_poll_ms', 7000)))
 Config.JobSyncPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_job_sync_poll_ms', 5000)))
 Config.RoutePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_route_poll_ms', 4000)))
+Config.ClosestCallPromptPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_call_prompt_poll_ms', 2500)))
+Config.ClosestCallPromptTimeoutMs = math.max(6000, math.floor(getNumber('cad_bridge_call_prompt_timeout_ms', 15000)))
 Config.VoicePollIntervalMs = math.max(250, math.floor(getNumber('cad_bridge_voice_poll_ms', 1000)))
 Config.JailPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_jail_poll_ms', 7000)))
 
