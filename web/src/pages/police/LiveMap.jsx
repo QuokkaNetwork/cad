@@ -36,6 +36,27 @@ function parseMapNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function parsePositiveInt(value, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  const rounded = Math.trunc(num);
+  return rounded > 0 ? rounded : fallback;
+}
+
+function sanitizeGameBounds(bounds) {
+  const x1 = Number(bounds?.x1);
+  const y1 = Number(bounds?.y1);
+  const x2 = Number(bounds?.x2);
+  const y2 = Number(bounds?.y2);
+  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) {
+    return { ...DEFAULT_GAME_BOUNDS };
+  }
+  if (!(x2 > x1) || !(y1 > y2)) {
+    return { ...DEFAULT_GAME_BOUNDS };
+  }
+  return { x1, y1, x2, y2 };
+}
+
 function roundCalibrationValue(value) {
   return Math.round(Number(value) * 1000) / 1000;
 }
@@ -102,29 +123,36 @@ function getMapBounds(map, tileConfig) {
   return latLngBounds(southWest, northEast);
 }
 
-function convertToMapLatLng(rawX, rawY, map, tileConfig) {
+function convertToMapLatLng(rawX, rawY, map, tileConfig, mapTransform) {
   const x = Number(rawX);
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !map) return null;
 
   const width = tileConfig.tileSize * tileConfig.tileColumns;
   const height = tileConfig.tileSize * tileConfig.tileRows;
-  const latLng1 = map.unproject([0, 0], 0);
-  const latLng2 = map.unproject([width / 2, height - tileConfig.tileSize], 0);
-
-  const denomX = DEFAULT_GAME_BOUNDS.x1 - DEFAULT_GAME_BOUNDS.x2;
-  const denomY = DEFAULT_GAME_BOUNDS.y1 - DEFAULT_GAME_BOUNDS.y2;
+  const gameBounds = sanitizeGameBounds(mapTransform?.gameBounds);
+  const denomX = gameBounds.x2 - gameBounds.x1;
+  const denomY = gameBounds.y1 - gameBounds.y2;
   if (Math.abs(denomX) < 0.0001 || Math.abs(denomY) < 0.0001) return null;
 
-  const projectedLng = latLng1.lng + ((x - DEFAULT_GAME_BOUNDS.x1) * (latLng1.lng - latLng2.lng)) / denomX;
-  const projectedLat = latLng1.lat + ((y - DEFAULT_GAME_BOUNDS.y1) * (latLng1.lat - latLng2.lat)) / denomY;
-  const baseProjected = map.project({ lat: projectedLat, lng: projectedLng }, 0);
-  const projectedX = baseProjected.x;
-  const projectedY = baseProjected.y;
+  const normalizedX = (x - gameBounds.x1) / denomX;
+  const normalizedY = (gameBounds.y1 - y) / denomY;
+  let projectedX = normalizedX * width;
+  let projectedY = normalizedY * height;
+
+  const scaleX = parseMapNumber(mapTransform?.scaleX, 1);
+  const scaleY = parseMapNumber(mapTransform?.scaleY, 1);
+  const offsetX = parseMapNumber(mapTransform?.offsetX, 0);
+  const offsetY = parseMapNumber(mapTransform?.offsetY, 0);
+  const centerX = width / 2;
+  const centerY = height / 2;
+  projectedX = centerX + ((projectedX - centerX) * scaleX) + offsetX;
+  projectedY = centerY + ((projectedY - centerY) * scaleY) + offsetY;
+  const projectedLatLng = map.unproject([projectedX, projectedY], 0);
 
   return {
-    lat: projectedLat,
-    lng: projectedLng,
+    lat: projectedLatLng.lat,
+    lng: projectedLatLng.lng,
     projectedX,
     projectedY,
     outOfBounds: projectedX < 0 || projectedY < 0 || projectedX > width || projectedY > height,
@@ -177,6 +205,7 @@ export default function LiveMap({ isPopout = false }) {
     maxZoom: DEFAULT_MAX_ZOOM,
     minNativeZoom: DEFAULT_NATIVE_ZOOM,
     maxNativeZoom: DEFAULT_NATIVE_ZOOM,
+    gameBounds: { ...DEFAULT_GAME_BOUNDS },
     missingTiles: [],
   });
   const [mapScaleX, setMapScaleX] = useState(1);
@@ -213,18 +242,24 @@ export default function LiveMap({ isPopout = false }) {
         ? cfg.missing_tiles.map((tile) => String(tile || '').trim()).filter(Boolean)
         : [];
       const mapAvailable = cfg?.map_available === true && missingTiles.length === 0;
+      const gameBounds = sanitizeGameBounds({
+        x1: parseMapNumber(cfg?.map_game_bounds?.x1 ?? cfg?.map_game_x1, DEFAULT_GAME_BOUNDS.x1),
+        y1: parseMapNumber(cfg?.map_game_bounds?.y1 ?? cfg?.map_game_y1, DEFAULT_GAME_BOUNDS.y1),
+        x2: parseMapNumber(cfg?.map_game_bounds?.x2 ?? cfg?.map_game_x2, DEFAULT_GAME_BOUNDS.x2),
+        y2: parseMapNumber(cfg?.map_game_bounds?.y2 ?? cfg?.map_game_y2, DEFAULT_GAME_BOUNDS.y2),
+      });
 
       setTileConfig({
         mapAvailable,
-        tileUrlTemplate: DEFAULT_TILE_URL_TEMPLATE,
-        // Match SnailyCAD map configuration exactly.
-        tileSize: DEFAULT_TILE_SIZE,
-        tileRows: DEFAULT_TILE_ROWS,
-        tileColumns: DEFAULT_TILE_COLUMNS,
-        minZoom: DEFAULT_MIN_ZOOM,
-        maxZoom: DEFAULT_MAX_ZOOM,
-        minNativeZoom: DEFAULT_NATIVE_ZOOM,
-        maxNativeZoom: DEFAULT_NATIVE_ZOOM,
+        tileUrlTemplate: String(cfg?.tile_url_template || DEFAULT_TILE_URL_TEMPLATE).trim() || DEFAULT_TILE_URL_TEMPLATE,
+        tileSize: parsePositiveInt(cfg?.tile_size, DEFAULT_TILE_SIZE),
+        tileRows: parsePositiveInt(cfg?.tile_rows, DEFAULT_TILE_ROWS),
+        tileColumns: parsePositiveInt(cfg?.tile_columns, DEFAULT_TILE_COLUMNS),
+        minZoom: parseMapNumber(cfg?.min_zoom, DEFAULT_MIN_ZOOM),
+        maxZoom: parseMapNumber(cfg?.max_zoom, DEFAULT_MAX_ZOOM),
+        minNativeZoom: parseMapNumber(cfg?.min_native_zoom, DEFAULT_NATIVE_ZOOM),
+        maxNativeZoom: parseMapNumber(cfg?.max_native_zoom, DEFAULT_NATIVE_ZOOM),
+        gameBounds,
         missingTiles,
       });
 
@@ -429,14 +464,21 @@ export default function LiveMap({ isPopout = false }) {
 
   const markers = useMemo(() => {
     if (!mapInstance) return [];
+    const mapTransform = {
+      scaleX: mapScaleX,
+      scaleY: mapScaleY,
+      offsetX: mapOffsetX,
+      offsetY: mapOffsetY,
+      gameBounds: tileConfig.gameBounds,
+    };
     return players
       .map((player) => {
-        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig);
+        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, mapTransform);
         if (!latLng) return null;
         return { player, latLng };
       })
       .filter(Boolean);
-  }, [players, mapInstance, tileConfig]);
+  }, [players, mapInstance, tileConfig, mapScaleX, mapScaleY, mapOffsetX, mapOffsetY]);
   const outOfBoundsCount = useMemo(() => markers.filter((m) => m?.latLng?.outOfBounds === true).length, [markers]);
 
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;
