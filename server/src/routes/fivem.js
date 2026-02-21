@@ -38,6 +38,27 @@ router.use((req, _res, next) => {
   next();
 });
 
+const BRIDGE_RADIO_FEATURES_ENABLED = String(process.env.CAD_BRIDGE_RADIO_FEATURES_ENABLED || 'false')
+  .trim()
+  .toLowerCase() === 'true';
+
+function isDisabledBridgeRadioPath(pathname = '') {
+  const path = String(pathname || '').trim().toLowerCase();
+  return path.startsWith('/voice-events')
+    || path.startsWith('/voice-participants')
+    || path.startsWith('/external-voice')
+    || path.startsWith('/radio-channels');
+}
+
+router.use((req, res, next) => {
+  if (BRIDGE_RADIO_FEATURES_ENABLED || !isDisabledBridgeRadioPath(req.path)) {
+    return next();
+  }
+  return res.status(410).json({
+    error: 'CAD bridge radio integration has been removed from this deployment',
+  });
+});
+
 const liveLinkUserCache = new Map();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const pendingRouteJobs = new Map();

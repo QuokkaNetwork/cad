@@ -19,10 +19,6 @@ files {
   'ui/license-card.html',
   'ui/styles.css',
   'ui/app.js',
-  'ui/cad_radio.css',
-  'ui/cad_radio.js',
-  'ui/livekit-client.umd.min.js',
-  'ui/external_voice_bridge.js',
   'ui/overlay.webp',
   'ui/vicroads-logo.jpg',
 }

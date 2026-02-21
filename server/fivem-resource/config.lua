@@ -380,9 +380,9 @@ if Config.OxNotifyPosition == '' then Config.OxNotifyPosition = 'center-right' e
 Config.OxNotifyForceIntervalMs = math.max(5000, math.floor(getNumber('cad_bridge_ox_notify_force_interval_ms', 60000)))
 
 -- Radio settings.
-Config.RadioAdapter = trim(getString('cad_bridge_radio_adapter', 'cad-radio'))
-if Config.RadioAdapter == '' then Config.RadioAdapter = 'cad-radio' end
-Config.RadioEnabled = getBoolean('cad_bridge_radio_enabled', true)
+Config.RadioAdapter = trim(getString('cad_bridge_radio_adapter', 'none'))
+if Config.RadioAdapter == '' then Config.RadioAdapter = 'none' end
+Config.RadioEnabled = getBoolean('cad_bridge_radio_enabled', false)
 Config.RadioTargetId = math.floor(getNumber('cad_bridge_radio_target_id', 2))
 Config.ProximityTargetId = math.floor(getNumber('cad_bridge_proximity_target_id', 1))
 Config.RadioRxVolume = getNumber('cad_bridge_radio_rx_volume', 0.35)
@@ -394,14 +394,14 @@ Config.RadioFollowNativePtt = getBoolean('cad_bridge_radio_follow_native_ptt', t
 Config.RadioPttReleaseDelayMs = math.max(0, math.floor(getNumber('cad_bridge_radio_ptt_release_delay_ms', 350)))
 Config.RadioTalkingTimeoutMs = math.max(1000, math.floor(getNumber('cad_bridge_radio_talking_timeout_ms', 6000)))
 Config.RadioForwardRoot = getBoolean('cad_bridge_radio_forward_root', false)
-Config.RadioUiEnabled = getBoolean('cad_bridge_radio_ui_enabled', true)
+Config.RadioUiEnabled = getBoolean('cad_bridge_radio_ui_enabled', false)
 Config.RadioUiKey = trim(getString('cad_bridge_radio_ui_key', 'EQUALS'))
 if Config.RadioUiKey == '' then Config.RadioUiKey = 'EQUALS' end
 Config.RadioMaxFrequency = math.max(1, math.floor(getNumber('cad_bridge_radio_max_frequency', 500)))
 Config.RadioOverlayMode = trim(getString('cad_bridge_radio_overlay', 'default'))
 if Config.RadioOverlayMode == '' then Config.RadioOverlayMode = 'default' end
-Config.RadioChannelSyncEnabled = getBoolean('cad_bridge_radio_channel_sync_enabled', true)
-Config.VoiceParticipantHeartbeatEnabled = getBoolean('cad_bridge_voice_participant_heartbeat_enabled', true)
+Config.RadioChannelSyncEnabled = getBoolean('cad_bridge_radio_channel_sync_enabled', false)
+Config.VoiceParticipantHeartbeatEnabled = getBoolean('cad_bridge_voice_participant_heartbeat_enabled', false)
 Config.VoiceEventPollEnabled = getBoolean('cad_bridge_voice_event_poll_enabled', false)
 Config.ExternalVoiceTokenEnabled = getBoolean('cad_bridge_external_voice_token_enabled', false)
 

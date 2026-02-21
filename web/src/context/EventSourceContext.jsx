@@ -7,7 +7,6 @@ const SSE_EVENTS = [
   'call:create', 'call:update', 'call:close', 'call:assign', 'call:unassign',
   'bolo:create', 'bolo:resolve', 'bolo:cancel',
   'warrant:create', 'warrant:serve', 'warrant:cancel',
-  'voice:join', 'voice:leave', 'voice:call_accepted', 'voice:call_declined', 'voice:call_ended',
   'announcement:new', 'sync:department',
 ];
 

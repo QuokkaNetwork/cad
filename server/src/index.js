@@ -10,21 +10,13 @@ const passport = require('passport');
 const path = require('path');
 const config = require('./config');
 const { verifyToken } = require('./auth/jwt');
-const { initDb, VoiceParticipants, DriverLicenses, VehicleRegistrations } = require('./db/sqlite');
+const { initDb, DriverLicenses, VehicleRegistrations } = require('./db/sqlite');
 const { initSteamAuth } = require('./auth/steam');
 const { startBot } = require('./discord/bot');
 const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
 const { ensureLiveMapTilesDir, getFallbackLiveMapTilesDir } = require('./services/liveMapTiles');
-
-function parseBool(value, fallback = false) {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (!normalized) return !!fallback;
-  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
-  return !!fallback;
-}
 
 function runCadExpirySweep() {
   try {
@@ -45,9 +37,6 @@ console.log('Initializing database...');
 initDb();
 console.log('Database ready');
 
-// Clear ghost voice participants left from previous run (before any routes are served)
-try { VoiceParticipants.removeAllOnStartup(); } catch {};
-
 // Initialize Express
 const app = express();
 app.locals.authCookieName = config.auth.cookieName;
@@ -57,16 +46,10 @@ if (config.http?.trustProxy !== false) {
 
 // Security middleware
 app.use(helmet({ contentSecurityPolicy: false }));
-// Allow microphone access for dispatcher voice (getUserMedia).
-// Helmet v8 does not manage Permissions-Policy, so we set it manually.
-app.use((_req, res, next) => {
-  res.setHeader('Permissions-Policy', 'microphone=(self)');
-  next();
-});
 // Allow both the HTTP (port 3031) and HTTPS (port 3030) origins so users can
 // access the CAD from either URL without CORS errors.
 const allowedOrigins = new Set([config.webUrl]);
-// Also accept the HTTPS variant on 3030 (for microphone access / dispatcher voice)
+// Also accept the HTTPS variant on 3030.
 try {
   const httpUrl  = new URL(config.webUrl);
   const httpsUrl = new URL(config.webUrl);
@@ -148,7 +131,6 @@ app.use('/api/records', require('./routes/records'));
 app.use('/api/medical', require('./routes/medical'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/admin', require('./routes/admin'));
-app.use('/api/voice', require('./routes/voice'));
 app.use('/api/integration/fivem', require('./routes/fivem'));
 
 // Announcements (public, auth-required)
@@ -314,77 +296,10 @@ bridgeHttpServer.on('error', (err) => {
 
 // Async startup
 (async () => {
-  const radioBehavior = String(config?.radio?.behavior || 'external');
-  const externalBehavior = radioBehavior === 'external';
-  const voiceBridgeRequested = parseBool(process.env.VOICE_BRIDGE_ENABLED, false);
-  const legacyBridgeEnabled = !externalBehavior && voiceBridgeRequested;
-
-  if (externalBehavior && voiceBridgeRequested) {
-    console.warn('[VoiceBridge] VOICE_BRIDGE_ENABLED=true ignored in external mode (no CAD-managed Mumble bridge).');
-  }
-
-  // Initialize Voice Bridge (optional - only if dependencies are installed)
-  if (legacyBridgeEnabled) {
-    try {
-      const { getVoiceBridge } = require('./services/voiceBridge');
-      const VoiceSignalingServer = require('./services/voiceSignaling');
-      const { initVoiceBridgeSync } = require('./services/voiceBridgeSync');
-
-      const voiceBridge = getVoiceBridge();
-      if (voiceBridge?.getStatus?.().available) {
-        const voiceSignalingServer = new VoiceSignalingServer(httpServer, voiceBridge);
-        app.locals.voiceSignalingServer = voiceSignalingServer;
-        // Mirror /voice-bridge upgrades on the plain HTTP bridge listener too.
-        // This keeps dispatcher voice available when operators access CAD via :3031.
-        bridgeHttpServer.on('upgrade', (request, socket, head) => {
-          if (request.url && request.url.startsWith('/voice-bridge')) {
-            voiceSignalingServer.handleUpgrade(request, socket, head);
-          }
-        });
-        initVoiceBridgeSync(voiceBridge);
-        console.log('[VoiceBridge] Voice bridge initialized successfully');
-      } else {
-        const missing = voiceBridge?.getStatus?.().dependency_missing || 'unknown';
-        console.warn(`[VoiceBridge] Voice bridge not available: missing ${missing}`);
-        console.warn('[VoiceBridge] Install dependencies: npm install --workspace=server mumble-node opusscript');
-      }
-    } catch (error) {
-      console.warn('[VoiceBridge] Voice bridge not available:', error.message);
-      console.warn('[VoiceBridge] CAD will run without voice bridge support');
-    }
-  } else if (externalBehavior) {
-    console.warn('[VoiceBridge] Disabled in external radio behavior mode (no CAD-managed Mumble bridge).');
-  } else {
-    console.warn('[VoiceBridge] Disabled by VOICE_BRIDGE_ENABLED=false');
-  }
-
   // Start HTTP server
   httpServer.listen(config.port, () => {
     console.log(`CAD server running on port ${config.port}`);
     console.log(`Environment: ${config.nodeEnv}`);
-    console.log(`Radio behavior: ${radioBehavior}`);
-    if (legacyBridgeEnabled) {
-      console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
-    } else {
-      console.log('[VoiceBridge] WebSocket signaling disabled');
-    }
-
-    // Print voice status summary
-    console.log('');
-    console.log('=== Voice Status ===');
-    if (externalBehavior) {
-      console.log('[VoiceMode]  Native FiveM/pma-voice mode active');
-      console.log('[VoiceCfg]   Auto-deploy disabled');
-      console.log('[VoiceBridge] Disabled in external mode (no CAD-managed Mumble bridge)');
-    } else if (legacyBridgeEnabled) {
-      console.log('[VoiceMode]  Legacy CAD voice bridge mode active');
-      console.log('[VoiceBridge] WebSocket signaling available at /voice-bridge');
-    } else {
-      console.log('[VoiceMode]  Legacy mode selected but VOICE_BRIDGE_ENABLED=false');
-      console.log('[VoiceBridge] Disabled by VOICE_BRIDGE_ENABLED=false');
-    }
-    console.log('====================');
-    console.log('');
   });
 
   // Start Discord bot

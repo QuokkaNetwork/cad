@@ -25,7 +25,6 @@ import AdminSystemSettings from './pages/admin/SystemSettings';
 import AdminHome from './pages/admin/Home';
 import AdminOffenceCatalog from './pages/admin/OffenceCatalog';
 import AdminFieldMappings from './pages/admin/FieldMappings';
-import Voice from './pages/police/Voice';
 
 export default function App() {
   return (
@@ -67,7 +66,6 @@ export default function App() {
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
             <Route path="/warrants" element={<RequireDepartment><Warrants /></RequireDepartment>} />
             <Route path="/call-details" element={<RequireDepartment><CallDetails /></RequireDepartment>} />
-            <Route path="/voice" element={<RequireDepartment><Voice /></RequireDepartment>} />
 
             {/* Admin */}
             <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminHome /></ProtectedRoute>} />
