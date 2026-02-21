@@ -682,6 +682,58 @@ const Calls = {
     `).get(unitId);
     return hydrateRequestedDepartments(call);
   },
+  autoCloseStaleUnassigned({ staleMinutes = 30, limit = 100 } = {}) {
+    const minutes = Number.isFinite(Number(staleMinutes))
+      ? Math.max(1, Math.trunc(Number(staleMinutes)))
+      : 30;
+    const maxRows = Number.isFinite(Number(limit))
+      ? Math.max(1, Math.trunc(Number(limit)))
+      : 100;
+
+    const staleCallRows = db.prepare(`
+      SELECT c.id
+      FROM calls c
+      LEFT JOIN call_units cu ON cu.call_id = c.id
+      WHERE c.status != 'closed'
+        AND COALESCE(c.was_ever_assigned, 0) = 0
+        AND cu.call_id IS NULL
+        AND c.created_at <= datetime('now', ?)
+      ORDER BY c.created_at ASC
+      LIMIT ?
+    `).all(`-${minutes} minutes`, maxRows);
+
+    if (!Array.isArray(staleCallRows) || staleCallRows.length === 0) {
+      return [];
+    }
+
+    const closeStmt = db.prepare(`
+      UPDATE calls
+      SET status = 'closed', updated_at = datetime('now')
+      WHERE id = ? AND status != 'closed'
+    `);
+
+    const closedCallIds = [];
+    const tx = db.transaction(() => {
+      for (const row of staleCallRows) {
+        const callId = Number(row?.id || 0);
+        if (!callId) continue;
+        const info = closeStmt.run(callId);
+        if (Number(info?.changes || 0) > 0) {
+          closedCallIds.push(callId);
+        }
+      }
+    });
+    tx();
+
+    if (closedCallIds.length === 0) return [];
+
+    const closedCalls = [];
+    for (const callId of closedCallIds) {
+      const call = this.findById(callId);
+      if (call) closedCalls.push(call);
+    }
+    return closedCalls;
+  },
 };
 
 // --- BOLOs ---

@@ -16,6 +16,7 @@ const { startBot } = require('./discord/bot');
 const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
+const { startCallAutoCloseProcessor } = require('./services/callAutoCloseProcessor');
 const { ensureLiveMapTilesDir, getFallbackLiveMapTilesDir } = require('./services/liveMapTiles');
 
 function runCadExpirySweep() {
@@ -314,6 +315,7 @@ bridgeHttpServer.on('error', (err) => {
 
   startFiveMResourceAutoSync();
   startFineProcessor();
+  startCallAutoCloseProcessor();
 
   const expirySweepMsRaw = parseInt(process.env.CAD_EXPIRY_SWEEP_MS || '60000', 10);
   const expirySweepMs = Number.isFinite(expirySweepMsRaw) ? Math.max(60000, expirySweepMsRaw) : 60000;
