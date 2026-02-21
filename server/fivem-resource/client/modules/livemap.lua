@@ -1,7 +1,73 @@
+local util = CadBridge and CadBridge.util or {}
+local notify = CadBridge and CadBridge.notify or {}
+
+local function trim(value)
+  if type(util.trim) == 'function' then
+    return util.trim(value)
+  end
+  if value == nil then return '' end
+  return (tostring(value):gsub('^%s+', ''):gsub('%s+$', ''))
+end
+
+RegisterNetEvent('cad_bridge:setCallRoute', function(route)
+  if type(route) ~= 'table' then return end
+  local action = tostring(route.action or ''):lower()
+  local clearWaypoint = action == 'clear' or route.clear_waypoint == true or tonumber(route.clear_waypoint or 0) == 1
+
+  if clearWaypoint then
+    SetWaypointOff()
+    if type(notify.routeCleared) == 'function' then
+      notify.routeCleared(route)
+    end
+    return
+  end
+
+  local coords = nil
+  if type(util.parseCoords) == 'function' then
+    coords = util.parseCoords(route.position)
+  end
+  if not coords and type(util.getPostalCoords) == 'function' then
+    coords = util.getPostalCoords(route.postal)
+  end
+
+  if coords and tonumber(coords.x) and tonumber(coords.y) then
+    SetNewWaypoint(coords.x + 0.0, coords.y + 0.0)
+    if type(notify.route) == 'function' then
+      notify.route(route, true)
+    end
+    return
+  end
+
+  if type(notify.route) == 'function' then
+    notify.route(route, false)
+  end
+end)
+
+RegisterNetEvent('cad_bridge:notifyFine', function(payload)
+  if type(notify.fine) == 'function' then
+    notify.fine(payload)
+  end
+end)
+
+RegisterNetEvent('cad_bridge:notifyAlert', function(payload)
+  if type(notify.alert) == 'function' then
+    notify.alert(payload)
+  end
+end)
+
+local LIVE_MAP_CALIBRATION_ENABLED = Config.LiveMapCalibrationEnabled == true
+local LIVE_MAP_CALIBRATION_COMMAND = trim(Config.LiveMapCalibrationCommand or 'calibrate')
+if LIVE_MAP_CALIBRATION_COMMAND == '' then LIVE_MAP_CALIBRATION_COMMAND = 'calibrate' end
+local liveMapCalibrationPointA = nil
+local liveMapCalibrationPointB = nil
+
+local function notifyLiveMapCalibration(message, notifyType)
+  local title = 'Live Map Calibration'
+  local description = tostring(message or '')
   local nType = trim(notifyType or '')
   if nType == '' then nType = 'inform' end
 
-  if triggerCadOxNotify({
+  if type(util.triggerCadOxNotify) == 'function' and util.triggerCadOxNotify({
     title = title,
     description = description,
     type = nType,
@@ -147,7 +213,6 @@ local function runAutoLiveMapCalibration()
   end
 
   setCalibrationEntityFreezeState(true)
-
   notifyLiveMapCalibration('Auto calibration started. Teleporting to point 1...')
   if not teleportCalibrationPoint(point1) then
     abortAutoCalibration('Failed to teleport to point 1.')
@@ -183,22 +248,6 @@ local function runAutoLiveMapCalibration()
   setCalibrationEntityFreezeState(false)
   notifyLiveMapCalibration('Auto calibration submitted.')
 end
-
-RegisterCommand(SHOW_ID_COMMAND, function()
-  requestShowIdCard()
-end, false)
-
-RegisterCommand('cadbridgecloseid', function()
-  closeShownIdCard()
-end, false)
-
-RegisterCommand('cadbridgeidtoggle', function()
-  if idCardUiOpen then
-    closeShownIdCard()
-    return
-  end
-  requestShowIdCard()
-end, false)
 
 if LIVE_MAP_CALIBRATION_ENABLED then
   RegisterCommand(LIVE_MAP_CALIBRATION_COMMAND, function(_source, args)
@@ -264,9 +313,7 @@ if LIVE_MAP_CALIBRATION_ENABLED then
     if action == 'reset' then
       liveMapCalibrationPointA = nil
       liveMapCalibrationPointB = nil
-      TriggerServerEvent('cad_bridge:saveLiveMapCalibration', {
-        reset = true,
-      })
+      TriggerServerEvent('cad_bridge:saveLiveMapCalibration', { reset = true })
       notifyLiveMapCalibration('Calibration reset submitted. Default GTA bounds will be restored if authorised.')
       return
     end
@@ -295,146 +342,3 @@ if LIVE_MAP_CALIBRATION_ENABLED then
     notifyLiveMapCalibration(('Unknown action: %s. Use /%s help'):format(action, LIVE_MAP_CALIBRATION_COMMAND), 'error')
   end, false)
 end
-
-RegisterKeyMapping('cadbridgeidtoggle', 'Show or hide your ID card', 'keyboard', SHOW_ID_KEY)
-
--- Test command to verify UI works without server
-RegisterCommand('test000ui', function()
-  print('[cad_bridge] Testing 000 UI with mock data')
-  openEmergencyPopup({
-    {id = 1, name = 'Police Department', short_name = 'LSPD', color = '#3b82f6'},
-    {id = 2, name = 'Fire Department', short_name = 'LSFD', color = '#ef4444'},
-    {id = 3, name = 'Emergency Medical Services', short_name = 'EMS', color = '#10b981'},
-  })
-end, false)
-
-local function loadPedModel(modelName)
-  local modelHash = modelName
-  if type(modelName) ~= 'number' then
-    modelHash = GetHashKey(tostring(modelName or ''))
-  end
-  if not modelHash or modelHash == 0 or not IsModelInCdimage(modelHash) or not IsModelValid(modelHash) then
-    return nil
-  end
-  RequestModel(modelHash)
-  local waited = 0
-  while not HasModelLoaded(modelHash) and waited < 5000 do
-    Wait(25)
-    waited = waited + 25
-  end
-  if not HasModelLoaded(modelHash) then
-    return nil
-  end
-  return modelHash
-end
-
-local function resolveGroundZForPed(x, y, fallbackZ)
-  local baseZ = tonumber(fallbackZ) or 0.0
-  local probes = {
-    baseZ + 1.0,
-    baseZ + 4.0,
-    baseZ + 10.0,
-    baseZ + 25.0,
-    baseZ + 50.0,
-    baseZ + 100.0,
-  }
-
-  for _, probeZ in ipairs(probes) do
-    local foundGround, groundZ = GetGroundZFor_3dCoord(x + 0.0, y + 0.0, probeZ + 0.0, false)
-    if foundGround and type(groundZ) == 'number' then
-      return groundZ
-    end
-  end
-
-  return baseZ
-end
-
-local function requestPedSpawnCollision(x, y, z, timeoutMs)
-  local px = (tonumber(x) or 0.0) + 0.0
-  local py = (tonumber(y) or 0.0) + 0.0
-  local pz = (tonumber(z) or 0.0) + 0.0
-  local deadline = (tonumber(GetGameTimer() or 0) or 0) + math.max(250, math.floor(tonumber(timeoutMs) or 1500))
-  repeat
-    RequestCollisionAtCoord(px, py, pz)
-    Wait(0)
-  until (tonumber(GetGameTimer() or 0) or 0) >= deadline
-end
-
-local function placePedOnGroundProperly(entity, x, y, z, heading)
-  if not entity or entity == 0 or not DoesEntityExist(entity) then
-    return false, tonumber(z) or 0.0
-  end
-
-  local px = (tonumber(x) or 0.0) + 0.0
-  local py = (tonumber(y) or 0.0) + 0.0
-  local pz = (tonumber(z) or 0.0) + 0.0
-  local h = (tonumber(heading) or 0.0) + 0.0
-
-  SetEntityCoordsNoOffset(entity, px, py, pz + 1.0, false, false, false)
-  SetEntityHeading(entity, h)
-  requestPedSpawnCollision(px, py, pz, 1800)
-
-  local deadline = (tonumber(GetGameTimer() or 0) or 0) + 2000
-  while (tonumber(GetGameTimer() or 0) or 0) < deadline do
-    if HasCollisionLoadedAroundEntity(entity) then break end
-    RequestCollisionAtCoord(px, py, pz)
-    Wait(0)
-  end
-
-  local placed = false
-  for _ = 1, 3 do
-    if type(PlaceEntityOnGroundProperly) == 'function' then
-      local ok, result = pcall(function()
-        return PlaceEntityOnGroundProperly(entity)
-      end)
-      placed = ok and (result == nil or result == true)
-    end
-    if not placed and type(SetPedOnGroundProperly) == 'function' then
-      local ok, result = pcall(function()
-        return SetPedOnGroundProperly(entity)
-      end)
-      placed = ok and (result == nil or result == true)
-    end
-    if placed then break end
-    Wait(50)
-  end
-
-  local settledGroundZ = resolveGroundZForPed(px, py, pz)
-  local entityCoords = GetEntityCoords(entity)
-  local finalZ = tonumber(entityCoords and entityCoords.z) or settledGroundZ
-  if (not placed) or finalZ < (settledGroundZ - 0.2) then
-    finalZ = settledGroundZ + 0.08
-    SetEntityCoordsNoOffset(entity, px, py, finalZ, false, false, false)
-  end
-  SetEntityHeading(entity, h)
-
-  return placed, finalZ
-end
-
-local function spawnDocumentPed(pedConfig)
-  if type(pedConfig) ~= 'table' or pedConfig.enabled == false then
-    return
-  end
-  local coords = type(pedConfig.coords) == 'table' and pedConfig.coords or nil
-  if not coords then return end
-  local x = tonumber(coords.x) or 0.0
-  local y = tonumber(coords.y) or 0.0
-  local z = tonumber(coords.z) or 0.0
-  local w = tonumber(coords.w) or 0.0
-  requestPedSpawnCollision(x, y, z, 1800)
-  local configuredZ = z + 0.0
-  local spawnZ = configuredZ
-
-  local modelHash = loadPedModel(pedConfig.model or '')
-  if not modelHash then
-    print(('[cad_bridge] Failed to load document ped model: %s'):format(tostring(pedConfig.model or '')))
-    return
-  end
-
-  local entity = CreatePed(4, modelHash, x, y, spawnZ + 1.0, w, false, true)
-  if not entity or entity == 0 or not DoesEntityExist(entity) then
-    print(('[cad_bridge] Failed to create document ped for id=%s'):format(tostring(pedConfig.id or 'unknown')))
-    SetModelAsNoLongerNeeded(modelHash)
-    return
-  end
-  SetEntityAsMissionEntity(entity, true, true)

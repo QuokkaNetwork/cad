@@ -9,7 +9,12 @@ version '0.1.0'
 
 shared_script 'config.lua'
 client_scripts {
-  'client.lua',
+  'client/modules/shared.lua',
+  'client/modules/license.lua',
+  'client/modules/registration.lua',
+  'client/modules/documents_ui.lua',
+  'client/modules/livemap.lua',
+  'client/modules/peds.lua',
   'client/modules/call_prompt.lua',
   'client/modules/call_popup.lua',
 }

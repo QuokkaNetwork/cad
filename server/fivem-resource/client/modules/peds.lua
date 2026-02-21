@@ -1,13 +1,162 @@
-  local _, groundedZ = placePedOnGroundProperly(entity, x, y, spawnZ, w)
-  if type(groundedZ) == 'number' then
-    spawnZ = groundedZ
+local util = CadBridge and CadBridge.util or {}
+local ui = CadBridge and CadBridge.ui or {}
+local state = CadBridge and CadBridge.state or {}
+
+local function trim(value)
+  if type(util.trim) == 'function' then
+    return util.trim(value)
   end
+  if value == nil then return '' end
+  return (tostring(value):gsub('^%s+', ''):gsub('%s+$', ''))
+end
+
+local documentInteractionDistance = tonumber(Config.DocumentPedInteractionDistance or 2.2) or 2.2
+if documentInteractionDistance < 1.0 then documentInteractionDistance = 1.0 end
+local documentPromptDistance = tonumber(Config.DocumentPedPromptDistance or 12.0) or 12.0
+if documentPromptDistance < documentInteractionDistance then
+  documentPromptDistance = documentInteractionDistance + 2.0
+end
+
+local documentPeds = {}
+local documentPedBlips = {}
+local documentPedTargetEntities = {}
+local useOxTargetForDocuments = GetResourceState('ox_target') == 'started'
+
+local function loadPedModel(modelName)
+  local modelHash = modelName
+  if type(modelName) ~= 'number' then
+    modelHash = GetHashKey(tostring(modelName or ''))
+  end
+  if not modelHash or modelHash == 0 or not IsModelInCdimage(modelHash) or not IsModelValid(modelHash) then
+    return nil
+  end
+  RequestModel(modelHash)
+  local waited = 0
+  while not HasModelLoaded(modelHash) and waited < 5000 do
+    Wait(25)
+    waited = waited + 25
+  end
+  if not HasModelLoaded(modelHash) then return nil end
+  return modelHash
+end
+
+local function resolveGroundZForPed(x, y, fallbackZ)
+  local baseZ = tonumber(fallbackZ) or 0.0
+  local probes = {
+    baseZ + 1.0,
+    baseZ + 4.0,
+    baseZ + 10.0,
+    baseZ + 25.0,
+    baseZ + 50.0,
+    baseZ + 100.0,
+  }
+
+  for _, probeZ in ipairs(probes) do
+    local foundGround, groundZ = GetGroundZFor_3dCoord(x + 0.0, y + 0.0, probeZ + 0.0, false)
+    if foundGround and type(groundZ) == 'number' then
+      return groundZ
+    end
+  end
+
+  return baseZ
+end
+
+local function requestPedSpawnCollision(x, y, z, timeoutMs)
+  local px = (tonumber(x) or 0.0) + 0.0
+  local py = (tonumber(y) or 0.0) + 0.0
+  local pz = (tonumber(z) or 0.0) + 0.0
+  local deadline = (tonumber(GetGameTimer() or 0) or 0) + math.max(250, math.floor(tonumber(timeoutMs) or 1500))
+  repeat
+    RequestCollisionAtCoord(px, py, pz)
+    Wait(0)
+  until (tonumber(GetGameTimer() or 0) or 0) >= deadline
+end
+
+local function placePedOnGroundProperly(entity, x, y, z, heading)
+  if not entity or entity == 0 or not DoesEntityExist(entity) then
+    return false, tonumber(z) or 0.0
+  end
+
+  local px = (tonumber(x) or 0.0) + 0.0
+  local py = (tonumber(y) or 0.0) + 0.0
+  local pz = (tonumber(z) or 0.0) + 0.0
+  local h = (tonumber(heading) or 0.0) + 0.0
+
+  SetEntityCoordsNoOffset(entity, px, py, pz + 1.0, false, false, false)
+  SetEntityHeading(entity, h)
+  requestPedSpawnCollision(px, py, pz, 1800)
+
+  local deadline = (tonumber(GetGameTimer() or 0) or 0) + 2000
+  while (tonumber(GetGameTimer() or 0) or 0) < deadline do
+    if HasCollisionLoadedAroundEntity(entity) then break end
+    RequestCollisionAtCoord(px, py, pz)
+    Wait(0)
+  end
+
+  local placed = false
+  for _ = 1, 3 do
+    if type(PlaceEntityOnGroundProperly) == 'function' then
+      local ok, result = pcall(function()
+        return PlaceEntityOnGroundProperly(entity)
+      end)
+      placed = ok and (result == nil or result == true)
+    end
+    if not placed and type(SetPedOnGroundProperly) == 'function' then
+      local ok, result = pcall(function()
+        return SetPedOnGroundProperly(entity)
+      end)
+      placed = ok and (result == nil or result == true)
+    end
+    if placed then break end
+    Wait(50)
+  end
+
+  local settledGroundZ = resolveGroundZForPed(px, py, pz)
+  local entityCoords = GetEntityCoords(entity)
+  local finalZ = tonumber(entityCoords and entityCoords.z) or settledGroundZ
+  if (not placed) or finalZ < (settledGroundZ - 0.2) then
+    finalZ = settledGroundZ + 0.08
+    SetEntityCoordsNoOffset(entity, px, py, finalZ, false, false, false)
+  end
+  SetEntityHeading(entity, h)
+  return placed, finalZ
+end
+
+local function spawnDocumentPed(pedConfig)
+  if type(pedConfig) ~= 'table' or pedConfig.enabled == false then return end
+  local coords = type(pedConfig.coords) == 'table' and pedConfig.coords or nil
+  if not coords then return end
+  local x = tonumber(coords.x) or 0.0
+  local y = tonumber(coords.y) or 0.0
+  local z = tonumber(coords.z) or 0.0
+  local w = tonumber(coords.w) or 0.0
+  requestPedSpawnCollision(x, y, z, 1800)
+  local configuredZ = z + 0.0
+  local spawnZ = configuredZ
+
+  local modelHash = loadPedModel(pedConfig.model or '')
+  if not modelHash then
+    print(('[cad_bridge] Failed to load document ped model: %s'):format(tostring(pedConfig.model or '')))
+    return
+  end
+
+  local entity = CreatePed(4, modelHash, x, y, spawnZ + 1.0, w, false, true)
+  if not entity or entity == 0 or not DoesEntityExist(entity) then
+    print(('[cad_bridge] Failed to create document ped for id=%s'):format(tostring(pedConfig.id or 'unknown')))
+    SetModelAsNoLongerNeeded(modelHash)
+    return
+  end
+  SetEntityAsMissionEntity(entity, true, true)
+
+  local _, groundedZ = placePedOnGroundProperly(entity, x, y, spawnZ, w)
+  if type(groundedZ) == 'number' then spawnZ = groundedZ end
   local minAllowedZ = configuredZ - 0.02
   if spawnZ < minAllowedZ then
     spawnZ = configuredZ
     SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ, false, false, false)
     SetEntityHeading(entity, w + 0.0)
   end
+
   SetEntityInvincible(entity, true)
   SetBlockingOfNonTemporaryEvents(entity, true)
   SetPedCanRagdoll(entity, false)
@@ -104,8 +253,8 @@ local function registerDocumentPedTarget(pedData)
       distance = documentInteractionDistance,
       onSelect = function()
         local nowMs = tonumber(GetGameTimer() or 0) or 0
-        if (nowMs - lastDocumentInteractAt) < 750 then return end
-        lastDocumentInteractAt = nowMs
+        if (nowMs - tonumber(state.lastDocumentInteractAt or 0)) < 750 then return end
+        state.lastDocumentInteractAt = nowMs
         TriggerServerEvent('cad_bridge:requestDriverLicensePrompt', pedData.id)
       end,
     }
@@ -118,8 +267,8 @@ local function registerDocumentPedTarget(pedData)
       distance = documentInteractionDistance,
       onSelect = function()
         local nowMs = tonumber(GetGameTimer() or 0) or 0
-        if (nowMs - lastDocumentInteractAt) < 750 then return end
-        lastDocumentInteractAt = nowMs
+        if (nowMs - tonumber(state.lastDocumentInteractAt or 0)) < 750 then return end
+        state.lastDocumentInteractAt = nowMs
         TriggerServerEvent('cad_bridge:requestVehicleRegistrationPrompt', pedData.id)
       end,
     }
@@ -131,8 +280,7 @@ local function registerDocumentPedTarget(pedData)
   end)
   if not ok then
     print(('[cad_bridge] Failed to register ox_target options for document ped %s: %s'):format(
-      tostring(pedData.id or entity),
-      tostring(err)
+      tostring(pedData.id or entity), tostring(err)
     ))
     return
   end
@@ -168,9 +316,10 @@ CreateThread(function()
         scenario = Config.VehicleRegistrationPed and Config.VehicleRegistrationPed.scenario or '',
         allows_license = false,
         allows_registration = true,
-      }
+      },
     }
   end
+
   for _, pedConfig in ipairs(interactionPeds) do
     spawnDocumentPed(pedConfig)
     createDocumentPedBlip(pedConfig)
@@ -184,6 +333,7 @@ CreateThread(function()
   if useOxTargetForDocuments then
     return
   end
+
   while true do
     local waitMs = 500
     local playerPed = PlayerPedId()
@@ -212,8 +362,8 @@ CreateThread(function()
 
             if distance <= documentInteractionDistance and (IsControlJustPressed(0, 38) or IsControlJustPressed(0, 47)) then
               local nowMs = tonumber(GetGameTimer() or 0) or 0
-              if (nowMs - lastDocumentInteractAt) >= 1000 then
-                lastDocumentInteractAt = nowMs
+              if (nowMs - tonumber(state.lastDocumentInteractAt or 0)) >= 1000 then
+                state.lastDocumentInteractAt = nowMs
                 local useLicense = IsControlJustPressed(0, 38)
                 local useRegistration = IsControlJustPressed(0, 47)
                 if pedData.allowsLicense and pedData.allowsRegistration then
@@ -241,36 +391,6 @@ AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
   clearDocumentPedBlips()
   deleteDocumentPeds()
-  if idCardUiOpen then
-    closeShownIdCard()
-  end
-  if emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen then
-    SetNuiFocus(false, false)
-  end
-end)
-
-CreateThread(function()
-  while true do
-    if hasAnyCadBridgeModalOpen() then
-      Wait(0)
-
-      if IsControlJustPressed(0, 200) or IsControlJustPressed(0, 202) or IsControlJustPressed(0, 177) then
-        closeEmergencyPopup()
-        closeDriverLicensePopup()
-        closeVehicleRegistrationPopup()
-      end
-
-      if emergencyUiAwaitingOpenAck and emergencyUiOpenedAtMs > 0 then
-        local nowMs = tonumber(GetGameTimer() or 0) or 0
-        if (nowMs - emergencyUiOpenedAtMs) > 2500 then
-          closeEmergencyPopup()
-          notifyEmergencyUiIssue('000 UI failed to initialize. Focus was released.')
-        end
-      end
-    else
-      Wait(250)
-    end
-  end
 end)
 
 CreateThread(function()
@@ -283,18 +403,24 @@ CreateThread(function()
       local heading = GetEntityHeading(ped)
       local speed = GetEntitySpeed(ped)
       local streetHash, crossingHash = GetStreetNameAtCoord(coords.x, coords.y, coords.z)
-      local postal = getNearestPostal()
-      local street = ''
-      local crossing = ''
+      local postal = type(util.getNearestPostal) == 'function' and util.getNearestPostal() or ''
+      local street, crossing = '', ''
       if streetHash and streetHash ~= 0 then
         street = GetStreetNameFromHashKey(streetHash) or ''
       end
       if crossingHash and crossingHash ~= 0 then
         crossing = GetStreetNameFromHashKey(crossingHash) or ''
       end
-      local vehicleSnapshot = getVehicleSnapshot(ped)
-      local weapon = getWeaponName(ped)
-      local location = buildLocationText(street, crossing, postal, coords)
+      local vehicleSnapshot = type(util.getVehicleSnapshot) == 'function' and util.getVehicleSnapshot(ped) or {
+        vehicle = '',
+        license_plate = '',
+        has_siren_enabled = false,
+        icon = 6,
+      }
+      local weapon = type(util.getWeaponName) == 'function' and util.getWeaponName(ped) or ''
+      local location = type(util.buildLocationText) == 'function'
+        and util.buildLocationText(street, crossing, postal, coords)
+        or tostring(street or '')
       TriggerServerEvent('cad_bridge:clientPosition', {
         x = coords.x,
         y = coords.y,

@@ -1,6 +1,27 @@
-local function trim(s)
-  if not s then return '' end
-  return (tostring(s):gsub('^%s+', ''):gsub('%s+$', ''))
+CadBridge = CadBridge or {}
+CadBridge.util = CadBridge.util or {}
+CadBridge.notify = CadBridge.notify or {}
+CadBridge.ui = CadBridge.ui or {}
+CadBridge.state = CadBridge.state or {}
+
+local util = CadBridge.util
+local notify = CadBridge.notify
+local ui = CadBridge.ui
+local state = CadBridge.state
+
+if state.emergencyUiOpen == nil then state.emergencyUiOpen = false end
+if state.emergencyUiReady == nil then state.emergencyUiReady = false end
+if state.emergencyUiAwaitingOpenAck == nil then state.emergencyUiAwaitingOpenAck = false end
+if state.emergencyUiOpenedAtMs == nil then state.emergencyUiOpenedAtMs = 0 end
+if state.driverLicenseUiOpen == nil then state.driverLicenseUiOpen = false end
+if state.vehicleRegistrationUiOpen == nil then state.vehicleRegistrationUiOpen = false end
+if state.idCardUiOpen == nil then state.idCardUiOpen = false end
+if state.headshotCapturePending == nil then state.headshotCapturePending = nil end
+if state.lastDocumentInteractAt == nil then state.lastDocumentInteractAt = 0 end
+
+function util.trim(value)
+  if value == nil then return '' end
+  return (tostring(value):gsub('^%s+', ''):gsub('%s+$', ''))
 end
 
 local function normalizePostal(value)
@@ -27,6 +48,7 @@ local function normalizePostal(value)
   end
   return ''
 end
+util.normalizePostal = normalizePostal
 
 local function tryPostalExport(resourceName, exportName)
   local ok, result = pcall(function()
@@ -40,12 +62,11 @@ local function tryPostalExport(resourceName, exportName)
   return normalizePostal(result)
 end
 
-local function getNearestPostal()
+function util.getNearestPostal()
   if not Config.UseNearestPostal then return '' end
 
   local primaryResource = tostring(Config.NearestPostalResource or 'nearest-postal')
   local primaryExport = tostring(Config.NearestPostalExport or 'getPostal')
-
   local postal = tryPostalExport(primaryResource, primaryExport)
   if postal ~= '' then return postal end
 
@@ -62,7 +83,7 @@ local function getNearestPostal()
   return ''
 end
 
-local function getWeaponName(ped)
+function util.getWeaponName(ped)
   if not ped or ped == 0 then return '' end
   local weaponHash = GetSelectedPedWeapon(ped)
   if not weaponHash or weaponHash == 0 then return '' end
@@ -84,7 +105,7 @@ local function isTowTruckModel(modelHash)
   return modelHash == GetHashKey('towtruck') or modelHash == GetHashKey('towtruck2')
 end
 
-local function getVehicleSnapshot(ped)
+function util.getVehicleSnapshot(ped)
   local snapshot = {
     vehicle = '',
     license_plate = '',
@@ -92,18 +113,11 @@ local function getVehicleSnapshot(ped)
     icon = 6,
   }
 
-  if not ped or ped == 0 then
-    return snapshot
-  end
-
-  if not IsPedInAnyVehicle(ped, false) then
-    return snapshot
-  end
+  if not ped or ped == 0 then return snapshot end
+  if not IsPedInAnyVehicle(ped, false) then return snapshot end
 
   local vehicle = GetVehiclePedIsIn(ped, false)
-  if not vehicle or vehicle == 0 then
-    return snapshot
-  end
+  if not vehicle or vehicle == 0 then return snapshot end
 
   local modelHash = GetEntityModel(vehicle)
   local vehicleName = GetDisplayNameFromVehicleModel(modelHash)
@@ -136,7 +150,7 @@ local function getVehicleSnapshot(ped)
   return snapshot
 end
 
-local function buildLocationText(street, crossing, postal, coords)
+function util.buildLocationText(street, crossing, postal, coords)
   local road = tostring(street or '')
   local cross = tostring(crossing or '')
   local post = tostring(postal or '')
@@ -163,7 +177,7 @@ local function buildLocationText(street, crossing, postal, coords)
   return base
 end
 
-local function parseCoords(value)
+function util.parseCoords(value)
   if value == nil then return nil end
   local t = type(value)
   if t ~= 'table' and t ~= 'vector3' and t ~= 'vector4' and t ~= 'userdata' then return nil end
@@ -211,10 +225,10 @@ local function tryPostalCoordsExport(resourceName, exportName, postal)
     return fn(postal)
   end)
   if not ok then return nil end
-  return parseCoords(result)
+  return util.parseCoords(result)
 end
 
-local function getPostalCoords(postal)
+function util.getPostalCoords(postal)
   local normalized = normalizePostal(postal)
   if normalized == '' then return nil end
   local primaryResource = tostring(Config.NearestPostalResource or 'nearest-postal')
@@ -243,25 +257,19 @@ local function getPostalCoords(postal)
 
   for _, pair in ipairs(lookups) do
     local coords = tryPostalCoordsExport(pair[1], pair[2], normalized)
-    if coords then
-      return coords
-    end
+    if coords then return coords end
   end
   return nil
 end
 
 local function getCadOxNotifyPosition()
-  local configured = trim(Config and Config.OxNotifyPosition or 'center-right')
-  if configured == '' then
-    configured = 'center-right'
-  end
+  local configured = util.trim(Config and Config.OxNotifyPosition or 'center-right')
+  if configured == '' then configured = 'center-right' end
   return configured
 end
 
-local function triggerCadOxNotify(payload)
-  if GetResourceState('ox_lib') ~= 'started' then
-    return false
-  end
+function util.triggerCadOxNotify(payload)
+  if GetResourceState('ox_lib') ~= 'started' then return false end
 
   local nextPayload = {}
   if type(payload) == 'table' then
@@ -270,7 +278,7 @@ local function triggerCadOxNotify(payload)
     end
   end
 
-  if (Config and Config.ForceOxNotifyPosition == true) or trim(nextPayload.position or '') == '' then
+  if (Config and Config.ForceOxNotifyPosition == true) or util.trim(nextPayload.position or '') == '' then
     nextPayload.position = getCadOxNotifyPosition()
   end
 
@@ -278,18 +286,16 @@ local function triggerCadOxNotify(payload)
   return true
 end
 
-local function notifyRoute(route, hadWaypoint)
+function notify.route(route, hadWaypoint)
   local callId = tostring(route.call_id or '?')
   local targetLabel = normalizePostal(route.postal)
-  if targetLabel == '' then
-    targetLabel = tostring(route.location or '')
-  end
+  if targetLabel == '' then targetLabel = tostring(route.location or '') end
 
   local message = hadWaypoint
     and ('CAD route set for call #%s%s%s'):format(callId, targetLabel ~= '' and ' -> ' or '', targetLabel)
     or ('CAD assigned call #%s%s%s (postal lookup unavailable for waypoint)'):format(callId, targetLabel ~= '' and ' -> ' or '', targetLabel)
 
-  if triggerCadOxNotify({
+  if util.triggerCadOxNotify({
     title = 'CAD Dispatch',
     description = message,
     type = hadWaypoint and 'inform' or 'warning',
@@ -305,18 +311,16 @@ local function notifyRoute(route, hadWaypoint)
   end
 end
 
-local function notifyRouteCleared(route)
+function notify.routeCleared(route)
   local callId = tostring(route.call_id or '?')
   local message = ('CAD route cleared for call #%s'):format(callId)
-
-  if triggerCadOxNotify({
+  if util.triggerCadOxNotify({
     title = 'CAD Dispatch',
     description = message,
     type = 'inform',
   }) then
     return
   end
-
   if GetResourceState('chat') == 'started' then
     TriggerEvent('chat:addMessage', {
       color = { 148, 163, 184 },
@@ -325,18 +329,16 @@ local function notifyRouteCleared(route)
   end
 end
 
-local function notifyFine(payload)
+function notify.fine(payload)
   local title = tostring(payload and payload.title or 'CAD Fine Issued')
   local description = tostring(payload and payload.description or 'You have received a fine.')
-
-  if triggerCadOxNotify({
+  if util.triggerCadOxNotify({
     title = title,
     description = description,
     type = 'error',
   }) then
     return
   end
-
   if GetResourceState('chat') == 'started' then
     TriggerEvent('chat:addMessage', {
       color = { 255, 85, 85 },
@@ -345,13 +347,13 @@ local function notifyFine(payload)
   end
 end
 
-local function notifyAlert(payload)
+function notify.alert(payload)
   local title = tostring(payload and payload.title or 'CAD')
   local description = tostring(payload and payload.description or '')
   local notifyType = tostring(payload and payload.type or 'inform')
   if notifyType == '' then notifyType = 'inform' end
 
-  if triggerCadOxNotify({
+  if util.triggerCadOxNotify({
     title = title,
     description = description,
     type = notifyType,
@@ -367,20 +369,16 @@ local function notifyAlert(payload)
   end
 end
 
-local function normalizeDepartmentIdList(value)
+function util.normalizeDepartmentIdList(value)
   local normalized = {}
   local seen = {}
-
-  if type(value) ~= 'table' then
-    return normalized
-  end
+  if type(value) ~= 'table' then return normalized end
 
   for key, raw in pairs(value) do
     local candidate = raw
     if type(key) ~= 'number' and (raw == true or raw == false or raw == nil) then
       candidate = key
     end
-
     local numeric = tonumber(candidate)
     if numeric and numeric > 0 then
       local id = math.floor(numeric)
@@ -394,45 +392,30 @@ local function normalizeDepartmentIdList(value)
   return normalized
 end
 
-local emergencyUiOpen = false
-local emergencyUiReady = false
-local emergencyUiAwaitingOpenAck = false
-local emergencyUiOpenedAtMs = 0
-local driverLicenseUiOpen = false
-local vehicleRegistrationUiOpen = false
-local idCardUiOpen = false
-local headshotCapturePending = nil
-local SHOW_ID_COMMAND = trim(Config.ShowIdCommand or 'showid')
-if SHOW_ID_COMMAND == '' then SHOW_ID_COMMAND = 'showid' end
-local SHOW_ID_KEY = trim(Config.ShowIdKey or 'PAGEDOWN')
-if SHOW_ID_KEY == '' then SHOW_ID_KEY = 'PAGEDOWN' end
-local SHOW_ID_MAX_DISTANCE = tonumber(Config.ShowIdTargetDistance or 4.0) or 4.0
-local documentInteractionDistance = tonumber(Config.DocumentPedInteractionDistance or 2.2) or 2.2
-if documentInteractionDistance < 1.0 then documentInteractionDistance = 1.0 end
-local documentPromptDistance = tonumber(Config.DocumentPedPromptDistance or 12.0) or 12.0
-if documentPromptDistance < documentInteractionDistance then
-  documentPromptDistance = documentInteractionDistance + 2.0
-end
-local lastDocumentInteractAt = 0
-local documentPeds = {}
-local documentPedBlips = {}
-local documentPedTargetEntities = {}
-local useOxTargetForDocuments = GetResourceState('ox_target') == 'started'
-
-local function hasAnyCadBridgeModalOpen()
-  return emergencyUiOpen or driverLicenseUiOpen or vehicleRegistrationUiOpen
+function ui.hasAnyCadBridgeModalOpen()
+  return state.emergencyUiOpen or state.driverLicenseUiOpen or state.vehicleRegistrationUiOpen
 end
 
-local function refreshCadBridgeNuiFocus()
-  if hasAnyCadBridgeModalOpen() then
+function ui.refreshCadBridgeNuiFocus()
+  if ui.hasAnyCadBridgeModalOpen() then
     SetNuiFocus(true, true)
   else
     SetNuiFocus(false, false)
   end
 end
 
-local function normalizeMugshotValue(value)
-  local normalized = trim(value)
-  if normalized == '' then return '' end
-  if normalized:match('^https?://') then return normalized end
-  if normalized:match('^data:image/') then return normalized end
+if type(ui.closeEmergencyPopup) ~= 'function' then
+  function ui.closeEmergencyPopup() end
+end
+if type(ui.closeDriverLicensePopup) ~= 'function' then
+  function ui.closeDriverLicensePopup() end
+end
+if type(ui.closeVehicleRegistrationPopup) ~= 'function' then
+  function ui.closeVehicleRegistrationPopup() end
+end
+
+function ui.closeAllModals()
+  ui.closeEmergencyPopup()
+  ui.closeDriverLicensePopup()
+  ui.closeVehicleRegistrationPopup()
+end
