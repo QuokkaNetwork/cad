@@ -1302,16 +1302,3 @@ AddEventHandler('playerDropped', function()
   wraithLookupCooldownBySource[src] = nil
   activeCallPromptBySource[src] = nil
 end)
-
--- ============================================================================
--- Radio/Voice integration removed from cad_bridge.
--- Use your third-party radio resource instead.
--- ============================================================================
-
-exports('setPlayerRadio', function()
-  return false, 'cad_bridge_radio_removed'
-end)
-
-exports('setPlayerCall', function()
-  return false, 'cad_bridge_radio_removed'
-end)

@@ -9,7 +9,6 @@ local modules = {
   'server/modules/document_prompts.lua',
   'server/modules/livemap.lua',
   'server/modules/enforcement.lua',
-  'server/modules/radio_exports.lua',
   'server/modules/minicad.lua',
 }
 

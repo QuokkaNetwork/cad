@@ -314,8 +314,3 @@ CreateThread(function()
     end
   end
 end)
-
--- ============================================================================
--- Radio integration removed.
--- Use your third-party radio resource instead of cad_bridge radio/voice.
--- ============================================================================

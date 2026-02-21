@@ -416,24 +416,4 @@ local function registerEmergencySuggestion(target)
       TriggerClientEvent('chat:addSuggestion', target, '/' .. calibrationCommand, 'Calibrate live map (manual or auto teleport flow)')
     end
   end
-
-  TriggerClientEvent('chat:addSuggestion', target, '/radio', 'Open CAD radio UI or join/leave channel', {
-    { name = 'channel', help = 'Optional channel number. Example: /radio 1. Use /radio off to leave.' },
-  })
-end
-
-local startNpwdEmergencyHandlerRegistration
-local npwdEmergencyHandlersRegistered = {}
-
-local function triggerNpwdEmergencyHandlerRegistration()
-  if type(startNpwdEmergencyHandlerRegistration) ~= 'function' then
-    CreateThread(function()
-      Wait(1000)
-      if type(startNpwdEmergencyHandlerRegistration) == 'function' then
-        startNpwdEmergencyHandlerRegistration()
-      end
-    end)
-    return
-  end
-  startNpwdEmergencyHandlerRegistration()
 end

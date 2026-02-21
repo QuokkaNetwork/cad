@@ -44,9 +44,6 @@ set "AUTO_UPDATE_SELF_RESTART=false"
 set "AUTO_UPDATE_EXIT_ON_UPDATE=false"
 set "AUTO_UPDATE_RUN_NPM_INSTALL=false"
 set "AUTO_UPDATE_RUN_WEB_BUILD=false"
-set "RADIO_BEHAVIOR=external"
-set "VOICE_BRIDGE_ENABLED=false"
-set "MUMBLE_MANAGE=false"
 
 echo [CAD-TEST] Starting CAD without auto-update/pull...
 echo [CAD-TEST] Working tree will not be reset by this launcher.

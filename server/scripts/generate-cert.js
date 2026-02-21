@@ -31,7 +31,7 @@ const certFile = path.join(dataDir, 'server.cert');
 
 fs.mkdirSync(dataDir, { recursive: true });
 
-const ip = process.env.MUMBLE_PUBLIC_IP || process.argv[2] || '127.0.0.1';
+const ip = process.env.TLS_PUBLIC_IP || process.argv[2] || '127.0.0.1';
 
 // Build a minimal openssl config with SAN so Chrome accepts it
 const sanConf = `

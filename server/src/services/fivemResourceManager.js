@@ -5,11 +5,6 @@ const { Settings } = require('../db/sqlite');
 
 const RESOURCE_NAME = 'cad_bridge';
 
-function deployVoiceCfg() {
-  // Intentionally disabled: CAD no longer writes/deploys voice.cfg.
-  // Manage native FiveM voice settings directly in your FiveM server.cfg.
-}
-
 const TEMPLATE_DIR = path.resolve(__dirname, '../../fivem-resource');
 const VERSION_FILE_NAME = '.cad_bridge_version';
 const OPTIONAL_MAP_RESOURCE_NAME = 'map';
@@ -308,5 +303,4 @@ module.exports = {
   getStatus,
   startFiveMResourceAutoSync,
   stopFiveMResourceAutoSync,
-  deployVoiceCfg,
 };

@@ -1,39 +1,15 @@
 # =============================================================================
-# CAD Bridge Voice Configuration (Native FiveM/pma-voice)
-# =============================================================================
-# Add these lines to your FiveM server.cfg.
-#
-# CAD no longer writes voice.cfg and no longer requires CAD-managed Mumble.
-# Configure native FiveM voice directly in your server.cfg.
-# =============================================================================
-# STEP 1: Configure FiveM voice settings
-# =============================================================================
-# Replace 103.203.241.35 with your VPS public IP (or your voice endpoint).
-
-setr voice_externalAddress "103.203.241.35"
-setr voice_externalPort 64738
-setr voice_allowSetIntent 1
-setr voice_hideEndpoints 1
-
-# Required for radio filter/submix audio.
-setr voice_useNativeAudio true
-setr voice_enableSubmix 1
-setr voice_defaultRadioVolume 100
-# cad_bridge handles radio routing and keybinds.
-setr voice_enableRadios 0
-
-# =============================================================================
-# STEP 2: Configure the CAD bridge resource
+# CAD Bridge Resource Configuration
 # =============================================================================
 # CAD bridge now uses resource-local config:
 #   [resources]/cad_bridge/config.cfg
 #
-# Configure cad_bridge values there (base URL, token, radio keys, adapters, etc.).
+# Configure cad_bridge values there (base URL, token, licensing/rego options, adapters, etc.).
 # CAD auto-sync will also patch cad_bridge_base_url and cad_bridge_token in that file.
 # You no longer need to put cad_bridge_* entries in server.cfg.
 
 # =============================================================================
-# STEP 3: Ensure the resource starts
+# Ensure the resource starts
 # =============================================================================
 
 ensure screencapture

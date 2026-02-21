@@ -253,23 +253,6 @@ local function parseVec3String(rawValue, fallback)
   }
 end
 
-local DEFAULT_RADIO_NAMES = {
-  ['1'] = 'DISPATCH (All Units)',
-  ['1.%'] = 'DISPATCH (All Units)',
-  ['2'] = 'VICPOL',
-  ['2.%'] = 'VICPOL',
-  ['3'] = 'AV',
-  ['3.%'] = 'AV',
-  ['4'] = 'FRV',
-  ['4.%'] = 'FRV',
-  ['420'] = 'Ballas CH#1',
-  ['420.%'] = 'Ballas CH#1',
-  ['421'] = 'LostMC CH#1',
-  ['421.%'] = 'LostMC CH#1',
-  ['422'] = 'Vagos CH#1',
-  ['422.%'] = 'Vagos CH#1',
-}
-
 local DEFAULT_DRIVER_LICENSE_CLASS_OPTIONS = {
   'CAR',
   'LR',
@@ -359,7 +342,6 @@ Config.JobSyncPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_j
 Config.RoutePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_route_poll_ms', 4000)))
 Config.ClosestCallPromptPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_call_prompt_poll_ms', 2500)))
 Config.ClosestCallPromptTimeoutMs = math.max(6000, math.floor(getNumber('cad_bridge_call_prompt_timeout_ms', 15000)))
-Config.VoicePollIntervalMs = math.max(250, math.floor(getNumber('cad_bridge_voice_poll_ms', 1000)))
 Config.JailPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_jail_poll_ms', 7000)))
 
 Config.PublishAllPlayers = getBoolean('cad_bridge_publish_all_players', true)
@@ -369,55 +351,11 @@ Config.UseNearestPostal = getBoolean('cad_bridge_use_nearest_postal', true)
 Config.NearestPostalResource = getString('cad_bridge_postal_resource', 'nearest-postal')
 Config.NearestPostalExport = getString('cad_bridge_postal_export', 'getPostal')
 
--- NPWD integration.
-Config.NpwdResource = trim(getString('cad_bridge_npwd_resource', 'npwd'))
-if Config.NpwdResource == '' then Config.NpwdResource = 'npwd' end
-Config.NpwdEmergencyNumbers = trim(getString('cad_bridge_npwd_emergency_numbers', '000'))
-if Config.NpwdEmergencyNumbers == '' then Config.NpwdEmergencyNumbers = '000' end
-
 -- ox_lib notifications.
 Config.ForceOxNotifyPosition = getBoolean('cad_bridge_force_ox_notify_position', true)
 Config.OxNotifyPosition = trim(getString('cad_bridge_ox_notify_position', 'center-right'))
 if Config.OxNotifyPosition == '' then Config.OxNotifyPosition = 'center-right' end
 Config.OxNotifyForceIntervalMs = math.max(5000, math.floor(getNumber('cad_bridge_ox_notify_force_interval_ms', 60000)))
-
--- Radio settings.
-Config.RadioAdapter = trim(getString('cad_bridge_radio_adapter', 'none'))
-if Config.RadioAdapter == '' then Config.RadioAdapter = 'none' end
-Config.RadioEnabled = getBoolean('cad_bridge_radio_enabled', false)
-Config.RadioTargetId = math.floor(getNumber('cad_bridge_radio_target_id', 2))
-Config.ProximityTargetId = math.floor(getNumber('cad_bridge_proximity_target_id', 1))
-Config.RadioRxVolume = getNumber('cad_bridge_radio_rx_volume', 0.35)
-if Config.RadioRxVolume < 0.0 then Config.RadioRxVolume = 0.0 end
-if Config.RadioRxVolume > 1.0 then Config.RadioRxVolume = 1.0 end
-Config.RadioPttKey = trim(getString('cad_bridge_radio_ptt_key', 'LMENU'))
-if Config.RadioPttKey == '' then Config.RadioPttKey = 'LMENU' end
-Config.RadioFollowNativePtt = getBoolean('cad_bridge_radio_follow_native_ptt', true)
-Config.RadioPttReleaseDelayMs = math.max(0, math.floor(getNumber('cad_bridge_radio_ptt_release_delay_ms', 350)))
-Config.RadioTalkingTimeoutMs = math.max(1000, math.floor(getNumber('cad_bridge_radio_talking_timeout_ms', 6000)))
-Config.RadioForwardRoot = getBoolean('cad_bridge_radio_forward_root', false)
-Config.RadioUiEnabled = getBoolean('cad_bridge_radio_ui_enabled', false)
-Config.RadioUiKey = trim(getString('cad_bridge_radio_ui_key', 'EQUALS'))
-if Config.RadioUiKey == '' then Config.RadioUiKey = 'EQUALS' end
-Config.RadioMaxFrequency = math.max(1, math.floor(getNumber('cad_bridge_radio_max_frequency', 500)))
-Config.RadioOverlayMode = trim(getString('cad_bridge_radio_overlay', 'default'))
-if Config.RadioOverlayMode == '' then Config.RadioOverlayMode = 'default' end
-Config.RadioChannelSyncEnabled = getBoolean('cad_bridge_radio_channel_sync_enabled', false)
-Config.VoiceParticipantHeartbeatEnabled = getBoolean('cad_bridge_voice_participant_heartbeat_enabled', false)
-Config.VoiceEventPollEnabled = getBoolean('cad_bridge_voice_event_poll_enabled', false)
-Config.ExternalVoiceTokenEnabled = getBoolean('cad_bridge_external_voice_token_enabled', false)
-
-Config.RadioNames = DEFAULT_RADIO_NAMES
-local radioNamesOverride = getJsonTable('cad_bridge_radio_names_json')
-if type(radioNamesOverride) == 'table' then
-  Config.RadioNames = radioNamesOverride
-end
-
-Config.RadioRestrictedChannels = {}
-local radioRestrictedOverride = getJsonTable('cad_bridge_radio_restricted_channels_json')
-if type(radioRestrictedOverride) == 'table' then
-  Config.RadioRestrictedChannels = radioRestrictedOverride
-end
 
 -- Driver license + registration documents.
 Config.EnableDocumentCommands = getBoolean('cad_bridge_enable_document_commands', false)

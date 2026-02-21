@@ -79,8 +79,3 @@ Command adapter execution now waits for the target character to be online.
 - Optional fee charging can be enforced with `cad_bridge_document_fee_required=true`.
   When set to `false` (default), fee charge failures no longer block save-to-CAD.
 
-## NPWD 000 phone hook (no NPWD edits)
-- `cad_bridge` now registers NPWD emergency handlers directly via NPWD exports (`onCall`).
-- This means NPWD source files do not need to be patched/replaced for 000->CAD call creation.
-- Set `cad_bridge_npwd_resource` if your phone resource name is not `npwd`.
-- Set `cad_bridge_npwd_emergency_numbers` to a comma-separated list if you use additional emergency numbers.

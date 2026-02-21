@@ -3,7 +3,6 @@ const path = require('path');
 const crypto = require('crypto');
 const sharp = require('sharp');
 const express = require('express');
-const config = require('../config');
 const {
   Settings,
   Users,
@@ -15,17 +14,12 @@ const {
   FiveMJailJobs,
   DriverLicenses,
   VehicleRegistrations,
-  VoiceCallSessions,
-  VoiceChannels,
-  VoiceParticipants,
   Bolos,
 } = require('../db/sqlite');
 const { getVehicleByPlate } = require('../db/qbox');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
 const liveMapStore = require('../services/liveMapStore');
-const { handleParticipantJoin, handleParticipantLeave } = require('../services/voiceBridgeSync');
-const { getExternalVoiceService } = require('../services/externalVoice');
 
 const router = express.Router();
 
@@ -38,35 +32,11 @@ router.use((req, _res, next) => {
   next();
 });
 
-const BRIDGE_RADIO_FEATURES_ENABLED = String(process.env.CAD_BRIDGE_RADIO_FEATURES_ENABLED || 'false')
-  .trim()
-  .toLowerCase() === 'true';
-
-function isDisabledBridgeRadioPath(pathname = '') {
-  const path = String(pathname || '').trim().toLowerCase();
-  return path.startsWith('/voice-events')
-    || path.startsWith('/voice-participants')
-    || path.startsWith('/external-voice')
-    || path.startsWith('/radio-channels');
-}
-
-router.use((req, res, next) => {
-  if (BRIDGE_RADIO_FEATURES_ENABLED || !isDisabledBridgeRadioPath(req.path)) {
-    return next();
-  }
-  return res.status(410).json({
-    error: 'CAD bridge radio integration has been removed from this deployment',
-  });
-});
-
 const liveLinkUserCache = new Map();
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const pendingRouteJobs = new Map();
 const pendingClosestCallPrompts = new Map();
 const closestCallDeclines = new Map();
-const pendingVoiceEvents = new Map();
-let nextVoiceEventId = 1;
-const VOICE_EVENT_RETRY_LIMIT = 5;
 const CLOSEST_CALL_DECLINE_COOLDOWN_MS = Math.max(
   10_000,
   Number.parseInt(process.env.FIVEM_CLOSEST_CALL_DECLINE_COOLDOWN_MS || '90000', 10) || 90_000
@@ -103,11 +73,6 @@ const BRIDGE_LICENSE_LOG_TO_FILE = String(process.env.FIVEM_BRIDGE_LICENSE_LOG_T
 const BRIDGE_LICENSE_LOG_FILE = String(
   process.env.FIVEM_BRIDGE_LICENSE_LOG_FILE || path.resolve(__dirname, '../../data/logs/fivem-license.log')
 ).trim();
-const VOICE_HEARTBEAT_LOG_INTERVAL_MS = Math.max(
-  5_000,
-  Number.parseInt(process.env.FIVEM_VOICE_LOG_INTERVAL_MS || '15000', 10) || 15_000
-);
-let lastVoiceHeartbeatLogAt = 0;
 let bridgeLicenseLogStream = null;
 let bridgeLicenseLogInitFailed = false;
 
@@ -459,29 +424,6 @@ function normalizeEmergencySourceType(value) {
   if (phoneValues.has(normalized)) return 'phone';
 
   return normalized;
-}
-
-function looksLikePhoneOrigin(payload) {
-  if (!payload || typeof payload !== 'object') return false;
-  if (payload.is_phone_call === true || payload.via_phone === true) return true;
-
-  const phoneHints = [
-    payload.phone_number,
-    payload.caller_phone,
-    payload.caller_number,
-    payload.from_number,
-  ];
-
-  return phoneHints.some((value) => String(value || '').trim().length > 0);
-}
-
-function shouldCreateVoiceSession(payload, sourceType) {
-  if (typeof payload?.enable_voice_session === 'boolean') {
-    return payload.enable_voice_session;
-  }
-  if (sourceType === 'phone') return true;
-  if (sourceType === 'command') return false;
-  return looksLikePhoneOrigin(payload);
 }
 
 function normalizeStatus(value, allowedStatuses, fallback) {
@@ -1019,40 +961,6 @@ function findActiveLinkByGameId(gameId) {
   return null;
 }
 
-function parsePositiveInt(value) {
-  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) return 0;
-  return parsed;
-}
-
-function resolveOrCreateVoiceChannelByNumber(channelNumber, { createIfMissing = false } = {}) {
-  const number = parsePositiveInt(channelNumber);
-  if (!number) return null;
-
-  let channel = VoiceChannels.findByChannelNumber(number);
-  if (!channel && createIfMissing) {
-    try {
-      channel = VoiceChannels.create({
-        channel_number: number,
-        department_id: null,
-        name: `Channel ${number}`,
-        description: `Radio channel ${number} (auto-created by external voice token flow)`,
-      });
-      console.log(`[FiveMBridge] Auto-created external voice channel ${number}`);
-    } catch {
-      // Race-safe fallback in case another request created the row first.
-      channel = VoiceChannels.findByChannelNumber(number) || null;
-    }
-  }
-
-  if (channel && !channel.is_active) {
-    VoiceChannels.update(channel.id, { is_active: 1 });
-    channel = VoiceChannels.findById(channel.id) || channel;
-  }
-
-  return channel || null;
-}
-
 function normalizePostalToken(value) {
   return String(value || '')
     .trim()
@@ -1459,102 +1367,6 @@ function resolveActiveLinkForBridgeJob(job = {}) {
   return null;
 }
 
-function queueVoiceEvent(eventType, options = {}) {
-  const normalizedEventType = String(eventType || '').trim().toLowerCase();
-  const gameId = String(options.game_id || '').trim();
-  const channelNumberRaw = Number(options.channel_number || 0);
-  const channelNumber = Number.isInteger(channelNumberRaw) && channelNumberRaw >= 0
-    ? channelNumberRaw
-    : 0;
-  if (!normalizedEventType || !gameId) {
-    if (normalizedEventType.includes('call')) {
-      console.warn(
-        `[VoiceEventQueue] Dropped ${normalizedEventType} event: missing game_id ` +
-        `(channel=${channelNumber || 0}, citizen=${String(options.citizen_id || '').trim() || 'none'})`
-      );
-    }
-    return null;
-  }
-
-  const id = nextVoiceEventId++;
-  const now = Date.now();
-  const entry = {
-    id,
-    event_type: normalizedEventType,
-    game_id: gameId,
-    channel_number: channelNumber,
-    citizen_id: String(options.citizen_id || '').trim(),
-    created_at_ms: now,
-    attempts: 0,
-    last_error: '',
-  };
-  pendingVoiceEvents.set(id, entry);
-  console.log(
-    `[VoiceEventQueue] Queued id=${id} type=${normalizedEventType} game=${gameId} ` +
-    `channel=${channelNumber} pending=${pendingVoiceEvents.size}`
-  );
-  return entry;
-}
-
-function shouldQueueVoiceEventToFiveM(payload = {}) {
-  if (payload.queue_to_fivem === true) return true;
-  if (payload.queue_to_fivem === false) return false;
-
-  const source = String(payload.source || payload.origin || '').trim().toLowerCase();
-  if (!source) return true;
-
-  if (
-    source === 'fivem-heartbeat'
-    || source === 'voice-heartbeat'
-    || source === 'voice-prune'
-    || source === 'voice-startup-cleanup'
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function listPendingVoiceEvents(limit = 50) {
-  const normalizedLimit = Math.min(100, Math.max(1, Number(limit || 50) || 50));
-  return Array.from(pendingVoiceEvents.values())
-    .sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
-    .slice(0, normalizedLimit);
-}
-
-function markVoiceEventProcessed(id) {
-  const targetId = Number(id || 0);
-  const existing = pendingVoiceEvents.get(targetId);
-  pendingVoiceEvents.delete(targetId);
-  if (existing) {
-    console.log(
-      `[VoiceEventQueue] Processed id=${targetId} type=${existing.event_type} ` +
-      `game=${existing.game_id} pending=${pendingVoiceEvents.size}`
-    );
-  }
-}
-
-function markVoiceEventFailed(id, errorText = '') {
-  const targetId = Number(id || 0);
-  const existing = pendingVoiceEvents.get(targetId);
-  if (!existing) return;
-
-  existing.attempts = Number(existing.attempts || 0) + 1;
-  existing.last_error = String(errorText || '').trim().slice(0, 500);
-  if (existing.attempts >= VOICE_EVENT_RETRY_LIMIT) {
-    console.warn(
-      `[VoiceEventQueue] Dropping id=${targetId} type=${existing.event_type} after ${existing.attempts} attempts. ` +
-      `Last error: ${existing.last_error || 'unknown'}`
-    );
-    pendingVoiceEvents.delete(targetId);
-    return;
-  }
-  console.warn(
-    `[VoiceEventQueue] Retry id=${targetId} type=${existing.event_type} attempt=${existing.attempts} ` +
-    `error=${existing.last_error || 'unknown'}`
-  );
-  pendingVoiceEvents.set(targetId, existing);
-}
-
 function shouldAutoSetUnitOnScene(unit, playerPayload, assignedCall) {
   if (!unit || String(unit.status || '').trim().toLowerCase() !== 'enroute') return false;
   if (!assignedCall || String(assignedCall.status || '').trim().toLowerCase() === 'closed') return false;
@@ -1655,51 +1467,6 @@ bus.on('unit:status_available', ({ unit, call }) => {
   }
 
   refreshClosestPromptForCall(resolvedCall, { force: true });
-});
-
-bus.on('voice:join', (payload = {}) => {
-  if (!shouldQueueVoiceEventToFiveM(payload)) return;
-  const { channelNumber, gameId, citizenId } = payload;
-  queueVoiceEvent('join_radio', {
-    channel_number: Number(channelNumber || 0),
-    game_id: String(gameId || '').trim(),
-    citizen_id: String(citizenId || '').trim(),
-  });
-});
-
-bus.on('voice:leave', (payload = {}) => {
-  if (!shouldQueueVoiceEventToFiveM(payload)) return;
-  const { channelNumber, gameId, citizenId } = payload;
-  queueVoiceEvent('leave_radio', {
-    channel_number: Number(channelNumber || 0),
-    game_id: String(gameId || '').trim(),
-    citizen_id: String(citizenId || '').trim(),
-  });
-});
-
-bus.on('voice:call_accepted', ({ callChannelNumber, callerGameId, callerCitizenId, callerPhoneNumber }) => {
-  queueVoiceEvent('join_call', {
-    channel_number: Number(callChannelNumber || 0),
-    game_id: String(callerGameId || '').trim(),
-    citizen_id: String(callerCitizenId || '').trim(),
-    phone_number: String(callerPhoneNumber || '').trim(),
-  });
-});
-
-bus.on('voice:call_declined', ({ callChannelNumber, callerGameId, callerCitizenId }) => {
-  queueVoiceEvent('leave_call', {
-    channel_number: Number(callChannelNumber || 0),
-    game_id: String(callerGameId || '').trim(),
-    citizen_id: String(callerCitizenId || '').trim(),
-  });
-});
-
-bus.on('voice:call_ended', ({ callChannelNumber, callerGameId, callerCitizenId }) => {
-  queueVoiceEvent('leave_call', {
-    channel_number: Number(callChannelNumber || 0),
-    game_id: String(callerGameId || '').trim(),
-    citizen_id: String(callerCitizenId || '').trim(),
-  });
 });
 
 // Heartbeat from FiveM resource with online players + position.
@@ -1956,7 +1723,6 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   const sourceType = normalizeEmergencySourceType(
     payload.source_type || payload.call_source || payload.origin || payload.entry_type
   );
-  const voiceEnabledForCall = shouldCreateVoiceSession(payload, sourceType);
   const details = String(payload.message || payload.details || '').trim();
 
   let cadUser = resolveCadUserFromIdentifiers(ids);
@@ -1990,7 +1756,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   const positionZ = Number(payload?.position?.z);
   const title = String(payload.title || '').trim() || (details ? details.slice(0, 120) : `000 Call from ${playerName}`);
   const descriptionParts = [];
-  descriptionParts.push(`${voiceEnabledForCall ? '000 phone call' : '000 call'} from ${playerName}${sourceId ? ` (#${sourceId})` : ''}`);
+  descriptionParts.push(`000 call from ${playerName}${sourceId ? ` (#${sourceId})` : ''}`);
   if (requestedDepartmentIds.length > 0) {
     const requestedLabels = requestedDepartmentIds
       .map((id) => {
@@ -2024,50 +1790,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     position_y: Number.isFinite(positionY) ? positionY : null,
     position_z: Number.isFinite(positionZ) ? positionZ : null,
   });
-  const callerCitizenId = String(payload?.citizenid || '').trim();
-  const callerGameId = String(payload?.source ?? '').trim();
-  const callerPhoneNumber = String(payload?.phone_number || '').trim();
-  const callChannelNumber = 10000 + Number(call.id || 0);
-  let voiceSessionCreated = false;
-  if (voiceEnabledForCall && callChannelNumber > 0) {
-    try {
-      VoiceCallSessions.create({
-        call_id: call.id,
-        call_channel_number: callChannelNumber,
-        caller_citizen_id: callerCitizenId,
-        caller_game_id: callerGameId,
-        caller_name: playerName,
-        caller_phone_number: callerPhoneNumber,
-      });
-      voiceSessionCreated = true;
-      // Put the in-game caller into the call channel immediately so the
-      // Voice call session exists as soon as 000 is dialed (pending until
-      // a dispatcher accepts on the CAD side).
-      if (callerGameId) {
-        queueVoiceEvent('join_call', {
-          channel_number: callChannelNumber,
-          game_id: callerGameId,
-          citizen_id: callerCitizenId,
-          phone_number: callerPhoneNumber,
-        });
-      }
-    } catch (err) {
-      console.warn('[FiveMBridge] Could not create voice call session:', err?.message || err);
-    }
-  }
-
   bus.emit('call:create', { departmentId, call });
-
-  // Notify all connected CAD clients that a 000 emergency call just came in
-  // so dispatchers see it immediately without having to manually refresh.
-  bus.emit('voice:call_incoming', {
-    callId: call.id,
-    callChannelNumber,
-    callerName: playerName,
-    callerPhoneNumber,
-    voiceSessionCreated,
-    departmentId,
-  });
 
   audit(cadUser?.id || null, 'fivem_000_call_created', {
     callId: call.id,
@@ -2075,7 +1798,6 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     playerName,
     sourceId,
     sourceType,
-    voiceSessionCreated,
     matchedUserId: cadUser?.id || null,
   });
 
@@ -2083,7 +1805,6 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     ok: true,
     call,
     source_type: sourceType,
-    voice_session_created: voiceSessionCreated,
   });
 });
 
@@ -2811,528 +2532,6 @@ router.post('/unit-detach-call', requireBridgeAuth, (req, res) => {
   });
 
   res.json({ ok: true });
-});
-
-// FiveM resource polls pending voice jobs and applies them in-game.
-router.get('/voice-events', requireBridgeAuth, (req, res) => {
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
-  const events = listPendingVoiceEvents(limit);
-  if (events.length > 0) {
-    console.log(
-      `[VoiceEventQueue] Delivering ${events.length} event(s) to bridge poller ` +
-      `(pending=${pendingVoiceEvents.size})`
-    );
-  }
-  res.json(events);
-});
-
-router.post('/voice-events/:id/processed', requireBridgeAuth, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid voice event id' });
-  markVoiceEventProcessed(id);
-  res.json({ ok: true });
-});
-
-router.post('/voice-events/:id/failed', requireBridgeAuth, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid voice event id' });
-  const error = String(req.body?.error || 'Voice delivery failed');
-  markVoiceEventFailed(id, error);
-  res.json({ ok: true });
-});
-
-router.get('/external-voice/status', requireBridgeAuth, (_req, res) => {
-  const behavior = String(config?.radio?.behavior || 'external');
-  const status = getExternalVoiceService().getStatus();
-  return res.json({
-    ok: true,
-    mode: behavior,
-    external_mode: behavior === 'external',
-    ...status,
-  });
-});
-
-router.post('/external-voice/token', requireBridgeAuth, (req, res) => {
-  const behavior = String(config?.radio?.behavior || 'external');
-  if (behavior !== 'external') {
-    return res.status(409).json({
-      error: 'External voice token flow is only available in RADIO_BEHAVIOR=external',
-      mode: behavior,
-    });
-  }
-
-  const externalVoice = getExternalVoiceService();
-  const transportStatus = externalVoice.getStatus();
-  if (!transportStatus.available) {
-    return res.status(503).json({
-      error: 'External voice transport is not configured',
-      provider: transportStatus.provider,
-      missing: transportStatus.missing,
-    });
-  }
-
-  const payload = req.body || {};
-  let gameId = String(payload.game_id ?? payload.gameId ?? '').trim();
-  let citizenId = String(payload.citizen_id ?? payload.citizenId ?? '').trim();
-  let playerName = String(payload.player_name ?? payload.playerName ?? '').trim();
-
-  const requestedChannelId = parsePositiveInt(payload.channel_id ?? payload.channelId);
-  const requestedChannelNumber = parsePositiveInt(payload.channel_number ?? payload.channelNumber);
-
-  let activeLink = null;
-  if (gameId) {
-    activeLink = findActiveLinkByGameId(gameId);
-  }
-  if (!activeLink && citizenId) {
-    activeLink = findActiveLinkByCitizenId(citizenId);
-  }
-  if (!activeLink && Array.isArray(payload.identifiers) && payload.identifiers.length > 0) {
-    const ids = resolveLinkIdentifiers(payload.identifiers);
-    if (ids.linkKey) {
-      const candidate = FiveMPlayerLinks.findBySteamId(ids.linkKey);
-      if (candidate && isActiveFiveMLink(candidate)) {
-        activeLink = candidate;
-      }
-    }
-  }
-
-  if (!gameId && activeLink) gameId = String(activeLink.game_id || '').trim();
-  if (!citizenId && activeLink) citizenId = String(activeLink.citizen_id || '').trim();
-  if (!playerName && activeLink) playerName = String(activeLink.player_name || '').trim();
-
-  if (!gameId) {
-    return res.status(400).json({
-      error: 'game_id is required (or resolveable from an active bridge link)',
-    });
-  }
-
-  let participant = VoiceParticipants.findByGameId(gameId);
-  if (!participant && citizenId) {
-    const byCitizen = findActiveLinkByCitizenId(citizenId);
-    if (byCitizen) {
-      const linkedGameId = String(byCitizen.game_id || '').trim();
-      if (linkedGameId) {
-        gameId = linkedGameId;
-        participant = VoiceParticipants.findByGameId(gameId);
-        if (!activeLink) activeLink = byCitizen;
-      }
-    }
-  }
-
-  let channel = null;
-  if (requestedChannelId) {
-    channel = VoiceChannels.findById(requestedChannelId);
-  }
-  if (!channel && requestedChannelNumber) {
-    channel = resolveOrCreateVoiceChannelByNumber(requestedChannelNumber, { createIfMissing: true });
-  }
-  if (!channel && participant?.channel_id) {
-    channel = VoiceChannels.findById(parsePositiveInt(participant.channel_id));
-  }
-  if (!channel && participant?.channel_number) {
-    channel = resolveOrCreateVoiceChannelByNumber(participant.channel_number, { createIfMissing: true });
-  }
-
-  if (!channel) {
-    return res.status(409).json({
-      error: 'No active voice channel context found for token request',
-      hint: 'Provide channel_number in request or join a CAD-tracked channel first',
-    });
-  }
-
-  const channelNumber = parsePositiveInt(channel.channel_number || requestedChannelNumber || participant?.channel_number);
-  if (!channelNumber) {
-    return res.status(409).json({
-      error: 'Resolved voice channel is invalid',
-    });
-  }
-
-  try {
-    const tokenData = externalVoice.issueFieldUnitToken({
-      gameId,
-      citizenId,
-      playerName: playerName || citizenId || `Unit ${gameId}`,
-      channelNumber,
-      channelName: String(channel.name || `Channel ${channelNumber}`).trim(),
-    });
-
-    audit(null, 'external_voice_field_token_issued', {
-      provider: tokenData.provider,
-      game_id: gameId,
-      citizen_id: citizenId,
-      channel_id: Number(channel.id || 0) || null,
-      channel_number: channelNumber,
-      participant_found: !!participant,
-    });
-
-    return res.json({
-      ok: true,
-      game_id: gameId,
-      citizen_id: citizenId,
-      channel_id: Number(channel.id || 0) || null,
-      channel_number: channelNumber,
-      participant_found: !!participant,
-      ...tokenData,
-    });
-  } catch (error) {
-    const statusCode = Number(error?.statusCode || 500) || 500;
-    console.warn(
-      `[FiveMBridge][external_voice] token issuance failed game_id=${gameId || 'unknown'} ` +
-      `channel=${channelNumber || 0} status=${statusCode} error=${error?.message || 'unknown'}`
-    );
-    return res.status(statusCode).json({
-      error: error?.message || 'Failed to issue external voice token',
-      details: error?.details || null,
-    });
-  }
-});
-
-// FiveM resource polls pending fine jobs and applies them through QBox-side logic.
-router.get('/fine-jobs', requireBridgeAuth, (req, res) => {
-  if (getFineDeliveryMode() === 'direct_db') {
-    return res.json([]);
-  }
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
-  const account = getFineAccountKey();
-  const jobs = FiveMFineJobs.listPending(limit).map((job) => {
-    const activeLink = findActiveLinkByCitizenId(job.citizen_id);
-    return {
-      ...job,
-      account,
-      game_id: activeLink ? String(activeLink.game_id || '') : '',
-      steam_id: activeLink ? String(activeLink.steam_id || '') : '',
-      player_name: activeLink ? String(activeLink.player_name || '') : '',
-    };
-  });
-  res.json(jobs);
-});
-
-router.post('/fine-jobs/:id/sent', requireBridgeAuth, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid job id' });
-  FiveMFineJobs.markSent(id);
-  res.json({ ok: true });
-});
-
-router.post('/fine-jobs/:id/failed', requireBridgeAuth, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid job id' });
-  const error = String(req.body?.error || 'Unknown fine processing error');
-  FiveMFineJobs.markFailed(id, error);
-  res.json({ ok: true });
-});
-
-// FiveM resource polls pending jail jobs and applies them through configured jail resource adapters.
-router.get('/jail-jobs', requireBridgeAuth, (req, res) => {
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
-  const jobs = FiveMJailJobs.listPending(limit).map((job) => {
-    const activeLink = findActiveLinkByCitizenId(job.citizen_id);
-    return {
-      ...job,
-      game_id: activeLink ? String(activeLink.game_id || '') : '',
-      steam_id: activeLink ? String(activeLink.steam_id || '') : '',
-      player_name: activeLink ? String(activeLink.player_name || '') : '',
-    };
-  });
-  res.json(jobs);
-});
-
-router.post('/jail-jobs/:id/sent', requireBridgeAuth, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid job id' });
-  FiveMJailJobs.markSent(id);
-  res.json({ ok: true });
-});
-
-router.post('/jail-jobs/:id/failed', requireBridgeAuth, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: 'Invalid job id' });
-  const error = String(req.body?.error || 'Unknown jail processing error');
-  FiveMJailJobs.markFailed(id, error);
-  res.json({ ok: true });
-});
-
-// CAD -> QBX job sync is temporarily disabled. Keep endpoint for compatibility.
-router.get('/job-jobs', requireBridgeAuth, (req, res) => {
-  res.json([]);
-});
-
-router.post('/job-jobs/:id/sent', requireBridgeAuth, (req, res) => {
-  res.json({ ok: true, disabled: true });
-});
-
-router.post('/job-jobs/:id/failed', requireBridgeAuth, (req, res) => {
-  res.json({ ok: true, disabled: true });
-});
-
-// Sync Mumble server configuration from FiveM
-// Expected payload: { mumble_host: "127.0.0.1", mumble_port: 64738, voice_system: "custom", detected: true }
-router.post('/mumble-config/sync', requireBridgeAuth, (req, res) => {
-  try {
-    const host = String(req.body?.mumble_host || '').trim();
-    const port = parseInt(req.body?.mumble_port || 0, 10);
-    const voiceSystem = String(req.body?.voice_system || 'unknown').trim();
-    const detected = !!req.body?.detected;
-
-    if (!host || !port || port <= 0) {
-      return res.status(400).json({ error: 'Invalid mumble_host or mumble_port' });
-    }
-
-    // Update settings in database
-    Settings.set('mumble_host', host);
-    Settings.set('mumble_port', port.toString());
-    Settings.set('mumble_voice_system', voiceSystem);
-    Settings.set('mumble_auto_detected', detected ? '1' : '0');
-
-    console.log(`[MumbleConfigSync] Updated Mumble config: ${host}:${port} (${voiceSystem}, auto-detected: ${detected})`);
-
-    res.json({
-      ok: true,
-      host,
-      port,
-      voice_system: voiceSystem,
-      detected,
-    });
-  } catch (error) {
-    console.error('[MumbleConfigSync] Error syncing Mumble config:', error);
-    res.status(500).json({ error: 'Failed to sync Mumble configuration' });
-  }
-});
-
-// Sync radio channel names from FiveM cad_bridge config.
-// Expected payload: { channels: [{ id: 1, name: "Police Primary", description: "..." }, ...] }
-router.post('/radio-channels/sync', requireBridgeAuth, (req, res) => {
-  try {
-    const channels = req.body?.channels || [];
-
-    if (!Array.isArray(channels)) {
-      return res.status(400).json({ error: 'channels must be an array' });
-    }
-
-    let updated = 0;
-    let created = 0;
-
-    for (const channelData of channels) {
-      const channelNumber = parseInt(channelData?.id || channelData?.channel || 0, 10);
-      const name = String(channelData?.name || '').trim();
-      const description = String(channelData?.description || channelData?.label || '').trim();
-
-      if (!channelNumber || channelNumber <= 0 || !name) {
-        continue; // Skip invalid entries
-      }
-
-      // Check if channel exists
-      const existing = VoiceChannels.findByChannelNumber(channelNumber);
-
-      if (existing) {
-        // Update existing channel
-        VoiceChannels.update(existing.id, {
-          name,
-          description: description || `Radio channel ${channelNumber}`,
-        });
-        updated++;
-      } else {
-        // Create new channel (no department assigned, available to all)
-        VoiceChannels.create({
-          channel_number: channelNumber,
-          department_id: null,
-          name,
-          description: description || `Radio channel ${channelNumber}`,
-        });
-        created++;
-      }
-    }
-
-    console.log(`[RadioChannelSync] Synced ${channels.length} channels: ${created} created, ${updated} updated`);
-
-    res.json({
-      ok: true,
-      synced: channels.length,
-      created,
-      updated,
-    });
-  } catch (error) {
-    console.error('[RadioChannelSync] Error syncing channels:', error);
-    res.status(500).json({ error: 'Failed to sync radio channels' });
-  }
-});
-
-// ============================================================================
-// Voice Participant Heartbeat — FiveM → CAD
-// FiveM resource polls in-game voice state for every online player and POSTs
-// batched updates here so the CAD channel participant list stays current
-// without requiring a resource restart.
-//
-// Expected payload:
-//   { participants: [{ game_id, citizen_id, channel_number, channel_type }] }
-//
-// channel_type is "radio" or "call".
-// channel_number 0 (or missing) means the player left that channel.
-// ============================================================================
-router.post('/voice-participants/heartbeat', requireBridgeAuth, (req, res) => {
-  try {
-    const incoming = req.body?.participants;
-    if (!Array.isArray(incoming)) {
-      return res.status(400).json({ error: 'participants must be an array' });
-    }
-
-    // Build a map of channel_number → VoiceChannel row (cached for this request).
-    // Auto-creates the channel if it doesn't exist yet (e.g. local config channels
-    // reported by the heartbeat before the radio-channels sync has run).
-    const channelCache = new Map();
-    function getOrCreateChannel(channelNumber) {
-      if (channelCache.has(channelNumber)) return channelCache.get(channelNumber);
-      let ch = VoiceChannels.findByChannelNumber(channelNumber);
-      if (!ch) {
-        // Channel not yet synced — create it automatically so participants can be tracked
-        try {
-          ch = VoiceChannels.create({
-            channel_number: channelNumber,
-            department_id: null,
-            name: `Channel ${channelNumber}`,
-            description: `Radio channel ${channelNumber} (auto-created by heartbeat)`,
-          });
-          console.log(`[VoiceHeartbeat] Auto-created voice channel ${channelNumber}`);
-        } catch (createErr) {
-          // Race condition — another request may have created it simultaneously
-          ch = VoiceChannels.findByChannelNumber(channelNumber) || null;
-        }
-      } else if (!ch.is_active) {
-        // Channel exists but was deactivated — reactivate it since in-game players are using it
-        VoiceChannels.update(ch.id, { is_active: 1 });
-        ch = VoiceChannels.findByChannelNumber(channelNumber);
-      }
-      channelCache.set(channelNumber, ch || null);
-      return ch || null;
-    }
-
-    const changedChannels = new Set();
-    const incomingGameIds = new Set();
-
-    // Heartbeat payload is authoritative for current in-game players.
-    // Remove any existing game participant rows not present in this batch.
-    for (const entry of incoming) {
-      const gameId = String(entry?.game_id || '').trim();
-      if (gameId) incomingGameIds.add(gameId);
-    }
-
-    const existingGameParticipants = VoiceParticipants.listAllGameParticipants();
-    for (const existing of existingGameParticipants) {
-      const existingGameId = String(existing?.game_id || '').trim();
-      if (!existingGameId || incomingGameIds.has(existingGameId)) continue;
-
-      VoiceParticipants.removeByGameId(existingGameId);
-      bus.emit('voice:leave', {
-        channelId: Number(existing?.channel_id || 0) || null,
-        channelNumber: Number(existing?.channel_number || 0) || 0,
-        userId: null,
-        gameId: existingGameId,
-        citizenId: String(existing?.citizen_id || ''),
-        source: 'fivem-heartbeat',
-        queue_to_fivem: false,
-      });
-
-      const oldChannelNum = Number(existing?.channel_number || 0) || 0;
-      if (oldChannelNum > 0) changedChannels.add(oldChannelNum);
-    }
-
-    for (const entry of incoming) {
-      const gameId      = String(entry.game_id    || '').trim();
-      const citizenId   = String(entry.citizen_id || '').trim();
-      const channelNum  = parseInt(entry.channel_number, 10) || 0;
-
-      if (!gameId) continue; // Must have a game_id to identify the player
-
-      const channel = channelNum > 0 ? getOrCreateChannel(channelNum) : null;
-
-      // Find existing participant row for this player (by game_id)
-      const existing = VoiceParticipants.findByGameId(gameId);
-
-      if (channel && channelNum > 0) {
-        // Player is in a channel — upsert participant
-        if (!existing || existing.channel_id !== channel.id) {
-          // Remove from old channel first
-          if (existing) {
-            const oldChannel = getOrCreateChannel(existing.channel_number);
-            VoiceParticipants.removeByGameId(gameId);
-            bus.emit('voice:leave', {
-              channelId: existing.channel_id,
-              channelNumber: existing.channel_number,
-              userId: null,
-              gameId,
-              citizenId,
-              source: 'fivem-heartbeat',
-              queue_to_fivem: false,
-            });
-            if (oldChannel) changedChannels.add(oldChannel.channel_number);
-          }
-          // Add to new channel
-          const participant = VoiceParticipants.add({
-            channel_id: channel.id,
-            user_id: null,
-            unit_id: null,
-            citizen_id: citizenId,
-            game_id: gameId,
-          });
-          bus.emit('voice:join', {
-            channelId: channel.id,
-            channelNumber: channel.channel_number,
-            userId: null,
-            gameId,
-            citizenId,
-            participant,
-            source: 'fivem-heartbeat',
-            queue_to_fivem: false,
-          });
-          changedChannels.add(channel.channel_number);
-        } else {
-          // Already in the right channel — just touch the last_activity_at
-          VoiceParticipants.touch(existing.id);
-        }
-      } else {
-        // Player is not in any channel (channel_number == 0 means left)
-        if (existing) {
-          VoiceParticipants.removeByGameId(gameId);
-          bus.emit('voice:leave', {
-            channelId: existing.channel_id,
-            channelNumber: existing.channel_number,
-            userId: null,
-            gameId,
-            citizenId,
-            source: 'fivem-heartbeat',
-            queue_to_fivem: false,
-          });
-          changedChannels.add(existing.channel_number);
-        }
-      }
-    }
-
-    // Sync routing for all changed channels
-    for (const channelNum of changedChannels) {
-      if (channelNum > 0) {
-        handleParticipantJoin(channelNum); // triggers a full route sync
-      }
-    }
-
-    const now = Date.now();
-    if (changedChannels.size > 0 || (now - lastVoiceHeartbeatLogAt) >= VOICE_HEARTBEAT_LOG_INTERVAL_MS) {
-      const changedList = Array.from(changedChannels.values())
-        .map(value => Number(value || 0))
-        .filter(value => value > 0)
-        .sort((a, b) => a - b);
-      lastVoiceHeartbeatLogAt = now;
-      console.log(
-        `[VoiceHeartbeat] processed=${incoming.length} incomingGameIds=${incomingGameIds.size} ` +
-        `changedChannels=${changedList.length ? changedList.join(',') : 'none'} ` +
-        `trackedParticipants=${VoiceParticipants.listAllGameParticipants().length}`
-      );
-    }
-
-    res.json({ ok: true, processed: incoming.length });
-  } catch (error) {
-    console.error('[VoiceHeartbeat] Error processing participant heartbeat:', error);
-    res.status(500).json({ error: 'Failed to process participant heartbeat' });
-  }
 });
 
 module.exports = router;

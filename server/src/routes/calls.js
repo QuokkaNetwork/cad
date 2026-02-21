@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Calls, Units, Departments, VoiceCallSessions } = require('../db/sqlite');
+const { Calls, Units, Departments } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -157,9 +157,6 @@ router.patch('/:id', requireAuth, (req, res) => {
     : String(status || '').trim().toLowerCase();
   const wasClosed = String(call?.status || '').trim().toLowerCase() === 'closed';
   const requestedDepartmentIds = resolveRequestedDepartmentIdsForUpdate(req.user, call, requested_department_ids);
-  const voiceSessionBeforeClose = normalizedStatus === 'closed'
-    ? VoiceCallSessions.findByCallId(call.id)
-    : null;
   Calls.update(call.id, {
     title,
     priority,
@@ -172,16 +169,6 @@ router.patch('/:id', requireAuth, (req, res) => {
   const updated = Calls.findById(call.id);
   const isClosingCall = normalizedStatus === 'closed' && !wasClosed;
   if (isClosingCall && Array.isArray(updated?.assigned_units)) {
-    VoiceCallSessions.endByCallId(call.id);
-    if (voiceSessionBeforeClose && Number(voiceSessionBeforeClose.call_channel_number || 0) > 0) {
-      bus.emit('voice:call_ended', {
-        callSessionId: Number(voiceSessionBeforeClose.id || 0),
-        callId: Number(call.id || 0),
-        callChannelNumber: Number(voiceSessionBeforeClose.call_channel_number || 0),
-        callerCitizenId: String(voiceSessionBeforeClose.caller_citizen_id || ''),
-        callerGameId: String(voiceSessionBeforeClose.caller_game_id || ''),
-      });
-    }
     for (const assignedUnit of updated.assigned_units) {
       const unitId = Number(assignedUnit?.id || 0);
       if (!unitId) continue;

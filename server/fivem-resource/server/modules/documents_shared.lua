@@ -1,9 +1,3 @@
-local function getNpwdResourceName()
-  local name = trim(Config.NpwdResource or 'npwd')
-  if name == '' then return 'npwd' end
-  return name
-end
-
 local lastForcedOxNotifyPosition = ''
 local loggedOxNotifyModernBehavior = false
 local function forceOxNotifyPosition(logApplied)
@@ -52,18 +46,6 @@ AddEventHandler('onResourceStart', function(resourceName)
     registerEmergencySuggestion(-1)
   end)
   forceOxNotifyPosition(true)
-  triggerNpwdEmergencyHandlerRegistration()
-end)
-
-AddEventHandler('onResourceStart', function(resourceName)
-  if resourceName ~= getNpwdResourceName() then return end
-  npwdEmergencyHandlersRegistered = {}
-  triggerNpwdEmergencyHandlerRegistration()
-end)
-
-AddEventHandler('onResourceStop', function(resourceName)
-  if resourceName ~= getNpwdResourceName() then return end
-  npwdEmergencyHandlersRegistered = {}
 end)
 
 AddEventHandler('playerJoining', function()

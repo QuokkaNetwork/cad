@@ -185,17 +185,16 @@ app.use((err, req, res, next) => {
 });
 
 // Create HTTP or HTTPS server for Express + WebSocket.
-// If TLS_CERT and TLS_KEY are set in .env, serve over HTTPS (required for
-// browser microphone access via getUserMedia on non-localhost origins).
+// If TLS_CERT and TLS_KEY are set in .env, serve over HTTPS.
 // If the cert files don't exist yet, auto-generates a self-signed cert using
-// the public IP from MUMBLE_PUBLIC_IP so no manual steps are needed.
+// TLS_PUBLIC_IP.
 function ensureSelfSignedCert(keyPath, certPath) {
   const { execSync } = require('child_process');
   const os = require('os');
   const dataDir = path.dirname(keyPath);
   fs.mkdirSync(dataDir, { recursive: true });
 
-  const ip = String(process.env.MUMBLE_PUBLIC_IP || '127.0.0.1').trim();
+  const ip = String(process.env.TLS_PUBLIC_IP || '127.0.0.1').trim();
   const confPath = path.join(os.tmpdir(), 'cad-openssl-san.cnf');
   const conf = [
     '[req]', 'default_bits = 2048', 'prompt = no', 'default_md = sha256',

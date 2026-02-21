@@ -231,16 +231,13 @@ if "!UPDATED!"=="1" (
   )
 )
 
-echo [CAD] Native FiveM voice mode enabled (no CAD-managed Mumble/voice.cfg).
+echo [CAD] Using third-party communication configuration.
 
 echo [CAD] Launching server...
 set NODE_ENV=production
 set AUTO_UPDATE_ENABLED=true
 set AUTO_UPDATE_SELF_RESTART=false
 set AUTO_UPDATE_EXIT_ON_UPDATE=true
-set RADIO_BEHAVIOR=external
-set VOICE_BRIDGE_ENABLED=false
-set MUMBLE_MANAGE=false
 echo [CAD] Running: %NPM_BIN% run start
 echo.
 call %NPM_BIN% run start
