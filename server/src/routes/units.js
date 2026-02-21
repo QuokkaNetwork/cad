@@ -388,6 +388,9 @@ router.get('/map-config', requireAuth, (_req, res) => {
   const tileRows = parsePositiveIntWithFallback(tileGrid?.tileRows, LIVE_MAP_TILE_ROWS);
   const tileColumns = parsePositiveIntWithFallback(tileGrid?.tileColumns, LIVE_MAP_TILE_COLUMNS);
   const transform = getConfiguredLiveMapTransform();
+  const liveMapSocketUrl = String(Settings.get('live_map_socket_url') || '').trim();
+  const liveMapUrl = String(Settings.get('live_map_url') || '').trim();
+  const mapImageUrl = String(Settings.get('map_image_url') || '').trim();
 
   res.json({
     map_available: mapAvailable,
@@ -397,6 +400,13 @@ router.get('/map-config', requireAuth, (_req, res) => {
     tile_columns: tileColumns,
     map_width: tileSize * tileColumns,
     map_height: tileSize * tileRows,
+    live_map_socket_url: liveMapSocketUrl,
+    live_map_url: liveMapUrl,
+    map_image_url: mapImageUrl,
+    map_scale_x: transform.scale_x,
+    map_scale_y: transform.scale_y,
+    map_offset_x: transform.offset_x,
+    map_offset_y: transform.offset_y,
     transform,
   });
 });

@@ -314,7 +314,7 @@ export default function AdminSystemSettings() {
             />
           </div>
           <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Legacy External LiveMap Socket URL</label>
+            <label className="block text-xs text-cad-muted mb-1">LiveMap Resource Socket URL</label>
             <input
               type="text"
               value={settings.live_map_socket_url || ''}
@@ -323,11 +323,11 @@ export default function AdminSystemSettings() {
               placeholder="ws://127.0.0.1:30121 or wss://your-proxy.example"
             />
             <p className="text-xs text-cad-muted mt-1">
-              Optional legacy field for external integrations. CAD's built-in Live Map now uses <span className="font-mono">cad_bridge</span> heartbeat data directly.
+              Used by CAD Live Map websocket mode. For the standard <span className="font-mono">live_map</span> resource, use <span className="font-mono">ws://127.0.0.1:30121</span> (or your server IP/hostname).
             </p>
           </div>
           <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Legacy External LiveMap URL</label>
+            <label className="block text-xs text-cad-muted mb-1">LiveMap Resource Base URL (Optional)</label>
             <input
               type="text"
               value={settings.live_map_url || ''}
@@ -336,7 +336,7 @@ export default function AdminSystemSettings() {
               placeholder="http://127.0.0.1:30121"
             />
             <p className="text-xs text-cad-muted mt-1">
-              Optional legacy field for opening third-party map UIs. Not required for CAD's built-in live map view.
+              Optional metadata field for integrations. The CAD live map primarily uses the websocket socket URL above.
             </p>
           </div>
           <div className="col-span-2">
