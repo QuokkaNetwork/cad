@@ -1162,17 +1162,24 @@ RegisterNetEvent('cad_bridge:requestMugshotCapture', function()
     return
   end
 
+  local chromaEnabled = Config.ScreenshotChromaKeyEnabled == true
   local captureOptions = {
     encoding = trim(Config.ScreenshotEncoding or 'jpg'):lower(),
     quality = tonumber(Config.ScreenshotQuality or 0.7) or 0.7,
     maxWidth = 512,
     maxHeight = 512,
-    -- Explicitly disable chroma-key style capture so the real world stays visible.
-    chromaKey = Config.ScreenshotChromaKeyEnabled == true,
-    chroma = Config.ScreenshotChromaKeyEnabled == true,
-    transparent = Config.ScreenshotChromaKeyEnabled == true,
-    disableChromaKey = Config.ScreenshotChromaKeyEnabled ~= true,
   }
+  -- Keep chroma options explicit so provider defaults do not override runtime config.
+  if chromaEnabled then
+    captureOptions.chromaKey = true
+    captureOptions.chroma = true
+    captureOptions.transparent = true
+  else
+    captureOptions.chromaKey = false
+    captureOptions.chroma = false
+    captureOptions.transparent = false
+    captureOptions.disableChromaKey = true
+  end
 
   print(('[cad_bridge] [screencapture] Calling serverCapture for src=%s encoding=%s quality=%s'):format(
     tostring(src), captureOptions.encoding, tostring(captureOptions.quality)))

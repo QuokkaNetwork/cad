@@ -563,10 +563,24 @@ local function captureMugshotViaScreenshot()
     pedWasFrozen = IsEntityPositionFrozen(ped) == true
   end
   local originalHeading = GetEntityHeading(ped)
+  local hadNightVision = false
+  if type(GetUsingnightvision) == 'function' then
+    hadNightVision = GetUsingnightvision() == true
+  end
+  local hadSeeThrough = false
+  if type(GetUsingseethrough) == 'function' then
+    hadSeeThrough = GetUsingseethrough() == true
+  end
 
   -- 1) Freeze the ped and lock heading FIRST, before any animation.
   FreezeEntityPosition(ped, true)
   SetEntityHeading(ped, originalHeading)
+  if type(SetNightvision) == 'function' then
+    SetNightvision(false)
+  end
+  if type(SetSeethrough) == 'function' then
+    SetSeethrough(false)
+  end
   Wait(100)
 
   -- 2) Trigger the Airforce 2 emote via scully_emotemenu.
@@ -599,6 +613,12 @@ local function captureMugshotViaScreenshot()
   local headPos = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
   if not headPos then
     if hasScully then exports['scully_emotemenu']:cancelEmote() end
+    if type(SetNightvision) == 'function' then
+      SetNightvision(hadNightVision)
+    end
+    if type(SetSeethrough) == 'function' then
+      SetSeethrough(hadSeeThrough)
+    end
     if not pedWasFrozen then FreezeEntityPosition(ped, false) end
     return ''
   end
@@ -606,19 +626,30 @@ local function captureMugshotViaScreenshot()
   -- 5) Calculate camera position using heading-based trig.
   local forwardX = -math.sin(headingRad)
   local forwardY =  math.cos(headingRad)
+  local hasHeadProp = false
+  if type(GetPedPropIndex) == 'function' then
+    hasHeadProp = (GetPedPropIndex(ped, 0) or -1) >= 0
+  end
+  local wearingHelmet = false
+  if type(IsPedWearingHelmet) == 'function' then
+    wearingHelmet = IsPedWearingHelmet(ped) == true
+  end
+  local useHelmetFraming = hasHeadProp or wearingHelmet
 
-  -- Camera 0.82m in front of ped, tight portrait: shoulders crop into frame edges.
-  local camDist = 0.82
+  -- Keep extra distance for helmets/head props to avoid clipping into the model.
+  local camDist = useHelmetFraming and 1.20 or 0.82
   local camX = headPos.x + forwardX * camDist
   local camY = headPos.y + forwardY * camDist
-  local camZ = headPos.z + 0.10  -- extra headroom to avoid clipping hair/hats
+  local camZ = headPos.z + (useHelmetFraming and 0.16 or 0.10)
 
   local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
   SetCamCoord(cam, camX, camY, camZ)
-  -- Aim slightly above head center to keep hair/hat tops inside frame.
-  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z + 0.04)
-  -- FOV 30 = tight portrait crop, shoulders overlap the frame edges.
-  SetCamFov(cam, 30.0)
+  if type(SetCamNearClip) == 'function' then
+    SetCamNearClip(cam, 0.03)
+  end
+  -- Aim slightly higher for helmet captures so hats/helmets remain fully visible.
+  PointCamAtCoord(cam, headPos.x, headPos.y, headPos.z + (useHelmetFraming and 0.10 or 0.04))
+  SetCamFov(cam, useHelmetFraming and 35.0 or 30.0)
   RenderScriptCams(true, false, 0, true, true)
 
   -- 4) Hide HUD during capture.
@@ -661,6 +692,12 @@ local function captureMugshotViaScreenshot()
   if hasScully then exports['scully_emotemenu']:cancelEmote() end
   ClearPedTasksImmediately(ped)
   SetEntityHeading(ped, originalHeading)
+  if type(SetNightvision) == 'function' then
+    SetNightvision(hadNightVision)
+  end
+  if type(SetSeethrough) == 'function' then
+    SetSeethrough(hadSeeThrough)
+  end
   if not pedWasFrozen then
     FreezeEntityPosition(ped, false)
   end

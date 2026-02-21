@@ -55,6 +55,9 @@ const BRIDGE_MUGSHOT_MAX_BYTES = Math.max(
   Number.parseInt(process.env.FIVEM_BRIDGE_MUGSHOT_MAX_BYTES || '5000000', 10) || 5000000
 );
 const BRIDGE_MUGSHOT_UPLOAD_DIR = path.resolve(__dirname, '../../data/uploads/fivem-mugshots');
+const BRIDGE_MUGSHOT_CHROMA_KEY_ENABLED = String(process.env.FIVEM_BRIDGE_MUGSHOT_CHROMA_KEY_ENABLED || 'false')
+  .trim()
+  .toLowerCase() === 'true';
 const BRIDGE_DOCUMENT_DEBUG_LOGS = String(process.env.FIVEM_BRIDGE_DOCUMENT_DEBUG_LOGS || 'true')
   .trim()
   .toLowerCase() !== 'false';
@@ -703,8 +706,24 @@ async function persistBridgeMugshot(payload = {}, citizenId = '') {
 
   const uploadDir = ensureBridgeMugshotUploadDir();
   const safeCitizenId = sanitizeFileToken(citizenId, 'unknown');
-  // Fixed filename per citizen — renewals overwrite the previous photo automatically.
-  const fileName = `${safeCitizenId}.png`;
+  let outputBuffer = parsed.imageBuffer;
+  let outputExtension = parsed.extension;
+  let outputMimeType = parsed.mimeType;
+
+  if (BRIDGE_MUGSHOT_CHROMA_KEY_ENABLED) {
+    // Optional chroma-key mode for green-screen workflows.
+    outputBuffer = await chromaKeyGreen(parsed.imageBuffer);
+    outputExtension = 'png';
+    outputMimeType = 'image/png';
+  } else if (parsed.mimeType === 'image/webp') {
+    // Normalise WEBP captures for broad CAD/browser compatibility.
+    outputBuffer = await sharp(parsed.imageBuffer).jpeg({ quality: 92, mozjpeg: true }).toBuffer();
+    outputExtension = 'jpg';
+    outputMimeType = 'image/jpeg';
+  }
+
+  // Fixed filename per citizen. Renewals overwrite the previous photo automatically.
+  const fileName = `${safeCitizenId}.${outputExtension}`;
   const filePath = path.join(uploadDir, fileName);
 
   // Remove any old mugshot files for this citizen (previous format or old .webp).
@@ -721,15 +740,12 @@ async function persistBridgeMugshot(payload = {}, citizenId = '') {
     // Non-fatal: stale files may remain but the new photo will take precedence.
   }
 
-  // Chroma-key the green backdrop to transparency, then save as PNG.
-  const pngBuffer = await chromaKeyGreen(parsed.imageBuffer);
-
-  fs.writeFileSync(filePath, pngBuffer);
+  fs.writeFileSync(filePath, outputBuffer);
   return {
     mugshot_url: `/uploads/fivem-mugshots/${fileName}`,
     persisted: true,
-    bytes: pngBuffer.length,
-    mime_type: 'image/png',
+    bytes: outputBuffer.length,
+    mime_type: outputMimeType,
   };
 }
 
