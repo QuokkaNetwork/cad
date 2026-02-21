@@ -391,6 +391,8 @@ if Config.RadioRxVolume > 1.0 then Config.RadioRxVolume = 1.0 end
 Config.RadioPttKey = trim(getString('cad_bridge_radio_ptt_key', 'LMENU'))
 if Config.RadioPttKey == '' then Config.RadioPttKey = 'LMENU' end
 Config.RadioFollowNativePtt = getBoolean('cad_bridge_radio_follow_native_ptt', true)
+Config.RadioPttReleaseDelayMs = math.max(0, math.floor(getNumber('cad_bridge_radio_ptt_release_delay_ms', 350)))
+Config.RadioTalkingTimeoutMs = math.max(1000, math.floor(getNumber('cad_bridge_radio_talking_timeout_ms', 6000)))
 Config.RadioForwardRoot = getBoolean('cad_bridge_radio_forward_root', false)
 Config.RadioUiEnabled = getBoolean('cad_bridge_radio_ui_enabled', true)
 Config.RadioUiKey = trim(getString('cad_bridge_radio_ui_key', 'EQUALS'))

@@ -2330,6 +2330,8 @@ local CAD_PROXIMITY_TARGET_ID = tonumber(Config.ProximityTargetId or 1) or 1
 local CAD_RADIO_RX_VOLUME = tonumber(Config.RadioRxVolume or 0.35) or 0.35
 local CAD_RADIO_PTT_KEY = tostring(Config.RadioPttKey or 'LMENU')
 local CAD_RADIO_FOLLOW_NATIVE_PTT = Config.RadioFollowNativePtt ~= false
+local CAD_RADIO_PTT_RELEASE_DELAY_MS = tonumber(Config.RadioPttReleaseDelayMs or 350) or 350
+local CAD_RADIO_TALKING_HEARTBEAT_MS = 1000
 local CAD_RADIO_FORWARD_ROOT = Config.RadioForwardRoot ~= false
 local CAD_RADIO_UI_ENABLED = Config.RadioUiEnabled ~= false
 local CAD_RADIO_UI_KEY = tostring(Config.RadioUiKey or 'EQUALS')
@@ -2344,6 +2346,8 @@ if CAD_PROXIMITY_TARGET_ID < 0 or CAD_PROXIMITY_TARGET_ID > 30 then
 end
 if CAD_RADIO_RX_VOLUME < 0.0 then CAD_RADIO_RX_VOLUME = 0.0 end
 if CAD_RADIO_RX_VOLUME > 1.0 then CAD_RADIO_RX_VOLUME = 1.0 end
+if CAD_RADIO_PTT_RELEASE_DELAY_MS < 0 then CAD_RADIO_PTT_RELEASE_DELAY_MS = 0 end
+if CAD_RADIO_PTT_RELEASE_DELAY_MS > 1000 then CAD_RADIO_PTT_RELEASE_DELAY_MS = 1000 end
 
 local cadRadioChannel = 0
 local cadRadioMembers = {}
@@ -2351,6 +2355,8 @@ local cadRadioMemberBySource = {}
 local cadRadioTalkingStateBySource = {}
 local cadRadioPttPressed = false
 local cadRadioManualPttWanted = false
+local cadRadioPendingReleaseAtMs = 0
+local cadRadioLastTalkingHeartbeatAt = 0
 local cadRadioLastTargetBuildAt = 0
 local cadRadioLastNoRouteLogAt = 0
 local cadRadioSubmixId = -1
@@ -2810,6 +2816,7 @@ local function setCadRadioPttState(enabled)
       cadRadioLastTargetBuildAt = 0
     end
     TriggerServerEvent('cad_bridge:radio:setTalking', true)
+    cadRadioLastTalkingHeartbeatAt = tonumber(GetGameTimer() or 0) or 0
     cadRadioSendNui('updateRadioTalking', {
       radioId = tostring(getLocalServerId()),
       radioTalking = true,
@@ -2843,6 +2850,7 @@ local function setCadRadioPttState(enabled)
   end
 
   cadRadioPttPressed = false
+  cadRadioLastTalkingHeartbeatAt = 0
   cadRadioLastTargetBuildAt = 0
   TriggerServerEvent('cad_bridge:radio:setTalking', false)
   cadRadioSendNui('updateRadioTalking', {
@@ -2852,6 +2860,44 @@ local function setCadRadioPttState(enabled)
   MumbleClearVoiceTargetPlayers(CAD_RADIO_TARGET_ID)
   MumbleSetVoiceTarget(CAD_PROXIMITY_TARGET_ID)
   playCadRadioMicClick(false)
+end
+
+local function cadRadioClearPendingPttRelease()
+  cadRadioPendingReleaseAtMs = 0
+end
+
+local function cadRadioQueuePttRelease()
+  if not cadRadioPttPressed then
+    cadRadioPendingReleaseAtMs = 0
+    return
+  end
+  if CAD_RADIO_PTT_RELEASE_DELAY_MS <= 0 then
+    cadRadioPendingReleaseAtMs = 0
+    setCadRadioPttState(false)
+    return
+  end
+  local nowMs = tonumber(GetGameTimer() or 0) or 0
+  if cadRadioPendingReleaseAtMs <= 0 then
+    cadRadioPendingReleaseAtMs = nowMs + CAD_RADIO_PTT_RELEASE_DELAY_MS
+  end
+end
+
+local function cadRadioApplyPttIntent(shouldTransmit)
+  if shouldTransmit == true then
+    if cadRadioPendingReleaseAtMs > 0 then
+      cadRadioClearPendingPttRelease()
+    end
+    if not cadRadioPttPressed then
+      setCadRadioPttState(true)
+    end
+    return
+  end
+
+  if cadRadioPttPressed then
+    cadRadioQueuePttRelease()
+  else
+    cadRadioClearPendingPttRelease()
+  end
 end
 
 RegisterNetEvent('cad_bridge:radio:update', function(payload)
@@ -2893,6 +2939,7 @@ RegisterNetEvent('cad_bridge:radio:update', function(payload)
   end
 
   if cadRadioPttPressed and cadRadioChannel <= 0 then
+    cadRadioClearPendingPttRelease()
     setCadRadioPttState(false)
   elseif cadRadioPttPressed then
     if not shouldUseCadExternalVoiceTransport() then
@@ -3034,13 +3081,13 @@ end)
 
 RegisterCommand('+cadbridgeradio', function()
   cadRadioManualPttWanted = true
-  setCadRadioPttState(true)
+  cadRadioApplyPttIntent(true)
 end, false)
 
 RegisterCommand('-cadbridgeradio', function()
   cadRadioManualPttWanted = false
   if not CAD_RADIO_FOLLOW_NATIVE_PTT or not NetworkIsPlayerTalking(PlayerId()) then
-    setCadRadioPttState(false)
+    cadRadioApplyPttIntent(false)
   end
 end, false)
 
@@ -3353,7 +3400,16 @@ end)
 
 CreateThread(function()
   while true do
+    local nowMs = tonumber(GetGameTimer() or 0) or 0
+    if cadRadioPendingReleaseAtMs > 0 and nowMs >= cadRadioPendingReleaseAtMs then
+      cadRadioPendingReleaseAtMs = 0
+      if cadRadioPttPressed then
+        setCadRadioPttState(false)
+      end
+    end
+
     if not CAD_RADIO_ENABLED or not isCadRadioAdapterActive() then
+      cadRadioClearPendingPttRelease()
       if cadRadioPttPressed then
         setCadRadioPttState(false)
       end
@@ -3362,6 +3418,7 @@ CreateThread(function()
     end
 
     if cadRadioChannel <= 0 then
+      cadRadioClearPendingPttRelease()
       if cadRadioPttPressed then
         setCadRadioPttState(false)
       end
@@ -3372,15 +3429,19 @@ CreateThread(function()
     local nativeTalking = CAD_RADIO_FOLLOW_NATIVE_PTT and NetworkIsPlayerTalking(PlayerId()) or false
     local shouldTransmit = cadRadioManualPttWanted or nativeTalking
 
-    if cadRadioPttPressed ~= shouldTransmit then
-      setCadRadioPttState(shouldTransmit)
-    elseif cadRadioPttPressed then
+    cadRadioApplyPttIntent(shouldTransmit)
+
+    if cadRadioPttPressed then
+      if (nowMs - cadRadioLastTalkingHeartbeatAt) >= CAD_RADIO_TALKING_HEARTBEAT_MS then
+        cadRadioLastTalkingHeartbeatAt = nowMs
+        TriggerServerEvent('cad_bridge:radio:setTalking', true)
+      end
+
       if not shouldUseCadExternalVoiceTransport() then
         -- pma/proximity scripts can reset the active target every tick.
         -- Reassert CAD radio target while transmitting.
         MumbleSetVoiceTarget(CAD_RADIO_TARGET_ID)
 
-        local nowMs = tonumber(GetGameTimer() or 0) or 0
         if (nowMs - cadRadioLastTargetBuildAt) >= 250 then
           rebuildCadRadioTarget()
           cadRadioLastTargetBuildAt = nowMs
@@ -3426,6 +3487,8 @@ end)
 AddEventHandler('onClientResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
   cadRadioManualPttWanted = false
+  cadRadioClearPendingPttRelease()
+  cadRadioLastTalkingHeartbeatAt = 0
   if cadRadioPttPressed then
     TriggerServerEvent('cad_bridge:radio:setTalking', false)
   end

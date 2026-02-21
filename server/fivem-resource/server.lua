@@ -4043,9 +4043,11 @@ end
 local CadRadioMembersByChannel = {} -- [channel] = { [source] = true }
 local CadRadioChannelBySource = {}  -- [source] = channel
 local CadRadioTalkingBySource = {}  -- [source] = bool
+local CadRadioTalkingUpdatedAtMs = {} -- [source] = last talking state update ms
 local CadRadioDisplayNameBySource = {} -- [source] = custom display name
 local ExternalVoiceSessionBySource = {} -- [source] = session payload
 local externalVoiceTokenRequestInFlightBySource = {}
+local CAD_RADIO_TALKING_TIMEOUT_MS = math.max(1000, tonumber(Config.RadioTalkingTimeoutMs or 6000) or 6000)
 
 local function clearExternalVoiceSessionForSource(source, reason)
   local src = tonumber(source) or 0
@@ -4261,6 +4263,7 @@ local function cadRadioGetMemberRows(channelNumber)
       bucket[memberSource] = nil
       CadRadioChannelBySource[memberSource] = nil
       CadRadioTalkingBySource[memberSource] = nil
+      CadRadioTalkingUpdatedAtMs[memberSource] = nil
       CadRadioDisplayNameBySource[memberSource] = nil
     end
   end
@@ -4338,6 +4341,7 @@ local function cadRadioSetPlayerChannel(source, channelNumber)
   end
 
   CadRadioTalkingBySource[src] = false
+  CadRadioTalkingUpdatedAtMs[src] = nil
 
   if newChannel > 0 then
     local newBucket = CadRadioMembersByChannel[newChannel]
@@ -4373,6 +4377,20 @@ local function cadRadioSetPlayerChannel(source, channelNumber)
   return true, nil
 end
 
+local function cadRadioBroadcastTalkingState(channelNumber, sourceId, isTalking)
+  local channel = tonumber(channelNumber) or 0
+  local src = tonumber(sourceId) or 0
+  if channel <= 0 or src <= 0 then return end
+
+  local bucket = CadRadioMembersByChannel[channel]
+  if not bucket then return end
+  for memberSource, _ in pairs(bucket) do
+    if GetPlayerName(memberSource) then
+      TriggerClientEvent('cad_bridge:radio:setTalking', memberSource, src, isTalking == true)
+    end
+  end
+end
+
 RegisterNetEvent('cad_bridge:radio:setTalking', function(enabled)
   local src = tonumber(source) or 0
   if src <= 0 then return end
@@ -4381,14 +4399,60 @@ RegisterNetEvent('cad_bridge:radio:setTalking', function(enabled)
   if channel <= 0 then return end
 
   local isTalking = enabled == true
-  if CadRadioTalkingBySource[src] == isTalking then return end
+  if CadRadioTalkingBySource[src] == isTalking then
+    if isTalking then
+      CadRadioTalkingUpdatedAtMs[src] = nowMs()
+    end
+    return
+  end
   CadRadioTalkingBySource[src] = isTalking
+  if isTalking then
+    CadRadioTalkingUpdatedAtMs[src] = nowMs()
+  else
+    CadRadioTalkingUpdatedAtMs[src] = nil
+  end
 
-  local bucket = CadRadioMembersByChannel[channel]
-  if not bucket then return end
-  for memberSource, _ in pairs(bucket) do
-    if GetPlayerName(memberSource) then
-      TriggerClientEvent('cad_bridge:radio:setTalking', memberSource, src, isTalking)
+  cadRadioBroadcastTalkingState(channel, src, isTalking)
+end)
+
+CreateThread(function()
+  while true do
+    Wait(1500)
+    local now = nowMs()
+
+    for sourceId, isTalking in pairs(CadRadioTalkingBySource) do
+      local src = tonumber(sourceId) or 0
+      if src <= 0 or not GetPlayerName(src) then
+        CadRadioTalkingBySource[sourceId] = nil
+        CadRadioTalkingUpdatedAtMs[sourceId] = nil
+        goto continueTalkingWatch
+      end
+
+      if isTalking ~= true then
+        CadRadioTalkingUpdatedAtMs[sourceId] = nil
+        goto continueTalkingWatch
+      end
+
+      local channel = tonumber(CadRadioChannelBySource[src] or 0) or 0
+      if channel <= 0 then
+        CadRadioTalkingBySource[sourceId] = false
+        CadRadioTalkingUpdatedAtMs[sourceId] = nil
+        goto continueTalkingWatch
+      end
+
+      local updatedAt = tonumber(CadRadioTalkingUpdatedAtMs[sourceId] or 0) or 0
+      if updatedAt > 0 and (now - updatedAt) > CAD_RADIO_TALKING_TIMEOUT_MS then
+        CadRadioTalkingBySource[sourceId] = false
+        CadRadioTalkingUpdatedAtMs[sourceId] = nil
+        cadRadioBroadcastTalkingState(channel, src, false)
+        print(('[cad_bridge][radio] cleared stale talking state src=%s channel=%s idle_ms=%s'):format(
+          tostring(src),
+          tostring(channel),
+          tostring(now - updatedAt)
+        ))
+      end
+
+      ::continueTalkingWatch::
     end
   end
 end)
@@ -4632,6 +4696,7 @@ AddEventHandler('playerDropped', function(reason)
   clearPlayerVoiceChannels(source)
   clearExternalVoiceSessionForSource(source, 'player_dropped')
   CadRadioTalkingBySource[source] = nil
+  CadRadioTalkingUpdatedAtMs[source] = nil
   CadRadioDisplayNameBySource[source] = nil
 end)
 
