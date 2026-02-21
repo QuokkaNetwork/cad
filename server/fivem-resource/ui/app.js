@@ -77,6 +77,7 @@ var licenseViewMode = "quiz";
 var licenseShowStatusPanel = false;
 var durationOptions = [];
 var selectedRegistrationDurationDays = 35;
+var registrationSubmitPending = false;
 
 function bindIdCardNodes() {
   idCardOverlay = document.getElementById("idCardOverlay");
@@ -889,7 +890,9 @@ function resetRegistrationForm(payload) {
   if (regoColourInput) regoColourInput.value = String(safeGet(data, "vehicle_colour", "") || "");
   durationOptions = Array.isArray(data.duration_options) ? data.duration_options : [];
   renderRegistrationDurations(Number(safeGet(data, "default_duration_days", 35)) || 35);
+  registrationSubmitPending = false;
   if (registrationSubmitBtn) registrationSubmitBtn.disabled = false;
+  if (registrationSubmitBtn) registrationSubmitBtn.textContent = "Save Registration";
   showErrorNode(registrationFormError, "");
 }
 
@@ -907,10 +910,17 @@ function openRegistrationForm(payload) {
 
 function closeRegistrationForm() {
   registrationOpen = false;
+  registrationSubmitPending = false;
   setVisible(registrationOverlay, false);
+  if (registrationSubmitBtn) {
+    registrationSubmitBtn.disabled = false;
+    registrationSubmitBtn.textContent = "Save Registration";
+  }
 }
 
 async function submitRegistrationForm() {
+  if (registrationSubmitPending) return;
+
   var ownerName = String(regoOwnerInput && regoOwnerInput.value || "").trim();
   var plate = String(regoPlateInput && regoPlateInput.value || "").trim().toUpperCase();
   var model = String(regoModelInput && regoModelInput.value || "").trim();
@@ -940,8 +950,23 @@ async function submitRegistrationForm() {
       result = null;
     }
     if (!response.ok || (result && result.ok === false)) {
-      showErrorNode(registrationFormError, "Unable to submit registration form.");
+      var errorCode = String(result && result.error || "").trim();
+      if (errorCode === "submit_in_progress") {
+        showErrorNode(registrationFormError, "Registration is already being submitted. Please wait.");
+      } else if (errorCode === "invalid_form") {
+        showErrorNode(registrationFormError, "Owner, plate and model are required.");
+      } else {
+        showErrorNode(registrationFormError, "Unable to submit registration form.");
+      }
       if (registrationSubmitBtn) registrationSubmitBtn.disabled = false;
+      return;
+    }
+    if (result && (result.pending === true || result.accepted === true)) {
+      registrationSubmitPending = true;
+      if (registrationSubmitBtn) {
+        registrationSubmitBtn.disabled = true;
+        registrationSubmitBtn.textContent = "Saving...";
+      }
       return;
     }
     closeRegistrationForm();
@@ -1076,6 +1101,38 @@ window.addEventListener("message", function onMessage(event) {
   }
   if (message.action === "cadBridgeRegistration:close") {
     closeRegistrationForm();
+    return;
+  }
+  if (message.action === "cadBridgeRegistration:submitting") {
+    registrationSubmitPending = true;
+    if (registrationSubmitBtn) {
+      registrationSubmitBtn.disabled = true;
+      registrationSubmitBtn.textContent = "Saving...";
+    }
+    return;
+  }
+  if (message.action === "cadBridgeRegistration:submitResult") {
+    var submitPayload = message.payload || {};
+    var submitOk = submitPayload.ok === true || submitPayload.success === true;
+    if (submitOk) {
+      closeRegistrationForm();
+      return;
+    }
+    registrationSubmitPending = false;
+    if (registrationSubmitBtn) {
+      registrationSubmitBtn.disabled = false;
+      registrationSubmitBtn.textContent = "Save Registration";
+    }
+    var submitMessage = String(safeGet(submitPayload, "message", "") || "").trim();
+    if (!submitMessage) {
+      var submitErrorCode = String(safeGet(submitPayload, "error_code", "") || "").trim();
+      if (submitErrorCode === "not_owner") {
+        submitMessage = "You are not the owner of this vehicle, so it cannot be registered.";
+      } else {
+        submitMessage = "Unable to save registration.";
+      }
+    }
+    showErrorNode(registrationFormError, submitMessage);
     return;
   }
   if (message.action === "cadBridgeIdCard:show") {

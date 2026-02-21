@@ -1,6 +1,7 @@
 local util = CadBridge and CadBridge.util or {}
 local ui = CadBridge and CadBridge.ui or {}
 local state = CadBridge and CadBridge.state or {}
+if state.vehicleRegistrationSubmitPending == nil then state.vehicleRegistrationSubmitPending = false end
 
 local function trim(value)
   if type(util.trim) == 'function' then
@@ -315,6 +316,7 @@ end
 local function closeVehicleRegistrationPopup()
   if not state.vehicleRegistrationUiOpen then return end
   state.vehicleRegistrationUiOpen = false
+  state.vehicleRegistrationSubmitPending = false
   if type(ui.refreshCadBridgeNuiFocus) == 'function' then
     ui.refreshCadBridgeNuiFocus()
   end
@@ -349,6 +351,7 @@ local function openVehicleRegistrationPopup(payload)
   end
 
   state.vehicleRegistrationUiOpen = true
+  state.vehicleRegistrationSubmitPending = false
   SetNuiFocus(true, true)
   SendNUIMessage({
     action = 'cadBridgeRegistration:open',
@@ -358,6 +361,11 @@ end
 ui.openVehicleRegistrationPopup = openVehicleRegistrationPopup
 
 RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
+  if state.vehicleRegistrationSubmitPending == true then
+    if cb then cb({ ok = false, error = 'submit_in_progress' }) end
+    return
+  end
+
   local plate = trim(data and data.plate or data and data.license_plate or '')
   local model = trim(data and data.vehicle_model or data and data.model or '')
   local colour = trim(data and data.vehicle_colour or data and data.colour or data and data.color or '')
@@ -370,8 +378,15 @@ RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
     return
   end
 
-  if cb then cb({ ok = true }) end
-  closeVehicleRegistrationPopup()
+  state.vehicleRegistrationSubmitPending = true
+  SendNUIMessage({
+    action = 'cadBridgeRegistration:submitting',
+    payload = {
+      pending = true,
+      message = 'Submitting registration...',
+    },
+  })
+  if cb then cb({ ok = true, pending = true }) end
   TriggerServerEvent('cad_bridge:submitVehicleRegistration', {
     plate = plate,
     vehicle_model = model,
@@ -388,4 +403,31 @@ end)
 
 RegisterNetEvent('cad_bridge:promptVehicleRegistration', function(payload)
   openVehicleRegistrationPopup(payload or {})
+end)
+
+RegisterNetEvent('cad_bridge:vehicleRegistrationSubmitResult', function(payload)
+  local result = type(payload) == 'table' and payload or {}
+  local ok = result.ok == true or result.success == true
+  local message = trim(result.message or result.error or '')
+  local errorCode = trim(result.error_code or '')
+
+  state.vehicleRegistrationSubmitPending = false
+
+  if ok then
+    closeVehicleRegistrationPopup()
+    return
+  end
+
+  if not state.vehicleRegistrationUiOpen then
+    return
+  end
+
+  SendNUIMessage({
+    action = 'cadBridgeRegistration:submitResult',
+    payload = {
+      ok = false,
+      error_code = errorCode,
+      message = message,
+    },
+  })
 end)

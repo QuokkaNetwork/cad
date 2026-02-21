@@ -119,7 +119,13 @@ local function submitVehicleRegistration(src, formData)
   if not s then return end
   if isBridgeBackoffActive('registrations') then
     local waitSeconds = math.max(1, math.ceil(getEffectiveBackoffRemainingMs('registrations') / 1000))
-    notifyPlayer(s, ('CAD bridge is rate-limited. Try again in %ss.'):format(waitSeconds))
+    local message = ('CAD bridge is rate-limited. Try again in %ss.'):format(waitSeconds)
+    notifyPlayer(s, message)
+    TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+      ok = false,
+      error_code = 'bridge_rate_limited',
+      message = message,
+    })
     return
   end
 
@@ -144,11 +150,17 @@ local function submitVehicleRegistration(src, formData)
   }, true)
 
   if trim(payload.citizenid) == '' then
-    notifyPlayer(s, 'Unable to determine your active character (citizenid). Re-log and try again.')
+    local message = 'Unable to determine your active character (citizenid). Re-log and try again.'
+    notifyPlayer(s, message)
     print(('[cad_bridge] Registration submit blocked for src %s: missing citizenid'):format(tostring(s)))
     logDocumentFailure('registration-create-blocked', {
       reason = 'missing_citizenid',
       payload = summarizeRegistrationPayloadForLog(payload),
+    })
+    TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+      ok = false,
+      error_code = 'missing_citizenid',
+      message = message,
     })
     return
   end
@@ -169,7 +181,13 @@ local function submitVehicleRegistration(src, formData)
       if okExisting and type(existingParsed) == 'table' and type(existingParsed.registration) == 'table' then
         local daysUntilExpiry = daysUntilDateOnly(existingParsed.registration.expiry_at)
         if daysUntilExpiry ~= nil and daysUntilExpiry > 3 then
-          notifyPlayer(s, ('Registration renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(tostring(existingParsed.registration.expiry_at or 'unknown')))
+          local message = ('Registration renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(tostring(existingParsed.registration.expiry_at or 'unknown'))
+          notifyPlayer(s, message)
+          TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+            ok = false,
+            error_code = 'renewal_window_blocked',
+            message = message,
+          })
           return
         end
       end
@@ -194,6 +212,11 @@ local function submitVehicleRegistration(src, formData)
           payload = summarizeRegistrationPayloadForLog(payload),
         })
         notifyPlayer(s, feeError)
+        TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+          ok = false,
+          error_code = 'fee_charge_failed_required',
+          message = feeError,
+        })
         return
       end
         print(('[cad_bridge] Registration fee bypassed for src %s (continuing without payment): %s'):format(

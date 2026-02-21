@@ -8,6 +8,10 @@
           feeCharged and ' | Charged: ' or '',
           feeCharged and formatMoney(feeAmount) or ''
         ))
+        TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+          ok = true,
+          message = 'Vehicle registration saved.',
+        })
         return
       end
 
@@ -55,6 +59,11 @@
         else
           notifyPlayer(s, 'Registration renewal unavailable. You can renew when within 3 days of expiry.')
         end
+        TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+          ok = false,
+          error_code = 'renewal_window_blocked',
+          message = existingExpiry ~= '' and ('Registration renewal unavailable. You can renew within 3 days of expiry (current expiry: %s).'):format(existingExpiry) or 'Registration renewal unavailable. You can renew within 3 days of expiry.',
+        })
         return
       end
 
@@ -69,7 +78,13 @@
             api_error = parsedError,
             payload = summarizeRegistrationPayloadForLog(payload),
           })
-          notifyPlayer(s, 'Vehicle detected in the registration area, but you cannot register it because you do not own it.')
+          local ownershipMessage = 'You are not the owner of this vehicle, so you cannot register it.'
+          notifyPlayer(s, ownershipMessage)
+          TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+            ok = false,
+            error_code = 'not_owner',
+            message = ownershipMessage,
+          })
           return
         end
       end
@@ -86,6 +101,11 @@
       else
         notifyPlayer(s, 'Vehicle registration failed to save to CAD. Check server logs.')
       end
+      TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+        ok = false,
+        error_code = 'save_failed',
+        message = parsedError ~= '' and ('Vehicle registration failed: %s'):format(parsedError) or 'Vehicle registration failed to save to CAD. Check server logs.',
+      })
     end)
   end)
 end
@@ -151,6 +171,11 @@ RegisterNetEvent('cad_bridge:submitVehicleRegistration', function(payload)
       payload = summarizeRegistrationPayloadForLog(payload),
     })
     notifyPlayer(src, err or 'Invalid registration details.')
+    TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', src, {
+      ok = false,
+      error_code = 'invalid_form',
+      message = err or 'Invalid registration details.',
+    })
     return
   end
 
