@@ -24,23 +24,20 @@ const MAX_ZOOM = 2;
 const NATIVE_ZOOM = 0;
 
 // Affine transformation from GTA V game coordinates to pixel coordinates
-// in our 2048×3072 tile grid.  Derived from the well-known FiveM/Leaflet
-// CRS constants (center_x=117.3, center_y=172.8, scale_x=0.02072,
-// scale_y=0.0205) scaled to our tile grid (×8 for 1024px tiles at zoom 0
-// equivalent to zoom 3 in a 256px-tile system).
+// in our 2048×3072 tile grid.
+//
+// Horizontal values derived from the well-known FiveM/Leaflet CRS
+// constants (scale_x=0.02072, center_x=117.3) scaled ×8 for our
+// 1024px-tile grid.  Vertical offset tuned to align the standard
+// minimap_sea postal-code tile set with in-game positions.
 //
 // Formula:
 //   pixelX =  SCALE_X * gameX + OFFSET_X
 //   pixelY = -SCALE_Y * gameY + OFFSET_Y
-//
-// Verified against known GTA V landmarks:
-//   MRPD (408.76, -998.36) → pixel (1006, 1546) — downtown LS ✓
-//   LSIA (-1350, -3400)    → pixel (715, 1940)  — airport      ✓
-//   Paleto Bay (-439, 6017)→ pixel (865, 396)   — north coast  ✓
 const SCALE_X  = 0.02072 * 8;   // 0.16576
 const SCALE_Y  = 0.0205  * 8;   // 0.164
 const OFFSET_X = 117.3   * 8;   // 938.4
-const OFFSET_Y = 172.8   * 8;   // 1382.4
+const OFFSET_Y = 1652;
 
 function normalizeMapPlayer(entry) {
   const unitId = Number(entry?.unit_id || 0);
