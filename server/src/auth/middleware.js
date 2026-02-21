@@ -1,6 +1,26 @@
-const { verifyToken } = require('./jwt');
+const { verifyToken, generateToken } = require('./jwt');
 const config = require('../config');
 const { Users, UserDepartments, Departments, UserSubDepartments, SubDepartments } = require('../db/sqlite');
+
+function authCookieOptions() {
+  const options = {
+    httpOnly: true,
+    secure: !!config.auth.cookieSecure,
+    sameSite: config.auth.cookieSameSite || 'Lax',
+    path: '/',
+    maxAge: Number(config.auth.cookieMaxAgeMs || 0) || (30 * 24 * 60 * 60 * 1000),
+  };
+  if (config.auth.cookieDomain) {
+    options.domain = config.auth.cookieDomain;
+  }
+  return options;
+}
+
+function getRefreshWindowSeconds() {
+  const cookieSeconds = Math.floor((Number(config.auth.cookieMaxAgeMs || 0) || (30 * 24 * 60 * 60 * 1000)) / 1000);
+  if (!Number.isFinite(cookieSeconds) || cookieSeconds <= 0) return 300;
+  return Math.max(300, Math.floor(cookieSeconds / 3));
+}
 
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -28,6 +48,18 @@ function requireAuth(req, res, next) {
       ? SubDepartments.list()
       : UserSubDepartments.getForUser(user.id);
     req.user = user;
+
+    const usingCookieAuth = !!cookieToken && token === cookieToken && !bearerToken;
+    if (usingCookieAuth) {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const expiresAtSeconds = Number(decoded.exp || 0) || 0;
+      const refreshWindowSeconds = getRefreshWindowSeconds();
+      if (expiresAtSeconds > 0 && (expiresAtSeconds - nowSeconds) <= refreshWindowSeconds) {
+        const refreshedToken = generateToken(user);
+        res.cookie(config.auth.cookieName, refreshedToken, authCookieOptions());
+      }
+    }
+
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' });

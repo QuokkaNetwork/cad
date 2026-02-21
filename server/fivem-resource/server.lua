@@ -1410,7 +1410,7 @@ local function submitDriverLicense(src, formData)
           tostring(daysUntilExpiry),
           tostring(existingLicense.status or '?')
         ))
-        if existingStatus == 'suspended' or existingStatus == 'disqualified' then
+        if (existingStatus == 'suspended' or existingStatus == 'disqualified') and not photoOnly then
           notifyPlayer(s, ('Licence renewal blocked. Your licence status is "%s".'):format(existingStatus))
           return
         end
@@ -1425,6 +1425,9 @@ local function submitDriverLicense(src, formData)
           local resolvedDays = daysUntilDateOnly(payload.expiry_at)
           payload.expiry_days = (resolvedDays and resolvedDays > 0) and resolvedDays or math.floor(payload.expiry_days or 1)
           if payload.expiry_days < 1 then payload.expiry_days = 1 end
+          if existingStatus == 'suspended' or existingStatus == 'disqualified' then
+            payload.status = existingStatus
+          end
           print('[cad_bridge] Photo-only licence update requested; skipping renewal window block and fees')
         elseif daysUntilExpiry ~= nil and daysUntilExpiry > 3 then
           print(('[cad_bridge] BLOCKED: Licence renewal unavailable — %s days until expiry (must be <=3). citizenid=%s'):format(
@@ -2344,6 +2347,39 @@ local function getDocumentInteractionPedById(pedId)
   return nil
 end
 
+local function normalizeVec3Like(value)
+  if value == nil then return nil end
+  local t = type(value)
+  if t ~= 'table' and t ~= 'vector3' and t ~= 'vector4' and t ~= 'userdata' then return nil end
+
+  local function readRaw(container, key, index)
+    local out = nil
+    local ok = pcall(function()
+      out = container[key]
+    end)
+    if (not ok or out == nil) and index ~= nil then
+      pcall(function()
+        out = container[index]
+      end)
+    end
+    return out
+  end
+
+  local x = tonumber(readRaw(value, 'x', 1))
+  local y = tonumber(readRaw(value, 'y', 2))
+  local z = tonumber(readRaw(value, 'z', 3) or 0.0)
+  local w = tonumber(readRaw(value, 'w', 4))
+  if not x or not y then return nil end
+
+  local out = {
+    x = x + 0.0,
+    y = y + 0.0,
+    z = (z or 0.0) + 0.0,
+  }
+  if w then out.w = w + 0.0 end
+  return out
+end
+
 local function openDriverLicensePromptForSource(src, pedId)
   if not src or src == 0 then
     print('[cad_bridge] Driver license prompt is in-game only')
@@ -2378,6 +2414,8 @@ local function openDriverLicensePromptForSource(src, pedId)
     can_retake_photo = false,
     existing_license = nil,
     renewal_window_days = 3,
+    blocked_reason = '',
+    blocked_message = '',
   }
 
   if citizenId == '' then
@@ -2392,8 +2430,9 @@ local function openDriverLicensePromptForSource(src, pedId)
         local license = parsed.license
         local expiryAt = trim(license.expiry_at or '')
         local statusText = trim(license.status or '')
+        local statusLower = statusText:lower()
         local daysUntilExpiry = daysUntilDateOnly(expiryAt)
-        local outsideRenewalWindow = statusText:lower() == 'valid' and daysUntilExpiry ~= nil and daysUntilExpiry > 3
+        local outsideRenewalWindow = statusLower == 'valid' and daysUntilExpiry ~= nil and daysUntilExpiry > 3
         payload.existing_license = {
           full_name = trim(license.full_name or payload.full_name),
           date_of_birth = normalizeDateOnly(license.date_of_birth or payload.date_of_birth),
@@ -2405,12 +2444,27 @@ local function openDriverLicensePromptForSource(src, pedId)
           status = statusText,
           days_until_expiry = daysUntilExpiry,
         }
-        if outsideRenewalWindow then
+        if statusLower == 'suspended' or statusLower == 'disqualified' then
           payload.can_take_quiz = false
           payload.can_retake_photo = true
+          payload.blocked_reason = 'status'
+          payload.blocked_message = ('Licence renewal is unavailable while your licence status is "%s". You may retake your photo or exit.'):format(
+            statusText ~= '' and statusText or statusLower
+          )
+        elseif outsideRenewalWindow then
+          payload.can_take_quiz = false
+          payload.can_retake_photo = true
+          payload.blocked_reason = 'renewal_window'
+          payload.blocked_message = ('You already have a valid licence (status: %s, expiry: %s). You can renew within %s days of expiry. You may retake your photo now.'):format(
+            statusText ~= '' and statusText or 'valid',
+            expiryAt ~= '' and expiryAt or 'unknown',
+            tostring(payload.renewal_window_days)
+          )
         else
           payload.can_take_quiz = true
           payload.can_retake_photo = true
+          payload.blocked_reason = ''
+          payload.blocked_message = ''
         end
       end
     end
@@ -2453,7 +2507,7 @@ local function openVehicleRegistrationPromptForSource(src, pedId)
     duration_options = resolvedDurationOptions,
     default_duration_days = defaultDuration,
     registration_parking = {
-      coords = type(sourcePed and sourcePed.registration_parking_coords) == 'table' and sourcePed.registration_parking_coords or nil,
+      coords = normalizeVec3Like(sourcePed and sourcePed.registration_parking_coords or nil),
       radius = tonumber(sourcePed and sourcePed.registration_parking_radius or 0) or 0,
     },
   })

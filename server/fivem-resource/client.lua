@@ -166,24 +166,39 @@ end
 local function parseCoords(value)
   if value == nil then return nil end
   local t = type(value)
-  if t == 'table' then
-    local nested = value.coords or value.position or nil
-    if type(nested) == 'table' then
-      local nx = tonumber(nested.x or nested[1])
-      local ny = tonumber(nested.y or nested[2])
-      local nz = tonumber(nested.z or nested[3] or 0.0)
-      if nx and ny then
-        return { x = nx, y = ny, z = nz or 0.0 }
-      end
-    end
+  if t ~= 'table' and t ~= 'vector3' and t ~= 'vector4' and t ~= 'userdata' then return nil end
 
-    local x = tonumber(value.x or value[1])
-    local y = tonumber(value.y or value[2])
-    local z = tonumber(value.z or value[3] or 0.0)
-    if x and y then
-      return { x = x, y = y, z = z or 0.0 }
+  local function readRaw(container, key, index)
+    local out = nil
+    local ok = pcall(function()
+      out = container[key]
+    end)
+    if (not ok or out == nil) and index ~= nil then
+      pcall(function()
+        out = container[index]
+      end)
     end
+    return out
   end
+
+  local function toVec3(container)
+    if container == nil then return nil end
+    local x = tonumber(readRaw(container, 'x', 1))
+    local y = tonumber(readRaw(container, 'y', 2))
+    local z = tonumber(readRaw(container, 'z', 3) or 0.0)
+    if x and y then
+      return { x = x + 0.0, y = y + 0.0, z = (z or 0.0) + 0.0 }
+    end
+    return nil
+  end
+
+  local nested = readRaw(value, 'coords', nil) or readRaw(value, 'position', nil)
+  local nestedVec = toVec3(nested)
+  if nestedVec then return nestedVec end
+
+  local directVec = toVec3(value)
+  if directVec then return directVec end
+
   return nil
 end
 
@@ -835,13 +850,15 @@ local function getVehicleColourLabel(vehicle)
 end
 
 local function distanceBetweenVec3(a, b)
-  if type(a) ~= 'table' or type(b) ~= 'table' then return 999999.0 end
-  local ax = tonumber(a.x) or 0.0
-  local ay = tonumber(a.y) or 0.0
-  local az = tonumber(a.z) or 0.0
-  local bx = tonumber(b.x) or 0.0
-  local by = tonumber(b.y) or 0.0
-  local bz = tonumber(b.z) or 0.0
+  local av = parseCoords(a)
+  local bv = parseCoords(b)
+  if not av or not bv then return 999999.0 end
+  local ax = tonumber(av.x) or 0.0
+  local ay = tonumber(av.y) or 0.0
+  local az = tonumber(av.z) or 0.0
+  local bx = tonumber(bv.x) or 0.0
+  local by = tonumber(bv.y) or 0.0
+  local bz = tonumber(bv.z) or 0.0
   local dx = ax - bx
   local dy = ay - by
   local dz = az - bz
@@ -849,11 +866,13 @@ local function distanceBetweenVec3(a, b)
 end
 
 local function distanceBetweenVec2(a, b)
-  if type(a) ~= 'table' or type(b) ~= 'table' then return 999999.0 end
-  local ax = tonumber(a.x) or 0.0
-  local ay = tonumber(a.y) or 0.0
-  local bx = tonumber(b.x) or 0.0
-  local by = tonumber(b.y) or 0.0
+  local av = parseCoords(a)
+  local bv = parseCoords(b)
+  if not av or not bv then return 999999.0 end
+  local ax = tonumber(av.x) or 0.0
+  local ay = tonumber(av.y) or 0.0
+  local bx = tonumber(bv.x) or 0.0
+  local by = tonumber(bv.y) or 0.0
   local dx = ax - bx
   local dy = ay - by
   return math.sqrt((dx * dx) + (dy * dy))
@@ -867,25 +886,67 @@ local function isVehicleUsableForRegistration(vehicle)
 end
 
 local function findNearestVehicleInRadius(origin, radius)
+  local resolvedOrigin = parseCoords(origin)
   local vehicles = GetGamePool('CVehicle')
-  if type(vehicles) ~= 'table' or not origin then return 0, 999999.0 end
+  if type(vehicles) ~= 'table' or not resolvedOrigin then return 0, 999999.0 end
 
   local maxRadius = tonumber(radius) or 8.0
   if maxRadius < 2.0 then maxRadius = 2.0 end
+  if maxRadius > 80.0 then maxRadius = 80.0 end
+  local searchRadius = maxRadius + math.max(1.5, maxRadius * 0.12)
+  local maxZDiff = math.max(6.0, searchRadius * 0.9)
+
   local bestVehicle = 0
-  local bestDistance = maxRadius + 0.001
+  local bestDistance = searchRadius + 0.001
+  local bestHasPlate = false
+  local fallbackVehicle = 0
+  local fallbackDistance = searchRadius + 0.001
+  local fallbackHasPlate = false
 
   for _, vehicle in ipairs(vehicles) do
-    if vehicle and vehicle ~= 0 and DoesEntityExist(vehicle) then
+    if isVehicleUsableForRegistration(vehicle) then
       local coords = GetEntityCoords(vehicle)
-      local dist2d = distanceBetweenVec2(coords, origin)
-      if dist2d <= maxRadius and dist2d < bestDistance and isVehicleUsableForRegistration(vehicle) then
-        bestDistance = dist2d
-        bestVehicle = vehicle
+      local dist2d = distanceBetweenVec2(coords, resolvedOrigin)
+      local hasPlate = trim(GetVehicleNumberPlateText(vehicle) or '') ~= ''
+      if dist2d <= searchRadius then
+        local shouldUseFallback = false
+        if fallbackVehicle == 0 then
+          shouldUseFallback = true
+        elseif hasPlate and not fallbackHasPlate then
+          shouldUseFallback = true
+        elseif hasPlate == fallbackHasPlate and dist2d < fallbackDistance then
+          shouldUseFallback = true
+        end
+        if shouldUseFallback then
+          fallbackDistance = dist2d
+          fallbackVehicle = vehicle
+          fallbackHasPlate = hasPlate
+        end
+      end
+
+      local zDiff = math.abs((tonumber(coords and coords.z) or 0.0) - (tonumber(resolvedOrigin and resolvedOrigin.z) or 0.0))
+      if dist2d <= searchRadius and zDiff <= maxZDiff then
+        local shouldUseBest = false
+        if bestVehicle == 0 then
+          shouldUseBest = true
+        elseif hasPlate and not bestHasPlate then
+          shouldUseBest = true
+        elseif hasPlate == bestHasPlate and dist2d < bestDistance then
+          shouldUseBest = true
+        end
+        if shouldUseBest then
+          bestDistance = dist2d
+          bestVehicle = vehicle
+          bestHasPlate = hasPlate
+        end
       end
     end
   end
 
+  if bestVehicle == 0 then
+    bestVehicle = fallbackVehicle
+    bestDistance = fallbackDistance
+  end
   if bestVehicle == 0 then return 0, 999999.0 end
   return bestVehicle, bestDistance
 end
@@ -903,15 +964,20 @@ local function getCurrentVehicleRegistrationDefaults(registrationParking)
 
   local playerCoords = GetEntityCoords(ped)
   local parking = type(registrationParking) == 'table' and registrationParking or {}
-  local zoneCoords = type(parking.coords) == 'table' and parking.coords or nil
+  local zoneCoords = parseCoords(parking.coords)
   local zoneRadius = tonumber(parking.radius or 0) or 0
 
   local searchOrigin = zoneCoords or playerCoords
-  local searchRadius = zoneRadius > 0 and zoneRadius or 10.0
+  local searchRadius = zoneRadius > 0 and zoneRadius or 12.0
   local vehicle = findNearestVehicleInRadius(searchOrigin, searchRadius)
 
+  if (not vehicle or vehicle == 0) and zoneCoords then
+    local expandedRadius = math.min(60.0, searchRadius + math.max(8.0, searchRadius * 0.5))
+    vehicle = findNearestVehicleInRadius(searchOrigin, expandedRadius)
+  end
+
   if not vehicle or vehicle == 0 then
-    payload.error_message = 'No vehicle found in the registration area.'
+    payload.error_message = 'No vehicle found in the registration area. Park any vehicle inside the marked carpark.'
     return payload
   end
 
@@ -923,6 +989,11 @@ local function getCurrentVehicleRegistrationDefaults(registrationParking)
     if localized and localized ~= '' and localized ~= 'NULL' then
       model = localized
     end
+  else
+    model = ''
+  end
+  if model == '' or model == 'NULL' or model == 'CARNOTFOUND' then
+    model = tostring(modelHash or '')
   end
 
   payload.plate = plate
@@ -1119,7 +1190,7 @@ local function openVehicleRegistrationPopup(payload)
   if trim(nextPayload.plate or '') == '' or trim(nextPayload.vehicle_model or '') == '' then
     local message = trim(defaults.error_message or '')
     if message == '' then
-      message = 'Park your vehicle in the registration carpark so details can be auto-filled.'
+      message = 'Park any vehicle in the registration carpark so details can be auto-filled.'
     end
     if not triggerCadOxNotify({
       title = 'CAD Registration',
@@ -2288,6 +2359,26 @@ local cadRadioMutedBySource = {}
 local cadRadioUiVisible = false
 local cadExternalVoiceSession = nil
 local cadExternalVoiceLastLogAt = 0
+local cadExternalVoiceUiLastState = ''
+local cadExternalVoiceUiLastStateAt = 0
+local cadExternalVoiceNextRefreshRequestAt = 0
+
+local function logExternalVoiceUiStatus(status, message)
+  local statusText = trim(status)
+  if statusText == '' then return end
+  local messageText = trim(message)
+  local nowMs = tonumber(GetGameTimer() or 0) or 0
+  local key = statusText .. '|' .. messageText
+  if key == cadExternalVoiceUiLastState and (nowMs - cadExternalVoiceUiLastStateAt) < 5000 then
+    return
+  end
+  cadExternalVoiceUiLastState = key
+  cadExternalVoiceUiLastStateAt = nowMs
+  print(('[cad_bridge][external_voice_ui] status=%s message=%s'):format(
+    statusText,
+    messageText ~= '' and messageText or '-'
+  ))
+end
 
 local function isCadExternalVoiceSessionActive()
   if Config.ExternalVoiceTokenEnabled ~= true then
@@ -2304,10 +2395,16 @@ local function isCadExternalVoiceSessionActive()
   if provider ~= 'livekit' or token == '' then
     return false
   end
-  local expiresAtMs = tonumber(cadExternalVoiceSession.expires_at_ms or 0) or 0
-  if expiresAtMs > 0 then
+  local expiresInSeconds = tonumber(cadExternalVoiceSession.expires_in_seconds or 0) or 0
+  if expiresInSeconds > 0 then
     local now = tonumber(GetGameTimer() or 0) or 0
-    if expiresAtMs <= (now + 1000) then
+    local localExpiresAtMs = tonumber(cadExternalVoiceSession.local_expires_at_ms or 0) or 0
+    if localExpiresAtMs <= 0 then
+      local localReceivedAtMs = tonumber(cadExternalVoiceSession.local_received_at_ms or 0) or now
+      localExpiresAtMs = localReceivedAtMs + math.floor(expiresInSeconds * 1000)
+      cadExternalVoiceSession.local_expires_at_ms = localExpiresAtMs
+    end
+    if localExpiresAtMs <= (now + 1000) then
       return false
     end
   end
@@ -2818,6 +2915,7 @@ RegisterNetEvent('cad_bridge:radio:update', function(payload)
         type = 'inform',
       })
       cadExternalVoiceSession = nil
+      cadExternalVoiceNextRefreshRequestAt = 0
       cadRadioPushExternalVoiceSession()
     end
   end
@@ -2831,6 +2929,13 @@ RegisterNetEvent('cad_bridge:external_voice:session', function(payload)
   if type(payload) ~= 'table' then return end
 
   if payload.ok == true and type(payload.token) == 'string' and payload.token ~= '' then
+    local localNowMs = tonumber(GetGameTimer() or 0) or 0
+    local expiresInSeconds = tonumber(payload.expires_in_seconds) or 0
+    local localExpiresAtMs = 0
+    if expiresInSeconds > 0 then
+      localExpiresAtMs = localNowMs + math.floor(expiresInSeconds * 1000)
+    end
+
     cadExternalVoiceSession = {
       ok = true,
       provider = tostring(payload.provider or ''),
@@ -2840,10 +2945,13 @@ RegisterNetEvent('cad_bridge:external_voice:session', function(payload)
       token = tostring(payload.token or ''),
       channel_number = tonumber(payload.channel_number) or 0,
       channel_type = tostring(payload.channel_type or 'radio'),
-      expires_in_seconds = tonumber(payload.expires_in_seconds) or 0,
+      expires_in_seconds = expiresInSeconds,
       issued_at_ms = tonumber(payload.issued_at_ms) or 0,
       expires_at_ms = tonumber(payload.expires_at_ms) or 0,
+      local_received_at_ms = localNowMs,
+      local_expires_at_ms = localExpiresAtMs,
     }
+    cadExternalVoiceNextRefreshRequestAt = 0
 
     cadRadioPushExternalVoiceSession()
     cadRadioReapplyRemoteAudio()
@@ -2851,10 +2959,21 @@ RegisterNetEvent('cad_bridge:external_voice:session', function(payload)
       cadRadioLastTargetBuildAt = 0
       rebuildCadRadioTarget()
     end
+    local localTtlSeconds = 0
+    if localExpiresAtMs > localNowMs then
+      localTtlSeconds = math.floor((localExpiresAtMs - localNowMs) / 1000)
+    end
+    print(('[cad_bridge][external_voice] session updated channel=%s provider=%s ttl=%ss (local_ttl=%ss)'):format(
+      tostring(cadExternalVoiceSession.channel_number or 0),
+      tostring(cadExternalVoiceSession.provider or 'unknown'),
+      tostring(expiresInSeconds),
+      tostring(localTtlSeconds)
+    ))
     return
   end
 
   cadExternalVoiceSession = nil
+  cadExternalVoiceNextRefreshRequestAt = 0
   cadRadioPushExternalVoiceSession()
   cadRadioReapplyRemoteAudio()
   if cadRadioPttPressed then
@@ -2867,6 +2986,35 @@ RegisterNetEvent('cad_bridge:external_voice:session', function(payload)
     print(('[cad_bridge][external_voice] session cleared (reason=%s)'):format(
       tostring(payload.reason or 'cleared')
     ))
+  end
+end)
+
+CreateThread(function()
+  if Config.ExternalVoiceTokenEnabled ~= true then
+    return
+  end
+
+  while true do
+    Wait(5000)
+    if not isCadRadioAdapterActive() then goto externalRefreshContinue end
+    if cadRadioChannel <= 0 then goto externalRefreshContinue end
+    if type(cadExternalVoiceSession) ~= 'table' or cadExternalVoiceSession.ok ~= true then goto externalRefreshContinue end
+
+    local localExpiresAtMs = tonumber(cadExternalVoiceSession.local_expires_at_ms or 0) or 0
+    if localExpiresAtMs <= 0 then goto externalRefreshContinue end
+
+    local nowMs = tonumber(GetGameTimer() or 0) or 0
+    local remainingMs = localExpiresAtMs - nowMs
+    if remainingMs <= 15000 and nowMs >= cadExternalVoiceNextRefreshRequestAt then
+      cadExternalVoiceNextRefreshRequestAt = nowMs + 10000
+      print(('[cad_bridge][external_voice] requesting token refresh (remaining=%sms channel=%s)'):format(
+        tostring(remainingMs),
+        tostring(cadRadioChannel)
+      ))
+      TriggerServerEvent('cad_bridge:external_voice:refresh')
+    end
+
+    ::externalRefreshContinue::
   end
 end)
 
@@ -2975,6 +3123,41 @@ end)
 RegisterNUICallback('leave', function(_, cb)
   TriggerServerEvent('cad_bridge:radio:uiLeaveRequest')
   cb('ok')
+end)
+
+RegisterNUICallback('cadBridgeExternalVoiceStatus', function(data, cb)
+  local status = trim(data and data.status or '')
+  local message = trim(data and data.message or '')
+  local channel = tonumber(data and data.channel_number) or 0
+  local provider = trim(data and data.provider or '')
+  if status ~= '' then
+    local details = ''
+    if channel > 0 then
+      details = details .. (' channel=%s'):format(tostring(channel))
+    end
+    if provider ~= '' then
+      details = details .. (' provider=%s'):format(provider)
+    end
+    if message ~= '' then
+      details = details .. (' msg=%s'):format(message)
+    end
+    logExternalVoiceUiStatus(status, trim(details))
+  end
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeExternalVoiceRefresh', function(data, cb)
+  local reason = trim(data and data.reason or 'requested_by_nui')
+  local nowMs = tonumber(GetGameTimer() or 0) or 0
+  if cadRadioChannel > 0 and nowMs >= cadExternalVoiceNextRefreshRequestAt then
+    cadExternalVoiceNextRefreshRequestAt = nowMs + 5000
+    print(('[cad_bridge][external_voice] refresh requested by NUI (reason=%s channel=%s)'):format(
+      reason ~= '' and reason or 'unknown',
+      tostring(cadRadioChannel)
+    ))
+    TriggerServerEvent('cad_bridge:external_voice:refresh')
+  end
+  if cb then cb({ ok = true }) end
 end)
 
 RegisterNUICallback('hideUI', function(_, cb)

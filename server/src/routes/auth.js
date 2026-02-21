@@ -14,7 +14,7 @@ function authCookieOptions() {
     secure: !!config.auth.cookieSecure,
     sameSite: config.auth.cookieSameSite || 'Lax',
     path: '/',
-    maxAge: 12 * 60 * 60 * 1000,
+    maxAge: Number(config.auth.cookieMaxAgeMs || 0) || (30 * 24 * 60 * 60 * 1000),
   };
   if (config.auth.cookieDomain) {
     options.domain = config.auth.cookieDomain;
@@ -55,7 +55,8 @@ router.post('/set-cookie', (req, res) => {
   const { Users } = require('../db/sqlite');
   const user = Users.findById(decoded.userId);
   if (!user || user.is_banned) return res.status(403).json({ error: 'Forbidden' });
-  res.cookie(config.auth.cookieName, token, authCookieOptions());
+  const refreshedToken = generateToken(user);
+  res.cookie(config.auth.cookieName, refreshedToken, authCookieOptions());
   res.json({ ok: true });
 });
 

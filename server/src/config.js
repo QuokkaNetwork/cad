@@ -65,13 +65,14 @@ module.exports = {
   nodeEnv,
   jwt: {
     secret: process.env.JWT_SECRET || 'change-me',
-    expiresIn: '12h',
+    expiresIn: String(process.env.JWT_EXPIRES_IN || process.env.AUTH_SESSION_EXPIRES_IN || '30d').trim() || '30d',
   },
   auth: {
     cookieName: process.env.AUTH_COOKIE_NAME || 'cad_token',
     cookieSameSite: process.env.AUTH_COOKIE_SAMESITE || 'Lax',
     cookieSecure: parseBoolEnv(process.env.AUTH_COOKIE_SECURE, defaultCookieSecure),
     cookieDomain: process.env.AUTH_COOKIE_DOMAIN || '',
+    cookieMaxAgeMs: Math.max(60 * 60 * 1000, parseIntEnv(process.env.AUTH_COOKIE_MAX_AGE_MS, 30 * 24 * 60 * 60 * 1000)),
   },
   steam: {
     apiKey: process.env.STEAM_API_KEY || '',

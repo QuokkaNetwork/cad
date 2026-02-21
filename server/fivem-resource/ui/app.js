@@ -606,8 +606,13 @@ function setLicenseMode(mode) {
   setVisible(licenseQuizPanel, licenseViewMode === "quiz");
   setVisible(licensePassPanel, licenseViewMode === "pass");
   if (licenseSubmitBtn) {
+    var showSubmit = licenseViewMode === "quiz";
     licenseSubmitBtn.textContent = licenseViewMode === "pass" ? "Processing..." : "Submit Quiz";
-    licenseSubmitBtn.disabled = licenseViewMode !== "quiz";
+    licenseSubmitBtn.disabled = !showSubmit;
+    licenseSubmitBtn.classList.toggle("hidden", !showSubmit);
+  }
+  if (licenseCancelBtn) {
+    licenseCancelBtn.textContent = licenseViewMode === "blocked" ? "Exit" : "Cancel";
   }
 }
 
@@ -651,15 +656,20 @@ function resetLicenseForm(payload) {
 
   var canTakeQuiz = safeGet(data, "can_take_quiz", true) === true;
   var canRetakePhoto = safeGet(data, "can_retake_photo", false) === true;
+  var blockedMessage = String(safeGet(data, "blocked_message", "") || "").trim();
   var expiryText = existingLicenseSnapshot && existingLicenseSnapshot.expiry_at ? existingLicenseSnapshot.expiry_at : "unknown";
   var statusText = existingLicenseSnapshot && existingLicenseSnapshot.status ? existingLicenseSnapshot.status : "unknown";
 
   if (!canTakeQuiz) {
     licenseShowStatusPanel = true;
     if (licenseStatusMessage) {
-      licenseStatusMessage.textContent =
-        "You already have a valid licence (status: " + statusText + ", expiry: " + expiryText + "). " +
-        "You can take a new test within " + String(licenseRenewalWindowDays) + " days of expiry.";
+      if (blockedMessage) {
+        licenseStatusMessage.textContent = blockedMessage;
+      } else {
+        licenseStatusMessage.textContent =
+          "You already have a valid licence (status: " + statusText + ", expiry: " + expiryText + "). " +
+          "You can take a new test within " + String(licenseRenewalWindowDays) + " days of expiry.";
+      }
     }
     if (licenseRetakePhotoBtn) licenseRetakePhotoBtn.disabled = !canRetakePhoto;
     setLicenseMode("blocked");
