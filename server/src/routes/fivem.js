@@ -742,7 +742,7 @@ function summarizeBridgeLicensePayload(payload = {}) {
   const mugshotData = String(payload.mugshot_data || payload.mugshotData || '').trim();
   return {
     source: Number(payload.source || 0) || 0,
-    player_name: String(payload.player_name || payload.name || '').trim(),
+    player_name: String(payload.character_name || payload.characterName || payload.player_name || payload.name || '').trim(),
     citizenid: String(payload.citizenid || payload.citizen_id || '').trim(),
     full_name: String(payload.full_name || payload.character_name || payload.name || '').trim(),
     date_of_birth: String(payload.date_of_birth || payload.dob || payload.birthdate || '').trim(),
@@ -760,7 +760,7 @@ function summarizeBridgeLicensePayload(payload = {}) {
 function summarizeBridgeRegistrationPayload(payload = {}) {
   return {
     source: Number(payload.source || 0) || 0,
-    player_name: String(payload.player_name || payload.name || '').trim(),
+    player_name: String(payload.character_name || payload.characterName || payload.player_name || payload.name || '').trim(),
     citizenid: String(payload.citizenid || payload.citizen_id || '').trim(),
     owner_name: String(payload.owner_name || payload.character_name || payload.full_name || '').trim(),
     plate: String(payload.plate || payload.license_plate || '').trim(),
@@ -1505,7 +1505,10 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     const gameId = String(playerSource || player?.source || '').trim();
     const position = parseHeartbeatPosition(player);
     const platformName = String(player.platform_name || player.platformName || '').trim();
-    const playerName = String(player.name || player.player_name || '').trim() || platformName;
+    const characterName = String(player.character_name || player.characterName || '').trim();
+    const playerName = characterName
+      || String(player.player_name || player.playerName || player.name || '').trim()
+      || platformName;
     const location = String(player.location || '').trim() || formatUnitLocation({ ...player, position });
     const vehicle = String(player.vehicle || '').trim();
     const licensePlate = String(player.license_plate || player.licensePlate || '').trim();
@@ -1545,14 +1548,15 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       }
     }
     if (!cadUser) {
-      // Prefer platform/Steam-style names for CAD identity matching.
-      cadUser = resolveCadUserByName(platformName, onDutyNameIndex)
-        || resolveCadUserByName(playerName, onDutyNameIndex);
+      // Prefer active character display names for CAD identity matching.
+      cadUser = resolveCadUserByName(playerName, onDutyNameIndex)
+        || resolveCadUserByName(platformName, onDutyNameIndex);
     }
 
     const mappedUnit = cadUser ? Units.findByUserId(cadUser.id) : null;
     liveMapStore.upsertPlayer(ids.linkKey, {
       name: playerName || platformName,
+      character_name: characterName,
       source: playerSource,
       game_id: gameId,
       player_id: Number(player.player_id || player.playerId || 0),
@@ -1579,7 +1583,7 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       callsign: String(mappedUnit?.callsign || ''),
       unit_status: String(mappedUnit?.status || ''),
       department_id: Number(mappedUnit?.department_id || 0),
-      cad_name: String(cadUser?.steam_name || ''),
+      cad_name: String(characterName || playerName || cadUser?.steam_name || ''),
     });
 
     if (!cadUser) {
@@ -1725,7 +1729,8 @@ router.get('/departments', requireBridgeAuth, (_req, res) => {
 router.post('/calls', requireBridgeAuth, (req, res) => {
   const payload = req.body || {};
   const ids = resolveLinkIdentifiers(payload.identifiers || []);
-  const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Caller';
+  const characterName = String(payload.character_name || payload.characterName || '').trim();
+  const playerName = characterName || String(payload.player_name || payload.name || '').trim() || 'Unknown Caller';
   const platformName = String(payload.platform_name || payload.platformName || '').trim();
   const sourceId = String(payload.source ?? '').trim();
   const sourceType = normalizeEmergencySourceType(
@@ -1740,8 +1745,8 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   }
   if (!cadUser) {
     const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
-    const byName = resolveCadUserByName(platformName, onDutyNameIndex)
-      || resolveCadUserByName(playerName, onDutyNameIndex);
+    const byName = resolveCadUserByName(playerName, onDutyNameIndex)
+      || resolveCadUserByName(platformName, onDutyNameIndex);
     if (byName) cadUser = byName;
   }
   if (cadUser) {
@@ -1823,7 +1828,8 @@ router.post('/licenses', requireBridgeAuth, async (req, res) => {
     const payloadSummary = summarizeBridgeLicensePayload(payload);
     logBridgeDocumentTrace('license request received', payloadSummary, true);
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
-    const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
+    const characterName = String(payload.character_name || payload.characterName || '').trim();
+    const playerName = characterName || String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
     const platformName = String(payload.platform_name || payload.platformName || '').trim();
 
     let cadUser = resolveCadUserFromIdentifiers(ids);
@@ -1833,8 +1839,8 @@ router.post('/licenses', requireBridgeAuth, async (req, res) => {
     }
     if (!cadUser) {
       const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
-      const byName = resolveCadUserByName(platformName, onDutyNameIndex)
-        || resolveCadUserByName(playerName, onDutyNameIndex);
+      const byName = resolveCadUserByName(playerName, onDutyNameIndex)
+        || resolveCadUserByName(platformName, onDutyNameIndex);
       if (byName) cadUser = byName;
     }
     if (cadUser) {
@@ -2015,7 +2021,8 @@ router.post('/registrations', requireBridgeAuth, async (req, res) => {
     const payloadSummary = summarizeBridgeRegistrationPayload(payload);
     logBridgeDocumentTrace('registration request received', payloadSummary, true);
     const ids = resolveLinkIdentifiers(payload.identifiers || []);
-    const playerName = String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
+    const characterName = String(payload.character_name || payload.characterName || '').trim();
+    const playerName = characterName || String(payload.player_name || payload.name || '').trim() || 'Unknown Player';
     const platformName = String(payload.platform_name || payload.platformName || '').trim();
 
     let cadUser = resolveCadUserFromIdentifiers(ids);
@@ -2025,8 +2032,8 @@ router.post('/registrations', requireBridgeAuth, async (req, res) => {
     }
     if (!cadUser) {
       const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
-      const byName = resolveCadUserByName(platformName, onDutyNameIndex)
-        || resolveCadUserByName(playerName, onDutyNameIndex);
+      const byName = resolveCadUserByName(playerName, onDutyNameIndex)
+        || resolveCadUserByName(platformName, onDutyNameIndex);
       if (byName) cadUser = byName;
     }
     if (cadUser) {

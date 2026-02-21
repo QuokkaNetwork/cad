@@ -44,6 +44,7 @@ function upsertPlayer(identifier, payload = {}) {
     steamId: normalizeString(payload.steamId || payload.steam_id),
     discordId: normalizeString(payload.discordId || payload.discord_id),
     citizenid: normalizeString(payload.citizenid),
+    characterName: normalizeString(payload.characterName || payload.character_name),
     cadUserId: Math.max(0, Math.trunc(normalizeNumber(payload.cadUserId || payload.cad_user_id, 0))),
     unitId: Math.max(0, Math.trunc(normalizeNumber(payload.unitId || payload.unit_id, 0))),
     callsign: normalizeString(payload.callsign),

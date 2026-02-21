@@ -385,7 +385,15 @@ router.get('/live-map/players', requireAuth, (req, res) => {
       unit_id: Number(unit.id || 0),
       callsign: String(unit.callsign || '').trim(),
       status: String(unit.status || '').trim().toLowerCase(),
-      name: String(livePlayer?.cadName || livePlayer?.name || unit.user_name || user?.steam_name || '').trim() || 'Unknown',
+      name: String(
+        livePlayer?.name
+        || livePlayer?.characterName
+        || livePlayer?.character_name
+        || livePlayer?.cadName
+        || unit.user_name
+        || user?.steam_name
+        || ''
+      ).trim() || 'Unknown',
       game_id: String(livePlayer?.gameId || livePlayer?.game_id || link?.game_id || '').trim(),
       location: String(livePlayer?.location || unit.location || '').trim(),
       vehicle: String(livePlayer?.vehicle || '').trim(),

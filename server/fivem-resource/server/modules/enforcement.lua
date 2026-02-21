@@ -3,7 +3,7 @@
             player_id = s,
             playerId = s,
             name = displayName,
-            player_name = platformName,
+            player_name = displayName,
             platform_name = platformName,
             character_name = characterName,
             identifiers = identifiers,

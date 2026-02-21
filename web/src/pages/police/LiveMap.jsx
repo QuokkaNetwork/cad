@@ -430,6 +430,9 @@ export default function LiveMap({ isPopout = false }) {
                     {player.callsign ? <p className="font-mono text-cyan-300">{player.callsign}</p> : null}
                     {player.vehicle ? <p>{player.vehicle}</p> : null}
                     <p>{player.location || 'No location'}</p>
+                    <p className="font-mono text-cad-muted">
+                      {player.pos.x.toFixed(1)}, {player.pos.y.toFixed(1)}, {player.pos.z.toFixed(1)}
+                    </p>
                   </div>
                 </Tooltip>
               </CircleMarker>

@@ -216,5 +216,6 @@ CreateThread(function()
             }
           end
           local platformName = trim(GetPlayerName(s) or '')
-          local characterName = getCharacterDisplayName(s)
-          local displayName = platformName ~= '' and platformName or characterName
+          local characterName = trim(getCharacterDisplayName(s) or '')
+          local resolvedCharacterName = characterName ~= '' and characterName or platformName
+          local displayName = resolvedCharacterName ~= '' and resolvedCharacterName or platformName
