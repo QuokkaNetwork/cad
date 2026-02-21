@@ -1,391 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { CRS, latLngBounds } from 'leaflet';
-import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet';
-import { api } from '../../api/client';
-import { useDepartment } from '../../context/DepartmentContext';
-import { formatTimeAU } from '../../utils/dateTime';
+import { useCallback, useMemo } from 'react';
 
-const MAP_POLL_INTERVAL_MS = 500;
-const MAP_ACTIVE_MAX_AGE_MS = 5_000;
-const MAP_RECOVERY_MAX_AGE_MS = 30_000;
-const MAP_STALE_THRESHOLD_MS = 4_000;
-const MAP_STALE_CHECK_INTERVAL_MS = 2_000;
-const MAP_RECOVERY_COOLDOWN_MS = 8_000;
-
-const DEFAULT_TILE_SIZE = 1024;
-const DEFAULT_TILE_ROWS = 3;
-const DEFAULT_TILE_COLUMNS = 2;
-const TILE_URL_TEMPLATE = '/tiles/minimap_sea_{y}_{x}.webp';
-const MIN_ZOOM = -2;
-const MAX_ZOOM = 2;
-const NATIVE_ZOOM = 0;
-
-// Base affine transform for GTA V game coordinates to map pixels.
-// Values are calibrated for 1024px tiles and scaled up/down by tile size.
-const BASE_SCALE_X = 0.02072 * 8;
-const BASE_SCALE_Y = 0.0205 * 8;
-const BASE_OFFSET_X = 117.3 * 8;
-const BASE_OFFSET_Y = 2005;
-
-const DEFAULT_MAP_LAYOUT = Object.freeze({
-  tileSize: DEFAULT_TILE_SIZE,
-  tileRows: DEFAULT_TILE_ROWS,
-  tileColumns: DEFAULT_TILE_COLUMNS,
-  transform: {
-    mode: 'affine',
-    gameBounds: null,
-    scaleX: BASE_SCALE_X,
-    scaleY: BASE_SCALE_Y,
-    offsetX: BASE_OFFSET_X,
-    offsetY: BASE_OFFSET_Y,
-  },
-});
-
-function parsePositiveInt(value, fallback) {
-  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
-  return parsed;
-}
-
-function parseFiniteNumber(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function parsePositiveNumber(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return parsed;
-}
-
-function parseGameBounds(value) {
-  const x1 = parseFiniteNumber(value?.x1, NaN);
-  const y1 = parseFiniteNumber(value?.y1, NaN);
-  const x2 = parseFiniteNumber(value?.x2, NaN);
-  const y2 = parseFiniteNumber(value?.y2, NaN);
-  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) {
-    return null;
-  }
-  if (!(x2 > x1) || !(y1 > y2)) return null;
-  return { x1, y1, x2, y2 };
-}
-
-function normalizeMapLayoutConfig(cfg) {
-  // Keep Leaflet's logical tile grid stable at 1024 regardless of source image dimensions.
-  const tileSize = DEFAULT_TILE_SIZE;
-  const tileRows = parsePositiveInt(cfg?.tile_rows, DEFAULT_TILE_ROWS);
-  const tileColumns = parsePositiveInt(cfg?.tile_columns, DEFAULT_TILE_COLUMNS);
-  const defaultScaleX = BASE_SCALE_X;
-  const defaultScaleY = BASE_SCALE_Y;
-  const defaultOffsetX = BASE_OFFSET_X;
-  const defaultOffsetY = BASE_OFFSET_Y;
-
-  const rawTransform = cfg?.transform || {};
-  const transformMode = String(rawTransform?.mode || '').trim().toLowerCase();
-  const gameBounds = parseGameBounds(rawTransform?.game_bounds);
-
-  return {
-    tileSize,
-    tileRows,
-    tileColumns,
-    transform: {
-      mode: transformMode === 'game_bounds' && gameBounds ? 'game_bounds' : 'affine',
-      gameBounds,
-      scaleX: parsePositiveNumber(rawTransform?.scale_x, defaultScaleX),
-      scaleY: parsePositiveNumber(rawTransform?.scale_y, defaultScaleY),
-      offsetX: parseFiniteNumber(rawTransform?.offset_x, defaultOffsetX),
-      offsetY: parseFiniteNumber(rawTransform?.offset_y, defaultOffsetY),
-    },
-  };
-}
-
-function normalizeMapPlayer(entry) {
-  const unitId = Number(entry?.unit_id || 0);
-  const pos = entry?.pos || {};
-  return {
-    identifier: String(entry?.identifier || (unitId ? `unit:${unitId}` : '')).trim(),
-    callsign: String(entry?.callsign || '').trim(),
-    cadUserId: Number(entry?.cad_user_id || 0),
-    unitId,
-    unitStatus: String(entry?.status || '').trim().toLowerCase(),
-    name: String(entry?.name || 'Unknown').trim() || 'Unknown',
-    location: String(entry?.location || '').trim(),
-    vehicle: String(entry?.vehicle || '').trim(),
-    licensePlate: String(entry?.licensePlate || entry?.license_plate || '').trim(),
-    weapon: String(entry?.weapon || '').trim(),
-    icon: Number(entry?.icon || 6),
-    hasSirenEnabled: entry?.hasSirenEnabled === true || entry?.has_siren_enabled === true,
-    speed: Number(entry?.speed || 0),
-    heading: Number(entry?.heading || 0),
-    pos: {
-      x: Number(pos.x || 0),
-      y: Number(pos.y || 0),
-      z: Number(pos.z || 0),
-    },
-    updatedAtMs: Number(entry?.updatedAtMs || Date.now()),
-  };
-}
-
-function normalizePlayers(payload) {
-  if (!Array.isArray(payload)) return [];
-  const seen = new Set();
-  const players = [];
-  for (const raw of payload) {
-    const player = normalizeMapPlayer(raw);
-    if (!player.identifier || seen.has(player.identifier)) continue;
-    seen.add(player.identifier);
-    players.push(player);
-  }
-  return players;
-}
-
-function getMapBounds(map, mapWidth, mapHeight) {
-  const southWest = map.unproject([0, mapHeight], 0);
-  const northEast = map.unproject([mapWidth, 0], 0);
-  return latLngBounds(southWest, northEast);
-}
-
-// Convert GTA V game coordinates to Leaflet lat/lng for our tile grid.
-// Uses either game bounds mapping or an affine pixel transform.
-function convertToMapLatLng(rawX, rawY, map, mapLayout) {
-  const x = Number(rawX);
-  const y = Number(rawY);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !map || !mapLayout) return null;
-
-  const mapWidth = mapLayout.tileSize * mapLayout.tileColumns;
-  const mapHeight = mapLayout.tileSize * mapLayout.tileRows;
-  const transform = mapLayout.transform || {};
-  const gameBounds = transform?.gameBounds;
-  let pixelX = NaN;
-  let pixelY = NaN;
-
-  if (transform.mode === 'game_bounds' && gameBounds) {
-    const xSpan = gameBounds.x2 - gameBounds.x1;
-    const ySpan = gameBounds.y1 - gameBounds.y2;
-    if (xSpan > 0 && ySpan > 0) {
-      pixelX = ((x - gameBounds.x1) / xSpan) * mapWidth;
-      pixelY = ((gameBounds.y1 - y) / ySpan) * mapHeight;
-    }
-  } else {
-    pixelX = transform.scaleX * x + transform.offsetX;
-    pixelY = -(transform.scaleY * y) + transform.offsetY;
-  }
-
-  if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY)) return null;
-
-  return map.unproject([pixelX, pixelY], 0);
-}
-
-function markerColor(player) {
-  if (player.hasSirenEnabled) return '#ef4444';
-  if (player.icon === 56) return '#3b82f6';
-  if (player.icon === 64) return '#8b5cf6';
-  if (player.icon === 68) return '#f59e0b';
-  return '#22c55e';
-}
-
-function MapBoundsController({ resetSignal, onMapReady, mapWidth, mapHeight }) {
-  const map = useMap();
-  const appliedRef = useRef('');
-
-  useEffect(() => {
-    if (!map) return;
-    onMapReady(map);
-
-    if (!Number.isFinite(mapWidth) || !Number.isFinite(mapHeight) || mapWidth <= 0 || mapHeight <= 0) return;
-
-    const bounds = getMapBounds(map, mapWidth, mapHeight);
-    const key = `bounds:${resetSignal}:${mapWidth}x${mapHeight}`;
-    if (appliedRef.current === key) return;
-
-    map.setMaxBounds(bounds);
-    map.fitBounds(bounds, { animate: false });
-    map.setMinZoom(MIN_ZOOM);
-    map.setMaxZoom(MAX_ZOOM);
-    map.setZoom(MIN_ZOOM);
-
-    appliedRef.current = key;
-  }, [map, resetSignal, onMapReady, mapWidth, mapHeight]);
-
-  return null;
-}
+const LIVE_MAP_INTERFACE_URL = '/live-map-interface/index.html';
 
 export default function LiveMap({ isPopout = false }) {
-  const { key: locationKey } = useLocation();
-  const { activeDepartment } = useDepartment();
-  const [mapAvailable, setMapAvailable] = useState(false);
-  const [missingTiles, setMissingTiles] = useState([]);
-  const [mapLayout, setMapLayout] = useState(DEFAULT_MAP_LAYOUT);
-  const [players, setPlayers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [mapConfigError, setMapConfigError] = useState('');
-  const [playerError, setPlayerError] = useState('');
-  const [lastRefreshAt, setLastRefreshAt] = useState(0);
-  const [staleSinceAt, setStaleSinceAt] = useState(0);
-  const [recoveringStaleFeed, setRecoveringStaleFeed] = useState(false);
-  const [mapInstance, setMapInstance] = useState(null);
-  const [resetSignal, setResetSignal] = useState(0);
-  const staleRecoveryInFlightRef = useRef(false);
-  const lastRecoveryAttemptAtRef = useRef(0);
-  const latestFeedUpdateMsRef = useRef(0);
-  const staleSinceAtRef = useRef(0);
+  const interfaceUrl = useMemo(() => LIVE_MAP_INTERFACE_URL, []);
 
-  const deptId = Number(activeDepartment?.id || 0);
-  const isDispatchDepartment = !!activeDepartment?.is_dispatch;
-  const mapWidth = mapLayout.tileSize * mapLayout.tileColumns;
-  const mapHeight = mapLayout.tileSize * mapLayout.tileRows;
-
-  const fetchMapConfig = useCallback(async () => {
-    try {
-      const cfg = await api.get('/api/units/map-config');
-      setMapLayout(normalizeMapLayoutConfig(cfg));
-      const tiles = Array.isArray(cfg?.missing_tiles)
-        ? cfg.missing_tiles.map((t) => String(t || '').trim()).filter(Boolean)
-        : [];
-      const available = cfg?.map_available === true && tiles.length === 0;
-      setMapAvailable(available);
-      setMissingTiles(tiles);
-
-      if (!available) {
-        const missingText = tiles.length > 0 ? ` Missing: ${tiles.join(', ')}` : '';
-        setMapConfigError(`Live map tiles are not fully uploaded.${missingText}`);
-      } else {
-        setMapConfigError('');
-      }
-    } catch {
-      setMapConfigError('Failed to load live map tile configuration');
-    }
-  }, []);
-
-  const fetchPlayers = useCallback(async (options = {}) => {
-    if (!deptId) {
-      setPlayers([]);
-      setLoading(false);
-      latestFeedUpdateMsRef.current = 0;
-      staleSinceAtRef.current = 0;
-      setStaleSinceAt(0);
-      setRecoveringStaleFeed(false);
-      return;
-    }
-
-    const recoveryMode = options?.recovery === true;
-    const maxAgeMs = recoveryMode ? MAP_RECOVERY_MAX_AGE_MS : MAP_ACTIVE_MAX_AGE_MS;
-    const cacheBuster = Date.now();
-
-    try {
-      const data = await api.get(
-        `/api/units/live-map/players?department_id=${deptId}&dispatch=${isDispatchDepartment ? 'true' : 'false'}&max_age_ms=${maxAgeMs}&_=${cacheBuster}`
-      );
-      const nextPlayers = normalizePlayers(data?.payload || []);
-      setPlayers(nextPlayers);
-      setPlayerError('');
-      setLastRefreshAt(Date.now());
-      const latestUpdatedAtMs = nextPlayers.reduce((max, player) => {
-        const updatedAt = Number(player?.updatedAtMs || 0);
-        if (!Number.isFinite(updatedAt)) return max;
-        return Math.max(max, updatedAt);
-      }, 0);
-      const nextFeedUpdateMs = latestUpdatedAtMs || Date.now();
-      if (nextFeedUpdateMs > latestFeedUpdateMsRef.current) {
-        latestFeedUpdateMsRef.current = nextFeedUpdateMs;
-        staleSinceAtRef.current = 0;
-        setStaleSinceAt(0);
-        setRecoveringStaleFeed(false);
-      }
-    } catch (err) {
-      setPlayerError(err?.message || 'Failed to load live map players');
-    } finally {
-      setLoading(false);
-    }
-  }, [deptId, isDispatchDepartment]);
-
-  const refreshAll = useCallback(async () => {
-    await Promise.all([fetchMapConfig(), fetchPlayers()]);
-  }, [fetchMapConfig, fetchPlayers]);
-
-  // Initial load.
-  useEffect(() => {
-    setLoading(true);
-    latestFeedUpdateMsRef.current = 0;
-    staleSinceAtRef.current = 0;
-    staleRecoveryInFlightRef.current = false;
-    lastRecoveryAttemptAtRef.current = 0;
-    setStaleSinceAt(0);
-    setRecoveringStaleFeed(false);
-    refreshAll();
-  }, [refreshAll, locationKey]);
-
-  // Player polling.
-  useEffect(() => {
-    const id = setInterval(fetchPlayers, MAP_POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [fetchPlayers]);
-
-  // Config polling.
-  useEffect(() => {
-    const id = setInterval(fetchMapConfig, 30000);
-    return () => clearInterval(id);
-  }, [fetchMapConfig]);
-
-  // Stale-feed recovery.
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (!deptId) return;
-      const latestFeedUpdateMs = latestFeedUpdateMsRef.current;
-      if (!latestFeedUpdateMs) return;
-
-      const now = Date.now();
-      const feedAgeMs = now - latestFeedUpdateMs;
-      if (feedAgeMs < MAP_STALE_THRESHOLD_MS) {
-        if (staleSinceAtRef.current > 0) {
-          staleSinceAtRef.current = 0;
-          setStaleSinceAt(0);
-        }
-        if (recoveringStaleFeed) {
-          setRecoveringStaleFeed(false);
-        }
-        return;
-      }
-
-      if (!staleSinceAtRef.current) {
-        staleSinceAtRef.current = now;
-        setStaleSinceAt(now);
-      }
-
-      if (staleRecoveryInFlightRef.current) return;
-      if ((now - lastRecoveryAttemptAtRef.current) < MAP_RECOVERY_COOLDOWN_MS) return;
-
-      staleRecoveryInFlightRef.current = true;
-      lastRecoveryAttemptAtRef.current = now;
-      setRecoveringStaleFeed(true);
-
-      Promise.all([
-        fetchMapConfig(),
-        fetchPlayers({ recovery: true }),
-      ]).finally(() => {
-        staleRecoveryInFlightRef.current = false;
-      });
-    }, MAP_STALE_CHECK_INTERVAL_MS);
-
-    return () => clearInterval(id);
-  }, [deptId, fetchMapConfig, fetchPlayers, recoveringStaleFeed]);
-
-  const markers = useMemo(() => {
-    if (!mapInstance) return [];
-    return players
-      .map((player) => {
-        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, mapLayout);
-        if (!latLng) return null;
-        return { player, latLng };
-      })
-      .filter(Boolean);
-  }, [players, mapInstance, mapLayout]);
-
-  const error = mapConfigError || playerError;
-  const staleFeedAgeSeconds = staleSinceAt
-    ? Math.max(0, Math.floor((Date.now() - Math.max(1, latestFeedUpdateMsRef.current)) / 1000))
-    : 0;
   const mapViewportClass = isPopout
     ? 'relative h-[calc(100vh-180px)] min-h-[420px] bg-[#0b1525]'
     : 'relative h-[72vh] min-h-[500px] bg-[#0b1525]';
@@ -394,7 +13,7 @@ export default function LiveMap({ isPopout = false }) {
     const next = window.open(
       '/map/popout',
       'cad_live_map_popout',
-      'popup=yes,width=1400,height=900,resizable=yes,scrollbars=yes'
+      'popup=yes,width=1600,height=980,resizable=yes,scrollbars=yes'
     );
     if (next && typeof next.focus === 'function') {
       next.focus();
@@ -404,6 +23,10 @@ export default function LiveMap({ isPopout = false }) {
   const openMainMap = useCallback(() => {
     window.location.assign('/map');
   }, []);
+
+  const openStandaloneInterface = useCallback(() => {
+    window.open(interfaceUrl, '_blank', 'noopener,noreferrer');
+  }, [interfaceUrl]);
 
   return (
     <div className="space-y-4">
@@ -429,108 +52,33 @@ export default function LiveMap({ isPopout = false }) {
             </button>
           )}
           <button
-            onClick={() => setResetSignal((prev) => prev + 1)}
+            onClick={openStandaloneInterface}
             className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
           >
-            Reset View
-          </button>
-          <button
-            onClick={refreshAll}
-            className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
-          >
-            Refresh
+            Open Standalone
           </button>
         </div>
       </div>
 
       <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
         <div className="px-3 py-2 border-b border-cad-border flex flex-wrap items-center justify-between gap-2 text-xs text-cad-muted">
-          <span>{markers.length} live marker{markers.length !== 1 ? 's' : ''}</span>
-          <div className="flex items-center gap-3">
-            {staleSinceAt ? (
-              <span className="text-amber-300">
-                {recoveringStaleFeed
-                  ? `Feed stale (${staleFeedAgeSeconds}s) - recovering`
-                  : `Feed stale (${staleFeedAgeSeconds}s)`}
-              </span>
-            ) : null}
-            <span>
-              {loading ? 'Loading...' : `Updated ${lastRefreshAt ? formatTimeAU(lastRefreshAt, '-') : 'never'}`}
-            </span>
-          </div>
+          <span>Using live_map-interface (official frontend)</span>
+          <span className="font-mono">{interfaceUrl}</span>
         </div>
 
         <div className={mapViewportClass}>
-          <MapContainer
-            crs={CRS.Simple}
-            center={[0, 0]}
-            zoom={MIN_ZOOM}
-            minZoom={MIN_ZOOM}
-            maxZoom={MAX_ZOOM}
-            zoomControl={false}
-            className="w-full h-full"
-          >
-            <MapBoundsController
-              resetSignal={resetSignal}
-              onMapReady={setMapInstance}
-              mapWidth={mapWidth}
-              mapHeight={mapHeight}
-            />
-            <TileLayer
-              url={TILE_URL_TEMPLATE}
-              tileSize={mapLayout.tileSize}
-              minZoom={MIN_ZOOM}
-              maxZoom={MAX_ZOOM}
-              minNativeZoom={NATIVE_ZOOM}
-              maxNativeZoom={NATIVE_ZOOM}
-              noWrap
-            />
-
-            {markers.map(({ player, latLng }) => (
-              <CircleMarker
-                key={player.identifier}
-                center={[latLng.lat, latLng.lng]}
-                radius={7}
-                pathOptions={{
-                  color: '#0f172a',
-                  weight: 2,
-                  fillColor: markerColor(player),
-                  fillOpacity: 0.95,
-                }}
-              >
-                <Tooltip direction="top" offset={[0, -8]} opacity={1} className="!bg-slate-900 !text-slate-100 !border-slate-700">
-                  <div className="text-xs">
-                    <p className="font-semibold">{player.name}</p>
-                    {player.callsign ? <p className="font-mono text-cyan-300">{player.callsign}</p> : null}
-                    {player.vehicle ? <p>{player.vehicle}</p> : null}
-                    <p>{player.location || 'No location'}</p>
-                    <p className="font-mono text-cad-muted">
-                      {player.pos.x.toFixed(1)}, {player.pos.y.toFixed(1)}, {player.pos.z.toFixed(1)}
-                    </p>
-                  </div>
-                </Tooltip>
-              </CircleMarker>
-            ))}
-          </MapContainer>
-
-          {!mapAvailable && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="bg-cad-surface/95 border border-cad-border rounded px-4 py-2 text-xs text-amber-300 max-w-md text-center">
-                Live map tiles are missing. Upload all required files in Admin &gt; System Settings.
-              </div>
-            </div>
-          )}
+          <iframe
+            title="Live Map Interface"
+            src={interfaceUrl}
+            className="w-full h-full border-0"
+            referrerPolicy="no-referrer"
+          />
         </div>
       </div>
 
-      {error && (
-        <p className="text-xs text-red-400 whitespace-pre-wrap">{error}</p>
-      )}
-      {staleSinceAt && (
-        <p className="text-xs text-amber-300">
-          Live map feed has not advanced for {staleFeedAgeSeconds}s. Automatic recovery is running.
-        </p>
-      )}
+      <p className="text-xs text-cad-muted">
+        Interface config file: <span className="font-mono">web/public/live-map-interface/config.json</span>
+      </p>
     </div>
   );
 }
