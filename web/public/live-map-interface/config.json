@@ -5,16 +5,16 @@
   "showIdentifiers": false,
   "groupPlayers": true,
   "defaults": {
-    "ip": "127.0.0.1",
+    "ip": "cad.quokkanetworks.net",
     "socketPort": "30121"
   },
   "servers": {
-    "Localhost": {
-      "ip": "127.0.0.1",
-      "socketPort": "30121"
-    },
     "CAD Domain": {
       "ip": "cad.quokkanetworks.net",
+      "socketPort": "30121"
+    },
+    "Localhost": {
+      "ip": "127.0.0.1",
       "socketPort": "30121"
     }
   },
@@ -27,7 +27,7 @@
     {
       "name": "Postal",
       "url": "{tileDirectory}/postal/minimap_sea_{y}_{x}.png",
-      "minZoom": -5
+      "minZoom": -3
     }
   ]
 }

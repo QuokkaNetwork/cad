@@ -23,6 +23,12 @@ function normalizeBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
+function normalizePathWithLeadingSlash(value, fallback) {
+  const normalized = `/${String(value || '').trim().replace(/^\/+/, '')}`.replace(/\/{2,}/g, '/');
+  if (normalized === '/') return fallback;
+  return normalized;
+}
+
 function parseTrustProxyEnv(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
   const text = String(value).trim().toLowerCase();
@@ -91,6 +97,15 @@ module.exports = {
     runWebBuild: String(process.env.AUTO_UPDATE_RUN_WEB_BUILD || 'true').toLowerCase() === 'true',
     exitOnUpdate: String(process.env.AUTO_UPDATE_EXIT_ON_UPDATE || 'true').toLowerCase() === 'true',
     selfRestart: String(process.env.AUTO_UPDATE_SELF_RESTART || 'true').toLowerCase() === 'true',
+  },
+  liveMap: {
+    enabled: parseBoolEnv(process.env.LIVE_MAP_INTEGRATION_ENABLED, true),
+    useProxy: parseBoolEnv(process.env.LIVE_MAP_USE_PROXY, true),
+    serverName: String(process.env.LIVE_MAP_SERVER_NAME || 'CAD Proxy (Auto)').trim() || 'CAD Proxy (Auto)',
+    upstreamHost: String(process.env.LIVE_MAP_UPSTREAM_HOST || '127.0.0.1').trim() || '127.0.0.1',
+    upstreamPort: Math.max(1, parseIntEnv(process.env.LIVE_MAP_UPSTREAM_PORT, 30121)),
+    upstreamSocketPath: normalizePathWithLeadingSlash(process.env.LIVE_MAP_UPSTREAM_SOCKET_PATH || '/', '/'),
+    upstreamBlipsPath: normalizePathWithLeadingSlash(process.env.LIVE_MAP_UPSTREAM_BLIPS_PATH || '/blips.json', '/blips.json'),
   },
   webUrl,
   http: {

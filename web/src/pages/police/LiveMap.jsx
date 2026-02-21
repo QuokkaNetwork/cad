@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
-const LIVE_MAP_INTERFACE_URL = '/live-map-interface/index.html';
+const LIVE_MAP_INTERFACE_URL = '/live-map-interface/';
 
 export default function LiveMap({ isPopout = false }) {
   const interfaceUrl = useMemo(() => LIVE_MAP_INTERFACE_URL, []);
