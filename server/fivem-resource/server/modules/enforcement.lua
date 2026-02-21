@@ -1187,9 +1187,131 @@ CreateThread(function()
 end)
 
 local wraithLookupCooldownBySource = {}
+local wraithEmergencyPlateCacheByPlate = {}
 
 local function normalizePlateKey(value)
   return trim(value):upper():gsub('[^A-Z0-9]', '')
+end
+
+local function isEmergencyPlatePrefix(plateKey)
+  local normalizedPlate = normalizePlateKey(plateKey)
+  if normalizedPlate == '' then return false end
+  local prefixes = type(Config.WraithEmergencyPlatePrefixes) == 'table' and Config.WraithEmergencyPlatePrefixes or {}
+  for _, rawPrefix in ipairs(prefixes) do
+    local prefix = normalizePlateKey(rawPrefix)
+    if prefix ~= '' and normalizedPlate:sub(1, #prefix) == prefix then
+      return true
+    end
+  end
+  return false
+end
+
+local function isConfiguredEmergencyVehicleClass(classId)
+  local classNum = tonumber(classId)
+  if not classNum then return false end
+  local classes = type(Config.WraithEmergencyVehicleClasses) == 'table' and Config.WraithEmergencyVehicleClasses or { 18 }
+  for _, rawClass in ipairs(classes) do
+    if tonumber(rawClass) == classNum then
+      return true
+    end
+  end
+  return false
+end
+
+local function isEmergencyVehicleEntity(vehicle)
+  if not vehicle or vehicle == 0 then return false end
+  if type(DoesEntityExist) == 'function' and not DoesEntityExist(vehicle) then return false end
+
+  local model = 0
+  if type(GetEntityModel) == 'function' then
+    local okModel, value = pcall(GetEntityModel, vehicle)
+    if okModel and tonumber(value) then
+      model = tonumber(value) or 0
+    end
+  end
+
+  if model ~= 0 and type(IsThisModelAPoliceVehicle) == 'function' then
+    local okPolice, isPolice = pcall(IsThisModelAPoliceVehicle, model)
+    if okPolice and isPolice == true then
+      return true
+    end
+  end
+
+  if type(GetVehicleClass) == 'function' then
+    local okClass, classId = pcall(GetVehicleClass, vehicle)
+    if okClass and isConfiguredEmergencyVehicleClass(classId) then
+      return true
+    end
+  end
+
+  if model ~= 0 and type(GetVehicleClassFromName) == 'function' then
+    local okClassFromName, classId = pcall(GetVehicleClassFromName, model)
+    if okClassFromName and isConfiguredEmergencyVehicleClass(classId) then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function isEmergencyVehiclePlateInWorld(plateKey)
+  local normalizedPlate = normalizePlateKey(plateKey)
+  if normalizedPlate == '' then return false end
+
+  local now = nowMs()
+  local cached = wraithEmergencyPlateCacheByPlate[normalizedPlate]
+  if type(cached) == 'table' and (tonumber(cached.expires_at_ms) or 0) > now then
+    return cached.is_emergency == true
+  end
+
+  local matchedVehicles = 0
+  local foundEmergency = false
+  local foundNonEmergency = false
+
+  if type(GetAllVehicles) == 'function' and type(GetVehicleNumberPlateText) == 'function' then
+    local okVehicles, vehicles = pcall(GetAllVehicles)
+    if okVehicles and type(vehicles) == 'table' then
+      for _, vehicle in ipairs(vehicles) do
+        if vehicle and vehicle ~= 0 then
+          local okPlate, vehiclePlate = pcall(GetVehicleNumberPlateText, vehicle)
+          if okPlate then
+            local vehiclePlateKey = normalizePlateKey(vehiclePlate)
+            if vehiclePlateKey ~= '' and vehiclePlateKey == normalizedPlate then
+              matchedVehicles = matchedVehicles + 1
+              if isEmergencyVehicleEntity(vehicle) then
+                foundEmergency = true
+              else
+                foundNonEmergency = true
+              end
+              if foundEmergency and foundNonEmergency then
+                break
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  local isEmergency = matchedVehicles > 0 and foundEmergency and not foundNonEmergency
+  wraithEmergencyPlateCacheByPlate[normalizedPlate] = {
+    is_emergency = isEmergency,
+    expires_at_ms = now + 2000,
+  }
+  return isEmergency
+end
+
+local function shouldIgnoreWraithPlateLookup(plateKey)
+  if Config.WraithIgnoreEmergencyVehicles ~= true then
+    return false
+  end
+  if isEmergencyPlatePrefix(plateKey) then
+    return true
+  end
+  if isEmergencyVehiclePlateInWorld(plateKey) then
+    return true
+  end
+  return false
 end
 
 local function shouldThrottleWraithLookup(source, plateKey)
@@ -1223,6 +1345,7 @@ local function lookupWraithPlateStatus(source, camera, plateRaw)
 
   local plateKey = normalizePlateKey(plateRaw)
   if plateKey == '' then return end
+  if shouldIgnoreWraithPlateLookup(plateKey) then return end
   if shouldThrottleWraithLookup(src, plateKey) then return end
 
   request('GET', '/api/integration/fivem/plate-status/' .. urlEncode(plateKey), nil, function(status, body, responseHeaders)
@@ -1300,5 +1423,6 @@ end)
 AddEventHandler('playerDropped', function()
   local src = source
   wraithLookupCooldownBySource[src] = nil
+  wraithEmergencyPlateCacheByPlate = {}
   activeCallPromptBySource[src] = nil
 end)

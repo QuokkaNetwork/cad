@@ -330,6 +330,16 @@ local DEFAULT_REGISTRATION_FEES_BY_DAYS = {
 
 local DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT1 = { x = -2672.40, y = 4285.00, z = 44.20 }
 local DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT2 = { x = 1707.50, y = -3290.20, z = 41.10 }
+local DEFAULT_WRAITH_EMERGENCY_PLATE_PREFIXES = {
+  'POLICE',
+  'LSPD',
+  'LSSD',
+  'SAHP',
+  'FIRE',
+  'EMS',
+  'AMBUL',
+}
+local DEFAULT_WRAITH_EMERGENCY_VEHICLE_CLASSES = { 18 }
 
 -- CAD bridge endpoint/token.
 Config.CadBaseUrl = getString('cad_bridge_base_url', 'http://127.0.0.1:3031')
@@ -488,3 +498,14 @@ Config.JailCommandTemplate = getString('cad_bridge_jail_command', 'jail {source}
 -- Wraith integration.
 Config.WraithCadLookupEnabled = getBoolean('cad_bridge_wraith_lookup_enabled', true)
 Config.WraithLookupCooldownMs = math.max(250, math.floor(getNumber('cad_bridge_wraith_lookup_cooldown_ms', 8000)))
+Config.WraithIgnoreEmergencyVehicles = getBoolean('cad_bridge_wraith_ignore_emergency_vehicles', true)
+Config.WraithEmergencyPlatePrefixes = firstNonEmptyList(
+  parseCsvList(getString('cad_bridge_wraith_emergency_plate_prefixes', table.concat(DEFAULT_WRAITH_EMERGENCY_PLATE_PREFIXES, ',')), function(item)
+    return trim(item):upper():gsub('[^A-Z0-9]', '')
+  end),
+  DEFAULT_WRAITH_EMERGENCY_PLATE_PREFIXES
+)
+Config.WraithEmergencyVehicleClasses = firstNonEmptyList(
+  parseCsvIntegerList(getString('cad_bridge_wraith_emergency_vehicle_classes', table.concat(DEFAULT_WRAITH_EMERGENCY_VEHICLE_CLASSES, ','))),
+  DEFAULT_WRAITH_EMERGENCY_VEHICLE_CLASSES
+)
