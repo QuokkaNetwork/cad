@@ -1553,9 +1553,32 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
         || resolveCadUserByName(platformName, onDutyNameIndex);
     }
 
+    const citizenId = String(player.citizenid || '').trim();
+    const resolvedPlayerName = playerName || platformName;
+    const cadUserSteamId = String(cadUser?.steam_id || '').trim();
+    if (cadUser && cadUserSteamId) {
+      // Keep a canonical link row keyed by the CAD user's steam_id so SQL joins for
+      // unit cards always resolve to the current in-game character name.
+      FiveMPlayerLinks.upsert({
+        steam_id: cadUserSteamId,
+        game_id: gameId,
+        citizen_id: citizenId,
+        player_name: resolvedPlayerName,
+        position_x: position.x,
+        position_y: position.y,
+        position_z: position.z,
+        heading,
+        speed,
+      });
+
+      if (citizenId && String(cadUser.preferred_citizen_id || '').trim() !== citizenId) {
+        Users.update(cadUser.id, { preferred_citizen_id: citizenId });
+      }
+    }
+
     const mappedUnit = cadUser ? Units.findByUserId(cadUser.id) : null;
     liveMapStore.upsertPlayer(ids.linkKey, {
-      name: playerName || platformName,
+      name: resolvedPlayerName,
       character_name: characterName,
       source: playerSource,
       game_id: gameId,
@@ -1577,7 +1600,7 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       hasSirenEnabled,
       steam_id: ids.steamId,
       discord_id: ids.discordId,
-      citizenid: String(player.citizenid || ''),
+      citizenid: citizenId,
       cad_user_id: Number(cadUser?.id || 0),
       unit_id: Number(mappedUnit?.id || 0),
       callsign: String(mappedUnit?.callsign || ''),
