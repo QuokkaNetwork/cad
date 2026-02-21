@@ -18,6 +18,7 @@ class ExternalVoiceClient {
     this.remoteElements = new Map();
     this.session = null;
     this.isConnected = false;
+    this.audioStarted = false;
     this.isPTTActive = false;
     this.connectingPromise = null;
 
@@ -72,6 +73,19 @@ class ExternalVoiceClient {
     this.localTrack = track;
   }
 
+  async ensureAudioStarted() {
+    if (!this.room || !this.isConnected) return;
+    try {
+      await this.room.startAudio();
+      this.audioStarted = true;
+    } catch (error) {
+      this.audioStarted = false;
+      if (typeof this.onError === 'function') {
+        this.onError(error?.message || 'Audio output is blocked until user interaction');
+      }
+    }
+  }
+
   async connect(rawSession) {
     const session = normalizeSession(rawSession);
     if (session.provider !== 'livekit') {
@@ -115,12 +129,9 @@ class ExternalVoiceClient {
 
     room.on(RoomEvent.Connected, async () => {
       this.isConnected = true;
+      this.audioStarted = false;
       if (typeof this.onConnectionChange === 'function') this.onConnectionChange(true);
-      try {
-        await room.startAudio();
-      } catch {
-        // Browser may block autoplay until user interaction.
-      }
+      await this.ensureAudioStarted();
     });
 
     room.on(RoomEvent.Disconnected, () => {
@@ -169,6 +180,9 @@ class ExternalVoiceClient {
     this.detachRemoteTrack(track);
     const element = track.attach();
     element.autoplay = true;
+    element.muted = false;
+    element.volume = 1.0;
+    element.playsInline = true;
     element.style.display = 'none';
     element.dataset.externalVoiceTrackSid = key;
     document.body.appendChild(element);
@@ -177,6 +191,7 @@ class ExternalVoiceClient {
       maybePromise.catch(() => {});
     }
     this.remoteElements.set(key, { track, element });
+    this.ensureAudioStarted().catch(() => {});
   }
 
   detachRemoteTrack(track) {
@@ -225,6 +240,9 @@ class ExternalVoiceClient {
 
   async setPushToTalk(enabled) {
     const wantsTransmit = !!enabled && this.isConnected;
+    if (wantsTransmit) {
+      await this.ensureAudioStarted();
+    }
     if (wantsTransmit && !this.localTrack) {
       try {
         await this.ensureLocalTrackPublished();
@@ -283,6 +301,7 @@ class ExternalVoiceClient {
 
     this.detachRemoteTracks();
     this.isConnected = false;
+    this.audioStarted = false;
     this.isPTTActive = false;
     this.session = null;
     if (typeof this.onTalkingChange === 'function') this.onTalkingChange(false);

@@ -12,6 +12,7 @@
     localGameId: '',
     session: null,
     connected: false,
+    audioStarted: false,
     pttActive: false,
     livekit: null,
     connectPromise: null,
@@ -159,6 +160,9 @@
     if (!element) return;
 
     element.autoplay = true;
+    element.muted = false;
+    element.volume = 1.0;
+    element.playsInline = true;
     element.style.display = 'none';
     element.setAttribute('data-cad-external-track', trackSid);
     document.body.appendChild(element);
@@ -169,6 +173,7 @@
     }
 
     state.remoteAudioByTrackSid.set(trackSid, { track, element });
+    ensureRoomAudioStarted('track_subscribed').catch(function ignoreStartAudioRetryError() {});
   }
 
   async function setTrackTransmitState(track, shouldTransmit) {
@@ -217,8 +222,24 @@
     state.localTrack = localTrack;
   }
 
+  async function ensureRoomAudioStarted(reason) {
+    if (!state.room || !state.connected) return;
+    try {
+      await state.room.startAudio();
+      state.audioStarted = true;
+    } catch (err) {
+      state.audioStarted = false;
+      const message = err && err.message ? err.message : 'audio output blocked until user interaction';
+      log(`startAudio failed (${reason || 'unknown'}): ${message}`);
+      emitStatus('audio_waiting_interaction', message);
+    }
+  }
+
   async function syncLocalTrackEnabled() {
     const shouldTransmit = state.connected && state.pttActive === true;
+    if (shouldTransmit) {
+      await ensureRoomAudioStarted('ptt');
+    }
     if (shouldTransmit && !state.localTrack) {
       try {
         await ensureLocalTrackPublished();
@@ -277,6 +298,7 @@
 
   async function disconnectRoom(reason) {
     state.pttActive = false;
+    state.audioStarted = false;
 
     if (state.localTrack) {
       try {
@@ -364,14 +386,11 @@
 
       room.on(livekit.RoomEvent.Connected, async function onConnected() {
         state.connected = true;
+        state.audioStarted = false;
         state.reconnectAttempts = 0;
         log(`connected room=${session.roomName || 'unknown'} channel=${session.channelNumber}`);
         emitStatus('connected', `room ${session.roomName || 'unknown'} channel ${session.channelNumber}`);
-        try {
-          await room.startAudio();
-        } catch (_err) {
-          // Autoplay can fail until user interaction.
-        }
+        await ensureRoomAudioStarted('connected');
         await syncLocalTrackEnabled();
       });
 
