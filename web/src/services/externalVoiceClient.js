@@ -26,6 +26,34 @@ class ExternalVoiceClient {
     this.onTalkingChange = null;
   }
 
+  async setTrackTransmitState(track, shouldTransmit) {
+    if (!track) return;
+    if (typeof track.setEnabled === 'function') {
+      await track.setEnabled(shouldTransmit);
+      return;
+    }
+    if (shouldTransmit) {
+      if (typeof track.unmute === 'function') {
+        await track.unmute();
+        return;
+      }
+      if (typeof track.enable === 'function') {
+        await track.enable();
+        return;
+      }
+    } else {
+      if (typeof track.mute === 'function') {
+        await track.mute();
+        return;
+      }
+      if (typeof track.disable === 'function') {
+        await track.disable();
+        return;
+      }
+    }
+    throw new Error('External voice local track does not support setEnabled or mute/unmute');
+  }
+
   async connect(rawSession) {
     const session = normalizeSession(rawSession);
     if (session.provider !== 'livekit') {
@@ -117,7 +145,7 @@ class ExternalVoiceClient {
       await room.localParticipant.publishTrack(this.localTrack, {
         source: Track.Source.Microphone,
       });
-      await this.localTrack.setEnabled(false);
+      await this.setTrackTransmitState(this.localTrack, false);
       this.isPTTActive = false;
       if (typeof this.onTalkingChange === 'function') this.onTalkingChange(false);
     } catch (error) {
@@ -189,17 +217,24 @@ class ExternalVoiceClient {
 
   async setPushToTalk(enabled) {
     const next = !!enabled && this.isConnected && !!this.localTrack;
-    this.isPTTActive = next;
-    if (this.localTrack) {
-      await this.localTrack.setEnabled(next);
+    if (this.isPTTActive === next) return;
+    try {
+      await this.setTrackTransmitState(this.localTrack, next);
+      this.isPTTActive = next;
+    } catch (error) {
+      this.isPTTActive = false;
+      if (typeof this.onError === 'function') {
+        this.onError(error?.message || 'Failed to update external push-to-talk state');
+      }
+      throw error;
     }
-    if (typeof this.onTalkingChange === 'function') this.onTalkingChange(next);
+    if (typeof this.onTalkingChange === 'function') this.onTalkingChange(this.isPTTActive);
   }
 
   async disconnect() {
     if (this.localTrack) {
       try {
-        await this.localTrack.setEnabled(false);
+        await this.setTrackTransmitState(this.localTrack, false);
       } catch {
         // Ignore.
       }

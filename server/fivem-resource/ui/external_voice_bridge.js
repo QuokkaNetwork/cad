@@ -171,13 +171,43 @@
     state.remoteAudioByTrackSid.set(trackSid, { track, element });
   }
 
+  async function setTrackTransmitState(track, shouldTransmit) {
+    if (!track) return;
+    if (typeof track.setEnabled === 'function') {
+      await track.setEnabled(shouldTransmit);
+      return;
+    }
+    if (shouldTransmit) {
+      if (typeof track.unmute === 'function') {
+        await track.unmute();
+        return;
+      }
+      if (typeof track.enable === 'function') {
+        await track.enable();
+        return;
+      }
+    } else {
+      if (typeof track.mute === 'function') {
+        await track.mute();
+        return;
+      }
+      if (typeof track.disable === 'function') {
+        await track.disable();
+        return;
+      }
+    }
+    throw new Error('Local track does not support setEnabled or mute/unmute');
+  }
+
   async function syncLocalTrackEnabled() {
     if (!state.localTrack) return;
     const shouldTransmit = state.connected && state.pttActive === true;
     try {
-      await state.localTrack.setEnabled(shouldTransmit);
-    } catch (_err) {
-      // Ignore.
+      await setTrackTransmitState(state.localTrack, shouldTransmit);
+    } catch (err) {
+      const message = err && err.message ? err.message : 'unable to toggle local track';
+      log(`local track state sync failed: ${message}`);
+      emitStatus('ptt_error', message);
     }
   }
 
@@ -220,7 +250,7 @@
 
     if (state.localTrack) {
       try {
-        await state.localTrack.setEnabled(false);
+        await setTrackTransmitState(state.localTrack, false);
       } catch (_err) {
         // Ignore.
       }
@@ -350,7 +380,7 @@
       await room.localParticipant.publishTrack(state.localTrack, {
         source: livekit.Track.Source.Microphone,
       });
-      await state.localTrack.setEnabled(false);
+      await setTrackTransmitState(state.localTrack, false);
       await syncLocalTrackEnabled();
       emitStatus('ready', `session ready channel ${session.channelNumber}`);
     })();
