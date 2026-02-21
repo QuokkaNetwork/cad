@@ -131,31 +131,36 @@ function convertToMapLatLng(rawX, rawY, map, tileConfig, mapTransform) {
   const width = tileConfig.tileSize * tileConfig.tileColumns;
   const height = tileConfig.tileSize * tileConfig.tileRows;
   const gameBounds = sanitizeGameBounds(mapTransform?.gameBounds);
-  const denomX = gameBounds.x2 - gameBounds.x1;
+  const anchorX = Math.max(0, width - tileConfig.tileSize);
+  const anchorY = Math.max(0, height - tileConfig.tileSize);
+  const latLng1 = map.unproject([0, 0], 0);
+  let latLng2 = map.unproject([anchorX, anchorY], 0);
+
+  if (
+    Math.abs(Number(latLng1.lng) - Number(latLng2.lng)) < 0.0000001
+    || Math.abs(Number(latLng1.lat) - Number(latLng2.lat)) < 0.0000001
+  ) {
+    latLng2 = map.unproject([width, height], 0);
+  }
+
+  const denomX = gameBounds.x1 - gameBounds.x2;
   const denomY = gameBounds.y1 - gameBounds.y2;
   if (Math.abs(denomX) < 0.0001 || Math.abs(denomY) < 0.0001) return null;
 
-  const normalizedX = (x - gameBounds.x1) / denomX;
-  const normalizedY = (gameBounds.y1 - y) / denomY;
-  let projectedX = normalizedX * width;
-  let projectedY = normalizedY * height;
-
-  const scaleX = parseMapNumber(mapTransform?.scaleX, 1);
-  const scaleY = parseMapNumber(mapTransform?.scaleY, 1);
-  const offsetX = parseMapNumber(mapTransform?.offsetX, 0);
-  const offsetY = parseMapNumber(mapTransform?.offsetY, 0);
-  const centerX = width / 2;
-  const centerY = height / 2;
-  projectedX = centerX + ((projectedX - centerX) * scaleX) + offsetX;
-  projectedY = centerY + ((projectedY - centerY) * scaleY) + offsetY;
-  const projectedLatLng = map.unproject([projectedX, projectedY], 0);
+  const projectedLng = latLng1.lng + ((x - gameBounds.x1) * (latLng1.lng - latLng2.lng)) / denomX;
+  const projectedLat = latLng1.lat + ((y - gameBounds.y1) * (latLng1.lat - latLng2.lat)) / denomY;
+  const projectedPoint = map.project([projectedLat, projectedLng], 0);
 
   return {
-    lat: projectedLatLng.lat,
-    lng: projectedLatLng.lng,
-    projectedX,
-    projectedY,
-    outOfBounds: projectedX < 0 || projectedY < 0 || projectedX > width || projectedY > height,
+    lat: projectedLat,
+    lng: projectedLng,
+    projectedX: Number(projectedPoint?.x || 0),
+    projectedY: Number(projectedPoint?.y || 0),
+    outOfBounds:
+      Number(projectedPoint?.x) < 0
+      || Number(projectedPoint?.y) < 0
+      || Number(projectedPoint?.x) > width
+      || Number(projectedPoint?.y) > height,
   };
 }
 
@@ -465,10 +470,6 @@ export default function LiveMap({ isPopout = false }) {
   const markers = useMemo(() => {
     if (!mapInstance) return [];
     const mapTransform = {
-      scaleX: mapScaleX,
-      scaleY: mapScaleY,
-      offsetX: mapOffsetX,
-      offsetY: mapOffsetY,
       gameBounds: tileConfig.gameBounds,
     };
     return players
@@ -478,7 +479,7 @@ export default function LiveMap({ isPopout = false }) {
         return { player, latLng };
       })
       .filter(Boolean);
-  }, [players, mapInstance, tileConfig, mapScaleX, mapScaleY, mapOffsetX, mapOffsetY]);
+  }, [players, mapInstance, tileConfig]);
   const outOfBoundsCount = useMemo(() => markers.filter((m) => m?.latLng?.outOfBounds === true).length, [markers]);
 
   const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;

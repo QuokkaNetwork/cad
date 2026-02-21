@@ -8,12 +8,11 @@ const {
   LIVE_MAP_TILE_NAMES,
   LIVE_MAP_TILE_URL_TEMPLATE,
   LIVE_MAP_TILE_SIZE,
-  LIVE_MAP_TILE_ROWS,
-  LIVE_MAP_TILE_COLUMNS,
   LIVE_MAP_MIN_ZOOM,
   LIVE_MAP_MAX_ZOOM,
   LIVE_MAP_MIN_NATIVE_ZOOM,
   LIVE_MAP_MAX_NATIVE_ZOOM,
+  getLiveMapTileGrid,
   listMissingLiveMapTiles,
   hasCompleteLiveMapTiles,
 } = require('../services/liveMapTiles');
@@ -24,6 +23,7 @@ const DEFAULT_MAP_SCALE = 1;
 const DEFAULT_MAP_OFFSET = 0;
 const DEFAULT_MAP_CALIBRATION_INCREMENT = 0.1;
 const DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE = true;
+const DEFAULT_MAP_USE_CUSTOM_BOUNDS = false;
 const DEFAULT_MAP_GAME_BOUNDS = Object.freeze({
   x1: -4230,
   y1: 8420,
@@ -194,6 +194,7 @@ function setIndexedPlayer(index, key, player) {
 
 function buildLiveMapPlayerIndexes(players = []) {
   const byGameId = new Map();
+  const byUnitId = new Map();
   const byCadUserId = new Map();
   const bySteamId = new Map();
   const byDiscordId = new Map();
@@ -201,6 +202,11 @@ function buildLiveMapPlayerIndexes(players = []) {
 
   for (const player of players) {
     const candidate = player || {};
+    const unitId = parsePositiveInt(candidate.unitId ?? candidate.unit_id);
+    if (unitId) {
+      byUnitId.set(unitId, pickLatestPlayer(byUnitId.get(unitId), candidate));
+    }
+
     const cadUserId = parsePositiveInt(candidate.cadUserId ?? candidate.cad_user_id);
     if (cadUserId) {
       byCadUserId.set(cadUserId, pickLatestPlayer(byCadUserId.get(cadUserId), candidate));
@@ -212,10 +218,15 @@ function buildLiveMapPlayerIndexes(players = []) {
     setIndexedPlayer(byCitizenId, candidate.citizenid, candidate);
   }
 
-  return { byGameId, byCadUserId, bySteamId, byDiscordId, byCitizenId };
+  return { byGameId, byUnitId, byCadUserId, bySteamId, byDiscordId, byCitizenId };
 }
 
 function resolveLiveMapPlayerForUnit(unit, user, indexes, activeLink) {
+  const unitId = parsePositiveInt(unit?.id);
+  if (unitId && indexes.byUnitId.has(unitId)) {
+    return indexes.byUnitId.get(unitId) || null;
+  }
+
   const gameId = normalizeLookupToken(activeLink?.game_id);
   if (gameId && indexes.byGameId.has(gameId)) {
     return indexes.byGameId.get(gameId) || null;
@@ -387,16 +398,22 @@ router.get('/map-config', requireAuth, (_req, res) => {
     Settings.get('live_map_admin_calibration_visible'),
     DEFAULT_MAP_ADMIN_CALIBRATION_VISIBLE
   );
-  const resolvedBounds = sanitizeMapBounds({
+  const persistedBounds = sanitizeMapBounds({
     x1: parseMapNumber(Settings.get('live_map_game_x1'), DEFAULT_MAP_GAME_BOUNDS.x1),
     y1: parseMapNumber(Settings.get('live_map_game_y1'), DEFAULT_MAP_GAME_BOUNDS.y1),
     x2: parseMapNumber(Settings.get('live_map_game_x2'), DEFAULT_MAP_GAME_BOUNDS.x2),
     y2: parseMapNumber(Settings.get('live_map_game_y2'), DEFAULT_MAP_GAME_BOUNDS.y2),
   });
+  const useCustomBounds = parseMapBoolean(
+    Settings.get('live_map_use_custom_bounds'),
+    DEFAULT_MAP_USE_CUSTOM_BOUNDS
+  );
+  const resolvedBounds = useCustomBounds ? persistedBounds : { ...DEFAULT_MAP_GAME_BOUNDS };
   const mapGameX1 = resolvedBounds.x1;
   const mapGameY1 = resolvedBounds.y1;
   const mapGameX2 = resolvedBounds.x2;
   const mapGameY2 = resolvedBounds.y2;
+  const tileGrid = getLiveMapTileGrid();
   const tileSize = parseTileSize(Settings.get('live_map_tile_size'), LIVE_MAP_TILE_SIZE);
   const missingTiles = listMissingLiveMapTiles();
   const mapAvailable = hasCompleteLiveMapTiles();
@@ -423,11 +440,12 @@ router.get('/map-config', requireAuth, (_req, res) => {
       x2: mapGameX2,
       y2: mapGameY2,
     },
+    map_use_custom_bounds: useCustomBounds,
     tile_url_template: LIVE_MAP_TILE_URL_TEMPLATE,
-    tile_names: LIVE_MAP_TILE_NAMES,
+    tile_names: tileGrid.tileNames.length > 0 ? tileGrid.tileNames : LIVE_MAP_TILE_NAMES,
     tile_size: tileSize,
-    tile_rows: LIVE_MAP_TILE_ROWS,
-    tile_columns: LIVE_MAP_TILE_COLUMNS,
+    tile_rows: tileGrid.tileRows,
+    tile_columns: tileGrid.tileColumns,
     min_zoom: LIVE_MAP_MIN_ZOOM,
     max_zoom: LIVE_MAP_MAX_ZOOM,
     min_native_zoom: LIVE_MAP_MIN_NATIVE_ZOOM,
