@@ -22,11 +22,17 @@ const { audit } = require('../utils/audit');
 const liveMapStore = require('../services/liveMapStore');
 
 const router = express.Router();
+const QUIET_BRIDGE_GET_PATHS = new Set([
+  '/fine-jobs',
+  '/jail-jobs',
+  '/call-prompts',
+]);
 
 // Log every incoming request to the fivem integration router.
 router.use((req, _res, next) => {
-  // Skip noisy heartbeat logging unless it fails auth.
-  if (req.path !== '/heartbeat') {
+  // Skip noisy heartbeat and poll endpoint logging unless they fail auth.
+  const suppressNoisyGet = req.method === 'GET' && QUIET_BRIDGE_GET_PATHS.has(req.path);
+  if (req.path !== '/heartbeat' && !suppressNoisyGet) {
     console.log(`[FiveMBridge] Incoming ${req.method} ${req.path} from ${req.ip || req.connection?.remoteAddress || 'unknown'}`);
   }
   next();

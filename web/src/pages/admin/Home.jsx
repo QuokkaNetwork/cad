@@ -38,9 +38,9 @@ const ADMIN_ITEMS = [
     color: 'bg-vicpol-navy',
   },
   {
-    to: '/admin/field-mappings',
-    title: 'Field Mappings',
-    description: 'Map CAD profile fields to specific database tables/columns/JSON keys.',
+    to: '/admin/qbox-settings',
+    title: 'QBox Settings',
+    description: 'Configure QBox connection and bind to default players/vehicles tables.',
     color: 'bg-cyan-500',
   },
 ];
