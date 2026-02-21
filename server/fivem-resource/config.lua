@@ -499,6 +499,7 @@ Config.JailCommandTemplate = getString('cad_bridge_jail_command', 'jail {source}
 Config.WraithCadLookupEnabled = getBoolean('cad_bridge_wraith_lookup_enabled', true)
 Config.WraithLookupCooldownMs = math.max(250, math.floor(getNumber('cad_bridge_wraith_lookup_cooldown_ms', 8000)))
 Config.WraithIgnoreEmergencyVehicles = getBoolean('cad_bridge_wraith_ignore_emergency_vehicles', true)
+Config.WraithIgnoreEmergencySeatbeltAlerts = getBoolean('cad_bridge_wraith_ignore_emergency_seatbelt_alerts', true)
 Config.WraithEmergencyPlatePrefixes = firstNonEmptyList(
   parseCsvList(getString('cad_bridge_wraith_emergency_plate_prefixes', table.concat(DEFAULT_WRAITH_EMERGENCY_PLATE_PREFIXES, ',')), function(item)
     return trim(item):upper():gsub('[^A-Z0-9]', '')

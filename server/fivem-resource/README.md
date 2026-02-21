@@ -56,6 +56,7 @@ Command adapter execution now waits for the target character to be online.
 - Heartbeat payload now includes map metadata (`weapon`, `vehicle`, `license_plate`, `icon`, siren status) used by CAD Live Map.
 - Wraith plate lookups can ignore emergency vehicles via:
   - `cad_bridge_wraith_ignore_emergency_vehicles=true`
+  - `cad_bridge_wraith_ignore_emergency_seatbelt_alerts=true`
   - `cad_bridge_wraith_emergency_plate_prefixes=POLICE,LSPD,LSSD,SAHP,FIRE,EMS,AMBUL`
   - `cad_bridge_wraith_emergency_vehicle_classes=18`
 - This is a first-draft bridge and may require adapter tweaks for your billing stack.

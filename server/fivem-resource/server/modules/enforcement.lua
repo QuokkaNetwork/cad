@@ -1314,6 +1314,139 @@ local function shouldIgnoreWraithPlateLookup(plateKey)
   return false
 end
 
+local function valueHasSeatbeltKeyword(value)
+  local text = trim(value):lower()
+  if text == '' then return false end
+  if text:find('seatbelt', 1, true) then return true end
+  if text:find('seat belt', 1, true) then return true end
+  if text:find('unbuckled', 1, true) then return true end
+  if text:find('without seatbelt', 1, true) then return true end
+  if text:find('no seatbelt', 1, true) then return true end
+  return false
+end
+
+local function tableHasSeatbeltKeyword(value)
+  if type(value) ~= 'table' then return false end
+  for _, nested in pairs(value) do
+    if type(nested) == 'table' then
+      if tableHasSeatbeltKeyword(nested) then
+        return true
+      end
+    elseif valueHasSeatbeltKeyword(nested) then
+      return true
+    end
+  end
+  return false
+end
+
+local function payloadIndicatesSeatbeltAlert(payload)
+  if type(payload) ~= 'table' then return false end
+
+  local directCandidates = {
+    payload.alert_type,
+    payload.alertType,
+    payload.type,
+    payload.reason,
+    payload.violation,
+    payload.violation_type,
+    payload.violationType,
+    payload.offense,
+    payload.offence,
+    payload.status,
+    payload.message,
+    payload.description,
+  }
+  for _, candidate in ipairs(directCandidates) do
+    if valueHasSeatbeltKeyword(candidate) then
+      return true
+    end
+  end
+
+  local nestedCandidates = {
+    payload.flags,
+    payload.alert_flags,
+    payload.violations,
+    payload.alerts,
+    payload.reasons,
+  }
+  for _, candidate in ipairs(nestedCandidates) do
+    if tableHasSeatbeltKeyword(candidate) then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function payloadIndicatesEmergencyVehicle(payload)
+  if type(payload) ~= 'table' then return false end
+
+  local booleanCandidates = {
+    payload.is_emergency,
+    payload.isEmergency,
+    payload.emergency_vehicle,
+    payload.emergencyVehicle,
+  }
+  for _, candidate in ipairs(booleanCandidates) do
+    if candidate == true then
+      return true
+    end
+    local numeric = tonumber(candidate)
+    if numeric and numeric ~= 0 then
+      return true
+    end
+    local text = trim(candidate):lower()
+    if text == 'true' or text == 'yes' then
+      return true
+    end
+  end
+
+  local classCandidates = {
+    payload.vehicle_class,
+    payload.vehicleClass,
+    payload.class_id,
+    payload.classId,
+    payload.class,
+  }
+  for _, candidate in ipairs(classCandidates) do
+    if isConfiguredEmergencyVehicleClass(candidate) then
+      return true
+    end
+  end
+
+  local plateCandidates = {
+    payload.plate,
+    payload.license_plate,
+    payload.licensePlate,
+  }
+  for _, candidate in ipairs(plateCandidates) do
+    if isEmergencyPlatePrefix(candidate) then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function shouldIgnoreWraithSeatbeltAlert(plateKey, payload)
+  if Config.WraithIgnoreEmergencySeatbeltAlerts ~= true then
+    return false
+  end
+  if not payloadIndicatesSeatbeltAlert(payload) then
+    return false
+  end
+  if payloadIndicatesEmergencyVehicle(payload) then
+    return true
+  end
+  if isEmergencyPlatePrefix(plateKey) then
+    return true
+  end
+  if isEmergencyVehiclePlateInWorld(plateKey) then
+    return true
+  end
+  return false
+end
+
 local function shouldThrottleWraithLookup(source, plateKey)
   local src = tonumber(source) or 0
   if src <= 0 or plateKey == '' then return true end
@@ -1362,6 +1495,9 @@ local function lookupWraithPlateStatus(source, camera, plateRaw)
       return
     end
     if payload.alert ~= true then
+      return
+    end
+    if shouldIgnoreWraithSeatbeltAlert(plateKey, payload) then
       return
     end
 
