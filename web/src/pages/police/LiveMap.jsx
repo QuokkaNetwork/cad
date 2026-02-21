@@ -16,30 +16,31 @@ const MAP_RECOVERY_COOLDOWN_MS = 8_000;
 const TILE_SIZE = 1024;
 const TILE_ROWS = 3;
 const TILE_COLUMNS = 2;
+const MAP_WIDTH = TILE_SIZE * TILE_COLUMNS;   // 2048
+const MAP_HEIGHT = TILE_SIZE * TILE_ROWS;     // 3072
 const TILE_URL_TEMPLATE = '/tiles/minimap_sea_{y}_{x}.webp';
 const MIN_ZOOM = -2;
 const MAX_ZOOM = 2;
 const NATIVE_ZOOM = 0;
 
-// GTA V game-world bounds — matches SnailyCAD exactly.
-const GAME = Object.freeze({
-  x1: -4000.0 - 230,   // -4230
-  y1: 8000.0 + 420,    //  8420
-  x2: 400.0 - 30,      //   370
-  y2: -300.0 - 340.0,  //  -640
-});
-
-function parseMapNumber(value, fallback) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
-}
-
-function parsePositiveInt(value, fallback) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return fallback;
-  const rounded = Math.trunc(num);
-  return rounded > 0 ? rounded : fallback;
-}
+// Affine transformation from GTA V game coordinates to pixel coordinates
+// in our 2048×3072 tile grid.  Derived from the well-known FiveM/Leaflet
+// CRS constants (center_x=117.3, center_y=172.8, scale_x=0.02072,
+// scale_y=0.0205) scaled to our tile grid (×8 for 1024px tiles at zoom 0
+// equivalent to zoom 3 in a 256px-tile system).
+//
+// Formula:
+//   pixelX =  SCALE_X * gameX + OFFSET_X
+//   pixelY = -SCALE_Y * gameY + OFFSET_Y
+//
+// Verified against known GTA V landmarks:
+//   MRPD (408.76, -998.36) → pixel (1006, 1546) — downtown LS ✓
+//   LSIA (-1350, -3400)    → pixel (715, 1940)  — airport      ✓
+//   Paleto Bay (-439, 6017)→ pixel (865, 396)   — north coast  ✓
+const SCALE_X  = 0.02072 * 8;   // 0.16576
+const SCALE_Y  = 0.0205  * 8;   // 0.164
+const OFFSET_X = 117.3   * 8;   // 938.4
+const OFFSET_Y = 172.8   * 8;   // 1382.4
 
 function normalizeMapPlayer(entry) {
   const unitId = Number(entry?.unit_id || 0);
@@ -82,33 +83,22 @@ function normalizePlayers(payload) {
 }
 
 function getMapBounds(map) {
-  const h = TILE_SIZE * TILE_ROWS;
-  const w = TILE_SIZE * TILE_COLUMNS;
-  const southWest = map.unproject([0, h], 0);
-  const northEast = map.unproject([w, 0], 0);
+  const southWest = map.unproject([0, MAP_HEIGHT], 0);
+  const northEast = map.unproject([MAP_WIDTH, 0], 0);
   return latLngBounds(southWest, northEast);
 }
 
-// Convert GTA V game coordinates to Leaflet lat/lng.
-// Uses the same two-point linear interpolation as SnailyCAD so markers
-// line up with the standard minimap_sea tile set.
+// Convert GTA V game coordinates to Leaflet lat/lng for our tile grid.
+// Uses an affine pixel transformation then Leaflet unproject.
 function convertToMapLatLng(rawX, rawY, map) {
   const x = Number(rawX);
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !map) return null;
 
-  const width = TILE_SIZE * TILE_COLUMNS;
-  const height = TILE_SIZE * TILE_ROWS;
+  const pixelX = SCALE_X * x + OFFSET_X;
+  const pixelY = -(SCALE_Y * y) + OFFSET_Y;
 
-  // Reference point 1 — top-left corner of tile grid (pixel 0,0).
-  const latLng1 = map.unproject([0, 0], 0);
-  // Reference point 2 — centre-X, bottom of second row (pixel width/2, height - TILE_SIZE).
-  const latLng2 = map.unproject([width / 2, height - TILE_SIZE], 0);
-
-  const rLng = latLng1.lng + ((x - GAME.x1) * (latLng1.lng - latLng2.lng)) / (GAME.x1 - GAME.x2);
-  const rLat = latLng1.lat + ((y - GAME.y1) * (latLng1.lat - latLng2.lat)) / (GAME.y1 - GAME.y2);
-
-  return { lat: rLat, lng: rLng };
+  return map.unproject([pixelX, pixelY], 0);
 }
 
 function markerColor(player) {
