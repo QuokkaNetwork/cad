@@ -2335,6 +2335,10 @@ router.post('/external-voice/token', requireBridgeAuth, (req, res) => {
     });
   } catch (error) {
     const statusCode = Number(error?.statusCode || 500) || 500;
+    console.warn(
+      `[FiveMBridge][external_voice] token issuance failed game_id=${gameId || 'unknown'} ` +
+      `channel=${channelNumber || 0} status=${statusCode} error=${error?.message || 'unknown'}`
+    );
     return res.status(statusCode).json({
       error: error?.message || 'Failed to issue external voice token',
       details: error?.details || null,

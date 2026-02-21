@@ -4099,11 +4099,23 @@ local function requestExternalVoiceTokenForSource(source, options)
 
     if status ~= 200 then
       if status ~= 0 then
+        local errorMessage = ''
+        local okError, parsedError = pcall(json.decode, body or '{}')
+        if okError and type(parsedError) == 'table' then
+          errorMessage = trim(parsedError.error or parsedError.message or '')
+        end
         print(('[cad_bridge][external_voice] token request failed src=%s channel=%s status=%s'):format(
           tostring(src),
           tostring(channelNumber),
           tostring(status)
         ))
+        if errorMessage ~= '' then
+          print(('[cad_bridge][external_voice] token request error src=%s channel=%s details=%s'):format(
+            tostring(src),
+            tostring(channelNumber),
+            tostring(errorMessage)
+          ))
+        end
       end
       return
     end

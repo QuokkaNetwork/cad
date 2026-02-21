@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
@@ -41,6 +41,8 @@ export default function Voice() {
   const [channelFilter, setChannelFilter] = useState('');
   const [externalTransport, setExternalTransport] = useState(null);
   const [externalSession, setExternalSession] = useState(null);
+  const externalTokenRefreshInFlightRef = useRef(false);
+  const externalReconnectAttemptAtRef = useRef(0);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
@@ -331,6 +333,55 @@ export default function Voice() {
     }
     return result;
   }, [externalVoiceClient, isExternalBehavior]);
+
+  // Keep external dispatcher token/session alive and auto-recover if transport drops.
+  useEffect(() => {
+    if (!isExternalBehavior || !externalVoiceClient) return undefined;
+    if (!externalSession || Number(currentChannel || 0) <= 0) return undefined;
+
+    const timer = setInterval(() => {
+      if (externalTokenRefreshInFlightRef.current) return;
+
+      const nowMs = Date.now();
+      const ttlSeconds = Number(externalSession?.expiresInSeconds || 0) || 0;
+      const issuedAtMs = Number(externalSession?.issuedAtMs || 0) || 0;
+      const expiresAtMs = ttlSeconds > 0 ? (issuedAtMs + (ttlSeconds * 1000)) : 0;
+      const expiresSoon = expiresAtMs > 0 && (expiresAtMs - nowMs) <= 30000;
+      const disconnected = isExternalConnected !== true;
+      const reconnectAllowed = disconnected && (nowMs - externalReconnectAttemptAtRef.current) >= 10000;
+
+      if (!expiresSoon && !reconnectAllowed) return;
+
+      const refreshChannelNumber = Number(externalSession?.channelNumber || currentChannel || 0) || 0;
+      if (refreshChannelNumber <= 0) return;
+
+      const refreshChannelId = Number(externalSession?.channelId || currentChannelData?.id || 0) || null;
+      const refreshCallSessionId = Number(externalSession?.callSessionId || 0) || null;
+
+      externalTokenRefreshInFlightRef.current = true;
+      if (reconnectAllowed) {
+        externalReconnectAttemptAtRef.current = nowMs;
+      }
+
+      requestExternalToken(refreshChannelId, refreshChannelNumber, {
+        callSessionId: refreshCallSessionId,
+      }).catch((err) => {
+        console.error('External voice token refresh failed:', err);
+      }).finally(() => {
+        externalTokenRefreshInFlightRef.current = false;
+      });
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [
+    currentChannel,
+    currentChannelData,
+    externalSession,
+    externalVoiceClient,
+    isExternalBehavior,
+    isExternalConnected,
+    requestExternalToken,
+  ]);
 
   async function joinChannel(channelId, channelNumber) {
     try {

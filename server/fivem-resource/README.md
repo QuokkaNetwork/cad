@@ -50,7 +50,7 @@ The CAD auto-sync now patches `cad_bridge_base_url` and `cad_bridge_token` direc
   - `POST /api/integration/fivem/external-voice/token`
   via the bridge shared token (`cad_bridge_token`).
 - External provider credentials are configured on the CAD server (`.env`), not in the FiveM resource.
-- In-game NUI external transport client is wired in `ui/external_voice_bridge.js` and currently loads the LiveKit browser SDK from CDN at runtime.
+- In-game NUI external transport client is wired in `ui/external_voice_bridge.js` and now loads the bundled `ui/livekit-client.umd.min.js` first (with CDN fallback if needed).
 
 CAD-side fine delivery options:
 - In Admin > System Settings, `Fine Delivery Mode = Direct QBX DB` applies fines directly in the QBX players table.
