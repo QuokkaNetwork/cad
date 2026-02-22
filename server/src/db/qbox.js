@@ -122,14 +122,7 @@ function resolveAddressFromCharInfo(info = {}) {
 function formatAddressFromPropertyRow(row = {}) {
   if (!row || typeof row !== 'object') return '';
   const propertyName = normalizeAddressText(row.property_name);
-  const interior = normalizeAddressText(row.property_interior);
-  if (propertyName && interior) {
-    const propertyLower = propertyName.toLowerCase();
-    const interiorLower = interior.toLowerCase();
-    if (propertyLower.includes(interiorLower)) return propertyName;
-    return [propertyName, interior].join('\n');
-  }
-  return propertyName || interior;
+  return propertyName;
 }
 
 async function resolveAddressFromPropertiesTable(poolConn, citizenId, propertiesConfig = {}) {
@@ -140,13 +133,11 @@ async function resolveAddressFromPropertiesTable(poolConn, citizenId, properties
   const propertiesTable = String(propertiesConfig.table || 'properties').trim();
   const propertiesOwnerCol = String(propertiesConfig.ownerCol || 'owner').trim();
   const propertiesNameCol = String(propertiesConfig.nameCol || 'property_name').trim();
-  const propertiesInteriorCol = String(propertiesConfig.interiorCol || 'interior').trim();
-  if (!propertiesTable || !propertiesOwnerCol || !propertiesNameCol || !propertiesInteriorCol) return '';
+  if (!propertiesTable || !propertiesOwnerCol || !propertiesNameCol) return '';
   if (
     !IDENTIFIER_RE.test(propertiesTable)
     || !IDENTIFIER_RE.test(propertiesOwnerCol)
     || !IDENTIFIER_RE.test(propertiesNameCol)
-    || !IDENTIFIER_RE.test(propertiesInteriorCol)
   ) {
     return '';
   }
@@ -154,11 +145,10 @@ async function resolveAddressFromPropertiesTable(poolConn, citizenId, properties
   const tableSql = escapeIdentifier(propertiesTable, 'properties table');
   const ownerColSql = escapeIdentifier(propertiesOwnerCol, 'properties owner column');
   const nameColSql = escapeIdentifier(propertiesNameCol, 'properties name column');
-  const interiorColSql = escapeIdentifier(propertiesInteriorCol, 'properties interior column');
 
   try {
     const [rows] = await poolConn.query(
-      `SELECT ${nameColSql} AS property_name, ${interiorColSql} AS property_interior
+      `SELECT ${nameColSql} AS property_name
        FROM ${tableSql}
        WHERE ${ownerColSql} = ?
        LIMIT 5`,

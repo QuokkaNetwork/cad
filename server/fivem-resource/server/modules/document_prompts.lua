@@ -1,4 +1,5 @@
       first_name = trim(license.first_name or ''),
+      last_name = trim(license.last_name or ''),
       address = trim(license.address or ''),
       expiry_at = trim(license.expiry_at or ''),
       mugshot_url = '',
@@ -6,6 +7,15 @@
 
     if payload.first_name == '' then
       payload.first_name = trim((payload.full_name or ''):match('^([^%s]+)') or '')
+    end
+    if payload.last_name == '' then
+      payload.last_name = trim((payload.full_name or ''):match('(%S+)%s*$') or '')
+      if payload.last_name == payload.first_name then
+        payload.last_name = ''
+      end
+    end
+    if payload.first_name ~= '' and payload.last_name ~= '' then
+      payload.full_name = ('%s %s'):format(payload.first_name, payload.last_name)
     end
 
     -- Fetch the mugshot image server-side and convert to a data URI so the NUI
@@ -15,6 +25,7 @@
 
       TriggerClientEvent('cad_bridge:showIdCard', src, {
         first_name = payload.first_name,
+        last_name = payload.last_name,
         full_name = payload.full_name,
         address = payload.address,
         date_of_birth = payload.date_of_birth,
@@ -31,6 +42,7 @@
         if tonumber(viewerSource) and viewerSource ~= src and GetPlayerName(viewerSource) then
           TriggerClientEvent('cad_bridge:showIdCard', viewerSource, {
           first_name = payload.first_name,
+          last_name = payload.last_name,
           full_name = payload.full_name,
           address = payload.address,
           date_of_birth = payload.date_of_birth,
