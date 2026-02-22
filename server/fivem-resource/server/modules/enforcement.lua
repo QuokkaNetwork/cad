@@ -1490,15 +1490,13 @@ local function applyJail(job)
     if not callbackOk then
       return false, ('xt-prison callback failed: %s'):format(tostring(callbackResult)), false
     end
-    if callbackResult ~= true then
+    if not callbackResult then
       return false, ('xt-prison callback returned %s'):format(tostring(callbackResult)), false
     end
 
-    local message = ('You have been sentenced to %s minute(s)'):format(tostring(minutes))
-    if reason ~= '' then
-      message = message .. (' | %s'):format(reason)
-    end
-    notifyAlert(sourceId, 'CAD Sentence', message, 'error')
+    lib.notify(sourceId, {
+      title = 'Sent Player to Jail'
+    })
     return true, '', false
   end
 
@@ -1702,16 +1700,19 @@ pollJailJobs = function()
     end
 
     for _, job in ipairs(jobs) do
-      local success, err, transient = applyJail(job)
-      if success then
-        request('POST', ('/api/integration/fivem/jail-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
-      elseif transient then
-        -- Keep pending and retry when the target character is online.
-      else
-        request('POST', ('/api/integration/fivem/jail-jobs/%s/failed'):format(tostring(job.id)), {
-          error = err or 'Jail adapter failed',
-        }, function() end)
-      end
+      -- Spawn a thread so lib.callback.await can yield (PerformHttpRequest callbacks are non-yieldable).
+      CreateThread(function()
+        local success, err, transient = applyJail(job)
+        if success then
+          request('POST', ('/api/integration/fivem/jail-jobs/%s/sent'):format(tostring(job.id)), {}, function() end)
+        elseif transient then
+          -- Keep pending and retry when the target character is online.
+        else
+          request('POST', ('/api/integration/fivem/jail-jobs/%s/failed'):format(tostring(job.id)), {
+            error = err or 'Jail adapter failed',
+          }, function() end)
+        end
+      end)
     end
   end)
 end
