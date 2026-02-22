@@ -1229,7 +1229,7 @@ window.addEventListener("message", function onMessage(event) {
     return;
   }
   if (message.action === "cadBridgeMiniCad:hide") {
-    if (!isMiniCadClosestPromptActive()) hideMiniCadSilently();
+    hideMiniCadSilently();
     return;
   }
   if (message.action === "cadBridgeMugshot:showBackdrop") {
@@ -1280,6 +1280,8 @@ var miniCadPostal = document.getElementById("miniCadPostal");
 var miniCadDescription = document.getElementById("miniCadDescription");
 var miniCadDetachBtn = document.getElementById("miniCadDetach");
 var miniCadHideBtn = document.getElementById("miniCadHideBtn");
+var miniCadTab = document.getElementById("miniCadTab");
+var miniCadTabLabel = document.getElementById("miniCadTabLabel");
 var miniCadClosestPromptPanel = document.getElementById("miniCadClosestPrompt");
 var miniCadClosestLabel = document.getElementById("miniCadClosestLabel");
 var miniCadClosestTimer = document.getElementById("miniCadClosestTimer");
@@ -1298,22 +1300,39 @@ function isMiniCadClosestPromptActive() {
   return !!(miniCadClosestPromptData && miniCadClosestPromptData.id);
 }
 
+function hasMiniCadContent() {
+  return isMiniCadClosestPromptActive() || !!(miniCadData && miniCadData.call_id);
+}
+
+function updateMiniCadTabVisibility() {
+  if (!miniCadTab) return;
+  if (miniCadOpen || !hasMiniCadContent()) {
+    miniCadTab.classList.add("hidden");
+    return;
+  }
+  miniCadTab.classList.remove("hidden");
+  if (miniCadTabLabel) {
+    miniCadTabLabel.textContent = isMiniCadClosestPromptActive() ? "Mini-CAD Offer (Insert)" : "Mini-CAD (Insert)";
+  }
+}
+
 function showMiniCad() {
   if (!miniCadPopup) return;
-  if (!isMiniCadClosestPromptActive() && (!miniCadData || !miniCadData.call_id)) return;
+  if (!hasMiniCadContent()) return;
   miniCadOpen = true;
   miniCadPopup.classList.remove("hidden");
+  updateMiniCadTabVisibility();
 }
 
 function hideMiniCadSilently() {
   if (!miniCadPopup) return;
   miniCadOpen = false;
   miniCadPopup.classList.add("hidden");
+  updateMiniCadTabVisibility();
 }
 
 function hideMiniCad() {
   if (!miniCadPopup) return;
-  if (isMiniCadClosestPromptActive()) return;
   hideMiniCadSilently();
   postNui("cadBridgeMiniCadHidden", {}).catch(function ignore() {});
 }
@@ -1365,7 +1384,7 @@ function renderMiniCadClosestPrompt() {
   var prompt = miniCadClosestPromptData || {};
   if (miniCadCallView) miniCadCallView.classList.add("hidden");
   miniCadClosestPromptPanel.classList.remove("hidden");
-  if (miniCadHideBtn) miniCadHideBtn.disabled = true;
+  if (miniCadHideBtn) miniCadHideBtn.disabled = false;
 
   var deptShort = String(prompt.department_short_name || "").trim();
   var deptName = String(prompt.department_name || "").trim();
@@ -1425,6 +1444,7 @@ function clearMiniCadClosestPrompt() {
   if ((!miniCadData || !miniCadData.call_id) && miniCadOpen) {
     hideMiniCadSilently();
   }
+  updateMiniCadTabVisibility();
 }
 
 function miniCadClosestDecision(action) {
@@ -1465,10 +1485,12 @@ function updateMiniCad(payload) {
   if (!miniCadData || !miniCadData.call_id) {
     renderMiniCadCall();
     if (miniCadOpen && !isMiniCadClosestPromptActive()) hideMiniCadSilently();
+    updateMiniCadTabVisibility();
     return;
   }
 
   renderMiniCadCall();
+  updateMiniCadTabVisibility();
 }
 
 function renderMiniCadCall() {
@@ -1516,6 +1538,12 @@ function miniCadDetach() {
   if (callId > 0) {
     postNui("cadBridgeMiniCadDetach", { call_id: callId }).catch(function ignore() {});
   }
+}
+
+function revealMiniCadFromTab() {
+  if (!hasMiniCadContent()) return;
+  showMiniCad();
+  postNui("cadBridgeMiniCadShown", {}).catch(function ignore() {});
 }
 
 window.force000Open = function force000Open(departmentsPayload) {
@@ -1592,6 +1620,14 @@ function initialize() {
   // Mini-CAD bindings.
   if (miniCadHideBtn) miniCadHideBtn.addEventListener("click", hideMiniCad);
   if (miniCadDetachBtn) miniCadDetachBtn.addEventListener("click", miniCadDetach);
+  if (miniCadTab) {
+    miniCadTab.addEventListener("click", revealMiniCadFromTab);
+    miniCadTab.addEventListener("keydown", function onMiniCadTabKeyDown(event) {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      revealMiniCadFromTab();
+    });
+  }
   if (miniCadClosestAttachBtn) miniCadClosestAttachBtn.addEventListener("click", function onMiniCadClosestAttach() {
     miniCadClosestDecision("accept");
   });
@@ -1617,6 +1653,8 @@ function initialize() {
     .catch(function onReadyError(err) {
       console.error("[CAD UI] Ready signal failed:", err);
     });
+
+  updateMiniCadTabVisibility();
 }
 
 if (document.readyState === "loading") {

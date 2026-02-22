@@ -1,5 +1,5 @@
 local miniCadVisible = false
-local miniCadUserHidden = false  -- true when user manually hid with PageUp
+local miniCadUserHidden = false  -- true when user manually hid with Insert
 local miniCadData = nil
 local miniCadClosestPrompt = nil
 local miniCadLastCallId = 0
@@ -90,16 +90,11 @@ local function updateMiniCad(data)
 end
 
 local function toggleMiniCad()
-  if type(miniCadClosestPrompt) == 'table' then
-    -- Closest-call prompts must stay visible until accepted/declined.
-    return
-  end
-
   if miniCadVisible then
     miniCadUserHidden = true
     hideMiniCad()
   else
-    if hasActiveMiniCadCall(miniCadData) then
+    if hasActiveMiniCadCall(miniCadData) or type(miniCadClosestPrompt) == 'table' then
       miniCadUserHidden = false
       showMiniCad()
     end
@@ -143,15 +138,30 @@ end
 
 -- NUI callback: user clicked hide button.
 RegisterNUICallback('cadBridgeMiniCadHidden', function(_data, cb)
-  if type(miniCadClosestPrompt) == 'table' then
-    showMiniCad()
-    if cb then cb({ ok = false, blocked = true }) end
-    return
-  end
-
   miniCadVisible = false
   miniCadUserHidden = true
   if cb then cb({ ok = true }) end
+end)
+
+-- NUI callback: user revealed Mini-CAD from hidden tab.
+RegisterNUICallback('cadBridgeMiniCadShown', function(_data, cb)
+  if type(miniCadClosestPrompt) == 'table' then
+    miniCadVisible = true
+    miniCadUserHidden = false
+    showMiniCad()
+    if cb then cb({ ok = true }) end
+    return
+  end
+
+  if hasActiveMiniCadCall(miniCadData) then
+    miniCadVisible = true
+    miniCadUserHidden = false
+    showMiniCad()
+    if cb then cb({ ok = true }) end
+    return
+  end
+
+  if cb then cb({ ok = false, error = 'no_active_call' }) end
 end)
 
 -- NUI callback: user clicked detach from call.
@@ -225,12 +235,12 @@ RegisterNetEvent('cad_bridge:miniCadUpdate', function(payload)
   updateMiniCad(payload)
 end)
 
--- Toggle command bound to PageUp.
+-- Toggle command bound to Insert.
 RegisterCommand(miniCadToggleCommand, function()
   toggleMiniCad()
 end, false)
 
-RegisterKeyMapping(miniCadToggleCommand, 'Toggle Mini-CAD call popup', 'keyboard', 'PAGEUP')
+RegisterKeyMapping(miniCadToggleCommand, 'Toggle Mini-CAD call popup', 'keyboard', 'INSERT')
 
 RegisterCommand(miniCadDetachCommand, function()
   detachCurrentMiniCadCall()

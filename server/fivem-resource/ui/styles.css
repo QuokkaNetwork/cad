@@ -898,6 +898,48 @@ select {
 }
 
 /* Mini-CAD Popup */
+.minicad-tab {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 10019;
+  appearance: none;
+  border: 1px solid var(--cad-border);
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  background: linear-gradient(180deg, var(--cad-card), var(--cad-surface));
+  color: var(--cad-ink);
+  padding: 0.42rem 0.5rem 0.42rem 0.42rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  box-shadow: -2px 8px 18px rgba(0, 0, 0, 0.55);
+  transition: background 120ms ease, color 120ms ease;
+  pointer-events: auto;
+}
+
+.minicad-tab:hover {
+  background: var(--cad-surface);
+  color: var(--cad-ink);
+}
+
+.minicad-tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cad-accent-light);
+  box-shadow: 0 0 8px rgba(43, 127, 255, 0.55);
+}
+
+.minicad-tab-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
 .minicad {
   position: fixed;
   top: 50%;
@@ -910,12 +952,14 @@ select {
   display: flex;
   flex-direction: column;
   border-radius: 6px;
-  border: 1px solid #3a3a3a;
-  background: #1a1a1a;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+  border: 1px solid var(--cad-border);
+  background: linear-gradient(180deg, var(--cad-card), var(--cad-surface));
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.62),
+    0 0 0 1px rgba(0, 82, 194, 0.12) inset;
   font-family: "Segoe UI", Tahoma, sans-serif;
   font-size: 12px;
-  color: #d4d4d4;
+  color: var(--cad-ink);
   pointer-events: auto;
 }
 
@@ -929,8 +973,8 @@ select {
   align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.55rem;
-  background: #2a2a2a;
-  border-bottom: 1px solid #3a3a3a;
+  background: var(--cad-surface);
+  border-bottom: 1px solid var(--cad-border);
   user-select: none;
 }
 
@@ -941,7 +985,7 @@ select {
   font-size: 11px;
   font-weight: 700;
   color: #fff;
-  background: #c0392b;
+  background: linear-gradient(135deg, var(--cad-accent), var(--cad-accent-light));
   border-radius: 3px;
   padding: 0.15rem 0.4rem;
   line-height: 1;
@@ -953,7 +997,7 @@ select {
   flex: 1;
   font-size: 12px;
   font-weight: 600;
-  color: #ccc;
+  color: var(--cad-ink);
   text-align: center;
   letter-spacing: 0.02em;
 }
@@ -965,9 +1009,9 @@ select {
 
 .minicad-icon-btn {
   appearance: none;
-  border: 1px solid #444;
-  background: #333;
-  color: #aaa;
+  border: 1px solid var(--cad-border);
+  background: var(--cad-bg);
+  color: var(--cad-muted);
   width: 22px;
   height: 22px;
   border-radius: 3px;
@@ -977,13 +1021,14 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 100ms ease, color 100ms ease;
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
   padding: 0;
 }
 
 .minicad-icon-btn:hover {
-  background: #444;
-  color: #eee;
+  background: var(--cad-surface);
+  color: var(--cad-ink);
+  border-color: var(--cad-accent-light);
 }
 
 .minicad-body {
@@ -997,9 +1042,9 @@ select {
 }
 
 .minicad-closest {
-  border: 1px solid #3a3a3a;
+  border: 1px solid var(--cad-border);
   border-radius: 6px;
-  background: #1f1f1f;
+  background: var(--cad-bg);
   padding: 0.45rem;
   margin-bottom: 0.5rem;
 }
@@ -1019,7 +1064,7 @@ select {
 .minicad-closest-label {
   font-size: 11px;
   font-weight: 700;
-  color: #e67e22;
+  color: var(--cad-accent-light);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -1027,13 +1072,13 @@ select {
 .minicad-closest-timer {
   font-size: 11px;
   font-weight: 700;
-  color: #f1c40f;
+  color: var(--cad-amber);
 }
 
 .minicad-closest-title {
   font-size: 12px;
   font-weight: 700;
-  color: #fff;
+  color: var(--cad-ink);
   margin-bottom: 0.2rem;
   text-transform: uppercase;
   word-break: break-word;
@@ -1041,14 +1086,14 @@ select {
 
 .minicad-closest-meta {
   font-size: 11px;
-  color: #bbb;
+  color: var(--cad-muted);
   margin-bottom: 0.2rem;
   word-break: break-word;
 }
 
 .minicad-closest-location {
   font-size: 11px;
-  color: #cfcfcf;
+  color: var(--cad-ink);
   margin-bottom: 0.35rem;
   word-break: break-word;
 }
@@ -1059,23 +1104,23 @@ select {
 }
 
 .minicad-closest-attach {
-  border-color: #1f7a3f;
-  background: #1f7a3f;
+  border-color: var(--cad-accent);
+  background: linear-gradient(135deg, var(--cad-accent), var(--cad-accent-light));
   color: #fff;
 }
 
 .minicad-closest-attach:hover {
-  background: #24914a;
+  background: var(--cad-accent-light);
 }
 
 .minicad-closest-decline {
-  border-color: #8b2f2f;
-  background: #8b2f2f;
+  border-color: #b91c1c;
+  background: #b91c1c;
   color: #fff;
 }
 
 .minicad-closest-decline:hover {
-  background: #a13636;
+  background: #dc2626;
 }
 
 .minicad-call-header {
@@ -1086,14 +1131,14 @@ select {
 .minicad-job-code {
   font-size: 14px;
   font-weight: 700;
-  color: #e74c3c;
+  color: var(--cad-accent-light);
   letter-spacing: 0.02em;
 }
 
 .minicad-title {
   font-size: 13px;
   font-weight: 700;
-  color: #fff;
+  color: var(--cad-ink);
   text-transform: uppercase;
   margin-top: 0.1rem;
 }
@@ -1101,7 +1146,7 @@ select {
 .minicad-caller {
   margin-top: 0.15rem;
   font-size: 11px;
-  color: #9ec7ff;
+  color: var(--cad-accent-light);
   text-transform: none;
   word-break: break-word;
 }
@@ -1109,7 +1154,7 @@ select {
 .minicad-location {
   text-align: center;
   font-size: 11px;
-  color: #b0b0b0;
+  color: var(--cad-muted);
   margin-bottom: 0.3rem;
   word-break: break-word;
 }
@@ -1168,21 +1213,22 @@ select {
 .minicad-nav-btn {
   flex: 1;
   appearance: none;
-  border: 1px solid #444;
-  background: #2a2a2a;
-  color: #bbb;
+  border: 1px solid var(--cad-border);
+  background: var(--cad-bg);
+  color: var(--cad-muted);
   border-radius: 4px;
   padding: 0.35rem 0.3rem;
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   text-align: center;
-  transition: background 100ms ease, color 100ms ease;
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
 }
 
 .minicad-nav-btn:hover {
-  background: #3a3a3a;
-  color: #fff;
+  background: var(--cad-surface);
+  color: var(--cad-ink);
+  border-color: var(--cad-accent-light);
 }
 
 .minicad-nav-btn:disabled {
@@ -1191,7 +1237,7 @@ select {
 }
 
 .minicad-section {
-  border-top: 1px solid #333;
+  border-top: 1px solid var(--cad-border);
   padding-top: 0.4rem;
 }
 
@@ -1199,26 +1245,27 @@ select {
   margin: 0 0 0.3rem;
   font-size: 11px;
   font-weight: 700;
-  color: #c0392b;
+  color: var(--cad-accent-light);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .minicad-description {
   font-size: 11px;
-  color: #ccc;
+  color: var(--cad-ink);
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 140px;
   overflow-y: auto;
-  background: #222;
+  background: var(--cad-bg);
+  border: 1px solid var(--cad-border);
   border-radius: 4px;
   padding: 0.4rem;
 }
 
 .minicad-description:empty::after {
   content: 'No description provided.';
-  color: #666;
+  color: var(--cad-muted);
   font-style: italic;
 }

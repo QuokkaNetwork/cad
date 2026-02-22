@@ -43,8 +43,13 @@ const pendingRouteJobs = new Map();
 const pendingClosestCallPrompts = new Map();
 const closestCallDeclines = new Map();
 const closestCallDeptEscalations = new Map();
+const pendingCallAutoCloseTimers = new Map();
 const CALL_STATUS_PENDING_DISPATCH = 'pending_dispatch';
 const CALL_STATUS_ACTIVE = 'active';
+const MINICAD_UNASSIGNED_CALL_AUTOCLOSE_DELAY_MS = Math.max(
+  1_000,
+  Number.parseInt(process.env.FIVEM_MINICAD_UNASSIGNED_CALL_AUTOCLOSE_DELAY_MS || '10000', 10) || 10_000
+);
 const CLOSEST_CALL_DECLINE_COOLDOWN_MS = Math.max(
   10_000,
   Number.parseInt(process.env.FIVEM_CLOSEST_CALL_DECLINE_COOLDOWN_MS || '90000', 10) || 90_000
@@ -1267,6 +1272,47 @@ function isPendingDispatchCall(call) {
   return normalizeCallStatus(call?.status) === CALL_STATUS_PENDING_DISPATCH;
 }
 
+function clearPendingCallAutoClose(callId) {
+  const normalizedCallId = Number(callId || 0);
+  if (!normalizedCallId) return;
+  const handle = pendingCallAutoCloseTimers.get(normalizedCallId);
+  if (handle) {
+    clearTimeout(handle);
+  }
+  pendingCallAutoCloseTimers.delete(normalizedCallId);
+}
+
+function getAssignedUnitCount(call) {
+  if (!Array.isArray(call?.assigned_units)) return 0;
+  return call.assigned_units.reduce((count, unit) => (
+    Number(unit?.id || 0) > 0 ? count + 1 : count
+  ), 0);
+}
+
+function schedulePendingCallAutoClose(callId) {
+  const normalizedCallId = Number(callId || 0);
+  if (!normalizedCallId) return;
+
+  clearPendingCallAutoClose(normalizedCallId);
+  const handle = setTimeout(() => {
+    pendingCallAutoCloseTimers.delete(normalizedCallId);
+
+    const call = Calls.findById(normalizedCallId);
+    if (!call) return;
+    if (normalizeCallStatus(call.status) === 'closed') return;
+    if (getAssignedUnitCount(call) > 0) return;
+
+    Calls.close(normalizedCallId);
+    audit(null, 'fivem_call_autoclosed_unassigned', {
+      callId: normalizedCallId,
+      delay_ms: MINICAD_UNASSIGNED_CALL_AUTOCLOSE_DELAY_MS,
+      source: 'fivem_bridge_minicad_detach',
+    });
+  }, MINICAD_UNASSIGNED_CALL_AUTOCLOSE_DELAY_MS);
+
+  pendingCallAutoCloseTimers.set(normalizedCallId, handle);
+}
+
 function getCallPromptId(callId, departmentId) {
   return `closest:${Number(callId || 0)}:${Number(departmentId || 0)}`;
 }
@@ -1768,6 +1814,7 @@ bus.on('call:update', ({ call }) => {
 });
 
 bus.on('call:assign', ({ call, unit }) => {
+  clearPendingCallAutoClose(call?.id);
   clearClosestCallPrompt(call?.id);
   clearClosestCallDeclines(call?.id);
   clearClosestCallEscalations(call?.id);
@@ -1780,6 +1827,22 @@ bus.on('call:assign', ({ call, unit }) => {
 });
 
 bus.on('call:unassign', ({ call, unit, unit_id, removed }) => {
+  const resolvedCallId = Number(call?.id || 0);
+  const resolvedCall = resolvedCallId
+    ? (Calls.findById(resolvedCallId) || call)
+    : call;
+  const resolvedCallStatus = normalizeCallStatus(resolvedCall?.status);
+  const resolvedAssignedCount = getAssignedUnitCount(resolvedCall);
+  if (resolvedCallId > 0) {
+    if (resolvedCallStatus === 'closed') {
+      clearPendingCallAutoClose(resolvedCallId);
+    } else if (resolvedAssignedCount <= 0) {
+      schedulePendingCallAutoClose(resolvedCallId);
+    } else {
+      clearPendingCallAutoClose(resolvedCallId);
+    }
+  }
+
   const resolvedUnit = unit || Units.findById(Number(unit_id || 0));
   const resolvedUnitId = resolvedUnit?.id || unit_id;
   clearRouteJobsForAssignment(call?.id, resolvedUnitId);
@@ -1797,6 +1860,7 @@ bus.on('call:unassign', ({ call, unit, unit_id, removed }) => {
 
 bus.on('call:close', ({ call }) => {
   const callId = Number(call?.id || 0);
+  clearPendingCallAutoClose(callId);
   clearClosestCallPrompt(callId);
   clearClosestCallDeclines(callId);
   clearClosestCallEscalations(callId);
@@ -2994,11 +3058,24 @@ router.post('/unit-detach-call', requireBridgeAuth, (req, res) => {
   if (!isAssigned) return res.status(400).json({ error: 'Unit is not assigned to this call' });
 
   Calls.unassignUnit(callId, unit.id);
-  Units.update(unit.id, { status: 'busy' });
+  Units.update(unit.id, { status: 'available' });
   const refreshedUnit = Units.findById(unit.id) || unit;
-  const updated = Calls.findById(callId);
+  const updated = Calls.findById(callId) || call;
+  const updatedStatus = normalizeCallStatus(updated?.status);
+  const assignedCount = getAssignedUnitCount(updated);
+  const shouldScheduleAutoClose = updatedStatus !== 'closed' && assignedCount <= 0;
+  if (shouldScheduleAutoClose) {
+    schedulePendingCallAutoClose(callId);
+  } else {
+    clearPendingCallAutoClose(callId);
+  }
 
   bus.emit('unit:update', { departmentId: refreshedUnit.department_id, unit: refreshedUnit });
+  bus.emit('unit:status_available', {
+    departmentId: refreshedUnit.department_id,
+    unit: refreshedUnit,
+    call: updated || null,
+  });
   bus.emit('call:unassign', {
     departmentId: call.department_id,
     call: updated,
@@ -3007,7 +3084,11 @@ router.post('/unit-detach-call', requireBridgeAuth, (req, res) => {
     removed: true,
   });
 
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    auto_close_scheduled: shouldScheduleAutoClose,
+    auto_close_delay_ms: shouldScheduleAutoClose ? MINICAD_UNASSIGNED_CALL_AUTOCLOSE_DELAY_MS : 0,
+  });
 });
 
 module.exports = router;
