@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quokka Live Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #0a0a1a;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .leaflet-container {
+            background: #0d1b2a;
+        }
+
+        /* Status bar */
+        #status-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 40px;
+            background: rgba(10, 10, 26, 0.92);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 1000;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 13px;
+        }
+
+        #status-bar .title {
+            font-weight: 600;
+            color: #7aa2f7;
+            letter-spacing: 0.5px;
+        }
+
+        #status-bar .info {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        #status-bar .info span {
+            color: #888;
+        }
+
+        #status-bar .info .value {
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+
+        .connection-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+        .connection-dot.connected { background: #9ece6a; }
+        .connection-dot.disconnected { background: #f7768e; }
+
+        /* Player list sidebar */
+        #sidebar {
+            position: fixed;
+            top: 40px;
+            right: 0;
+            width: 320px;
+            height: calc(100vh - 40px);
+            background: rgba(10, 10, 26, 0.92);
+            backdrop-filter: blur(10px);
+            border-left: 1px solid rgba(255, 255, 255, 0.08);
+            z-index: 999;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+        }
+
+        #sidebar.collapsed {
+            transform: translateX(320px);
+        }
+
+        #sidebar-toggle {
+            position: fixed;
+            top: 50px;
+            right: 320px;
+            z-index: 1000;
+            background: rgba(10, 10, 26, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-right: none;
+            color: #7aa2f7;
+            padding: 8px 6px;
+            cursor: pointer;
+            border-radius: 4px 0 0 4px;
+            font-size: 14px;
+            transition: right 0.3s ease;
+        }
+
+        #sidebar-toggle.collapsed {
+            right: 0;
+        }
+
+        #sidebar h3 {
+            padding: 12px 16px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #666;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .player-item {
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .player-item:hover {
+            background: rgba(122, 162, 247, 0.08);
+        }
+
+        .player-item .player-name {
+            font-weight: 600;
+            font-size: 13px;
+            color: #c0caf5;
+            margin-bottom: 3px;
+        }
+
+        .player-item .player-location {
+            font-size: 11px;
+            color: #666;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .player-item .player-meta {
+            display: flex;
+            gap: 8px;
+            margin-top: 4px;
+            font-size: 10px;
+        }
+
+        .player-item .player-meta .tag {
+            padding: 1px 6px;
+            border-radius: 3px;
+            background: rgba(122, 162, 247, 0.15);
+            color: #7aa2f7;
+        }
+
+        .player-item .player-meta .tag.siren {
+            background: rgba(247, 118, 142, 0.15);
+            color: #f7768e;
+            animation: pulse-siren 1s infinite;
+        }
+
+        .player-item .player-meta .tag.weapon {
+            background: rgba(224, 175, 104, 0.15);
+            color: #e0af68;
+        }
+
+        @keyframes pulse-siren {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Custom map markers */
+        .player-marker {
+            position: relative;
+        }
+
+        .player-marker-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #7aa2f7;
+            border: 2px solid #fff;
+            box-shadow: 0 0 6px rgba(122, 162, 247, 0.6);
+        }
+
+        .player-marker-dot.police {
+            background: #7aa2f7;
+            box-shadow: 0 0 8px rgba(122, 162, 247, 0.8);
+        }
+
+        .player-marker-dot.heli {
+            background: #bb9af7;
+            box-shadow: 0 0 8px rgba(187, 154, 247, 0.8);
+        }
+
+        .player-marker-dot.tow {
+            background: #e0af68;
+            box-shadow: 0 0 8px rgba(224, 175, 104, 0.8);
+        }
+
+        .player-marker-dot.civilian {
+            background: #9ece6a;
+            box-shadow: 0 0 6px rgba(158, 206, 106, 0.6);
+        }
+
+        .player-marker-dot.siren-active {
+            animation: siren-flash 0.6s infinite alternate;
+        }
+
+        @keyframes siren-flash {
+            0% { box-shadow: 0 0 10px rgba(247, 118, 142, 0.9), 0 0 20px rgba(247, 118, 142, 0.4); }
+            100% { box-shadow: 0 0 10px rgba(122, 162, 247, 0.9), 0 0 20px rgba(122, 162, 247, 0.4); }
+        }
+
+        .player-marker-label {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(10, 10, 26, 0.85);
+            color: #c0caf5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            white-space: nowrap;
+            pointer-events: none;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        /* Popup styling */
+        .leaflet-popup-content-wrapper {
+            background: rgba(10, 10, 26, 0.95);
+            color: #e0e0e0;
+            border: 1px solid rgba(122, 162, 247, 0.3);
+            border-radius: 8px;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        .leaflet-popup-tip {
+            background: rgba(10, 10, 26, 0.95);
+        }
+
+        .leaflet-popup-content {
+            margin: 10px 14px;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .leaflet-popup-content strong {
+            color: #7aa2f7;
+        }
+
+        /* Scrollbar */
+        #sidebar::-webkit-scrollbar { width: 4px; }
+        #sidebar::-webkit-scrollbar-track { background: transparent; }
+        #sidebar::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+        /* No players message */
+        #no-players {
+            text-align: center;
+            padding: 40px 20px;
+            color: #444;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div id="status-bar">
+        <span class="title">QUOKKA LIVE MAP</span>
+        <div class="info">
+            <span>Players: <span class="value" id="player-count">0</span></span>
+            <span>
+                <span class="connection-dot disconnected" id="connection-dot"></span>
+                <span id="connection-status">Connecting...</span>
+            </span>
+        </div>
+    </div>
+
+    <button id="sidebar-toggle" onclick="toggleSidebar()">&#9776;</button>
+
+    <div id="sidebar">
+        <h3>Active Players</h3>
+        <div id="player-list">
+            <div id="no-players">No players online</div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        // ============================================================
+        // CONFIGURATION
+        // ============================================================
+
+        var CONFIG = {
+            // Socket.IO connects to the same host:port as the web page
+            socketUrl: window.location.protocol + "//" + window.location.host,
+
+            // Tile grid settings - tiles named minimap_sea_{row}_{col}.png
+            tilePrefix: "minimap_sea",
+            tileExt: "png",
+            gridCols: 2,    // columns (0 to gridCols-1)
+            gridRows: 3,    // rows (0 to gridRows-1)
+
+            // GTA V game coordinate bounds that the tile grid covers
+            // Adjust these if player markers don't line up with the map
+            mapMinX: -3000,
+            mapMaxX: 4500,
+            mapMinY: -4300,
+            mapMaxY: 8000,
+
+            // Zoom levels
+            minZoom: -3,
+            maxZoom: 5,
+
+            // Show player name labels on map
+            showLabels: true
+        };
+
+        // ============================================================
+        // MAP SETUP
+        // ============================================================
+
+        // Use Leaflet CRS.Simple - game coords map directly as lat=y, lng=x
+        var map = L.map("map", {
+            crs: L.CRS.Simple,
+            minZoom: CONFIG.minZoom,
+            maxZoom: CONFIG.maxZoom,
+            preferCanvas: true,
+            zoomControl: false
+        });
+
+        // Calculate how wide/tall each tile covers in game coordinates
+        var tileGameWidth = (CONFIG.mapMaxX - CONFIG.mapMinX) / CONFIG.gridCols;
+        var tileGameHeight = (CONFIG.mapMaxY - CONFIG.mapMinY) / CONFIG.gridRows;
+
+        // Load each tile as an image overlay at its exact game coordinate bounds
+        for (var row = 0; row < CONFIG.gridRows; row++) {
+            for (var col = 0; col < CONFIG.gridCols; col++) {
+                var west = CONFIG.mapMinX + col * tileGameWidth;
+                var east = west + tileGameWidth;
+                var north = CONFIG.mapMaxY - row * tileGameHeight;
+                var south = north - tileGameHeight;
+
+                var tileBounds = [[south, west], [north, east]];
+                var tileUrl = "/tiles/" + CONFIG.tilePrefix + "_" + row + "_" + col + "." + CONFIG.tileExt;
+
+                L.imageOverlay(tileUrl, tileBounds).addTo(map);
+            }
+        }
+
+        // Fit the map to show the entire GTA V world, zoomed out and centered
+        var mapBounds = [[CONFIG.mapMinY, CONFIG.mapMinX], [CONFIG.mapMaxY, CONFIG.mapMaxX]];
+        map.fitBounds(mapBounds);
+
+        // Add zoom control to bottom-left (away from sidebar)
+        L.control.zoom({ position: "bottomleft" }).addTo(map);
+
+        // ============================================================
+        // PLAYER MARKERS
+        // ============================================================
+
+        var playerMarkers = {};
+        var playerData = {};
+
+        function getMarkerClass(icon, hasSiren) {
+            var cls = "player-marker-dot";
+            switch (icon) {
+                case 56: cls += " police"; break;
+                case 64: cls += " heli"; break;
+                case 68: cls += " tow"; break;
+                case 6:  cls += " civilian"; break;
+                default: cls += " civilian"; break;
+            }
+            if (hasSiren) cls += " siren-active";
+            return cls;
+        }
+
+        function getIconLabel(icon) {
+            switch (icon) {
+                case 56: return "Police";
+                case 64: return "Helicopter";
+                case 68: return "Tow Truck";
+                case 6:  return "On Foot";
+                default: return "Vehicle";
+            }
+        }
+
+        function createMarkerIcon(player) {
+            var cls = getMarkerClass(player.icon, player.hasSirenEnabled);
+            var html = '<div class="player-marker">';
+            html += '<div class="' + cls + '"></div>';
+            if (CONFIG.showLabels) {
+                html += '<div class="player-marker-label">' + escapeHtml(player.name) + '</div>';
+            }
+            html += '</div>';
+
+            return L.divIcon({
+                html: html,
+                className: "",
+                iconSize: [12, 12],
+                iconAnchor: [6, 6],
+                popupAnchor: [0, -10]
+            });
+        }
+
+        function createPopupContent(player) {
+            var html = '<strong>' + escapeHtml(player.name) + '</strong><br>';
+            html += '<span style="color:#888">Location:</span> ' + escapeHtml(player.location || 'Unknown') + '<br>';
+            if (player.vehicle) {
+                html += '<span style="color:#888">Vehicle:</span> ' + escapeHtml(player.vehicle);
+                if (player.licensePlate) {
+                    html += ' [' + escapeHtml(player.licensePlate) + ']';
+                }
+                html += '<br>';
+            }
+            if (player.weapon) {
+                html += '<span style="color:#e0af68">Weapon:</span> ' + escapeHtml(player.weapon) + '<br>';
+            }
+            if (player.hasSirenEnabled) {
+                html += '<span style="color:#f7768e">Siren Active</span><br>';
+            }
+            html += '<span style="color:#555">Coords: ' +
+                Math.round(player.pos.x) + ', ' +
+                Math.round(player.pos.y) + ', ' +
+                Math.round(player.pos.z) + '</span>';
+            return html;
+        }
+
+        function updatePlayerMarker(player) {
+            var latlng = L.latLng(player.pos.y, player.pos.x);
+
+            if (playerMarkers[player.name]) {
+                playerMarkers[player.name].setLatLng(latlng);
+                playerMarkers[player.name].setIcon(createMarkerIcon(player));
+                playerMarkers[player.name].setPopupContent(createPopupContent(player));
+            } else {
+                var marker = L.marker(latlng, {
+                    icon: createMarkerIcon(player)
+                }).addTo(map);
+                marker.bindPopup(createPopupContent(player));
+                playerMarkers[player.name] = marker;
+            }
+
+            playerData[player.name] = player;
+        }
+
+        function removePlayerMarker(name) {
+            if (playerMarkers[name]) {
+                map.removeLayer(playerMarkers[name]);
+                delete playerMarkers[name];
+            }
+            delete playerData[name];
+        }
+
+        // ============================================================
+        // SIDEBAR
+        // ============================================================
+
+        function updateSidebar() {
+            var list = document.getElementById("player-list");
+            var names = Object.keys(playerData).sort();
+
+            document.getElementById("player-count").textContent = names.length;
+
+            if (names.length === 0) {
+                list.innerHTML = '<div id="no-players">No players online</div>';
+                return;
+            }
+
+            var html = "";
+            for (var i = 0; i < names.length; i++) {
+                var p = playerData[names[i]];
+                html += '<div class="player-item" onclick="focusPlayer(\'' + escapeAttr(p.name) + '\')">';
+                html += '<div class="player-name">' + escapeHtml(p.name) + '</div>';
+                html += '<div class="player-location">' + escapeHtml(p.location || 'Unknown') + '</div>';
+                html += '<div class="player-meta">';
+                html += '<span class="tag">' + getIconLabel(p.icon) + '</span>';
+                if (p.vehicle) {
+                    html += '<span class="tag">' + escapeHtml(p.vehicle) + '</span>';
+                }
+                if (p.hasSirenEnabled) {
+                    html += '<span class="tag siren">SIREN</span>';
+                }
+                if (p.weapon) {
+                    html += '<span class="tag weapon">' + escapeHtml(p.weapon) + '</span>';
+                }
+                html += '</div></div>';
+            }
+            list.innerHTML = html;
+        }
+
+        function focusPlayer(name) {
+            var p = playerData[name];
+            if (p) {
+                map.setView(L.latLng(p.pos.y, p.pos.x), CONFIG.maxZoom - 1, {
+                    animate: true,
+                    duration: 0.5
+                });
+                if (playerMarkers[name]) {
+                    playerMarkers[name].openPopup();
+                }
+            }
+        }
+
+        var sidebarCollapsed = false;
+        function toggleSidebar() {
+            sidebarCollapsed = !sidebarCollapsed;
+            document.getElementById("sidebar").classList.toggle("collapsed", sidebarCollapsed);
+            document.getElementById("sidebar-toggle").classList.toggle("collapsed", sidebarCollapsed);
+        }
+
+        // ============================================================
+        // SOCKET.IO CONNECTION
+        // ============================================================
+
+        var socket = io(CONFIG.socketUrl, {
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionAttempts: Infinity
+        });
+
+        socket.on("connect", function () {
+            document.getElementById("connection-dot").className = "connection-dot connected";
+            document.getElementById("connection-status").textContent = "Connected";
+        });
+
+        socket.on("disconnect", function () {
+            document.getElementById("connection-dot").className = "connection-dot disconnected";
+            document.getElementById("connection-status").textContent = "Disconnected";
+        });
+
+        socket.on("connect_error", function () {
+            document.getElementById("connection-dot").className = "connection-dot disconnected";
+            document.getElementById("connection-status").textContent = "Connection Error";
+        });
+
+        socket.on("map-data", function (data) {
+            if (data.type === "playerData") {
+                // Track which players are in this update
+                var activePlayers = {};
+
+                for (var i = 0; i < data.payload.length; i++) {
+                    var player = data.payload[i];
+                    if (player && player.name && player.pos) {
+                        activePlayers[player.name] = true;
+                        updatePlayerMarker(player);
+                    }
+                }
+
+                // Remove players no longer in the data
+                var existingNames = Object.keys(playerMarkers);
+                for (var j = 0; j < existingNames.length; j++) {
+                    if (!activePlayers[existingNames[j]]) {
+                        removePlayerMarker(existingNames[j]);
+                    }
+                }
+
+                updateSidebar();
+            } else if (data.type === "playerLeft") {
+                removePlayerMarker(data.payload);
+                updateSidebar();
+            }
+        });
+
+        // ============================================================
+        // UTILITIES
+        // ============================================================
+
+        function escapeHtml(str) {
+            if (!str) return "";
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+        }
+
+        function escapeAttr(str) {
+            if (!str) return "";
+            return String(str)
+                .replace(/\\/g, "\\\\")
+                .replace(/'/g, "\\'");
+        }
+    </script>
+</body>
+</html>

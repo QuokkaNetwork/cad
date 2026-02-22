@@ -339,6 +339,13 @@ local DEFAULT_WRAITH_EMERGENCY_PLATE_PREFIXES = {
   'AMBUL',
 }
 local DEFAULT_WRAITH_EMERGENCY_VEHICLE_CLASSES = { 18 }
+local DEFAULT_WRAITH_SEATBELT_IGNORED_VEHICLE_CODES = {
+  'sprinter19',
+  'sprinter19b',
+  'pumpertanker',
+  'hinorescue',
+  'scaniahp',
+}
 
 -- CAD bridge endpoint/token.
 Config.CadBaseUrl = getString('cad_bridge_base_url', 'http://127.0.0.1:3031')
@@ -486,6 +493,15 @@ Config.WraithCadLookupEnabled = getBoolean('cad_bridge_wraith_lookup_enabled', t
 Config.WraithLookupCooldownMs = math.max(250, math.floor(getNumber('cad_bridge_wraith_lookup_cooldown_ms', 8000)))
 Config.WraithIgnoreEmergencyVehicles = getBoolean('cad_bridge_wraith_ignore_emergency_vehicles', true)
 Config.WraithIgnoreEmergencySeatbeltAlerts = getBoolean('cad_bridge_wraith_ignore_emergency_seatbelt_alerts', true)
+Config.WraithSeatbeltIgnoredVehicleCodes = firstNonEmptyList(
+  parseCsvList(getString(
+    'cad_bridge_wraith_seatbelt_ignored_vehicle_codes',
+    table.concat(DEFAULT_WRAITH_SEATBELT_IGNORED_VEHICLE_CODES, ',')
+  ), function(item)
+    return trim(item):lower():gsub('[^a-z0-9]', '')
+  end),
+  DEFAULT_WRAITH_SEATBELT_IGNORED_VEHICLE_CODES
+)
 Config.WraithEmergencyPlatePrefixes = firstNonEmptyList(
   parseCsvList(getString('cad_bridge_wraith_emergency_plate_prefixes', table.concat(DEFAULT_WRAITH_EMERGENCY_PLATE_PREFIXES, ',')), function(item)
     return trim(item):upper():gsub('[^A-Z0-9]', '')

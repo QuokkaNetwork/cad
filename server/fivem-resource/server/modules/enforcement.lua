@@ -1935,12 +1935,75 @@ local function payloadIndicatesEmergencyVehicle(payload)
   return false
 end
 
+local function normalizeVehicleCodeToken(value)
+  return trim(value):lower():gsub('[^a-z0-9]', '')
+end
+
+local function isIgnoredSeatbeltVehicleCode(code)
+  local normalized = normalizeVehicleCodeToken(code)
+  if normalized == '' then return false end
+
+  local configured = type(Config.WraithSeatbeltIgnoredVehicleCodes) == 'table'
+    and Config.WraithSeatbeltIgnoredVehicleCodes
+    or { 'sprinter19', 'sprinter19b', 'pumpertanker', 'hinorescue', 'scaniahp' }
+  for _, raw in ipairs(configured) do
+    if normalizeVehicleCodeToken(raw) == normalized then
+      return true
+    end
+  end
+  return false
+end
+
+local function payloadHasIgnoredSeatbeltVehicleCode(payload)
+  if type(payload) ~= 'table' then return false end
+
+  local configured = type(Config.WraithSeatbeltIgnoredVehicleCodes) == 'table'
+    and Config.WraithSeatbeltIgnoredVehicleCodes
+    or { 'sprinter19', 'sprinter19b', 'pumpertanker', 'hinorescue', 'scaniahp' }
+
+  local candidates = {
+    payload.vehicle_model,
+    payload.vehicleModel,
+    payload.model,
+    payload.vehicle,
+    payload.display_name,
+    payload.displayName,
+    payload.message,
+    payload.description,
+  }
+
+  for _, candidate in ipairs(candidates) do
+    local normalized = normalizeVehicleCodeToken(candidate)
+    if normalized == '' then
+      goto continue
+    end
+
+    if isIgnoredSeatbeltVehicleCode(normalized) then
+      return true
+    end
+
+    for _, raw in ipairs(configured) do
+      local ignoredCode = normalizeVehicleCodeToken(raw)
+      if ignoredCode ~= '' and normalized:find(ignoredCode, 1, true) then
+        return true
+      end
+    end
+
+    ::continue::
+  end
+
+  return false
+end
+
 local function shouldIgnoreWraithSeatbeltAlert(plateKey, payload)
   if Config.WraithIgnoreEmergencySeatbeltAlerts ~= true then
     return false
   end
   if not payloadIndicatesSeatbeltAlert(payload) then
     return false
+  end
+  if payloadHasIgnoredSeatbeltVehicleCode(payload) then
+    return true
   end
   if payloadIndicatesEmergencyVehicle(payload) then
     return true
