@@ -21823,61 +21823,6 @@ var io2 = new Server(server, {
   cors: { origin: "*" }
 });
 var playerData = /* @__PURE__ */ new Map();
-function getSmartSigns() {
-  var _a, _b;
-  try {
-    return (_b = (_a = exports.SmartSigns)["SmartSigns:GetSigns"]) == null ? void 0 : _b.call(_a);
-  } catch {
-    console.log(
-      "[quokka_livemap][DEBUG]",
-      "Could not load SmartSigns signs. If you're not using SmartSigns, ignore this message."
-    );
-    return [];
-  }
-}
-function getSmartMotorwaySigns() {
-  var _a, _b;
-  try {
-    return (_b = (_a = exports.SmartMotorways)["getSigns"]) == null ? void 0 : _b.call(_a);
-  } catch {
-    console.log(
-      "[quokka_livemap][DEBUG]",
-      "Could not load SmartMotorway signs. If you're not using SmartMotorways, ignore this message."
-    );
-    return [];
-  }
-}
-io2.on("connection", (socket) => {
-  const smartSigns = getSmartSigns();
-  io2.sockets.emit("quokka_livemap:smart-signs", { smartSigns });
-  socket.on("quokka_livemap:update-smart-sign", (data) => {
-    console.log(
-      "[quokka_livemap]",
-      "Request received to update smart sign",
-      data.id,
-      data.defaultText
-    );
-    emit("SmartSigns:apiUpdateSign", data.id, [
-      data.defaultText.firstLine,
-      data.defaultText.secondLine,
-      data.defaultText.thirdLine
-    ]);
-  });
-  const smartMotorwaySigns = getSmartMotorwaySigns();
-  io2.sockets.emit("quokka_livemap:smart-motorways-signs", { smartMotorwaySigns });
-  socket.on("quokka_livemap:update-smart-motorway-sign", (data) => {
-    console.log("[quokka_livemap]", "Request received to update Smart Motorway sign", data.id);
-    emit("SmartMotorways:apiUpdateSign", data.id, data.speeds);
-  });
-});
-on("SmartSigns:updateSignExternal", () => {
-  const smartSigns = getSmartSigns();
-  io2.sockets.emit("quokka_livemap:smart-signs", { smartSigns });
-});
-onNet("quokka_livemap-sign-smart-motorways" /* SyncSmartMotorwaysSigns */, () => {
-  const smartMotorwaySigns = getSmartMotorwaySigns();
-  io2.sockets.emit("quokka_livemap:smart-motorways-signs", { smartMotorwaySigns });
-});
 onNet("onResourceStart" /* CFXResourceStarted */, (name) => {
   const playerCount = GetNumPlayerIndices();
   if (name !== GetCurrentResourceName())
@@ -21888,10 +21833,6 @@ onNet("onResourceStart" /* CFXResourceStarted */, (name) => {
     type: "playerData" /* UpdatePlayerData */,
     payload: Array.from(playerData.values())
   });
-  const smartSigns = getSmartSigns();
-  io2.sockets.emit("quokka_livemap:smart-signs", { smartSigns });
-  const smartMotorwaySigns = getSmartMotorwaySigns();
-  io2.sockets.emit("quokka_livemap:smart-motorways-signs", { smartMotorwaySigns });
 });
 onNet("playerDropped" /* CFXPlayerDropped */, () => {
   const playerName = GetPlayerName(source);

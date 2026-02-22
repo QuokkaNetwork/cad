@@ -3,7 +3,8 @@ const fs = require("fs");
 const path = require("path");
 
 const PORT = 8090;
-const DIR = __dirname;
+const WEB_DIR = __dirname;
+const RESOURCE_DIR = path.resolve(__dirname, "..");
 
 const TYPES = {
   ".html": "text/html",
@@ -19,7 +20,16 @@ const TYPES = {
 http.createServer((req, res) => {
   let url = req.url.split("?")[0];
   if (url === "/") url = "/index.html";
-  const filePath = path.join(DIR, url);
+  let relativePath = url.startsWith("/") ? url.slice(1) : url;
+
+  if (relativePath.includes("..")) {
+    res.writeHead(400);
+    res.end("Bad Request");
+    return;
+  }
+
+  const baseDir = relativePath.startsWith("tiles/") ? RESOURCE_DIR : WEB_DIR;
+  const filePath = path.join(baseDir, relativePath);
   const ext = path.extname(filePath);
   fs.readFile(filePath, (err, data) => {
     if (err) {
