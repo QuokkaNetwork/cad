@@ -252,6 +252,17 @@ end, false)
 
 RegisterKeyMapping(miniCadClosestDeclineCommand, 'Mini-CAD closest prompt: Decline', 'keyboard', 'N')
 
+-- Backward-compatible aliases for existing keybinds from earlier closest-prompt module.
+RegisterCommand('cadbridge_callprompt_accept', function()
+  if type(miniCadClosestPrompt) ~= 'table' then return end
+  submitClosestCallPromptDecision('accept', 'player_accept_legacy_keybind')
+end, false)
+
+RegisterCommand('cadbridge_callprompt_decline', function()
+  if type(miniCadClosestPrompt) ~= 'table' then return end
+  submitClosestCallPromptDecision('decline', 'player_decline_legacy_keybind')
+end, false)
+
 -- Polling loop: periodically ask server for active call data.
 CreateThread(function()
   while true do

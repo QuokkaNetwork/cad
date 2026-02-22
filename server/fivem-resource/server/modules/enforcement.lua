@@ -227,6 +227,24 @@ local function parseWasabiDeadResult(value)
   return toBoolean(value)
 end
 
+local function isPlayerAliveByHealthFallback(sourceId)
+  local s = tonumber(sourceId) or 0
+  if s <= 0 then return false end
+  local ped = GetPlayerPed(s)
+  if not ped or ped <= 0 then return false end
+
+  local health = tonumber(GetEntityHealth(ped)) or 0
+  local fatallyInjured = false
+  if type(IsPedFatallyInjured) == 'function' then
+    local ok, result = pcall(function()
+      return IsPedFatallyInjured(ped)
+    end)
+    fatallyInjured = ok and (result == true)
+  end
+
+  return health > 101 and not fatallyInjured
+end
+
 RegisterNetEvent('cad_bridge:autoAmbulanceDeathState', function(payload)
   local src = tonumber(source) or 0
   if src <= 0 then return end
@@ -243,6 +261,9 @@ RegisterNetEvent('cad_bridge:autoAmbulanceDeathState', function(payload)
   end
 
   local parsedDead = parseWasabiDeadResult(deadValue)
+  if parsedDead == true and isPlayerAliveByHealthFallback(src) then
+    parsedDead = false
+  end
   autoAmbulanceDeathSnapshotBySource[src] = {
     is_dead = parsedDead,
     updated_ms = nowMs(),
@@ -447,6 +468,13 @@ CreateThread(function()
         end
 
         local isDead = isPlayerDeadFromWasabi(s)
+        if isDead and isPlayerAliveByHealthFallback(s) then
+          isDead = false
+          autoAmbulanceDeathSnapshotBySource[s] = {
+            is_dead = false,
+            updated_ms = nowMs(),
+          }
+        end
         if isDead then
           if state.call_submit_in_flight == true then
             local startedAt = tonumber(state.call_submit_started_ms) or 0
