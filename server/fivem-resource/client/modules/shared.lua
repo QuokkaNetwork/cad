@@ -89,7 +89,13 @@ function util.getWeaponName(ped)
   if not weaponHash or weaponHash == 0 then return '' end
   if weaponHash == GetHashKey('WEAPON_UNARMED') then return '' end
 
-  local weaponLabel = GetWeaponDisplayNameFromHash(weaponHash)
+  local weaponLabel = ''
+  if type(GetWeaponDisplayNameFromHash) == 'function' then
+    local ok, label = pcall(GetWeaponDisplayNameFromHash, weaponHash)
+    if ok and type(label) == 'string' then
+      weaponLabel = label
+    end
+  end
   if not weaponLabel or weaponLabel == '' or weaponLabel == 'WT_INVALID' then
     return ''
   end
