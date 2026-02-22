@@ -16,7 +16,6 @@ import Search from './pages/police/Search';
 import BOLOs from './pages/police/BOLOs';
 import Warrants from './pages/police/Warrants';
 import CallDetails from './pages/police/CallDetails';
-import LiveMap from './pages/police/LiveMap';
 import AdminUsers from './pages/admin/Users';
 import AdminDepartments from './pages/admin/Departments';
 import AdminRoleMappings from './pages/admin/RoleMappings';
@@ -25,7 +24,6 @@ import AdminSystemSettings from './pages/admin/SystemSettings';
 import AdminHome from './pages/admin/Home';
 import AdminOffenceCatalog from './pages/admin/OffenceCatalog';
 import AdminQboxSettings from './pages/admin/QboxSettings';
-import AdminLiveMap from './pages/admin/LiveMap';
 
 export default function App() {
   return (
@@ -55,7 +53,6 @@ export default function App() {
             <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
             <Route path="/warrants" element={<RequireDepartment><Warrants /></RequireDepartment>} />
-            <Route path="/live-map" element={<RequireDepartment><LiveMap /></RequireDepartment>} />
             <Route path="/call-details" element={<RequireDepartment><CallDetails /></RequireDepartment>} />
 
             {/* Admin */}
@@ -67,7 +64,6 @@ export default function App() {
             <Route path="/admin/audit-log" element={<ProtectedRoute requireAdmin><AdminAuditLog /></ProtectedRoute>} />
             <Route path="/admin/settings" element={<ProtectedRoute requireAdmin><AdminSystemSettings /></ProtectedRoute>} />
             <Route path="/admin/qbox-settings" element={<ProtectedRoute requireAdmin><AdminQboxSettings /></ProtectedRoute>} />
-            <Route path="/admin/live-map" element={<ProtectedRoute requireAdmin><AdminLiveMap /></ProtectedRoute>} />
           </Route>
 
           {/* Default redirect */}
