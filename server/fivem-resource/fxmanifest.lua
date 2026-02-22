@@ -28,5 +28,5 @@ files {
   'ui/styles.css',
   'ui/app.js',
   'ui/overlay.webp',
-  'ui/vicroads-logo.jpg',
+  'ui/vicroads-logo.png',
 }

@@ -155,7 +155,7 @@ function CadVictoriaLicenseCard({ person }) {
               <img src={mugshot} alt="Licence photo" className="h-full w-full object-cover object-top" />
             ) : null}
           </div>
-          <img src="/vicroads-logo.jpg" alt="VicRoads" className="h-auto w-[152px] rounded border border-[#18382459] bg-white/90 p-0.5" />
+          <img src="/vicroads-logo.png" alt="VicRoads" className="h-auto w-[152px] rounded border border-[#18382459] bg-white/90 p-0.5" />
         </div>
       </div>
     </div>
