@@ -291,6 +291,36 @@ RegisterCommand('test000ui', function()
   })
 end, false)
 
+local function dumpOutfit()
+  local ped = PlayerPedId()
+
+  print('----- OUTFIT DUMP START -----')
+
+  print('clothing = {')
+  for comp = 0, 11 do
+    local drawable = GetPedDrawableVariation(ped, comp)
+    local texture = GetPedTextureVariation(ped, comp)
+    print(string.format('  { component = %d, drawable = %d, texture = %d },', comp, drawable, texture))
+  end
+  print('},')
+
+  print('props = {')
+  for prop = 0, 7 do
+    local drawable = GetPedPropIndex(ped, prop)
+    if drawable ~= -1 then
+      local texture = GetPedPropTextureIndex(ped, prop)
+      print(string.format('  { component = %d, drawable = %d, texture = %d },', prop, drawable, texture))
+    end
+  end
+  print('}')
+
+  print('----- OUTFIT DUMP END -----')
+end
+
+RegisterCommand('dumpfit', function()
+  dumpOutfit()
+end, false)
+
 AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
   if state.idCardUiOpen then
