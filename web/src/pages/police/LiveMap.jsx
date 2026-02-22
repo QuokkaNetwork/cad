@@ -1,317 +1,547 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { useDepartment } from '../../context/DepartmentContext';
-import { useEventSource } from '../../hooks/useEventSource';
+import { CRS, latLngBounds } from 'leaflet';
+import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
+import { useDepartment } from '../../context/DepartmentContext';
+import { formatTimeAU } from '../../utils/dateTime';
 
-const WORLD_BOUNDS = {
-  minX: Number(import.meta.env.VITE_CAD_MAP_MIN_X ?? -4000),
-  maxX: Number(import.meta.env.VITE_CAD_MAP_MAX_X ?? 4500),
-  minY: Number(import.meta.env.VITE_CAD_MAP_MIN_Y ?? -4500),
-  maxY: Number(import.meta.env.VITE_CAD_MAP_MAX_Y ?? 8000),
-};
+const MAP_POLL_INTERVAL_MS = 500;
+const MAP_ACTIVE_MAX_AGE_MS = 5_000;
+const MAP_RECOVERY_MAX_AGE_MS = 30_000;
+const MAP_STALE_THRESHOLD_MS = 4_000;
+const MAP_STALE_CHECK_INTERVAL_MS = 2_000;
+const MAP_RECOVERY_COOLDOWN_MS = 8_000;
 
-const WORLD_WIDTH = WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX;
-const WORLD_HEIGHT = WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY;
-const DEFAULT_MAP_BACKGROUND_URL = '/maps/FullMap.png';
-const DEFAULT_MAP_TRANSFORM = {
-  scaleX: 1,
-  scaleY: 1,
-  offsetX: 0,
-  offsetY: 0,
-};
-
-const STATUS_COLORS = {
-  available: '#22c55e',
-  busy: '#f59e0b',
-  enroute: '#3b82f6',
-  'on-scene': '#a855f7',
-};
-
-function createInitialViewBox() {
-  return {
-    x: WORLD_BOUNDS.minX,
-    y: -WORLD_BOUNDS.maxY,
-    width: WORLD_WIDTH,
-    height: WORLD_HEIGHT,
-  };
-}
-
-function formatSpeedMph(value) {
-  const speed = Number(value || 0);
-  if (!Number.isFinite(speed) || speed <= 0) return '0 mph';
-  return `${Math.round(speed * 2.23694)} mph`;
-}
-
-function formatStatus(status) {
-  const raw = String(status || '').trim().toLowerCase();
-  if (!raw) return 'Unknown';
-  if (raw === 'on-scene') return 'On Scene';
-  if (raw === 'enroute') return 'En Route';
-  return raw.charAt(0).toUpperCase() + raw.slice(1);
-}
-
-function getMarkerColor(unit) {
-  return STATUS_COLORS[unit.status] || '#94a3b8';
-}
+const DEFAULT_TILE_SIZE = 1024;
+const DEFAULT_TILE_ROWS = 3;
+const DEFAULT_TILE_COLUMNS = 2;
+const DEFAULT_TILE_URL_TEMPLATE = '/tiles/minimap_sea_{y}_{x}.webp';
+const DEFAULT_MIN_ZOOM = -2;
+const DEFAULT_MAX_ZOOM = 2;
+const DEFAULT_NATIVE_ZOOM = 0;
+const DEFAULT_CALIBRATION_INCREMENT = 0.1;
+const DEFAULT_SCALE_INCREMENT = 0.01;
+const DEFAULT_GAME_BOUNDS = Object.freeze({
+  // Match SnailyCAD map conversion constants exactly.
+  x1: -4230,
+  y1: 8420,
+  x2: 370,
+  y2: -640,
+});
 
 function parseMapNumber(value, fallback) {
-  const text = String(value ?? '').trim();
-  if (!text) return fallback;
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
 }
 
-function isDispatchUnit(unit) {
-  const callsign = String(unit?.callsign || '').trim().toUpperCase();
-  if (callsign === 'DISPATCH') return true;
-  if (unit?.is_dispatch) return true;
-  const short = String(unit?.department_short_name || '').trim().toUpperCase();
-  return short === 'DISPATCH';
+function parsePositiveInt(value, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  const rounded = Math.trunc(num);
+  return rounded > 0 ? rounded : fallback;
 }
 
-export default function LiveMap() {
-  const { activeDepartment } = useDepartment();
+function sanitizeGameBounds(bounds) {
+  const x1 = Number(bounds?.x1);
+  const y1 = Number(bounds?.y1);
+  const x2 = Number(bounds?.x2);
+  const y2 = Number(bounds?.y2);
+  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) {
+    return { ...DEFAULT_GAME_BOUNDS };
+  }
+  if (!(x2 > x1) || !(y1 > y2)) {
+    return { ...DEFAULT_GAME_BOUNDS };
+  }
+  return { x1, y1, x2, y2 };
+}
+
+function roundCalibrationValue(value) {
+  return Math.round(Number(value) * 1000) / 1000;
+}
+
+function parseCalibrationIncrement(value, fallback = DEFAULT_CALIBRATION_INCREMENT) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.max(0.001, Math.min(100, num));
+}
+
+function getIncrementPrecision(step) {
+  const text = String(step);
+  const dotIndex = text.indexOf('.');
+  if (dotIndex < 0) return 0;
+  const decimals = text.slice(dotIndex + 1).replace(/0+$/, '');
+  return Math.min(4, decimals.length || 1);
+}
+
+function normalizeMapPlayer(entry) {
+  const unitId = Number(entry?.unit_id || 0);
+  const pos = entry?.pos || {};
+  return {
+    identifier: String(entry?.identifier || (unitId ? `unit:${unitId}` : '')).trim(),
+    callsign: String(entry?.callsign || '').trim(),
+    cadUserId: Number(entry?.cad_user_id || 0),
+    unitId,
+    unitStatus: String(entry?.status || '').trim().toLowerCase(),
+    name: String(entry?.name || 'Unknown').trim() || 'Unknown',
+    location: String(entry?.location || '').trim(),
+    vehicle: String(entry?.vehicle || '').trim(),
+    licensePlate: String(entry?.licensePlate || entry?.license_plate || '').trim(),
+    weapon: String(entry?.weapon || '').trim(),
+    icon: Number(entry?.icon || 6),
+    hasSirenEnabled: entry?.hasSirenEnabled === true || entry?.has_siren_enabled === true,
+    speed: Number(entry?.speed || 0),
+    heading: Number(entry?.heading || 0),
+    pos: {
+      x: Number(pos.x || 0),
+      y: Number(pos.y || 0),
+      z: Number(pos.z || 0),
+    },
+    updatedAtMs: Number(entry?.updatedAtMs || Date.now()),
+  };
+}
+
+function normalizePlayers(payload) {
+  if (!Array.isArray(payload)) return [];
+  const seen = new Set();
+  const players = [];
+  for (const raw of payload) {
+    const player = normalizeMapPlayer(raw);
+    if (!player.identifier || seen.has(player.identifier)) continue;
+    seen.add(player.identifier);
+    players.push(player);
+  }
+  return players;
+}
+
+function getMapBounds(map, tileConfig) {
+  const height = tileConfig.tileSize * tileConfig.tileRows;
+  const width = tileConfig.tileSize * tileConfig.tileColumns;
+  const southWest = map.unproject([0, height], 0);
+  const northEast = map.unproject([width, 0], 0);
+  return latLngBounds(southWest, northEast);
+}
+
+function convertToMapLatLng(rawX, rawY, map, tileConfig, mapTransform) {
+  const x = Number(rawX);
+  const y = Number(rawY);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !map) return null;
+
+  const width = tileConfig.tileSize * tileConfig.tileColumns;
+  const height = tileConfig.tileSize * tileConfig.tileRows;
+  const gameBounds = sanitizeGameBounds(mapTransform?.gameBounds);
+  const denomX = gameBounds.x2 - gameBounds.x1;
+  const denomY = gameBounds.y1 - gameBounds.y2;
+  if (Math.abs(denomX) < 0.0001 || Math.abs(denomY) < 0.0001) return null;
+
+  const normalizedX = (x - gameBounds.x1) / denomX;
+  const normalizedY = (gameBounds.y1 - y) / denomY;
+  let projectedX = normalizedX * width;
+  let projectedY = normalizedY * height;
+
+  const scaleX = parseMapNumber(mapTransform?.scaleX, 1);
+  const scaleY = parseMapNumber(mapTransform?.scaleY, 1);
+  const offsetX = parseMapNumber(mapTransform?.offsetX, 0);
+  const offsetY = parseMapNumber(mapTransform?.offsetY, 0);
+  const centerX = width / 2;
+  const centerY = height / 2;
+  projectedX = centerX + ((projectedX - centerX) * scaleX) + offsetX;
+  projectedY = centerY + ((projectedY - centerY) * scaleY) + offsetY;
+
+  const projectedLatLng = map.unproject([projectedX, projectedY], 0);
+
+  return {
+    lat: projectedLatLng.lat,
+    lng: projectedLatLng.lng,
+    projectedX,
+    projectedY,
+    outOfBounds:
+      projectedX < 0
+      || projectedY < 0
+      || projectedX > width
+      || projectedY > height,
+  };
+}
+
+function markerColor(player) {
+  if (player.hasSirenEnabled) return '#ef4444';
+  if (player.icon === 56) return '#3b82f6';
+  if (player.icon === 64) return '#8b5cf6';
+  if (player.icon === 68) return '#f59e0b';
+  return '#22c55e';
+}
+
+function MapBoundsController({ tileConfig, resetSignal, onMapReady }) {
+  const map = useMap();
+  const appliedRef = useRef('');
+
+  useEffect(() => {
+    if (!map) return;
+    onMapReady(map);
+
+    const bounds = getMapBounds(map, tileConfig);
+    const key = `${tileConfig.tileSize}:${tileConfig.tileRows}:${tileConfig.tileColumns}:${resetSignal}`;
+    if (appliedRef.current === key) return;
+
+    map.setMaxBounds(bounds);
+    map.fitBounds(bounds, { animate: false });
+    map.setMinZoom(tileConfig.minZoom);
+    map.setMaxZoom(tileConfig.maxZoom);
+    map.setZoom(tileConfig.minZoom);
+
+    appliedRef.current = key;
+  }, [map, tileConfig, resetSignal, onMapReady]);
+
+  return null;
+}
+
+export default function LiveMap({ isPopout = false }) {
   const { key: locationKey } = useLocation();
-  const deptId = activeDepartment?.id;
-  const isDispatch = !!activeDepartment?.is_dispatch;
+  const { isAdmin } = useAuth();
+  const { activeDepartment } = useDepartment();
+  const [tileConfig, setTileConfig] = useState({
+    mapAvailable: false,
+    tileUrlTemplate: DEFAULT_TILE_URL_TEMPLATE,
+    tileSize: DEFAULT_TILE_SIZE,
+    tileRows: DEFAULT_TILE_ROWS,
+    tileColumns: DEFAULT_TILE_COLUMNS,
+    minZoom: DEFAULT_MIN_ZOOM,
+    maxZoom: DEFAULT_MAX_ZOOM,
+    minNativeZoom: DEFAULT_NATIVE_ZOOM,
+    maxNativeZoom: DEFAULT_NATIVE_ZOOM,
+    gameBounds: { ...DEFAULT_GAME_BOUNDS },
+    missingTiles: [],
+  });
+  const [mapScaleX, setMapScaleX] = useState(1);
+  const [mapScaleY, setMapScaleY] = useState(1);
+  const [mapOffsetX, setMapOffsetX] = useState(0);
+  const [mapOffsetY, setMapOffsetY] = useState(0);
+  const [calibrationStep, setCalibrationStep] = useState(DEFAULT_CALIBRATION_INCREMENT);
+  const [scaleStep, setScaleStep] = useState(DEFAULT_SCALE_INCREMENT);
+  const [adminCalibrationVisible, setAdminCalibrationVisible] = useState(false);
+  const [players, setPlayers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [mapConfigError, setMapConfigError] = useState('');
+  const [playerError, setPlayerError] = useState('');
+  const [lastRefreshAt, setLastRefreshAt] = useState(0);
+  const [staleSinceAt, setStaleSinceAt] = useState(0);
+  const [recoveringStaleFeed, setRecoveringStaleFeed] = useState(false);
+  const [mapInstance, setMapInstance] = useState(null);
+  const [resetSignal, setResetSignal] = useState(0);
+  const [calibrationDirty, setCalibrationDirty] = useState(false);
+  const [calibrationSaving, setCalibrationSaving] = useState(false);
+  const [calibrationNotice, setCalibrationNotice] = useState('');
+  const staleRecoveryInFlightRef = useRef(false);
+  const lastRecoveryAttemptAtRef = useRef(0);
+  const latestFeedUpdateMsRef = useRef(0);
+  const staleSinceAtRef = useRef(0);
 
-  const [units, setUnits] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [showStale, setShowStale] = useState(true);
-  const [selectedUnitId, setSelectedUnitId] = useState(null);
-  const [viewBox, setViewBox] = useState(createInitialViewBox);
-  const [mapBackgroundUrl, setMapBackgroundUrl] = useState(DEFAULT_MAP_BACKGROUND_URL);
-  const [mapTransform, setMapTransform] = useState(DEFAULT_MAP_TRANSFORM);
-
-  const svgRef = useRef(null);
-  const dragRef = useRef(null);
-
-  const fetchData = useCallback(async () => {
-    if (!deptId) return;
-    setLoading(true);
-    try {
-      const query = isDispatch ? '&dispatch=true' : '';
-      const data = await api.get(`/api/units/map?department_id=${deptId}${query}`);
-      const incoming = Array.isArray(data) ? data : [];
-      setUnits(incoming.filter(unit => !isDispatchUnit(unit)));
-    } catch (err) {
-      console.error('Failed to load live map units:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [deptId, isDispatch]);
+  const deptId = Number(activeDepartment?.id || 0);
+  const isDispatchDepartment = !!activeDepartment?.is_dispatch;
 
   const fetchMapConfig = useCallback(async () => {
     try {
-      const config = await api.get('/api/units/map-config');
-      // Keep the map image pinned to the bundled FullMap asset.
-      setMapBackgroundUrl(DEFAULT_MAP_BACKGROUND_URL);
-      setMapTransform({
-        scaleX: parseMapNumber(config?.map_scale_x, DEFAULT_MAP_TRANSFORM.scaleX),
-        scaleY: parseMapNumber(config?.map_scale_y, DEFAULT_MAP_TRANSFORM.scaleY),
-        offsetX: parseMapNumber(config?.map_offset_x, DEFAULT_MAP_TRANSFORM.offsetX),
-        offsetY: parseMapNumber(config?.map_offset_y, DEFAULT_MAP_TRANSFORM.offsetY),
+      const cfg = await api.get('/api/units/map-config');
+      const missingTiles = Array.isArray(cfg?.missing_tiles)
+        ? cfg.missing_tiles.map((tile) => String(tile || '').trim()).filter(Boolean)
+        : [];
+      const mapAvailable = cfg?.map_available === true && missingTiles.length === 0;
+      const gameBounds = sanitizeGameBounds({
+        x1: parseMapNumber(cfg?.map_game_bounds?.x1 ?? cfg?.map_game_x1, DEFAULT_GAME_BOUNDS.x1),
+        y1: parseMapNumber(cfg?.map_game_bounds?.y1 ?? cfg?.map_game_y1, DEFAULT_GAME_BOUNDS.y1),
+        x2: parseMapNumber(cfg?.map_game_bounds?.x2 ?? cfg?.map_game_x2, DEFAULT_GAME_BOUNDS.x2),
+        y2: parseMapNumber(cfg?.map_game_bounds?.y2 ?? cfg?.map_game_y2, DEFAULT_GAME_BOUNDS.y2),
       });
+
+      setTileConfig({
+        mapAvailable,
+        tileUrlTemplate: String(cfg?.tile_url_template || DEFAULT_TILE_URL_TEMPLATE).trim() || DEFAULT_TILE_URL_TEMPLATE,
+        tileSize: parsePositiveInt(cfg?.tile_size, DEFAULT_TILE_SIZE),
+        tileRows: parsePositiveInt(cfg?.tile_rows, DEFAULT_TILE_ROWS),
+        tileColumns: parsePositiveInt(cfg?.tile_columns, DEFAULT_TILE_COLUMNS),
+        minZoom: parseMapNumber(cfg?.min_zoom, DEFAULT_MIN_ZOOM),
+        maxZoom: parseMapNumber(cfg?.max_zoom, DEFAULT_MAX_ZOOM),
+        minNativeZoom: parseMapNumber(cfg?.min_native_zoom, DEFAULT_NATIVE_ZOOM),
+        maxNativeZoom: parseMapNumber(cfg?.max_native_zoom, DEFAULT_NATIVE_ZOOM),
+        gameBounds,
+        missingTiles,
+      });
+
+      if (!calibrationDirty) {
+        setMapScaleX(parseMapNumber(cfg?.map_scale_x, 1));
+        setMapScaleY(parseMapNumber(cfg?.map_scale_y, 1));
+        setMapOffsetX(parseMapNumber(cfg?.map_offset_x, 0));
+        setMapOffsetY(parseMapNumber(cfg?.map_offset_y, 0));
+        setCalibrationStep(parseCalibrationIncrement(cfg?.map_calibration_increment, DEFAULT_CALIBRATION_INCREMENT));
+        setScaleStep(parseCalibrationIncrement(cfg?.map_scale_increment, DEFAULT_SCALE_INCREMENT));
+      }
+      setAdminCalibrationVisible(false);
+
+      if (!mapAvailable) {
+        const missingText = missingTiles.length > 0 ? ` Missing: ${missingTiles.join(', ')}` : '';
+        setMapConfigError(`Live map tiles are not fully uploaded.${missingText}`);
+      } else {
+        setMapConfigError('');
+      }
     } catch {
-      setMapBackgroundUrl(DEFAULT_MAP_BACKGROUND_URL);
-      setMapTransform(DEFAULT_MAP_TRANSFORM);
+      setMapConfigError('Failed to load live map tile configuration');
     }
+  }, [calibrationDirty]);
+
+  const fetchPlayers = useCallback(async (options = {}) => {
+    if (!deptId) {
+      setPlayers([]);
+      setLoading(false);
+      latestFeedUpdateMsRef.current = 0;
+      staleSinceAtRef.current = 0;
+      setStaleSinceAt(0);
+      setRecoveringStaleFeed(false);
+      return;
+    }
+
+    const recoveryMode = options?.recovery === true;
+    const maxAgeMs = recoveryMode ? MAP_RECOVERY_MAX_AGE_MS : MAP_ACTIVE_MAX_AGE_MS;
+    const cacheBuster = Date.now();
+
+    try {
+      const data = await api.get(
+        `/api/units/live-map/players?department_id=${deptId}&dispatch=${isDispatchDepartment ? 'true' : 'false'}&max_age_ms=${maxAgeMs}&_=${cacheBuster}`
+      );
+      const nextPlayers = normalizePlayers(data?.payload || []);
+      setPlayers(nextPlayers);
+      setPlayerError('');
+      setLastRefreshAt(Date.now());
+      const latestUpdatedAtMs = nextPlayers.reduce((max, player) => {
+        const updatedAt = Number(player?.updatedAtMs || 0);
+        if (!Number.isFinite(updatedAt)) return max;
+        return Math.max(max, updatedAt);
+      }, 0);
+      const nextFeedUpdateMs = latestUpdatedAtMs || Date.now();
+      if (nextFeedUpdateMs > latestFeedUpdateMsRef.current) {
+        latestFeedUpdateMsRef.current = nextFeedUpdateMs;
+        staleSinceAtRef.current = 0;
+        setStaleSinceAt(0);
+        setRecoveringStaleFeed(false);
+      }
+    } catch (err) {
+      setPlayerError(err?.message || 'Failed to load live map players');
+    } finally {
+      setLoading(false);
+    }
+  }, [deptId, isDispatchDepartment]);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([fetchMapConfig(), fetchPlayers()]);
+  }, [fetchMapConfig, fetchPlayers]);
+
+  const nudgeCalibration = useCallback((deltaX, deltaY) => {
+    const step = parseCalibrationIncrement(calibrationStep, DEFAULT_CALIBRATION_INCREMENT);
+    setMapOffsetX((prev) => roundCalibrationValue(prev + (deltaX * step)));
+    setMapOffsetY((prev) => roundCalibrationValue(prev + (deltaY * step)));
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, [calibrationStep]);
+
+  const updateCalibrationStep = useCallback((value) => {
+    setCalibrationStep(parseCalibrationIncrement(value, DEFAULT_CALIBRATION_INCREMENT));
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData, locationKey]);
+  const updateScaleStep = useCallback((value) => {
+    setScaleStep(parseCalibrationIncrement(value, DEFAULT_SCALE_INCREMENT));
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, []);
+
+  const resetCalibrationOffsets = useCallback(() => {
+    setMapOffsetX(0);
+    setMapOffsetY(0);
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, []);
+
+  const resetCalibrationAll = useCallback(() => {
+    setMapScaleX(1);
+    setMapScaleY(1);
+    setMapOffsetX(0);
+    setMapOffsetY(0);
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, []);
+
+  const nudgeScale = useCallback((deltaX, deltaY) => {
+    const step = parseCalibrationIncrement(scaleStep, DEFAULT_SCALE_INCREMENT);
+    setMapScaleX((prev) => roundCalibrationValue(Math.max(0.2, Math.min(5, prev + (deltaX * step)))));
+    setMapScaleY((prev) => roundCalibrationValue(Math.max(0.2, Math.min(5, prev + (deltaY * step)))));
+    setCalibrationDirty(true);
+    setCalibrationNotice('');
+  }, [scaleStep]);
+
+  const saveCalibrationOffsets = useCallback(async () => {
+    if (!isAdmin || calibrationSaving) return;
+    setCalibrationSaving(true);
+    setCalibrationNotice('');
+    try {
+      await api.put('/api/admin/settings', {
+        settings: {
+          live_map_scale_x: String(mapScaleX),
+          live_map_scale_y: String(mapScaleY),
+          live_map_offset_x: String(mapOffsetX),
+          live_map_offset_y: String(mapOffsetY),
+          live_map_calibration_increment: String(parseCalibrationIncrement(calibrationStep, DEFAULT_CALIBRATION_INCREMENT)),
+          live_map_scale_increment: String(parseCalibrationIncrement(scaleStep, DEFAULT_SCALE_INCREMENT)),
+        },
+      });
+      setCalibrationDirty(false);
+      setCalibrationNotice('Calibration saved');
+      fetchMapConfig();
+    } catch (err) {
+      setCalibrationNotice(err?.message || 'Failed to save calibration');
+    } finally {
+      setCalibrationSaving(false);
+    }
+  }, [isAdmin, calibrationSaving, mapScaleX, mapScaleY, mapOffsetX, mapOffsetY, calibrationStep, scaleStep, fetchMapConfig]);
 
   useEffect(() => {
-    fetchMapConfig();
-  }, [fetchMapConfig, locationKey]);
+    setLoading(true);
+    latestFeedUpdateMsRef.current = 0;
+    staleSinceAtRef.current = 0;
+    staleRecoveryInFlightRef.current = false;
+    lastRecoveryAttemptAtRef.current = 0;
+    setStaleSinceAt(0);
+    setRecoveringStaleFeed(false);
+    refreshAll();
+  }, [refreshAll, locationKey]);
 
-  useEventSource({
-    'unit:online': () => fetchData(),
-    'unit:offline': () => fetchData(),
-    'unit:update': () => fetchData(),
-    'sync:department': () => fetchData(),
-  });
+  useEffect(() => {
+    const id = setInterval(fetchPlayers, MAP_POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [fetchPlayers]);
+
+  useEffect(() => {
+    const id = setInterval(fetchMapConfig, 30000);
+    return () => clearInterval(id);
+  }, [fetchMapConfig]);
 
   useEffect(() => {
     const id = setInterval(() => {
-      fetchData();
-      fetchMapConfig();
-    }, 5000);
+      if (!deptId) return;
+      const latestFeedUpdateMs = latestFeedUpdateMsRef.current;
+      if (!latestFeedUpdateMs) return;
+
+      const now = Date.now();
+      const feedAgeMs = now - latestFeedUpdateMs;
+      if (feedAgeMs < MAP_STALE_THRESHOLD_MS) {
+        if (staleSinceAtRef.current > 0) {
+          staleSinceAtRef.current = 0;
+          setStaleSinceAt(0);
+        }
+        if (recoveringStaleFeed) {
+          setRecoveringStaleFeed(false);
+        }
+        return;
+      }
+
+      if (!staleSinceAtRef.current) {
+        staleSinceAtRef.current = now;
+        setStaleSinceAt(now);
+      }
+
+      if (staleRecoveryInFlightRef.current) return;
+      if ((now - lastRecoveryAttemptAtRef.current) < MAP_RECOVERY_COOLDOWN_MS) return;
+
+      staleRecoveryInFlightRef.current = true;
+      lastRecoveryAttemptAtRef.current = now;
+      setRecoveringStaleFeed(true);
+
+      Promise.all([
+        fetchMapConfig(),
+        fetchPlayers({ recovery: true }),
+      ]).finally(() => {
+        staleRecoveryInFlightRef.current = false;
+      });
+    }, MAP_STALE_CHECK_INTERVAL_MS);
+
     return () => clearInterval(id);
-  }, [fetchData, fetchMapConfig]);
+  }, [deptId, fetchMapConfig, fetchPlayers, recoveringStaleFeed]);
 
-  useEffect(() => {
-    if (!selectedUnitId) return;
-    if (!units.find(u => u.id === selectedUnitId)) {
-      setSelectedUnitId(null);
+  const markers = useMemo(() => {
+    if (!mapInstance) return [];
+    const mapTransform = {
+      scaleX: mapScaleX,
+      scaleY: mapScaleY,
+      offsetX: mapOffsetX,
+      offsetY: mapOffsetY,
+      gameBounds: tileConfig.gameBounds,
+    };
+    return players
+      .map((player) => {
+        const latLng = convertToMapLatLng(player.pos.x, player.pos.y, mapInstance, tileConfig, mapTransform);
+        if (!latLng) return null;
+        return { player, latLng };
+      })
+      .filter(Boolean);
+  }, [players, mapInstance, tileConfig, mapScaleX, mapScaleY, mapOffsetX, mapOffsetY]);
+  const outOfBoundsCount = useMemo(() => markers.filter((m) => m?.latLng?.outOfBounds === true).length, [markers]);
+
+  const mapKey = `${tileConfig.tileUrlTemplate}|${tileConfig.tileSize}|${tileConfig.tileRows}|${tileConfig.tileColumns}`;
+  const error = mapConfigError || playerError;
+  const calibrationPrecision = Math.max(1, getIncrementPrecision(calibrationStep));
+  const staleFeedAgeSeconds = staleSinceAt
+    ? Math.max(0, Math.floor((Date.now() - Math.max(1, latestFeedUpdateMsRef.current)) / 1000))
+    : 0;
+  const mapViewportClass = isPopout
+    ? 'relative h-[calc(100vh-180px)] min-h-[420px] bg-[#0b1525]'
+    : 'relative h-[72vh] min-h-[500px] bg-[#0b1525]';
+
+  const openMapPopout = useCallback(() => {
+    const next = window.open(
+      '/map/popout',
+      'cad_live_map_popout',
+      'popup=yes,width=1400,height=900,resizable=yes,scrollbars=yes'
+    );
+    if (next && typeof next.focus === 'function') {
+      next.focus();
     }
-  }, [selectedUnitId, units]);
-
-  const clampViewBox = useCallback((next) => {
-    const minWidth = WORLD_WIDTH * 0.12;
-    const maxWidth = WORLD_WIDTH * 4;
-    const width = Math.min(maxWidth, Math.max(minWidth, next.width));
-    const height = width * (WORLD_HEIGHT / WORLD_WIDTH);
-
-    // Keep map constrained when zoomed in; keep centered when zoomed out.
-    const extraX = Math.max(0, width - WORLD_WIDTH) * 0.5;
-    const extraY = Math.max(0, height - WORLD_HEIGHT) * 0.5;
-    const minX = WORLD_BOUNDS.minX - extraX;
-    const maxX = WORLD_BOUNDS.maxX - width + extraX;
-    const worldMinY = -WORLD_BOUNDS.maxY;
-    const worldMaxY = -WORLD_BOUNDS.minY;
-    const minY = worldMinY - extraY;
-    const maxY = worldMaxY - height + extraY;
-
-    return {
-      x: Math.min(maxX, Math.max(minX, next.x)),
-      y: Math.min(maxY, Math.max(minY, next.y)),
-      width,
-      height,
-    };
   }, []);
 
-  const screenToWorld = useCallback((clientX, clientY, targetViewBox = viewBox) => {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const rect = svg.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    const px = (clientX - rect.left) / rect.width;
-    const py = (clientY - rect.top) / rect.height;
-    return {
-      x: targetViewBox.x + (px * targetViewBox.width),
-      y: targetViewBox.y + (py * targetViewBox.height),
-    };
-  }, [viewBox]);
-
-  const zoomAt = useCallback((factor, clientX, clientY) => {
-    setViewBox((current) => {
-      const pivot = screenToWorld(clientX, clientY, current);
-      if (!pivot) return current;
-      const width = current.width * factor;
-      const height = current.height * factor;
-      const next = {
-        x: pivot.x - ((pivot.x - current.x) * (width / current.width)),
-        y: pivot.y - ((pivot.y - current.y) * (height / current.height)),
-        width,
-        height,
-      };
-      return clampViewBox(next);
-    });
-  }, [clampViewBox, screenToWorld]);
-
-  const handleWheel = useCallback((event) => {
-    event.preventDefault();
-    const factor = event.deltaY < 0 ? 0.88 : 1.14;
-    zoomAt(factor, event.clientX, event.clientY);
-  }, [zoomAt]);
-
-  const handlePointerDown = useCallback((event) => {
-    if (event.button !== 0) return;
-    const svg = svgRef.current;
-    if (!svg) return;
-    dragRef.current = {
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startViewBox: { ...viewBox },
-    };
-    svg.setPointerCapture(event.pointerId);
-  }, [viewBox]);
-
-  const handlePointerMove = useCallback((event) => {
-    const svg = svgRef.current;
-    if (!svg || !dragRef.current) return;
-    if (dragRef.current.pointerId !== event.pointerId) return;
-    const rect = svg.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-
-    const deltaX = event.clientX - dragRef.current.startClientX;
-    const deltaY = event.clientY - dragRef.current.startClientY;
-    const worldDx = deltaX * (dragRef.current.startViewBox.width / rect.width);
-    const worldDy = deltaY * (dragRef.current.startViewBox.height / rect.height);
-
-    setViewBox(clampViewBox({
-      x: dragRef.current.startViewBox.x - worldDx,
-      y: dragRef.current.startViewBox.y - worldDy,
-      width: dragRef.current.startViewBox.width,
-      height: dragRef.current.startViewBox.height,
-    }));
-  }, [clampViewBox]);
-
-  const handlePointerUp = useCallback((event) => {
-    const svg = svgRef.current;
-    if (!svg || !dragRef.current) return;
-    if (dragRef.current.pointerId !== event.pointerId) return;
-    svg.releasePointerCapture(event.pointerId);
-    dragRef.current = null;
+  const openMainMap = useCallback(() => {
+    window.location.assign('/map');
   }, []);
-
-  const visibleUnits = useMemo(() => {
-    return units.filter((unit) => {
-      if (!showStale && unit.position_stale) return false;
-      const x = Number(unit.position_x);
-      const y = Number(unit.position_y);
-      return Number.isFinite(x) && Number.isFinite(y);
-    });
-  }, [units, showStale]);
-
-  const unitsWithoutPosition = useMemo(() => {
-    return units.filter((unit) => {
-      const x = Number(unit.position_x);
-      const y = Number(unit.position_y);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
-      return unit.position_stale;
-    });
-  }, [units]);
-
-  const selectedUnit = useMemo(
-    () => units.find(u => u.id === selectedUnitId) || visibleUnits[0] || null,
-    [units, visibleUnits, selectedUnitId]
-  );
-
-  const markerRadius = Math.max(24, viewBox.width * 0.0042);
-  const labelSize = Math.max(58, markerRadius * 2.1);
-  const translateToMapPoint = useCallback((rawX, rawY) => {
-    const unitX = Number(rawX);
-    const unitY = Number(rawY);
-    if (!Number.isFinite(unitX) || !Number.isFinite(unitY)) return null;
-    return {
-      x: (unitX * mapTransform.scaleX) + mapTransform.offsetX,
-      y: ((-unitY) * mapTransform.scaleY) + mapTransform.offsetY,
-    };
-  }, [mapTransform]);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
-          <p className="text-sm text-cad-muted">
-            Real-time unit positions from FiveM bridge heartbeat data.
-          </p>
         </div>
         <div className="flex items-center gap-2">
+          {!isPopout && (
+            <button
+              onClick={openMapPopout}
+              className="px-3 py-1.5 text-xs bg-cad-accent text-white border border-cad-accent/40 rounded hover:bg-cad-accent-light transition-colors"
+            >
+              Popout Map
+            </button>
+          )}
+          {isPopout && (
+            <button
+              onClick={openMainMap}
+              className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Open In CAD
+            </button>
+          )}
           <button
-            onClick={() => setViewBox(createInitialViewBox())}
+            onClick={() => setResetSignal((prev) => prev + 1)}
             className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
           >
             Reset View
           </button>
           <button
-            onClick={() => setShowStale(v => !v)}
-            className={`px-3 py-1.5 text-xs border rounded transition-colors ${
-              showStale
-                ? 'bg-cad-accent/20 text-cad-accent-light border-cad-accent/40'
-                : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
-            }`}
-          >
-            {showStale ? 'Hide Stale' : 'Show Stale'}
-          </button>
-          <button
-            onClick={fetchData}
+            onClick={refreshAll}
             className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
           >
             Refresh
@@ -319,161 +549,222 @@ export default function LiveMap() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
-        <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
-          <div className="px-3 py-2 border-b border-cad-border flex items-center justify-between text-xs text-cad-muted">
-            <span>{visibleUnits.length} tracked unit{visibleUnits.length !== 1 ? 's' : ''}</span>
-            <span>{loading ? 'Updating...' : 'Live'}</span>
-          </div>
-          <div className="relative h-[68vh] min-h-[480px] bg-[#0b1525]">
-            <svg
-              ref={svgRef}
-              viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
-              className="w-full h-full touch-none cursor-grab active:cursor-grabbing"
-              onWheel={handleWheel}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerCancel={handlePointerUp}
+      {isAdmin && adminCalibrationVisible && (
+        <div className="bg-cad-card border border-cad-border rounded-lg px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-cad-muted">Calibration</span>
+            <label className="inline-flex items-center gap-1 text-cad-muted">
+              Move Step
+              <input
+                type="number"
+                min="0.001"
+                step="0.1"
+                value={calibrationStep}
+                onChange={(e) => updateCalibrationStep(e.target.value)}
+                className="w-20 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs text-cad-ink focus:outline-none focus:border-cad-accent"
+              />
+            </label>
+            <label className="inline-flex items-center gap-1 text-cad-muted">
+              Scale Step
+              <input
+                type="number"
+                min="0.001"
+                step="0.01"
+                value={scaleStep}
+                onChange={(e) => updateScaleStep(e.target.value)}
+                className="w-20 bg-cad-surface border border-cad-border rounded px-2 py-1 text-xs text-cad-ink focus:outline-none focus:border-cad-accent"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => nudgeCalibration(0, -1)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
             >
-              <defs>
-                <pattern id="map-grid" width="500" height="500" patternUnits="userSpaceOnUse">
-                  <path d="M 500 0 L 0 0 0 500" fill="none" stroke="#163352" strokeWidth="14" />
-                </pattern>
-              </defs>
+              Up
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeCalibration(0, 1)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Down
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeCalibration(-1, 0)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Left
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeCalibration(1, 0)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Right
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeScale(1, 0)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Scale X+
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeScale(-1, 0)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Scale X-
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeScale(0, 1)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Scale Y+
+            </button>
+            <button
+              type="button"
+              onClick={() => nudgeScale(0, -1)}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Scale Y-
+            </button>
+            <button
+              type="button"
+              onClick={resetCalibrationOffsets}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Reset Offsets
+            </button>
+            <button
+              type="button"
+              onClick={resetCalibrationAll}
+              className="px-2 py-1 bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+            >
+              Reset All
+            </button>
+            <button
+              type="button"
+              onClick={saveCalibrationOffsets}
+              disabled={!calibrationDirty || calibrationSaving}
+              className="px-2 py-1 bg-cad-accent text-white border border-cad-accent/40 rounded hover:bg-cad-accent-light transition-colors disabled:opacity-50"
+            >
+              {calibrationSaving ? 'Saving...' : 'Save'}
+            </button>
+            <span className="font-mono text-cad-muted">
+              scaleX {mapScaleX.toFixed(3)} | scaleY {mapScaleY.toFixed(3)} |
+            </span>
+            <span className="font-mono text-cad-muted">
+              offsetX {mapOffsetX.toFixed(calibrationPrecision)} | offsetY {mapOffsetY.toFixed(calibrationPrecision)}
+            </span>
+            {calibrationDirty && (
+              <span className="text-amber-300">Unsaved changes</span>
+            )}
+            {calibrationNotice && (
+              <span className={calibrationNotice === 'Calibration saved' ? 'text-emerald-400' : 'text-red-400'}>
+                {calibrationNotice}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-cad-muted">
+            If markers appear low compared to in-game, use Up. If markers appear high, use Down.
+            If alignment is correct in one area but drifts in another, adjust scale (X/Y) then save.
+          </p>
+        </div>
+      )}
 
-              <rect
-                x={WORLD_BOUNDS.minX}
-                y={-WORLD_BOUNDS.maxY}
-                width={WORLD_WIDTH}
-                height={WORLD_HEIGHT}
-                fill="#09111d"
-              />
-
-              {mapBackgroundUrl && (
-                <image
-                  href={mapBackgroundUrl}
-                  x={WORLD_BOUNDS.minX}
-                  y={-WORLD_BOUNDS.maxY}
-                  width={WORLD_WIDTH}
-                  height={WORLD_HEIGHT}
-                  preserveAspectRatio="none"
-                  opacity="0.9"
-                />
-              )}
-
-              <rect
-                x={WORLD_BOUNDS.minX}
-                y={-WORLD_BOUNDS.maxY}
-                width={WORLD_WIDTH}
-                height={WORLD_HEIGHT}
-                fill="url(#map-grid)"
-                opacity="0.45"
-              />
-
-              {visibleUnits.map((unit) => {
-                const mapPoint = translateToMapPoint(unit.position_x, unit.position_y);
-                if (!mapPoint) return null;
-                const selected = unit.id === selectedUnit?.id;
-                const stale = !!unit.position_stale;
-                return (
-                  <g
-                    key={unit.id}
-                    transform={`translate(${mapPoint.x} ${mapPoint.y})`}
-                    onClick={() => setSelectedUnitId(unit.id)}
-                    style={{ cursor: 'pointer' }}
-                    opacity={stale ? 0.5 : 1}
-                  >
-                    <circle
-                      r={selected ? markerRadius * 1.35 : markerRadius}
-                      fill={getMarkerColor(unit)}
-                      stroke={selected ? '#ffffff' : '#0b1320'}
-                      strokeWidth={selected ? markerRadius * 0.23 : markerRadius * 0.18}
-                    />
-                    <text
-                      x={markerRadius * 1.3}
-                      y={-markerRadius * 1.1}
-                      fill="#e2e8f0"
-                      fontSize={labelSize}
-                      fontWeight="700"
-                    >
-                      {unit.callsign}
-                    </text>
-                    <text
-                      x={markerRadius * 1.3}
-                      y={markerRadius * 1.35}
-                      fill="#94a3b8"
-                      fontSize={Math.max(50, labelSize * 0.72)}
-                    >
-                      {formatStatus(unit.status)}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-
-            <div className="absolute left-3 bottom-3 bg-cad-surface/90 border border-cad-border rounded px-2 py-1 text-[11px] text-cad-muted">
-              Mouse wheel to zoom | Drag to pan
-            </div>
+      <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
+        <div className="px-3 py-2 border-b border-cad-border flex flex-wrap items-center justify-between gap-2 text-xs text-cad-muted">
+          <span>{markers.length} live marker{markers.length !== 1 ? 's' : ''}</span>
+          <div className="flex items-center gap-3">
+            {staleSinceAt ? (
+              <span className="text-amber-300">
+                {recoveringStaleFeed
+                  ? `Feed stale (${staleFeedAgeSeconds}s) - recovering`
+                  : `Feed stale (${staleFeedAgeSeconds}s)`}
+              </span>
+            ) : null}
+            <span>
+              {loading ? 'Loading...' : `Updated ${lastRefreshAt ? formatTimeAU(lastRefreshAt, '-') : 'never'}`}
+            </span>
           </div>
         </div>
 
-        <div className="space-y-3">
-          <div className="bg-cad-card border border-cad-border rounded-lg p-3">
-            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Selected Unit</h3>
-            {selectedUnit ? (
-              <div className="space-y-1 text-sm">
-                <p className="font-mono text-cad-accent-light">{selectedUnit.callsign}</p>
-                <p className="text-cad-muted">{selectedUnit.user_name}</p>
-                <p>
-                  <span className="text-cad-muted">Status:</span>{' '}
-                  <span style={{ color: getMarkerColor(selectedUnit) }}>{formatStatus(selectedUnit.status)}</span>
-                </p>
-                <p className="text-cad-muted">Speed: {formatSpeedMph(selectedUnit.position_speed)}</p>
-                <p className="text-cad-muted">
-                  X {Number(selectedUnit.position_x || 0).toFixed(1)} | Y {Number(selectedUnit.position_y || 0).toFixed(1)}
-                </p>
-                {selectedUnit.position_updated_at && (
-                  <p className="text-xs text-cad-muted">Last update: {selectedUnit.position_updated_at} UTC</p>
-                )}
-                {selectedUnit.position_stale && (
-                  <p className="text-xs text-amber-300">Location is stale (older than 5 minutes).</p>
-                )}
-              </div>
-            ) : (
-              <p className="text-sm text-cad-muted">No live unit positions yet.</p>
-            )}
-          </div>
+        <div className={mapViewportClass}>
+          <MapContainer
+            key={mapKey}
+            crs={CRS.Simple}
+            center={[0, 0]}
+            zoom={tileConfig.minZoom}
+            minZoom={tileConfig.minZoom}
+            maxZoom={tileConfig.maxZoom}
+            zoomControl={false}
+            className="w-full h-full"
+          >
+            <MapBoundsController
+              tileConfig={tileConfig}
+              resetSignal={resetSignal}
+              onMapReady={setMapInstance}
+            />
+            <TileLayer
+              url={tileConfig.tileUrlTemplate}
+              tileSize={tileConfig.tileSize}
+              minZoom={tileConfig.minZoom}
+              maxZoom={tileConfig.maxZoom}
+              minNativeZoom={tileConfig.minNativeZoom}
+              maxNativeZoom={tileConfig.maxNativeZoom}
+              noWrap
+            />
 
-          <div className="bg-cad-card border border-cad-border rounded-lg p-3">
-            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">No Live Position</h3>
-            {unitsWithoutPosition.length > 0 ? (
-              <div className="space-y-1 max-h-64 overflow-y-auto">
-                {unitsWithoutPosition.map(unit => (
-                  <div key={unit.id} className="text-xs bg-cad-surface border border-cad-border rounded px-2 py-1">
-                    <p className="font-mono text-cad-accent-light">{unit.callsign}</p>
-                    <p className="text-cad-muted truncate">{unit.user_name}</p>
+            {markers.map(({ player, latLng }) => (
+              <CircleMarker
+                key={player.identifier}
+                center={[latLng.lat, latLng.lng]}
+                radius={7}
+                pathOptions={{
+                  color: '#0f172a',
+                  weight: 2,
+                  fillColor: markerColor(player),
+                  fillOpacity: 0.95,
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -8]} opacity={1} className="!bg-slate-900 !text-slate-100 !border-slate-700">
+                  <div className="text-xs">
+                    <p className="font-semibold">{player.name}</p>
+                    {player.callsign ? <p className="font-mono text-cyan-300">{player.callsign}</p> : null}
+                    {player.vehicle ? <p>{player.vehicle}</p> : null}
+                    <p>{player.location || 'No location'}</p>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-cad-muted">All tracked units currently have live positions.</p>
-            )}
-          </div>
+                </Tooltip>
+              </CircleMarker>
+            ))}
+          </MapContainer>
 
-          <div className="bg-cad-card border border-cad-border rounded-lg p-3 text-xs text-cad-muted">
-            <p>
-              Map image is pinned to <span className="font-mono">/maps/FullMap.png</span>.
-            </p>
-            <p className="mt-1">
-              Calibration: X = (gameX * {mapTransform.scaleX}) + {mapTransform.offsetX}, Y = ((-gameY) * {mapTransform.scaleY}) + {mapTransform.offsetY}
-            </p>
-            <p className="mt-1">
-              Optional calibration vars: `VITE_CAD_MAP_MIN_X`, `VITE_CAD_MAP_MAX_X`, `VITE_CAD_MAP_MIN_Y`, `VITE_CAD_MAP_MAX_Y`.
-            </p>
-          </div>
+          {!tileConfig.mapAvailable && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="bg-cad-surface/95 border border-cad-border rounded px-4 py-2 text-xs text-amber-300 max-w-md text-center">
+                Live map tiles are missing. Upload all required files in Admin &gt; System Settings.
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {error && (
+        <p className="text-xs text-red-400 whitespace-pre-wrap">{error}</p>
+      )}
+      {!error && outOfBoundsCount > 0 && (
+        <p className="text-xs text-amber-300">
+          {outOfBoundsCount} marker{outOfBoundsCount !== 1 ? 's are' : ' is'} outside tile bounds. This usually means tiles or map bounds do not match Snaily defaults.
+        </p>
+      )}
+      {staleSinceAt && (
+        <p className="text-xs text-amber-300">
+          Live map feed has not advanced for {staleFeedAgeSeconds}s. Automatic recovery is running.
+        </p>
+      )}
     </div>
   );
 }
