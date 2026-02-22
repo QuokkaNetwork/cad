@@ -16,11 +16,6 @@ const WORLD_HEIGHT = WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY;
 const DEFAULT_MAP_BACKGROUND_URL = '/maps/FullMap.png';
 const MAP_BACKGROUND_ENV_URL = String(import.meta.env.VITE_CAD_MAP_IMAGE || '').trim();
 const INITIAL_MAP_BACKGROUND_URL = MAP_BACKGROUND_ENV_URL || DEFAULT_MAP_BACKGROUND_URL;
-
-const LIVE_MAP_SOCKET_ENV_URL = String(import.meta.env.VITE_LIVEMAP_SOCKET_URL || '').trim();
-const LIVE_MAP_SOCKET_PORT = Number(import.meta.env.VITE_LIVEMAP_SOCKET_PORT ?? 30121);
-const LIVE_MAP_STALE_MS = Math.max(5000, Number(import.meta.env.VITE_LIVEMAP_STALE_MS ?? 15000) || 15000);
-
 const DEFAULT_MAP_TRANSFORM = {
   scaleX: 1,
   scaleY: 1,
@@ -44,13 +39,6 @@ function createInitialViewBox() {
   };
 }
 
-function normalizeIdentityToken(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-}
-
 function formatSpeedMph(value) {
   const speed = Number(value || 0);
   if (!Number.isFinite(speed) || speed <= 0) return '0 mph';
@@ -59,10 +47,14 @@ function formatSpeedMph(value) {
 
 function formatStatus(status) {
   const raw = String(status || '').trim().toLowerCase();
-  if (!raw) return 'LiveMap';
+  if (!raw) return 'Unknown';
   if (raw === 'on-scene') return 'On Scene';
   if (raw === 'enroute') return 'En Route';
   return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function getMarkerColor(unit) {
+  return STATUS_COLORS[unit.status] || '#94a3b8';
 }
 
 function parseMapNumber(value, fallback) {
@@ -80,57 +72,6 @@ function isDispatchUnit(unit) {
   return short === 'DISPATCH';
 }
 
-function parseLiveMapIdentifier(entry) {
-  return String(
-    entry?.identifier
-    || entry?.identifer
-    || entry?.steam_id
-    || entry?.steam
-    || ''
-  ).trim();
-}
-
-function parseLiveMapPosition(entry) {
-  const x = Number(entry?.pos?.x);
-  const y = Number(entry?.pos?.y);
-  const z = Number(entry?.pos?.z);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  return {
-    x,
-    y,
-    z: Number.isFinite(z) ? z : 0,
-  };
-}
-
-function toSocketUrl(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  if (text.startsWith('http://')) return `ws://${text.slice('http://'.length)}`;
-  if (text.startsWith('https://')) return `wss://${text.slice('https://'.length)}`;
-  return text;
-}
-
-function buildFallbackSocketUrl() {
-  const envUrl = toSocketUrl(LIVE_MAP_SOCKET_ENV_URL);
-  if (envUrl) return envUrl;
-  if (typeof window === 'undefined') return '';
-
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.hostname || '127.0.0.1';
-  const port = Number.isFinite(LIVE_MAP_SOCKET_PORT) && LIVE_MAP_SOCKET_PORT > 0
-    ? LIVE_MAP_SOCKET_PORT
-    : 30121;
-  return `${protocol}//${host}:${port}`;
-}
-
-function formatSocketState(state) {
-  if (state === 'connected') return 'Connected';
-  if (state === 'connecting') return 'Connecting';
-  if (state === 'error') return 'Error';
-  if (state === 'missing') return 'Not Configured';
-  return 'Disconnected';
-}
-
 export default function LiveMap() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -138,263 +79,77 @@ export default function LiveMap() {
   const isDispatch = !!activeDepartment?.is_dispatch;
 
   const [units, setUnits] = useState([]);
-  const [loadingUnits, setLoadingUnits] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [showStale, setShowStale] = useState(true);
-  const [selectedMarkerId, setSelectedMarkerId] = useState(null);
-
+  const [selectedUnitId, setSelectedUnitId] = useState(null);
   const [viewBox, setViewBox] = useState(createInitialViewBox);
   const [mapBackgroundUrl, setMapBackgroundUrl] = useState(INITIAL_MAP_BACKGROUND_URL);
   const [mapTransform, setMapTransform] = useState(DEFAULT_MAP_TRANSFORM);
-  const [socketUrl, setSocketUrl] = useState(buildFallbackSocketUrl);
-
-  const [socketState, setSocketState] = useState('idle');
-  const [socketError, setSocketError] = useState('');
-  const [lastSocketMessageAt, setLastSocketMessageAt] = useState(0);
-  const [livePlayersById, setLivePlayersById] = useState({});
 
   const svgRef = useRef(null);
   const dragRef = useRef(null);
 
-  const fetchUnits = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     if (!deptId) return;
-    setLoadingUnits(true);
+    setLoading(true);
     try {
-      let incoming = [];
-      if (isDispatch) {
-        const payload = await api.get('/api/units/dispatchable');
-        incoming = Array.isArray(payload?.units) ? payload.units : [];
-      } else {
-        const payload = await api.get(`/api/units?department_id=${deptId}`);
-        incoming = Array.isArray(payload) ? payload : [];
-      }
+      const query = isDispatch ? '&dispatch=true' : '';
+      const data = await api.get(`/api/units/map?department_id=${deptId}${query}`);
+      const incoming = Array.isArray(data) ? data : [];
       setUnits(incoming.filter(unit => !isDispatchUnit(unit)));
     } catch (err) {
-      console.error('Failed to load unit metadata for live map:', err);
+      console.error('Failed to load live map units:', err);
     } finally {
-      setLoadingUnits(false);
+      setLoading(false);
     }
   }, [deptId, isDispatch]);
 
   const fetchMapConfig = useCallback(async () => {
     try {
       const config = await api.get('/api/units/map-config');
-      const configuredImage = String(config?.map_image_url || '').trim();
-      const configuredSocket = toSocketUrl(config?.live_map_socket_url);
-      setMapBackgroundUrl(configuredImage || INITIAL_MAP_BACKGROUND_URL);
+      const configured = String(config?.map_image_url || '').trim();
+      setMapBackgroundUrl(configured || INITIAL_MAP_BACKGROUND_URL);
       setMapTransform({
         scaleX: parseMapNumber(config?.map_scale_x, DEFAULT_MAP_TRANSFORM.scaleX),
         scaleY: parseMapNumber(config?.map_scale_y, DEFAULT_MAP_TRANSFORM.scaleY),
         offsetX: parseMapNumber(config?.map_offset_x, DEFAULT_MAP_TRANSFORM.offsetX),
         offsetY: parseMapNumber(config?.map_offset_y, DEFAULT_MAP_TRANSFORM.offsetY),
       });
-      setSocketUrl(configuredSocket || buildFallbackSocketUrl());
     } catch {
       setMapBackgroundUrl(INITIAL_MAP_BACKGROUND_URL);
       setMapTransform(DEFAULT_MAP_TRANSFORM);
-      setSocketUrl(buildFallbackSocketUrl());
     }
   }, []);
 
-  const refreshAll = useCallback(() => {
-    fetchUnits();
-    fetchMapConfig();
-  }, [fetchUnits, fetchMapConfig]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData, locationKey]);
 
   useEffect(() => {
-    refreshAll();
-  }, [refreshAll, locationKey]);
+    fetchMapConfig();
+  }, [fetchMapConfig, locationKey]);
 
   useEventSource({
-    'unit:online': () => fetchUnits(),
-    'unit:offline': () => fetchUnits(),
-    'unit:update': () => fetchUnits(),
-    'sync:department': () => fetchUnits(),
+    'unit:online': () => fetchData(),
+    'unit:offline': () => fetchData(),
+    'unit:update': () => fetchData(),
+    'sync:department': () => fetchData(),
   });
 
   useEffect(() => {
-    const id = setInterval(fetchUnits, 7000);
+    const id = setInterval(() => {
+      fetchData();
+      fetchMapConfig();
+    }, 5000);
     return () => clearInterval(id);
-  }, [fetchUnits]);
+  }, [fetchData, fetchMapConfig]);
 
   useEffect(() => {
-    const id = setInterval(fetchMapConfig, 30000);
-    return () => clearInterval(id);
-  }, [fetchMapConfig]);
-
-  useEffect(() => {
-    const targetSocketUrl = toSocketUrl(socketUrl);
-    if (!targetSocketUrl) {
-      setSocketState('missing');
-      setSocketError('Configure live_map websocket URL in Admin > System Settings.');
-      return undefined;
+    if (!selectedUnitId) return;
+    if (!units.find(u => u.id === selectedUnitId)) {
+      setSelectedUnitId(null);
     }
-
-    let closed = false;
-    let socket = null;
-    let reconnectTimer = null;
-
-    const connect = () => {
-      if (closed) return;
-      setSocketState('connecting');
-      setSocketError('');
-
-      try {
-        socket = new WebSocket(targetSocketUrl);
-      } catch (err) {
-        setSocketState('error');
-        setSocketError(err?.message || 'Unable to open websocket');
-        reconnectTimer = setTimeout(connect, 3000);
-        return;
-      }
-
-      socket.onopen = () => {
-        if (closed) return;
-        setSocketState('connected');
-        setSocketError('');
-      };
-
-      socket.onmessage = (event) => {
-        if (closed) return;
-        let message = null;
-        try {
-          message = JSON.parse(event.data);
-        } catch {
-          return;
-        }
-
-        if (!message || typeof message !== 'object') return;
-
-        if (message.type === 'playerData') {
-          const payload = Array.isArray(message.payload) ? message.payload : [];
-          const now = Date.now();
-          const next = {};
-          for (const row of payload) {
-            const identifier = parseLiveMapIdentifier(row);
-            if (!identifier) continue;
-            next[identifier] = {
-              identifier,
-              row,
-              updatedAtMs: now,
-            };
-          }
-          setLivePlayersById(next);
-          setLastSocketMessageAt(now);
-          return;
-        }
-
-        if (message.type === 'playerLeft') {
-          const identifier = String(message.payload || '').trim();
-          if (!identifier) return;
-          setLivePlayersById((prev) => {
-            if (!prev[identifier]) return prev;
-            const next = { ...prev };
-            delete next[identifier];
-            return next;
-          });
-        }
-      };
-
-      socket.onerror = () => {
-        if (closed) return;
-        setSocketState('error');
-        setSocketError('Unable to read live_map websocket stream.');
-      };
-
-      socket.onclose = () => {
-        if (closed) return;
-        setSocketState('disconnected');
-        reconnectTimer = setTimeout(connect, 3000);
-      };
-    };
-
-    connect();
-
-    return () => {
-      closed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
-        socket.close();
-      }
-    };
-  }, [socketUrl]);
-
-  const livePlayers = useMemo(() => Object.values(livePlayersById), [livePlayersById]);
-
-  const markerSnapshot = useMemo(() => {
-    const nameBuckets = new Map();
-    for (const unit of units) {
-      const key = normalizeIdentityToken(unit.user_name);
-      if (!key) continue;
-      const bucket = nameBuckets.get(key) || [];
-      bucket.push(unit);
-      nameBuckets.set(key, bucket);
-    }
-
-    const now = Date.now();
-    const matchedUnitIds = new Set();
-    const markers = [];
-    let unmatchedLivePlayers = 0;
-
-    for (const livePlayer of livePlayers) {
-      const pos = parseLiveMapPosition(livePlayer.row);
-      if (!pos) continue;
-
-      const nameKey = normalizeIdentityToken(livePlayer.row?.name);
-      let matchedUnit = null;
-      if (nameKey) {
-        const candidates = nameBuckets.get(nameKey) || [];
-        matchedUnit = candidates.find(unit => !matchedUnitIds.has(unit.id)) || null;
-      }
-      if (!matchedUnit) {
-        unmatchedLivePlayers += 1;
-        continue;
-      }
-      matchedUnitIds.add(matchedUnit.id);
-
-      const status = String(matchedUnit.status || '').trim().toLowerCase();
-      markers.push({
-        id: livePlayer.identifier,
-        identifier: livePlayer.identifier,
-        unit: matchedUnit,
-        label: matchedUnit.callsign || String(livePlayer.row?.name || '').trim() || livePlayer.identifier,
-        displayName: matchedUnit.user_name || String(livePlayer.row?.name || '').trim() || 'Unknown',
-        status,
-        location: String(livePlayer.row?.Location || livePlayer.row?.location || '').trim(),
-        speed: Number(livePlayer.row?.speed ?? livePlayer.row?.Speed ?? 0),
-        position_x: pos.x,
-        position_y: pos.y,
-        position_z: pos.z,
-        stale: (now - Number(livePlayer.updatedAtMs || 0)) > LIVE_MAP_STALE_MS,
-        updatedAtMs: Number(livePlayer.updatedAtMs || 0),
-      });
-    }
-
-    const unitsWithoutPosition = units.filter(unit => !matchedUnitIds.has(unit.id));
-    return {
-      markers,
-      unitsWithoutPosition,
-      unmatchedLivePlayers,
-      matchedUnits: units.length - unitsWithoutPosition.length,
-    };
-  }, [livePlayers, units]);
-
-  const allMarkers = markerSnapshot.markers;
-  const visibleMarkers = useMemo(
-    () => allMarkers.filter(marker => (showStale ? true : !marker.stale)),
-    [allMarkers, showStale]
-  );
-
-  const selectedMarker = useMemo(
-    () => allMarkers.find(marker => marker.id === selectedMarkerId) || visibleMarkers[0] || null,
-    [allMarkers, visibleMarkers, selectedMarkerId]
-  );
-
-  useEffect(() => {
-    if (!selectedMarkerId) return;
-    if (!allMarkers.find(marker => marker.id === selectedMarkerId)) {
-      setSelectedMarkerId(null);
-    }
-  }, [selectedMarkerId, allMarkers]);
+  }, [selectedUnitId, units]);
 
   const clampViewBox = useCallback((next) => {
     const minWidth = WORLD_WIDTH * 0.12;
@@ -402,6 +157,7 @@ export default function LiveMap() {
     const width = Math.min(maxWidth, Math.max(minWidth, next.width));
     const height = width * (WORLD_HEIGHT / WORLD_WIDTH);
 
+    // Keep map constrained when zoomed in; keep centered when zoomed out.
     const extraX = Math.max(0, width - WORLD_WIDTH) * 0.5;
     const extraY = Math.max(0, height - WORLD_HEIGHT) * 0.5;
     const minX = WORLD_BOUNDS.minX - extraX;
@@ -495,6 +251,31 @@ export default function LiveMap() {
     dragRef.current = null;
   }, []);
 
+  const visibleUnits = useMemo(() => {
+    return units.filter((unit) => {
+      if (!showStale && unit.position_stale) return false;
+      const x = Number(unit.position_x);
+      const y = Number(unit.position_y);
+      return Number.isFinite(x) && Number.isFinite(y);
+    });
+  }, [units, showStale]);
+
+  const unitsWithoutPosition = useMemo(() => {
+    return units.filter((unit) => {
+      const x = Number(unit.position_x);
+      const y = Number(unit.position_y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
+      return unit.position_stale;
+    });
+  }, [units]);
+
+  const selectedUnit = useMemo(
+    () => units.find(u => u.id === selectedUnitId) || visibleUnits[0] || null,
+    [units, visibleUnits, selectedUnitId]
+  );
+
+  const markerRadius = Math.max(24, viewBox.width * 0.0042);
+  const labelSize = Math.max(58, markerRadius * 2.1);
   const translateToMapPoint = useCallback((rawX, rawY) => {
     const unitX = Number(rawX);
     const unitY = Number(rawY);
@@ -505,17 +286,13 @@ export default function LiveMap() {
     };
   }, [mapTransform]);
 
-  const markerRadius = viewBox.width * 0.006;
-  const labelSize = markerRadius * 2.2;
-  const socketStatus = formatSocketState(socketState);
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
           <p className="text-sm text-cad-muted">
-            Position stream from <span className="font-mono">live_map-3.2.1</span> websocket data.
+            Real-time unit positions from FiveM bridge heartbeat data.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -536,7 +313,7 @@ export default function LiveMap() {
             {showStale ? 'Hide Stale' : 'Show Stale'}
           </button>
           <button
-            onClick={refreshAll}
+            onClick={fetchData}
             className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
           >
             Refresh
@@ -546,13 +323,9 @@ export default function LiveMap() {
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
         <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
-          <div className="px-3 py-2 border-b border-cad-border flex flex-wrap items-center justify-between gap-2 text-xs text-cad-muted">
-            <span>
-              {visibleMarkers.length} visible marker{visibleMarkers.length !== 1 ? 's' : ''} / {allMarkers.length} matched unit marker{allMarkers.length !== 1 ? 's' : ''}
-            </span>
-            <span>
-              Socket: {socketStatus} | CAD Units: {loadingUnits ? 'Updating...' : `${markerSnapshot.matchedUnits}/${units.length} matched`}
-            </span>
+          <div className="px-3 py-2 border-b border-cad-border flex items-center justify-between text-xs text-cad-muted">
+            <span>{visibleUnits.length} tracked unit{visibleUnits.length !== 1 ? 's' : ''}</span>
+            <span>{loading ? 'Updating...' : 'Live'}</span>
           </div>
           <div className="relative h-[68vh] min-h-[480px] bg-[#0b1525]">
             <svg
@@ -600,25 +373,22 @@ export default function LiveMap() {
                 opacity="0.45"
               />
 
-              {visibleMarkers.map((marker) => {
-                const mapPoint = translateToMapPoint(marker.position_x, marker.position_y);
+              {visibleUnits.map((unit) => {
+                const mapPoint = translateToMapPoint(unit.position_x, unit.position_y);
                 if (!mapPoint) return null;
-
-                const selected = marker.id === selectedMarker?.id;
-                const stale = !!marker.stale;
-                const color = STATUS_COLORS[marker.status] || '#94a3b8';
-
+                const selected = unit.id === selectedUnit?.id;
+                const stale = !!unit.position_stale;
                 return (
                   <g
-                    key={marker.id}
+                    key={unit.id}
                     transform={`translate(${mapPoint.x} ${mapPoint.y})`}
-                    onClick={() => setSelectedMarkerId(marker.id)}
+                    onClick={() => setSelectedUnitId(unit.id)}
                     style={{ cursor: 'pointer' }}
                     opacity={stale ? 0.5 : 1}
                   >
                     <circle
                       r={selected ? markerRadius * 1.35 : markerRadius}
-                      fill={color}
+                      fill={getMarkerColor(unit)}
                       stroke={selected ? '#ffffff' : '#0b1320'}
                       strokeWidth={selected ? markerRadius * 0.23 : markerRadius * 0.18}
                     />
@@ -629,7 +399,7 @@ export default function LiveMap() {
                       fontSize={labelSize}
                       fontWeight="700"
                     >
-                      {marker.label}
+                      {unit.callsign}
                     </text>
                     <text
                       x={markerRadius * 1.3}
@@ -637,7 +407,7 @@ export default function LiveMap() {
                       fill="#94a3b8"
                       fontSize={Math.max(50, labelSize * 0.72)}
                     >
-                      {formatStatus(marker.status)}
+                      {formatStatus(unit.status)}
                     </text>
                   </g>
                 );
@@ -652,50 +422,36 @@ export default function LiveMap() {
 
         <div className="space-y-3">
           <div className="bg-cad-card border border-cad-border rounded-lg p-3">
-            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Selected Marker</h3>
-            {selectedMarker ? (
+            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Selected Unit</h3>
+            {selectedUnit ? (
               <div className="space-y-1 text-sm">
-                <p className="font-mono text-cad-accent-light">{selectedMarker.label}</p>
-                <p className="text-cad-muted">{selectedMarker.displayName}</p>
+                <p className="font-mono text-cad-accent-light">{selectedUnit.callsign}</p>
+                <p className="text-cad-muted">{selectedUnit.user_name}</p>
                 <p>
                   <span className="text-cad-muted">Status:</span>{' '}
-                  <span style={{ color: STATUS_COLORS[selectedMarker.status] || '#94a3b8' }}>
-                    {formatStatus(selectedMarker.status)}
-                  </span>
+                  <span style={{ color: getMarkerColor(selectedUnit) }}>{formatStatus(selectedUnit.status)}</span>
                 </p>
-                <p className="text-cad-muted">Speed: {formatSpeedMph(selectedMarker.speed)}</p>
+                <p className="text-cad-muted">Speed: {formatSpeedMph(selectedUnit.position_speed)}</p>
                 <p className="text-cad-muted">
-                  X {Number(selectedMarker.position_x || 0).toFixed(1)} | Y {Number(selectedMarker.position_y || 0).toFixed(1)}
+                  X {Number(selectedUnit.position_x || 0).toFixed(1)} | Y {Number(selectedUnit.position_y || 0).toFixed(1)}
                 </p>
-                {selectedMarker.location && (
-                  <p className="text-cad-muted break-words">Location: {selectedMarker.location}</p>
+                {selectedUnit.position_updated_at && (
+                  <p className="text-xs text-cad-muted">Last update: {selectedUnit.position_updated_at} UTC</p>
                 )}
-                <p className="text-xs text-cad-muted break-all">Identifier: {selectedMarker.identifier}</p>
-                {selectedMarker.updatedAtMs > 0 && (
-                  <p className="text-xs text-cad-muted">
-                    Last update: {new Date(selectedMarker.updatedAtMs).toLocaleTimeString()}
-                  </p>
-                )}
-                {selectedMarker.stale && (
-                  <p className="text-xs text-amber-300">
-                    Location is stale (older than {Math.round(LIVE_MAP_STALE_MS / 1000)} seconds).
-                  </p>
+                {selectedUnit.position_stale && (
+                  <p className="text-xs text-amber-300">Location is stale (older than 5 minutes).</p>
                 )}
               </div>
             ) : (
-              <p className="text-sm text-cad-muted">
-                {markerSnapshot.unmatchedLivePlayers > 0
-                  ? `No on-duty unit matches yet (${markerSnapshot.unmatchedLivePlayers} unmatched live_map player${markerSnapshot.unmatchedLivePlayers !== 1 ? 's' : ''}).`
-                  : 'No live markers received from live_map yet.'}
-              </p>
+              <p className="text-sm text-cad-muted">No live unit positions yet.</p>
             )}
           </div>
 
           <div className="bg-cad-card border border-cad-border rounded-lg p-3">
-            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">CAD Units Missing Live Position</h3>
-            {markerSnapshot.unitsWithoutPosition.length > 0 ? (
+            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">No Live Position</h3>
+            {unitsWithoutPosition.length > 0 ? (
               <div className="space-y-1 max-h-64 overflow-y-auto">
-                {markerSnapshot.unitsWithoutPosition.map(unit => (
+                {unitsWithoutPosition.map(unit => (
                   <div key={unit.id} className="text-xs bg-cad-surface border border-cad-border rounded px-2 py-1">
                     <p className="font-mono text-cad-accent-light">{unit.callsign}</p>
                     <p className="text-cad-muted truncate">{unit.user_name}</p>
@@ -703,30 +459,21 @@ export default function LiveMap() {
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-cad-muted">All on-duty CAD units are currently matched to live_map data.</p>
+              <p className="text-xs text-cad-muted">All tracked units currently have live positions.</p>
             )}
           </div>
 
-          <div className="bg-cad-card border border-cad-border rounded-lg p-3 text-xs text-cad-muted space-y-1">
+          <div className="bg-cad-card border border-cad-border rounded-lg p-3 text-xs text-cad-muted">
             <p>
-              Data source: <span className="font-mono">live_map-3.2.1</span> websocket stream.
+              Default map image is hardcoded to <span className="font-mono">/maps/FullMap.png</span>.
+              Admins can upload a replacement PNG in <span className="font-semibold">System Settings</span>.
             </p>
-            <p className="break-all">
-              Socket URL: <span className="font-mono">{socketUrl || 'Not configured'}</span>
-            </p>
-            <p>
-              Socket status: <span className={socketState === 'connected' ? 'text-emerald-400' : 'text-amber-300'}>{socketStatus}</span>
-              {lastSocketMessageAt > 0 ? ` (last packet ${new Date(lastSocketMessageAt).toLocaleTimeString()})` : ''}
-            </p>
-            <p>
-              Unmatched live_map players: {markerSnapshot.unmatchedLivePlayers}
-            </p>
-            <p>
+            <p className="mt-1">
               Calibration: X = (gameX * {mapTransform.scaleX}) + {mapTransform.offsetX}, Y = ((-gameY) * {mapTransform.scaleY}) + {mapTransform.offsetY}
             </p>
-            {socketError && (
-              <p className="text-red-400 whitespace-pre-wrap">{socketError}</p>
-            )}
+            <p className="mt-1">
+              Optional calibration vars: `VITE_CAD_MAP_MIN_X`, `VITE_CAD_MAP_MAX_X`, `VITE_CAD_MAP_MIN_Y`, `VITE_CAD_MAP_MAX_Y`.
+            </p>
           </div>
         </div>
       </div>
