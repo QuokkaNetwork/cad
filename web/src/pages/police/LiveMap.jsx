@@ -8,15 +8,21 @@ const MAP_WIDTH = 2048;
 const MAP_HEIGHT = 3072;
 const MAP_POLL_INTERVAL_MS = 1500;
 const MAP_ACTIVE_MAX_AGE_MS = 30_000;
-const MAP_MIN_WIDTH = MAP_WIDTH * 0.2;
+const MAP_MIN_WIDTH = MAP_WIDTH * 0.05;
 const MAP_MAX_WIDTH = MAP_WIDTH * 3.5;
-
-const SNAILY_GAME_BOUNDS = {
-  x1: -4230,
-  y1: 8420,
-  x2: 370,
-  y2: -640,
+const DEFAULT_MAP_TRANSFORM = {
+  scaleX: 0.16576,
+  scaleY: 0.164,
+  offsetX: 938.4,
+  offsetY: 2005,
 };
+
+function parseMapNumber(value, fallback) {
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
 
 function createInitialViewBox() {
   return {
@@ -63,21 +69,15 @@ function normalizePlayers(payload) {
   return players;
 }
 
-function convertToMapPoint(rawX, rawY) {
+function convertToMapPoint(rawX, rawY, mapTransform) {
   const x = Number(rawX);
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
-  const xRange = SNAILY_GAME_BOUNDS.x2 - SNAILY_GAME_BOUNDS.x1;
-  const yRange = SNAILY_GAME_BOUNDS.y2 - SNAILY_GAME_BOUNDS.y1;
-  if (!xRange || !yRange) return null;
-
-  // Match SnailyCAD's calibration constants against a static map surface.
-  const px = ((x - SNAILY_GAME_BOUNDS.x1) * 1024) / xRange;
-  const py = ((y - SNAILY_GAME_BOUNDS.y1) * 2048) / yRange;
-  if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
-
-  return { x: px, y: py };
+  return {
+    x: (x * mapTransform.scaleX) + mapTransform.offsetX,
+    y: ((-y) * mapTransform.scaleY) + mapTransform.offsetY,
+  };
 }
 
 function formatSpeedMph(value) {
@@ -105,9 +105,24 @@ export default function LiveMap() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastRefreshAt, setLastRefreshAt] = useState(0);
+  const [mapTransform, setMapTransform] = useState(DEFAULT_MAP_TRANSFORM);
 
   const svgRef = useRef(null);
   const dragRef = useRef(null);
+
+  const fetchMapConfig = useCallback(async () => {
+    try {
+      const cfg = await api.get('/api/units/map-config');
+      setMapTransform({
+        scaleX: parseMapNumber(cfg?.map_scale_x, DEFAULT_MAP_TRANSFORM.scaleX),
+        scaleY: parseMapNumber(cfg?.map_scale_y, DEFAULT_MAP_TRANSFORM.scaleY),
+        offsetX: parseMapNumber(cfg?.map_offset_x, DEFAULT_MAP_TRANSFORM.offsetX),
+        offsetY: parseMapNumber(cfg?.map_offset_y, DEFAULT_MAP_TRANSFORM.offsetY),
+      });
+    } catch {
+      setMapTransform(DEFAULT_MAP_TRANSFORM);
+    }
+  }, []);
 
   const fetchPlayers = useCallback(async () => {
     if (!deptId) {
@@ -136,22 +151,28 @@ export default function LiveMap() {
   useEffect(() => {
     setLoading(true);
     fetchPlayers();
-  }, [fetchPlayers, locationKey]);
+    fetchMapConfig();
+  }, [fetchPlayers, fetchMapConfig, locationKey]);
 
   useEffect(() => {
     const id = setInterval(fetchPlayers, MAP_POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [fetchPlayers]);
 
+  useEffect(() => {
+    const id = setInterval(fetchMapConfig, 30000);
+    return () => clearInterval(id);
+  }, [fetchMapConfig]);
+
   const markers = useMemo(() => {
     return players
       .map((player) => {
-        const point = convertToMapPoint(player.pos.x, player.pos.y);
+        const point = convertToMapPoint(player.pos.x, player.pos.y, mapTransform);
         if (!point) return null;
         return { player, point };
       })
       .filter(Boolean);
-  }, [players]);
+  }, [players, mapTransform]);
 
   const selectedMarker = useMemo(() => {
     const byId = markers.find(marker => marker.player.identifier === selectedPlayerId);
@@ -263,7 +284,7 @@ export default function LiveMap() {
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
           <p className="text-sm text-cad-muted">
-            Snaily-style fixed mapping from resource heartbeat data (no manual calibration).
+            Snaily-style map with CAD transform calibration and heartbeat player data.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -399,7 +420,10 @@ export default function LiveMap() {
             <p>Refresh interval: {MAP_POLL_INTERVAL_MS}ms</p>
             <p>Max age window: {Math.round(MAP_ACTIVE_MAX_AGE_MS / 1000)}s</p>
             <p>
-              Mapping profile: X1 {SNAILY_GAME_BOUNDS.x1}, Y1 {SNAILY_GAME_BOUNDS.y1}, X2 {SNAILY_GAME_BOUNDS.x2}, Y2 {SNAILY_GAME_BOUNDS.y2}
+              Transform: X = (gameX * {mapTransform.scaleX}) + {mapTransform.offsetX}, Y = ((-gameY) * {mapTransform.scaleY}) + {mapTransform.offsetY}
+            </p>
+            <p>
+              Rendered map size: {MAP_WIDTH}x{MAP_HEIGHT} (source PNG 6144x9216, scaled 33.3%)
             </p>
             {error && <p className="text-red-400 whitespace-pre-wrap">{error}</p>}
           </div>
