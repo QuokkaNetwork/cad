@@ -40,6 +40,56 @@ function isEmergency000CallEvent(payload) {
   return String(payload?.call?.job_code || '').trim() === '000';
 }
 
+function normalizeDepartmentIds(value) {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(
+      value
+        .map(item => Number(item))
+        .filter(item => Number.isInteger(item) && item > 0)
+    ));
+  }
+
+  if (typeof value === 'string') {
+    const text = String(value || '').trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) return [];
+      return Array.from(new Set(
+        parsed
+          .map(item => Number(item))
+          .filter(item => Number.isInteger(item) && item > 0)
+      ));
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function getRequestedDepartmentIdsFromEvent(payload) {
+  const call = payload?.call || {};
+  const fromArray = normalizeDepartmentIds(call.requested_department_ids);
+  if (fromArray.length > 0) return fromArray;
+
+  const fromJson = normalizeDepartmentIds(call.requested_department_ids_json);
+  if (fromJson.length > 0) return fromJson;
+
+  const fallbackDepartmentId = Number(call.department_id || payload?.departmentId || payload?.department_id || 0);
+  if (Number.isInteger(fallbackDepartmentId) && fallbackDepartmentId > 0) return [fallbackDepartmentId];
+  return [];
+}
+
+function isCallSoundRelevantToActiveDepartment(payload, activeDepartmentId, isDispatchDepartment) {
+  if (!activeDepartmentId) return false;
+  if (isDispatchDepartment) return true;
+
+  const requestedDepartmentIds = getRequestedDepartmentIdsFromEvent(payload);
+  if (requestedDepartmentIds.length === 0) return false;
+  return requestedDepartmentIds.includes(activeDepartmentId);
+}
+
 function SidebarLink({ to, label, icon }) {
   return (
     <NavLink
@@ -68,6 +118,7 @@ export default function Sidebar() {
   const [dispatcherOnline, setDispatcherOnline] = useState(false);
   const [isDispatchDepartment, setIsDispatchDepartment] = useState(false);
   const [isOnDuty, setIsOnDuty] = useState(false);
+  const [onDutyDepartmentId, setOnDutyDepartmentId] = useState(0);
   const [hasActiveCall, setHasActiveCall] = useState(false);
   const callAssignAudioRef = useRef(null);
   const emergencyCallAudioRef = useRef(null);
@@ -142,11 +193,14 @@ export default function Sidebar() {
 
   const fetchOnDutyStatus = useCallback(async () => {
     try {
-      await api.get('/api/units/me');
+      const unit = await api.get('/api/units/me');
       setIsOnDuty(true);
+      const unitDepartmentId = Number(unit?.department_id || 0);
+      setOnDutyDepartmentId(Number.isInteger(unitDepartmentId) && unitDepartmentId > 0 ? unitDepartmentId : 0);
     } catch (err) {
       if (err?.status === 404 || err?.status === 401) {
         setIsOnDuty(false);
+        setOnDutyDepartmentId(0);
         setHasActiveCall(false);
       }
     }
@@ -177,6 +231,8 @@ export default function Sidebar() {
   useEventSource({
     'call:create': (payload) => {
       if (!isOnDuty) return;
+      if (onDutyDepartmentId > 0 && deptId && onDutyDepartmentId !== deptId) return;
+      if (!isCallSoundRelevantToActiveDepartment(payload, Number(deptId || 0), isDispatchDepartment)) return;
       if (isEmergency000CallEvent(payload)) {
         const fromPendingDispatch = payload?.from_fivem_pending_dispatch === true;
         if (fromPendingDispatch && payload?.play_emergency_sound !== true) {
@@ -200,9 +256,10 @@ export default function Sidebar() {
       if (payload?.suppress_assignment_sound === true) {
         return;
       }
-      if (isOnDuty) {
-        playCallAssignSound();
-      }
+      if (!isOnDuty) return;
+      if (onDutyDepartmentId > 0 && deptId && onDutyDepartmentId !== deptId) return;
+      if (!isCallSoundRelevantToActiveDepartment(payload, Number(deptId || 0), isDispatchDepartment)) return;
+      playCallAssignSound();
     },
     'call:unassign': () => {
       fetchActiveCallStatus();
