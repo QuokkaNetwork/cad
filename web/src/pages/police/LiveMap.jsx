@@ -10,7 +10,11 @@ const TILE_SIZE = 1024;
 const TILE_ROWS = 3;
 const TILE_COLUMNS = 2;
 const TILES_URL = '/tiles/minimap_sea_{y}_{x}.webp';
-const BLIPS_URL = '/live-map-interface/proxy/blips.json';
+const BLIPS_URL = '/api/units/live-map/blips';
+const BLIPS_FALLBACK_URLS = [
+  '/live-map-interface/proxy/blips.json',
+  '/blips.json',
+];
 const MAP_POLL_INTERVAL_MS = 1500;
 const BLIPS_POLL_INTERVAL_MS = 20_000;
 const ACTIVE_MAX_AGE_MS = 30_000;
@@ -271,23 +275,44 @@ function getPlayerIcon(player, markerTypes) {
   return PLAYER_ICON;
 }
 
-async function fetchBlipsFromProxy() {
-  const response = await fetch(BLIPS_URL, {
+async function fetchJsonOrThrow(url) {
+  const response = await fetch(url, {
     method: 'GET',
     credentials: 'include',
     headers: { Accept: 'application/json' },
   });
+  const text = await response.text();
+  let parsed = {};
+
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Live map blips endpoint returned invalid JSON (${url})`);
+  }
 
   if (!response.ok) {
-    throw new Error(`Failed to load blips (${response.status})`);
+    const message = parsed && typeof parsed.error === 'string'
+      ? parsed.error
+      : `Failed to load blips (${response.status})`;
+    throw new Error(message);
   }
 
-  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-  if (!contentType.includes('json')) {
-    throw new Error('Live map blips endpoint did not return JSON');
+  return parsed;
+}
+
+async function fetchBlipsFromProxy() {
+  const sources = [BLIPS_URL, ...BLIPS_FALLBACK_URLS];
+  let lastError = null;
+
+  for (const source of sources) {
+    try {
+      return await fetchJsonOrThrow(source);
+    } catch (error) {
+      lastError = error;
+    }
   }
 
-  return response.json();
+  throw lastError || new Error('Failed to load blips from all configured sources');
 }
 
 export default function LiveMap() {

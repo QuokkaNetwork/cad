@@ -1,5 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
+const config = require('../config');
 const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
@@ -22,6 +23,10 @@ function parseSqliteUtc(value) {
   const base = text.replace(' ', 'T');
   const normalized = base.endsWith('Z') ? base : `${base}Z`;
   return Date.parse(normalized);
+}
+
+function getLiveMapUpstreamHttpUrl() {
+  return `http://${config.liveMap.upstreamHost}:${config.liveMap.upstreamPort}${config.liveMap.upstreamBlipsPath}`;
 }
 
 function findDispatchDepartments() {
@@ -409,6 +414,58 @@ router.get('/map-config', requireAuth, (_req, res) => {
     map_offset_y: transform.offset_y,
     transform,
   });
+});
+
+router.get('/live-map/blips', requireAuth, async (_req, res) => {
+  if (!config.liveMap.enabled) {
+    return res.json({});
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  const upstreamUrl = getLiveMapUpstreamHttpUrl();
+
+  try {
+    const upstreamResponse = await fetch(upstreamUrl, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    });
+    const payloadText = await upstreamResponse.text();
+    let payloadJson = {};
+
+    try {
+      payloadJson = payloadText ? JSON.parse(payloadText) : {};
+    } catch {
+      return res.status(502).json({
+        error: 'Live map blips upstream returned invalid JSON',
+        upstream: upstreamUrl,
+      });
+    }
+
+    if (!upstreamResponse.ok) {
+      if (payloadJson && typeof payloadJson === 'object' && !Array.isArray(payloadJson)) {
+        return res.status(upstreamResponse.status).json(payloadJson);
+      }
+      return res.status(upstreamResponse.status).json({
+        error: `Live map blips upstream returned status ${upstreamResponse.status}`,
+        upstream: upstreamUrl,
+      });
+    }
+
+    return res.json(payloadJson);
+  } catch (error) {
+    const detail = error?.name === 'AbortError'
+      ? 'Timed out reaching live_map upstream'
+      : (error?.message || 'Unknown proxy error');
+    return res.status(502).json({
+      error: 'Unable to reach live_map upstream',
+      detail,
+      upstream: upstreamUrl,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 });
 
 router.get('/live-map/players', requireAuth, (req, res) => {
