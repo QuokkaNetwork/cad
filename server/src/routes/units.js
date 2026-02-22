@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls } = require('../db/sqlite');
+const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -378,6 +378,18 @@ router.delete('/me', requireAuth, (req, res) => {
   audit(req.user.id, 'unit_off_duty', { callsign: unit.callsign });
   bus.emit('unit:offline', { departmentId: deptId, unit });
   res.json({ success: true });
+});
+
+// Live map configuration for department pages.
+router.get('/live-map-config', requireAuth, (req, res) => {
+  const raw = Settings.get('live_map_urls');
+  let urls = [];
+  try {
+    urls = JSON.parse(raw || '[]');
+  } catch {
+    urls = [];
+  }
+  res.json({ urls });
 });
 
 module.exports = router;

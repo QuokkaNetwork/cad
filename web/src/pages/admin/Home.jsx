@@ -43,6 +43,12 @@ const ADMIN_ITEMS = [
     description: 'Configure QBox connection and bind to default players/vehicles tables.',
     color: 'bg-cyan-500',
   },
+  {
+    to: '/admin/live-map',
+    title: 'Live Map',
+    description: 'Configure live map server URLs and upload map tile images.',
+    color: 'bg-teal-500',
+  },
 ];
 
 function AdminCard({ item, onOpen, className = '' }) {

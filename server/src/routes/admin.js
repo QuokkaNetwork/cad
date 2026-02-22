@@ -821,4 +821,75 @@ router.delete('/units/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// --- Live Map Settings ---
+
+router.get('/live-map', (req, res) => {
+  const raw = Settings.get('live_map_urls');
+  let urls = [];
+  try {
+    urls = JSON.parse(raw || '[]');
+  } catch {
+    urls = [];
+  }
+  res.json({ urls });
+});
+
+router.put('/live-map', (req, res) => {
+  const urls = Array.isArray(req.body?.urls) ? req.body.urls : [];
+  const sanitized = urls
+    .filter(entry => entry && typeof entry.name === 'string' && typeof entry.url === 'string')
+    .map(entry => ({
+      name: String(entry.name).trim(),
+      url: String(entry.url).trim(),
+    }))
+    .filter(entry => entry.name && entry.url);
+
+  Settings.set('live_map_urls', JSON.stringify(sanitized));
+  audit(req.user.id, 'live_map_urls_updated', { count: sanitized.length });
+  res.json({ urls: sanitized });
+});
+
+const LIVE_MAP_TILE_NAMES = new Set([
+  'minimap_sea_0_0', 'minimap_sea_0_1',
+  'minimap_sea_1_0', 'minimap_sea_1_1',
+  'minimap_sea_2_0', 'minimap_sea_2_1',
+]);
+
+const tileUploadDir = path.resolve(__dirname, '../../data/uploads/live-map-tiles');
+fs.mkdirSync(tileUploadDir, { recursive: true });
+
+const tileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'image/png') return cb(null, true);
+    cb(new Error('Only PNG files are allowed for map tiles'));
+  },
+});
+
+router.post('/live-map/tiles', tileUpload.array('tiles', 6), async (req, res, next) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: 'No tile files provided' });
+  }
+
+  try {
+    const results = [];
+    for (const file of req.files) {
+      const baseName = file.originalname.split('.')[0];
+      if (!LIVE_MAP_TILE_NAMES.has(baseName)) {
+        return res.status(400).json({
+          error: `Invalid tile name: ${file.originalname}. Expected one of: ${Array.from(LIVE_MAP_TILE_NAMES).join(', ')}`,
+        });
+      }
+      const outPath = path.join(tileUploadDir, `${baseName}.webp`);
+      await sharp(file.buffer).webp({ quality: 90 }).toFile(outPath);
+      results.push(baseName);
+    }
+    audit(req.user.id, 'live_map_tiles_uploaded', { tiles: results });
+    res.json({ success: true, uploaded: results });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
