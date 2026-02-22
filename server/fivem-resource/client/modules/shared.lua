@@ -52,6 +52,37 @@ local function parseWasabiDeadResult(value)
   return toBoolean(value)
 end
 
+local autoAmbulanceDeathEpisode = 0
+local autoAmbulanceLastObservedDead = nil
+local autoAmbulanceLastSentDead = nil
+local autoAmbulanceLastSentAt = 0
+
+local function getLocalPedHealthSnapshot()
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then
+    return {
+      health = 0,
+      fatally_injured = false,
+      alive = false,
+    }
+  end
+
+  local health = tonumber(GetEntityHealth(ped)) or 0
+  local fatallyInjured = false
+  if type(IsPedFatallyInjured) == 'function' then
+    local ok, result = pcall(function()
+      return IsPedFatallyInjured(ped)
+    end)
+    fatallyInjured = ok and (result == true)
+  end
+
+  return {
+    health = health,
+    fatally_injured = fatallyInjured,
+    alive = health > 101 and not fatallyInjured,
+  }
+end
+
 local function getLocalWasabiDeathState()
   if Config.AutoAmbulanceCallEnabled ~= true then return false end
   if GetResourceState('wasabi_ambulance') ~= 'started' then return false end
@@ -70,31 +101,55 @@ local function getLocalWasabiDeathState()
   return parseWasabiDeadResult(result)
 end
 
-local function sendWasabiDeathStateToServer(dead)
+local function buildAutoAmbulanceDeathPayload()
+  local healthSnapshot = getLocalPedHealthSnapshot()
+  local wasabiDead = getLocalWasabiDeathState()
+  local derivedDead = (wasabiDead == true) or (healthSnapshot.alive ~= true)
+
+  if derivedDead and autoAmbulanceLastObservedDead ~= true then
+    autoAmbulanceDeathEpisode = autoAmbulanceDeathEpisode + 1
+  end
+  autoAmbulanceLastObservedDead = derivedDead
+
+  return {
+    is_dead = derivedDead == true,
+    wasabi_dead = wasabiDead == true,
+    death_episode = autoAmbulanceDeathEpisode,
+    ped_health = tonumber(healthSnapshot.health) or 0,
+    fatally_injured = healthSnapshot.fatally_injured == true,
+  }
+end
+
+local function sendWasabiDeathStateToServer(payload)
+  local out = type(payload) == 'table' and payload or buildAutoAmbulanceDeathPayload()
   TriggerServerEvent('cad_bridge:autoAmbulanceDeathState', {
-    is_dead = dead == true,
+    is_dead = out.is_dead == true,
+    wasabi_dead = out.wasabi_dead == true,
+    death_episode = math.max(0, math.floor(tonumber(out.death_episode) or 0)),
+    ped_health = tonumber(out.ped_health) or 0,
+    fatally_injured = out.fatally_injured == true,
   })
 end
 
 RegisterNetEvent('cad_bridge:requestAutoAmbulanceDeathState', function()
-  sendWasabiDeathStateToServer(getLocalWasabiDeathState())
+  local payload = buildAutoAmbulanceDeathPayload()
+  sendWasabiDeathStateToServer(payload)
+  autoAmbulanceLastSentDead = payload.is_dead == true
+  autoAmbulanceLastSentAt = tonumber(GetGameTimer() or 0) or 0
 end)
 
 CreateThread(function()
-  local lastSentState = nil
-  local lastSentAt = 0
-
   while true do
-    local dead = getLocalWasabiDeathState()
+    local payload = buildAutoAmbulanceDeathPayload()
     local now = tonumber(GetGameTimer() or 0) or 0
-    local shouldSend = (lastSentState == nil)
-      or (dead ~= lastSentState)
-      or ((now - tonumber(lastSentAt or 0)) >= 10000)
+    local shouldSend = (autoAmbulanceLastSentDead == nil)
+      or ((payload.is_dead == true) ~= (autoAmbulanceLastSentDead == true))
+      or ((now - tonumber(autoAmbulanceLastSentAt or 0)) >= 10000)
 
     if shouldSend then
-      sendWasabiDeathStateToServer(dead)
-      lastSentState = dead
-      lastSentAt = now
+      sendWasabiDeathStateToServer(payload)
+      autoAmbulanceLastSentDead = payload.is_dead == true
+      autoAmbulanceLastSentAt = now
     end
 
     local intervalMs = math.max(1000, tonumber(Config.AutoAmbulanceCallPollIntervalMs) or 2500)

@@ -250,6 +250,9 @@ RegisterNetEvent('cad_bridge:autoAmbulanceDeathState', function(payload)
   if src <= 0 then return end
 
   local deadValue = payload
+  local deathEpisode = 0
+  local clientHealth = nil
+  local clientFatallyInjured = nil
   if type(payload) == 'table' then
     if payload.is_dead ~= nil then
       deadValue = payload.is_dead
@@ -258,14 +261,28 @@ RegisterNetEvent('cad_bridge:autoAmbulanceDeathState', function(payload)
     elseif payload.status ~= nil then
       deadValue = payload.status
     end
+
+    deathEpisode = math.max(0, math.floor(tonumber(payload.death_episode) or 0))
+    if payload.ped_health ~= nil then
+      clientHealth = tonumber(payload.ped_health)
+    end
+    if payload.fatally_injured ~= nil then
+      clientFatallyInjured = payload.fatally_injured == true or tonumber(payload.fatally_injured) == 1
+    end
   end
 
   local parsedDead = parseWasabiDeadResult(deadValue)
-  if parsedDead == true and isPlayerAliveByHealthFallback(src) then
-    parsedDead = false
+  if parsedDead == true then
+    local clientAlive = (clientHealth ~= nil) and ((clientHealth or 0) > 101) and (clientFatallyInjured ~= true)
+    if clientAlive or isPlayerAliveByHealthFallback(src) then
+      parsedDead = false
+    end
   end
   autoAmbulanceDeathSnapshotBySource[src] = {
     is_dead = parsedDead,
+    death_episode = deathEpisode,
+    ped_health = clientHealth,
+    fatally_injured = clientFatallyInjured == true,
     updated_ms = nowMs(),
   }
 
@@ -463,19 +480,33 @@ CreateThread(function()
             last_attempt_ms = 0,
             call_submit_in_flight = false,
             call_submit_started_ms = 0,
+            last_notified_death_episode = 0,
           }
           autoAmbulanceCallStateBySource[s] = state
         end
+
+        local deathSnapshot = autoAmbulanceDeathSnapshotBySource[s]
+        local snapshotDeathEpisode = math.max(0, math.floor(tonumber(deathSnapshot and deathSnapshot.death_episode) or 0))
+        local lastNotifiedEpisode = math.max(0, math.floor(tonumber(state.last_notified_death_episode) or 0))
+        local hasFreshDeathEpisode = snapshotDeathEpisode > 0 and snapshotDeathEpisode > lastNotifiedEpisode
 
         local isDead = isPlayerDeadFromWasabi(s)
         if isDead and isPlayerAliveByHealthFallback(s) then
           isDead = false
           autoAmbulanceDeathSnapshotBySource[s] = {
             is_dead = false,
+            death_episode = snapshotDeathEpisode,
             updated_ms = nowMs(),
           }
         end
         if isDead then
+          if hasFreshDeathEpisode then
+            -- New death cycle detected from client; allow a fresh auto-call immediately.
+            state.dead_reported = false
+            state.last_call_ms = 0
+            state.last_attempt_ms = 0
+          end
+
           if state.call_submit_in_flight == true then
             local startedAt = tonumber(state.call_submit_started_ms) or 0
             if startedAt > 0 and (now - startedAt) > 20000 then
@@ -490,9 +521,11 @@ CreateThread(function()
             if (now - lastAttemptMs) >= retryIntervalMs then
               local lastCallMs = tonumber(state.last_call_ms) or 0
               state.last_attempt_ms = now
-              if (now - lastCallMs) >= cooldownMs then
+              local allowByCooldown = (now - lastCallMs) >= cooldownMs
+              if hasFreshDeathEpisode or allowByCooldown then
                 state.call_submit_in_flight = true
                 state.call_submit_started_ms = now
+                local episodeForDispatch = snapshotDeathEpisode
                 local dispatched = submitAutoAmbulanceCall(s, function(success)
                   local current = autoAmbulanceCallStateBySource[s]
                   if type(current) ~= 'table' then return end
@@ -500,6 +533,12 @@ CreateThread(function()
                   current.call_submit_started_ms = 0
                   if success == true then
                     current.last_call_ms = nowMs()
+                    if episodeForDispatch > 0 then
+                      current.last_notified_death_episode = math.max(
+                        math.max(0, math.floor(tonumber(current.last_notified_death_episode) or 0)),
+                        episodeForDispatch
+                      )
+                    end
                     if isPlayerDeadFromWasabi(s) then
                       current.dead_reported = true
                     end
