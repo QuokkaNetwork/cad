@@ -1453,6 +1453,9 @@ end)
 local function applyJail(job)
   local adapter = trim(Config.JailAdapter or 'wasabi'):lower()
   if adapter == '' then adapter = 'wasabi' end
+  if adapter == 'xtprison' then
+    adapter = 'xt-prison'
+  end
   if adapter == 'none' then
     return false, 'Jail adapter disabled (Config.JailAdapter=none)', false
   end
@@ -1470,6 +1473,33 @@ local function applyJail(job)
   local sourceId = resolveFineSource(job, citizenId)
   if not sourceId then
     return false, 'Target character is not currently online', true
+  end
+
+  if adapter == 'xt-prison' then
+    if GetResourceState('xt-prison') ~= 'started' then
+      return false, 'xt-prison is not started', false
+    end
+
+    if type(lib) ~= 'table' or type(lib.callback) ~= 'table' or type(lib.callback.await) ~= 'function' then
+      return false, 'ox_lib lib.callback.await is unavailable for xt-prison adapter', false
+    end
+
+    local callbackOk, callbackResult = pcall(function()
+      return lib.callback.await('xt-prison:client:enterJail', sourceId, minutes)
+    end)
+    if not callbackOk then
+      return false, ('xt-prison callback failed: %s'):format(tostring(callbackResult)), false
+    end
+    if callbackResult ~= true then
+      return false, ('xt-prison callback returned %s'):format(tostring(callbackResult)), false
+    end
+
+    local message = ('You have been sentenced to %s minute(s)'):format(tostring(minutes))
+    if reason ~= '' then
+      message = message .. (' | %s'):format(reason)
+    end
+    notifyAlert(sourceId, 'CAD Sentence', message, 'error')
+    return true, '', false
   end
 
   if adapter == 'wasabi' then

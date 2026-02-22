@@ -6,7 +6,6 @@ name 'cad_bridge'
 author 'CAD Team'
 description 'Bridge between CAD and FiveM/QBox'
 version '0.1.0'
-dependency 'quokka_livemap'
 
 shared_script 'config.lua'
 client_scripts {

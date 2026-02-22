@@ -484,8 +484,8 @@ Config.JobSyncAdapter = trim(getString('cad_bridge_job_sync_adapter', 'none'))
 if Config.JobSyncAdapter == '' then Config.JobSyncAdapter = 'none' end
 Config.JobSyncCommandTemplate = getString('cad_bridge_job_sync_command', 'qbx_setjob {source} {job} {grade}')
 
-Config.JailAdapter = trim(getString('cad_bridge_jail_adapter', 'wasabi'))
-if Config.JailAdapter == '' then Config.JailAdapter = 'wasabi' end
+Config.JailAdapter = trim(getString('cad_bridge_jail_adapter', 'xt-prison'))
+if Config.JailAdapter == '' then Config.JailAdapter = 'xt-prison' end
 Config.JailCommandTemplate = getString('cad_bridge_jail_command', 'jail {source} {minutes} {reason}')
 
 -- Wraith integration.

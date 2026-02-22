@@ -163,19 +163,6 @@ export default function AdminSystemSettings() {
             </p>
           </div>
           <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Live Map Embed URL</label>
-            <input
-              type="text"
-              value={settings.live_map_embed_url || ''}
-              onChange={e => updateSetting('live_map_embed_url', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="http://127.0.0.1:30121"
-            />
-            <p className="text-xs text-cad-muted mt-1">
-              URL used by the CAD <span className="font-mono">Live Map</span> tab iframe. Leave blank to auto-derive from bridge base URL.
-            </p>
-          </div>
-          <div className="col-span-2">
             <label className="block text-xs text-cad-muted mb-1">Shared Bridge Token</label>
             <input
               type="text"

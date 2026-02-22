@@ -11,12 +11,6 @@ const RESOURCE_TEMPLATES = [
     versionFileName: '.cad_bridge_version',
     needsRuntimeConfig: true,
   },
-  {
-    resourceName: 'quokka_livemap',
-    templateDir: path.resolve(__dirname, '../../../quokka_livemap'),
-    versionFileName: '.quokka_livemap_version',
-    needsRuntimeConfig: false,
-  },
 ];
 
 let syncInterval = null;
