@@ -455,6 +455,64 @@ function notify.routeCleared(route)
   end
 end
 
+local function resolveRouteCoords(route)
+  if type(route) ~= 'table' then return nil end
+
+  local x = tonumber(route.position_x)
+  local y = tonumber(route.position_y)
+  if (not x or not y) and type(route.position) == 'table' then
+    x = tonumber(route.position.x)
+    y = tonumber(route.position.y)
+  end
+  if x and y then
+    return { x = x + 0.0, y = y + 0.0 }
+  end
+
+  local postal = util.trim(route.postal or '')
+  if postal ~= '' and type(util.getPostalCoords) == 'function' then
+    local coords = util.getPostalCoords(postal)
+    if coords and tonumber(coords.x) and tonumber(coords.y) then
+      return {
+        x = tonumber(coords.x) + 0.0,
+        y = tonumber(coords.y) + 0.0,
+      }
+    end
+  end
+
+  return nil
+end
+
+local function clearPlayerWaypoint()
+  if type(SetWaypointOff) ~= 'function' then return false end
+  local ok = pcall(function()
+    SetWaypointOff()
+  end)
+  return ok
+end
+
+RegisterNetEvent('cad_bridge:setCallRoute', function(payload)
+  local route = type(payload) == 'table' and payload or {}
+  local action = util.trim(route.action or ''):lower()
+  local clearWaypoint = route.clear_waypoint == true or tonumber(route.clear_waypoint or 0) == 1 or action == 'clear'
+
+  if clearWaypoint then
+    clearPlayerWaypoint()
+    notify.routeCleared(route)
+    return
+  end
+
+  local coords = resolveRouteCoords(route)
+  if not coords then
+    notify.route(route, false)
+    return
+  end
+
+  pcall(function()
+    SetNewWaypoint(coords.x, coords.y)
+  end)
+  notify.route(route, true)
+end)
+
 function notify.fine(payload)
   local title = tostring(payload and payload.title or 'CAD Fine Issued')
   local description = tostring(payload and payload.description or 'You have received a fine.')

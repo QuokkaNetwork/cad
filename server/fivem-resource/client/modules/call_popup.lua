@@ -5,6 +5,7 @@ local miniCadClosestPrompt = nil
 local miniCadLastCallId = 0
 local miniCadPollIntervalMs = 3000
 local miniCadToggleCommand = 'cadbridge_minicad_toggle'
+local miniCadToggleInsertCommand = 'cadbridge_minicad_toggle_insert'
 local miniCadDetachCommand = 'cadbridge_minicad_detach'
 local miniCadClosestAcceptCommand = 'cadbridge_minicad_closest_accept'
 local miniCadClosestDeclineCommand = 'cadbridge_minicad_closest_decline'
@@ -235,12 +236,21 @@ RegisterNetEvent('cad_bridge:miniCadUpdate', function(payload)
   updateMiniCad(payload)
 end)
 
--- Toggle command bound to Insert.
+-- Primary toggle command (legacy PageUp binding kept for backward compatibility).
 RegisterCommand(miniCadToggleCommand, function()
   toggleMiniCad()
 end, false)
 
-RegisterKeyMapping(miniCadToggleCommand, 'Toggle Mini-CAD call popup', 'keyboard', 'INSERT')
+-- Keep legacy mapping command on PageUp for users with historical binds.
+RegisterKeyMapping(miniCadToggleCommand, 'Toggle Mini-CAD call popup', 'keyboard', 'PAGEUP')
+
+-- Dedicated Insert alias so Insert continues to work even if players have
+-- old saved bindings on cadbridge_minicad_toggle.
+RegisterCommand(miniCadToggleInsertCommand, function()
+  toggleMiniCad()
+end, false)
+
+RegisterKeyMapping(miniCadToggleInsertCommand, 'Mini-CAD: Toggle (Insert)', 'keyboard', 'INSERT')
 
 RegisterCommand(miniCadDetachCommand, function()
   detachCurrentMiniCadCall()
