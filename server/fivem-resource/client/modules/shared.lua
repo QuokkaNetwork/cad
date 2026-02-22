@@ -24,6 +24,84 @@ function util.trim(value)
   return (tostring(value):gsub('^%s+', ''):gsub('%s+$', ''))
 end
 
+local function toBoolean(value)
+  if value == true then return true end
+  local numeric = tonumber(value)
+  if numeric and numeric ~= 0 then return true end
+  local text = util.trim(value):lower()
+  return text == 'true' or text == 'yes'
+end
+
+local function parseWasabiDeadResult(value)
+  if type(value) == 'table' then
+    if value.isDead ~= nil then return toBoolean(value.isDead) end
+    if value.dead ~= nil then return toBoolean(value.dead) end
+    if value.value ~= nil then return toBoolean(value.value) end
+
+    local status = util.trim(value.status or value.state or '')
+    if status ~= '' then
+      local normalized = status:lower()
+      if normalized == 'dead' or normalized == 'down' or normalized == 'dying' then return true end
+      if normalized == 'alive' or normalized == 'healthy' then return false end
+      return toBoolean(status)
+    end
+
+    if value[1] ~= nil then return toBoolean(value[1]) end
+    return false
+  end
+  return toBoolean(value)
+end
+
+local function getLocalWasabiDeathState()
+  if Config.AutoAmbulanceCallEnabled ~= true then return false end
+  if GetResourceState('wasabi_ambulance') ~= 'started' then return false end
+
+  local serverId = tonumber(GetPlayerServerId(PlayerId()) or 0) or 0
+  local ok, result = pcall(function()
+    return exports.wasabi_ambulance:isPlayerDead(serverId)
+  end)
+  if not ok then
+    ok, result = pcall(function()
+      return exports.wasabi_ambulance:isPlayerDead()
+    end)
+  end
+  if not ok then return false end
+
+  return parseWasabiDeadResult(result)
+end
+
+local function sendWasabiDeathStateToServer(dead)
+  TriggerServerEvent('cad_bridge:autoAmbulanceDeathState', {
+    is_dead = dead == true,
+  })
+end
+
+RegisterNetEvent('cad_bridge:requestAutoAmbulanceDeathState', function()
+  sendWasabiDeathStateToServer(getLocalWasabiDeathState())
+end)
+
+CreateThread(function()
+  local lastSentState = nil
+  local lastSentAt = 0
+
+  while true do
+    local dead = getLocalWasabiDeathState()
+    local now = tonumber(GetGameTimer() or 0) or 0
+    local shouldSend = (lastSentState == nil)
+      or (dead ~= lastSentState)
+      or ((now - tonumber(lastSentAt or 0)) >= 10000)
+
+    if shouldSend then
+      sendWasabiDeathStateToServer(dead)
+      lastSentState = dead
+      lastSentAt = now
+    end
+
+    local intervalMs = math.max(1000, tonumber(Config.AutoAmbulanceCallPollIntervalMs) or 2500)
+    Wait(intervalMs)
+  end
+end)
+
 local function normalizePostal(value)
   if value == nil then return '' end
   local t = type(value)

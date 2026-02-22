@@ -193,8 +193,10 @@ CreateThread(function()
 end)
 
 local autoAmbulanceCallStateBySource = {}
+local autoAmbulanceDeathSnapshotBySource = {}
 local lastAutoAmbulanceMissingResourceLogAtMs = 0
-local lastAutoAmbulanceExportErrorLogAtMs = 0
+local lastAutoAmbulanceSnapshotLogAtMs = 0
+local AUTO_AMBULANCE_DEATH_STATE_STALE_MS = 30000
 
 local function toBoolean(value)
   if value == true then return true end
@@ -225,6 +227,27 @@ local function parseWasabiDeadResult(value)
   return toBoolean(value)
 end
 
+RegisterNetEvent('cad_bridge:autoAmbulanceDeathState', function(payload)
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+
+  local deadValue = payload
+  if type(payload) == 'table' then
+    if payload.is_dead ~= nil then
+      deadValue = payload.is_dead
+    elseif payload.dead ~= nil then
+      deadValue = payload.dead
+    elseif payload.status ~= nil then
+      deadValue = payload.status
+    end
+  end
+
+  autoAmbulanceDeathSnapshotBySource[src] = {
+    is_dead = parseWasabiDeadResult(deadValue),
+    updated_ms = nowMs(),
+  }
+end)
+
 local function isPlayerDeadFromWasabi(sourceId)
   if GetResourceState('wasabi_ambulance') ~= 'started' then
     return false
@@ -232,19 +255,22 @@ local function isPlayerDeadFromWasabi(sourceId)
   local s = tonumber(sourceId) or 0
   if s <= 0 then return false end
 
-  local ok, result = pcall(function()
-    return exports.wasabi_ambulance:isPlayerDead(s)
-  end)
-  if not ok then
-    local now = nowMs()
-    if (now - lastAutoAmbulanceExportErrorLogAtMs) >= 60000 then
-      lastAutoAmbulanceExportErrorLogAtMs = now
-      print(('[cad_bridge] Auto ambulance check failed calling wasabi_ambulance:isPlayerDead(%s): %s')
-        :format(tostring(s), tostring(result)))
+  local snapshot = autoAmbulanceDeathSnapshotBySource[s]
+  if type(snapshot) == 'table' then
+    local updatedMs = tonumber(snapshot.updated_ms) or 0
+    if updatedMs > 0 and (nowMs() - updatedMs) <= AUTO_AMBULANCE_DEATH_STATE_STALE_MS then
+      return snapshot.is_dead == true
     end
-    return false
   end
-  return parseWasabiDeadResult(result)
+
+  local now = nowMs()
+  if (now - lastAutoAmbulanceSnapshotLogAtMs) >= 60000 then
+    lastAutoAmbulanceSnapshotLogAtMs = now
+    print(('[cad_bridge] Auto ambulance death snapshot stale/missing for source %s; awaiting client update')
+      :format(tostring(s)))
+  end
+  TriggerClientEvent('cad_bridge:requestAutoAmbulanceDeathState', s)
+  return false
 end
 
 local function submitAutoAmbulanceCall(sourceId, onResult)
@@ -268,6 +294,11 @@ local function submitAutoAmbulanceCall(sourceId, onResult)
   end
   if isBridgeBackoffActive('calls') then
     finish(false, 429, 'calls_backoff_active')
+    local now = nowMs()
+    if (now - lastAutoAmbulanceSnapshotLogAtMs) >= 60000 then
+      lastAutoAmbulanceSnapshotLogAtMs = now
+      print('[cad_bridge] Auto ambulance call skipped: CAD call endpoint currently in backoff')
+    end
     return false
   end
 
@@ -352,6 +383,7 @@ CreateThread(function()
         else
           autoAmbulanceCallStateBySource[sourceId] = nil
         end
+        autoAmbulanceDeathSnapshotBySource[sourceId] = nil
       end
       goto continue
     end
@@ -376,6 +408,7 @@ CreateThread(function()
         else
           autoAmbulanceCallStateBySource[sourceId] = nil
         end
+        autoAmbulanceDeathSnapshotBySource[sourceId] = nil
       end
       goto continue
     end
@@ -451,6 +484,7 @@ CreateThread(function()
     for sourceId, _ in pairs(autoAmbulanceCallStateBySource) do
       if not onlineBySource[sourceId] then
         autoAmbulanceCallStateBySource[sourceId] = nil
+        autoAmbulanceDeathSnapshotBySource[sourceId] = nil
       end
     end
 
