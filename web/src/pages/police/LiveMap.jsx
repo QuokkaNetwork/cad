@@ -10,20 +10,11 @@ const MAP_POLL_INTERVAL_MS = 1500;
 const MAP_ACTIVE_MAX_AGE_MS = 30_000;
 const MAP_MIN_WIDTH = MAP_WIDTH * 0.05;
 const MAP_MAX_WIDTH = MAP_WIDTH * 3.5;
-const TILE_SIZE = 1024;
 const SNAILY_GAME_BOUNDS = {
   x1: -4230,
   y1: 8420,
   x2: 370,
   y2: -640,
-};
-// FullMap.png contains transparent padding around the island.
-// These bounds map the playable map area inside the rendered 2048x3072 surface.
-const FULLMAP_CONTENT_BOUNDS = {
-  x: 25.333,
-  y: 116,
-  width: 2018.333,
-  height: 2743,
 };
 
 function createInitialViewBox() {
@@ -76,15 +67,16 @@ function convertToMapPoint(rawX, rawY) {
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
-  // Match SnailyCAD conversion first (logical 1024x2048 map space).
-  const snailyX = ((x - SNAILY_GAME_BOUNDS.x1) * TILE_SIZE) / (SNAILY_GAME_BOUNDS.x2 - SNAILY_GAME_BOUNDS.x1);
-  const snailyY = ((SNAILY_GAME_BOUNDS.y1 - y) * (TILE_SIZE * 2)) / (SNAILY_GAME_BOUNDS.y1 - SNAILY_GAME_BOUNDS.y2);
-  if (!Number.isFinite(snailyX) || !Number.isFinite(snailyY)) return null;
+  const gameWidth = SNAILY_GAME_BOUNDS.x2 - SNAILY_GAME_BOUNDS.x1;
+  const gameHeight = SNAILY_GAME_BOUNDS.y1 - SNAILY_GAME_BOUNDS.y2;
+  if (!gameWidth || !gameHeight) return null;
 
-  // Then place that logical space into the visible content box of FullMap.png.
+  const normalizedX = (x - SNAILY_GAME_BOUNDS.x1) / gameWidth;
+  const normalizedY = (SNAILY_GAME_BOUNDS.y1 - y) / gameHeight;
+
   return {
-    x: FULLMAP_CONTENT_BOUNDS.x + ((snailyX / TILE_SIZE) * FULLMAP_CONTENT_BOUNDS.width),
-    y: FULLMAP_CONTENT_BOUNDS.y + ((snailyY / (TILE_SIZE * 2)) * FULLMAP_CONTENT_BOUNDS.height),
+    x: normalizedX * MAP_WIDTH,
+    y: normalizedY * MAP_HEIGHT,
   };
 }
 
@@ -271,7 +263,7 @@ export default function LiveMap() {
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
           <p className="text-sm text-cad-muted">
-            SnailyCAD conversion profile with FullMap content-bound correction.
+            SnailyCAD conversion profile with no manual offset calibration.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -410,7 +402,7 @@ export default function LiveMap() {
               Snaily bounds: X1 {SNAILY_GAME_BOUNDS.x1}, Y1 {SNAILY_GAME_BOUNDS.y1}, X2 {SNAILY_GAME_BOUNDS.x2}, Y2 {SNAILY_GAME_BOUNDS.y2}
             </p>
             <p>
-              FullMap content bounds: X {FULLMAP_CONTENT_BOUNDS.x.toFixed(1)}, Y {FULLMAP_CONTENT_BOUNDS.y.toFixed(1)}, W {FULLMAP_CONTENT_BOUNDS.width.toFixed(1)}, H {FULLMAP_CONTENT_BOUNDS.height.toFixed(1)}
+              Map projection uses full image scale only (no X/Y offset correction).
             </p>
             {error && <p className="text-red-400 whitespace-pre-wrap">{error}</p>}
           </div>
