@@ -21793,13 +21793,26 @@ var server = (0, import_node_http.createServer)(function(req, res) {
       "woff": "font/woff",
       "woff2": "font/woff2"
     };
+    var binaryTypes = {
+      "png": true,
+      "jpg": true,
+      "jpeg": true,
+      "gif": true,
+      "ico": true,
+      "woff": true,
+      "woff2": true
+    };
     var contentType = types[ext] || "application/octet-stream";
     res.writeHead(200, {
       "Content-Type": contentType,
       "Access-Control-Allow-Origin": "*",
       "Cache-Control": "no-cache"
     });
-    res.end(content);
+    if (binaryTypes[ext]) {
+      res.end(Buffer.from(content, "binary"));
+    } else {
+      res.end(content);
+    }
   } else {
     var tileContent = LoadResourceFile(GetCurrentResourceName(), url.substring(1));
     if (tileContent !== null && tileContent !== void 0) {
@@ -21810,7 +21823,7 @@ var server = (0, import_node_http.createServer)(function(req, res) {
         "Access-Control-Allow-Origin": "*",
         "Cache-Control": "max-age=86400"
       });
-      res.end(tileContent);
+      res.end(Buffer.from(tileContent, "binary"));
     } else {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not Found");
