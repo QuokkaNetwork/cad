@@ -64,8 +64,6 @@
         ))
         return
       end
-
-      notifyPlayer(src, 'No nearby player found. Licence shown to yourself only.')
     end
 
     if mugshotFullUrl == '' or rawMugshot == '' then

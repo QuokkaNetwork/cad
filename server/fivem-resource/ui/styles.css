@@ -545,6 +545,8 @@ select {
   width: min(560px, 84vw);
   max-height: 78vh;
   overflow: auto;
+  position: relative;
+  isolation: isolate;
   border-radius: 12px;
   border: 1px solid #7ca270;
   background:
@@ -554,6 +556,28 @@ select {
   box-shadow: 0 14px 34px rgba(5, 24, 13, 0.34);
   padding: 0.48rem 0.54rem 0.52rem;
   font-family: "Bahnschrift", "Segoe UI", Tahoma, sans-serif;
+}
+
+.id-card-watermark {
+  position: absolute;
+  left: 44%;
+  top: 58%;
+  width: min(320px, 66%);
+  height: auto;
+  transform: translate(-50%, -50%) rotate(-11deg);
+  opacity: 0.12;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
+}
+
+.id-card-header,
+.id-card-title,
+.id-card-body,
+.id-card-note,
+.id-card-footer {
+  position: relative;
+  z-index: 1;
 }
 
 .id-card-header {
@@ -708,7 +732,7 @@ select {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.24rem;
+  gap: 0;
 }
 
 .id-card-photo {
@@ -719,15 +743,6 @@ select {
   border-radius: 6px;
   border: 1px solid rgba(24, 56, 36, 0.45);
   background: rgba(255, 255, 255, 0.42);
-}
-
-.id-card-vicroads-logo {
-  width: 88px;
-  height: auto;
-  border: 1px solid rgba(24, 56, 36, 0.35);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.9);
-  padding: 0.09rem;
 }
 
 .id-card-fields {
@@ -866,7 +881,7 @@ select {
   .id-card-photo-panel {
     align-items: flex-start;
     flex-direction: row;
-    gap: 0.35rem;
+    gap: 0;
   }
 
   .id-card-photo {
@@ -874,8 +889,11 @@ select {
     height: 124px;
   }
 
-  .id-card-vicroads-logo {
-    width: 76px;
+  .id-card-watermark {
+    left: 50%;
+    top: 63%;
+    width: min(300px, 72%);
+    opacity: 0.1;
   }
 }
 
