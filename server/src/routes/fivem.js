@@ -1504,9 +1504,16 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     const playerSource = parseHeartbeatSource(player);
     const gameId = String(playerSource || player?.source || '').trim();
     const position = parseHeartbeatPosition(player);
+    const citizenId = String(player.citizenid || player.citizen_id || '').trim();
     const platformName = String(player.platform_name || player.platformName || '').trim();
     const characterName = String(player.character_name || player.characterName || '').trim();
+    const fullName = String(player.full_name || player.fullName || '').trim();
+    const licenseCharacterName = citizenId
+      ? String(DriverLicenses.findByCitizenId(citizenId)?.full_name || '').trim()
+      : '';
     const playerName = characterName
+      || fullName
+      || licenseCharacterName
       || String(player.player_name || player.playerName || player.name || '').trim()
       || platformName;
     const location = String(player.location || '').trim() || formatUnitLocation({ ...player, position });
@@ -1522,7 +1529,7 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     FiveMPlayerLinks.upsert({
       steam_id: ids.linkKey,
       game_id: gameId,
-      citizen_id: String(player.citizenid || ''),
+      citizen_id: citizenId,
       player_name: playerName || platformName,
       position_x: position.x,
       position_y: position.y,
@@ -1553,7 +1560,6 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
         || resolveCadUserByName(platformName, onDutyNameIndex);
     }
 
-    const citizenId = String(player.citizenid || '').trim();
     const resolvedPlayerName = playerName || platformName;
     const cadUserSteamId = String(cadUser?.steam_id || '').trim();
     if (cadUser && cadUserSteamId) {

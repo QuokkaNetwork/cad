@@ -388,7 +388,7 @@ const Units = {
     return `
       SELECT
         u.*,
-        COALESCE(NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
+        COALESCE(NULLIF(dl.full_name, ''), NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
         us.avatar_url as user_avatar,
         sd.name as sub_department_name,
         sd.short_name as sub_department_short_name,
@@ -396,6 +396,8 @@ const Units = {
       FROM units u
       JOIN users us ON us.id = u.user_id
       LEFT JOIN fivem_player_links fpl ON fpl.steam_id = us.steam_id
+      LEFT JOIN driver_licenses dl
+        ON lower(dl.citizen_id) = lower(COALESCE(NULLIF(fpl.citizen_id, ''), us.preferred_citizen_id))
       LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
     `;
   },
@@ -414,7 +416,7 @@ const Units = {
     return db.prepare(`
       SELECT
         u.*,
-        COALESCE(NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
+        COALESCE(NULLIF(dl.full_name, ''), NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
         us.avatar_url as user_avatar,
         sd.name as sub_department_name,
         sd.short_name as sub_department_short_name,
@@ -425,6 +427,8 @@ const Units = {
       FROM units u
       JOIN users us ON us.id = u.user_id
       LEFT JOIN fivem_player_links fpl ON fpl.steam_id = us.steam_id
+      LEFT JOIN driver_licenses dl
+        ON lower(dl.citizen_id) = lower(COALESCE(NULLIF(fpl.citizen_id, ''), us.preferred_citizen_id))
       JOIN departments d ON d.id = u.department_id
       LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
       WHERE u.department_id IN (${placeholders})
@@ -513,13 +517,15 @@ const Calls = {
     const call = db.prepare('SELECT * FROM calls WHERE id = ?').get(id);
     if (call) {
       call.assigned_units = db.prepare(`
-        SELECT u.*, COALESCE(NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
+        SELECT u.*, COALESCE(NULLIF(dl.full_name, ''), NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
                sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color,
                d.short_name as department_short_name, d.color as department_color
         FROM call_units cu
         JOIN units u ON u.id = cu.unit_id
         JOIN users us ON us.id = u.user_id
         LEFT JOIN fivem_player_links fpl ON fpl.steam_id = us.steam_id
+        LEFT JOIN driver_licenses dl
+          ON lower(dl.citizen_id) = lower(COALESCE(NULLIF(fpl.citizen_id, ''), us.preferred_citizen_id))
         JOIN departments d ON d.id = u.department_id
         LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
         WHERE cu.call_id = ?
@@ -541,13 +547,15 @@ const Calls = {
     `).all(departmentId);
 
     const getUnits = db.prepare(`
-      SELECT u.id, u.callsign, u.status, COALESCE(NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
+      SELECT u.id, u.callsign, u.status, COALESCE(NULLIF(dl.full_name, ''), NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
              sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color,
              d.short_name as department_short_name, d.color as department_color
       FROM call_units cu
       JOIN units u ON u.id = cu.unit_id
       JOIN users us ON us.id = u.user_id
       LEFT JOIN fivem_player_links fpl ON fpl.steam_id = us.steam_id
+      LEFT JOIN driver_licenses dl
+        ON lower(dl.citizen_id) = lower(COALESCE(NULLIF(fpl.citizen_id, ''), us.preferred_citizen_id))
       JOIN departments d ON d.id = u.department_id
       LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
       WHERE cu.call_id = ?
@@ -576,13 +584,15 @@ const Calls = {
     `).all(...departmentIds);
 
     const getUnits = db.prepare(`
-      SELECT u.id, u.callsign, u.status, COALESCE(NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
+      SELECT u.id, u.callsign, u.status, COALESCE(NULLIF(dl.full_name, ''), NULLIF(fpl.player_name, ''), us.steam_name) as user_name,
              sd.name as sub_department_name, sd.short_name as sub_department_short_name, sd.color as sub_department_color,
              d.short_name as department_short_name, d.color as department_color
       FROM call_units cu
       JOIN units u ON u.id = cu.unit_id
       JOIN users us ON us.id = u.user_id
       LEFT JOIN fivem_player_links fpl ON fpl.steam_id = us.steam_id
+      LEFT JOIN driver_licenses dl
+        ON lower(dl.citizen_id) = lower(COALESCE(NULLIF(fpl.citizen_id, ''), us.preferred_citizen_id))
       JOIN departments d ON d.id = u.department_id
       LEFT JOIN sub_departments sd ON sd.id = u.sub_department_id
       WHERE cu.call_id = ?
