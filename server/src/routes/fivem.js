@@ -220,6 +220,18 @@ function resolveLinkIdentifiers(identifiers = []) {
   };
 }
 
+function parseFiveMLinkKey(value) {
+  const key = String(value || '').trim();
+  if (!key) return { type: 'unknown', value: '' };
+  if (key.startsWith('discord:')) {
+    return { type: 'discord', value: key.slice('discord:'.length) };
+  }
+  if (key.startsWith('license:')) {
+    return { type: 'license', value: key.slice('license:'.length) };
+  }
+  return { type: 'steam', value: key };
+}
+
 function resolveCadUserFromIdentifiers(identifiers = {}) {
   if (identifiers.steamId) {
     const bySteam = Users.findBySteamId(identifiers.steamId);
