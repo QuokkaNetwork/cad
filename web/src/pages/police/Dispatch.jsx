@@ -9,7 +9,7 @@ import Modal from '../../components/Modal';
 import StatusBadge from '../../components/StatusBadge';
 import { getHighContrastBadgeStyle } from '../../utils/color';
 
-const UNIT_STATUSES = ['available', 'busy', 'enroute', 'on-scene'];
+const UNIT_STATUSES = ['available', 'busy', 'enroute', 'on-scene', 'unavailable'];
 
 function isEmergency000Call(call) {
   return String(call?.job_code || '').trim() === '000';
@@ -31,6 +31,7 @@ function normalizeUnitStatus(value) {
 function formatUnitStatusLabel(value) {
   if (value === 'on-scene') return 'On Scene';
   if (value === 'enroute') return 'En Route';
+  if (value === 'unavailable') return 'Unavailable';
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 

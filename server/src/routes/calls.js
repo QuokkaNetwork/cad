@@ -5,6 +5,7 @@ const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 const router = express.Router();
+const HIDDEN_CALL_STATUSES = new Set(['pending_dispatch']);
 
 function isUserInDispatchDepartment(user) {
   const dispatchDepts = Departments.list().filter(d => d.is_dispatch);
@@ -35,6 +36,11 @@ function normalizeRequestedDepartmentIds(value) {
       .map(item => Number(item))
       .filter(item => Number.isInteger(item) && item > 0)
   ));
+}
+
+function filterCallsVisibleToCad(calls = []) {
+  if (!Array.isArray(calls)) return [];
+  return calls.filter((call) => !HIDDEN_CALL_STATUSES.has(String(call?.status || '').trim().toLowerCase()));
 }
 
 function getFallbackRequestedDepartmentIds(departmentId) {
@@ -92,11 +98,11 @@ router.get('/', requireAuth, (req, res) => {
     // Also include the dispatch department's own calls
     if (!visibleIds.includes(deptId)) visibleIds.push(deptId);
     const calls = Calls.listByDepartmentIds(visibleIds, include_closed === 'true');
-    return res.json(calls);
+    return res.json(filterCallsVisibleToCad(calls));
   }
 
   const calls = Calls.listByDepartment(deptId, include_closed === 'true');
-  res.json(calls);
+  res.json(filterCallsVisibleToCad(calls));
 });
 
 // Create a call

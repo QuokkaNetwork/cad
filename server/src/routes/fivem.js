@@ -16,7 +16,7 @@ const {
   VehicleRegistrations,
   Bolos,
 } = require('../db/sqlite');
-const { getVehicleByPlate } = require('../db/qbox');
+const { getVehicleByPlate, getCharacterById } = require('../db/qbox');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
 
@@ -42,6 +42,9 @@ const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const pendingRouteJobs = new Map();
 const pendingClosestCallPrompts = new Map();
 const closestCallDeclines = new Map();
+const closestCallDeptEscalations = new Map();
+const CALL_STATUS_PENDING_DISPATCH = 'pending_dispatch';
+const CALL_STATUS_ACTIVE = 'active';
 const CLOSEST_CALL_DECLINE_COOLDOWN_MS = Math.max(
   10_000,
   Number.parseInt(process.env.FIVEM_CLOSEST_CALL_DECLINE_COOLDOWN_MS || '90000', 10) || 90_000
@@ -502,6 +505,14 @@ function normalizeDateOnly(value) {
   const parsed = Date.parse(text);
   if (Number.isNaN(parsed)) return '';
   return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function extractFirstName(value) {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return '';
+  const parts = normalized.split(' ').filter(Boolean);
+  if (parts.length === 0) return '';
+  return String(parts[0] || '').trim();
 }
 
 function addDaysDateOnly(daysFromNow) {
@@ -1185,12 +1196,24 @@ function normalizeRequestedDepartmentIdsFromCall(call) {
   return Number.isInteger(fallback) && fallback > 0 ? [fallback] : [];
 }
 
-function getCallPromptId(callId) {
-  return `closest:${Number(callId || 0)}`;
+function normalizeCallStatus(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
-function getDeclineKey(callId, unitId) {
-  return `${Number(callId || 0)}:${Number(unitId || 0)}`;
+function isPendingDispatchCall(call) {
+  return normalizeCallStatus(call?.status) === CALL_STATUS_PENDING_DISPATCH;
+}
+
+function getCallPromptId(callId, departmentId) {
+  return `closest:${Number(callId || 0)}:${Number(departmentId || 0)}`;
+}
+
+function getDeclineKey(callId, departmentId, unitId) {
+  return `${Number(callId || 0)}:${Number(departmentId || 0)}:${Number(unitId || 0)}`;
+}
+
+function getEscalationKey(callId, departmentId) {
+  return `${Number(callId || 0)}:${Number(departmentId || 0)}`;
 }
 
 function pruneClosestCallDeclines(now = Date.now()) {
@@ -1202,9 +1225,22 @@ function pruneClosestCallDeclines(now = Date.now()) {
   }
 }
 
-function clearClosestCallPrompt(callId) {
-  const id = getCallPromptId(callId);
-  pendingClosestCallPrompts.delete(id);
+function clearClosestCallPrompt(callId, departmentId = null) {
+  const normalizedCallId = Number(callId || 0);
+  if (!normalizedCallId) return;
+
+  const normalizedDepartmentId = Number(departmentId || 0);
+  if (normalizedDepartmentId > 0) {
+    pendingClosestCallPrompts.delete(getCallPromptId(normalizedCallId, normalizedDepartmentId));
+    return;
+  }
+
+  const prefix = `closest:${normalizedCallId}:`;
+  for (const [id] of pendingClosestCallPrompts.entries()) {
+    if (id.startsWith(prefix)) {
+      pendingClosestCallPrompts.delete(id);
+    }
+  }
 }
 
 function clearClosestCallPromptsForUnit(unitId) {
@@ -1217,14 +1253,64 @@ function clearClosestCallPromptsForUnit(unitId) {
   }
 }
 
-function clearClosestCallDeclines(callId) {
+function clearClosestCallDeclines(callId, departmentId = null) {
   const normalizedCallId = Number(callId || 0);
   if (!normalizedCallId) return;
+  const normalizedDepartmentId = Number(departmentId || 0);
   for (const [key] of closestCallDeclines.entries()) {
+    if (normalizedDepartmentId > 0) {
+      if (key.startsWith(`${normalizedCallId}:${normalizedDepartmentId}:`)) {
+        closestCallDeclines.delete(key);
+      }
+      continue;
+    }
     if (key.startsWith(`${normalizedCallId}:`)) {
       closestCallDeclines.delete(key);
     }
   }
+}
+
+function clearClosestCallEscalations(callId, departmentId = null) {
+  const normalizedCallId = Number(callId || 0);
+  if (!normalizedCallId) return;
+  const normalizedDepartmentId = Number(departmentId || 0);
+  for (const [key] of closestCallDeptEscalations.entries()) {
+    if (normalizedDepartmentId > 0) {
+      if (key === getEscalationKey(normalizedCallId, normalizedDepartmentId)) {
+        closestCallDeptEscalations.delete(key);
+      }
+      continue;
+    }
+    if (key.startsWith(`${normalizedCallId}:`)) {
+      closestCallDeptEscalations.delete(key);
+    }
+  }
+}
+
+function markClosestCallDepartmentEscalated(callId, departmentId) {
+  const normalizedCallId = Number(callId || 0);
+  const normalizedDepartmentId = Number(departmentId || 0);
+  if (!normalizedCallId || !normalizedDepartmentId) return;
+  closestCallDeptEscalations.set(getEscalationKey(normalizedCallId, normalizedDepartmentId), Date.now());
+}
+
+function isClosestCallDepartmentEscalated(callId, departmentId) {
+  const normalizedCallId = Number(callId || 0);
+  const normalizedDepartmentId = Number(departmentId || 0);
+  if (!normalizedCallId || !normalizedDepartmentId) return false;
+  return closestCallDeptEscalations.has(getEscalationKey(normalizedCallId, normalizedDepartmentId));
+}
+
+function countClosestCallPromptsForCall(callId) {
+  const normalizedCallId = Number(callId || 0);
+  if (!normalizedCallId) return 0;
+  let count = 0;
+  for (const job of pendingClosestCallPrompts.values()) {
+    if (Number(job?.call_id || 0) === normalizedCallId) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function hasActiveDispatcherOnline() {
@@ -1245,116 +1331,311 @@ function parseCallPosition(call) {
   return { x, y, z: Number.isFinite(z) ? z : 0 };
 }
 
-function queueClosestCallPromptForCall(call, { force = false } = {}) {
+function extractMiniCadCallerAndReason(call) {
+  const title = String(call?.title || '').trim();
+  const rawDescription = String(call?.description || '').trim();
+  const jobCode = String(call?.job_code || '').trim();
+  const parts = rawDescription
+    .split('|')
+    .map(part => String(part || '').trim())
+    .filter(Boolean);
+
+  let callerName = '';
+  let reasonForCall = '';
+
+  const callerMatch = rawDescription.match(/(?:^|\r?\n)\s*caller\s*:\s*([^\r\n]+)/i);
+  if (callerMatch && callerMatch[1]) {
+    callerName = String(callerMatch[1] || '').trim();
+  }
+
+  const reasonMatch = rawDescription.match(/(?:^|\r?\n)\s*reason\s*:\s*([\s\S]*)$/i);
+  if (reasonMatch && reasonMatch[1]) {
+    reasonForCall = String(reasonMatch[1] || '').trim();
+  }
+
+  if (!callerName) {
+    const legacyCallerLine = parts.find(part => /^000 call from /i.test(part)) || '';
+    if (legacyCallerLine) {
+      callerName = legacyCallerLine
+        .replace(/^000 call from /i, '')
+        .replace(/\s*\(#\d+\)\s*$/i, '')
+        .trim();
+    }
+  }
+
+  if (!reasonForCall) {
+    const legacyCallerLine = parts.find(part => /^000 call from /i.test(part)) || '';
+    const filtered = parts.filter(part => (
+      part !== legacyCallerLine
+      && !/^requested departments:/i.test(part)
+      && !/^link:/i.test(part)
+    ));
+    reasonForCall = filtered.join(' | ').trim();
+  }
+
+  if (!reasonForCall) {
+    reasonForCall = rawDescription || title;
+  }
+
+  if (jobCode !== '000' && !callerName) {
+    callerName = '';
+  }
+
+  return {
+    caller_name: callerName,
+    reason_for_call: reasonForCall,
+  };
+}
+
+function publishPendingDispatchCall(call, { reason = '' } = {}) {
   const callId = Number(call?.id || 0);
   if (!callId) return null;
 
-  const resolvedCall = Calls.findById(callId) || call;
-  if (!resolvedCall || String(resolvedCall.status || '').trim().toLowerCase() === 'closed') {
+  let resolvedCall = Calls.findById(callId) || call;
+  if (!resolvedCall) return null;
+
+  if (normalizeCallStatus(resolvedCall.status) === 'closed') {
     clearClosestCallPrompt(callId);
     clearClosestCallDeclines(callId);
-    return null;
+    clearClosestCallEscalations(callId);
+    return resolvedCall;
+  }
+
+  const wasPendingDispatch = isPendingDispatchCall(resolvedCall);
+  if (wasPendingDispatch) {
+    Calls.update(callId, {
+      status: CALL_STATUS_ACTIVE,
+    });
+    resolvedCall = Calls.findById(callId) || {
+      ...resolvedCall,
+      status: CALL_STATUS_ACTIVE,
+    };
+    const normalizedReason = String(reason || '').trim().toLowerCase();
+    bus.emit('call:create', {
+      departmentId: resolvedCall.department_id,
+      call: resolvedCall,
+      from_fivem_pending_dispatch: true,
+      fivem_pending_dispatch_reason: normalizedReason,
+      play_emergency_sound: normalizedReason === 'closest_unit_declined',
+    });
+  }
+
+  clearClosestCallPrompt(callId);
+  clearClosestCallDeclines(callId);
+  clearClosestCallEscalations(callId);
+
+  if (reason) {
+    audit(null, 'fivem_pending_call_published', {
+      callId,
+      reason,
+      was_pending_dispatch: wasPendingDispatch,
+    });
+  }
+
+  return resolvedCall;
+}
+
+function queueClosestCallPromptForCall(call, { force = false } = {}) {
+  const callId = Number(call?.id || 0);
+  if (!callId) {
+    return {
+      call_id: 0,
+      queued_prompt_count: 0,
+      requested_department_ids: [],
+      queued_prompt_ids: [],
+    };
+  }
+
+  const resolvedCall = Calls.findById(callId) || call;
+  if (!resolvedCall) {
+    clearClosestCallPrompt(callId);
+    clearClosestCallDeclines(callId);
+    clearClosestCallEscalations(callId);
+    return {
+      call_id: callId,
+      queued_prompt_count: 0,
+      requested_department_ids: [],
+      queued_prompt_ids: [],
+    };
+  }
+
+  const callStatus = normalizeCallStatus(resolvedCall.status);
+  if (callStatus === 'closed') {
+    clearClosestCallPrompt(callId);
+    clearClosestCallDeclines(callId);
+    clearClosestCallEscalations(callId);
+    return {
+      call_id: callId,
+      queued_prompt_count: 0,
+      requested_department_ids: [],
+      queued_prompt_ids: [],
+    };
+  }
+
+  // Closest-unit prompts only run while the call is hidden from CAD.
+  if (callStatus !== CALL_STATUS_PENDING_DISPATCH) {
+    clearClosestCallPrompt(callId);
+    clearClosestCallDeclines(callId);
+    clearClosestCallEscalations(callId);
+    return {
+      call_id: callId,
+      queued_prompt_count: 0,
+      requested_department_ids: normalizeRequestedDepartmentIdsFromCall(resolvedCall),
+      queued_prompt_ids: [],
+    };
   }
 
   const callPosition = parseCallPosition(resolvedCall);
   if (!callPosition) {
     clearClosestCallPrompt(callId);
-    return null;
+    return {
+      call_id: callId,
+      queued_prompt_count: 0,
+      requested_department_ids: normalizeRequestedDepartmentIdsFromCall(resolvedCall),
+      queued_prompt_ids: [],
+    };
   }
 
   if (hasActiveDispatcherOnline()) {
     clearClosestCallPrompt(callId);
-    return null;
+    return {
+      call_id: callId,
+      queued_prompt_count: 0,
+      requested_department_ids: normalizeRequestedDepartmentIdsFromCall(resolvedCall),
+      queued_prompt_ids: [],
+    };
   }
 
   const assignedUnits = Array.isArray(resolvedCall.assigned_units) ? resolvedCall.assigned_units : [];
   if (assignedUnits.length > 0) {
     clearClosestCallPrompt(callId);
-    return null;
+    return {
+      call_id: callId,
+      queued_prompt_count: 0,
+      requested_department_ids: normalizeRequestedDepartmentIdsFromCall(resolvedCall),
+      queued_prompt_ids: [],
+    };
   }
 
   const requestedDeptIds = normalizeRequestedDepartmentIdsFromCall(resolvedCall);
-  if (requestedDeptIds.length === 0) return null;
+  if (requestedDeptIds.length === 0) {
+    clearClosestCallPrompt(callId);
+    return {
+      call_id: callId,
+      queued_prompt_count: 0,
+      requested_department_ids: [],
+      queued_prompt_ids: [],
+    };
+  }
 
   pruneClosestCallDeclines();
+  const requestedDeptIdSet = new Set(requestedDeptIds);
   const availableUnits = Units.listByDepartmentIds(requestedDeptIds)
-    .filter(unit => String(unit?.status || '').trim().toLowerCase() === 'available');
+    .filter((unit) => {
+      if (String(unit?.status || '').trim().toLowerCase() !== 'available') return false;
+      const unitDeptId = Number(unit?.department_id || 0);
+      return requestedDeptIdSet.has(unitDeptId);
+    });
 
-  let best = null;
-  for (const unit of availableUnits) {
-    const unitId = Number(unit?.id || 0);
-    if (!unitId) continue;
-    if (assignedUnits.some(assigned => Number(assigned?.id || 0) === unitId)) continue;
+  const queuedPromptJobs = [];
 
-    const target = resolveRouteTargetForUnit(unit);
-    if (!hasRouteTarget(target)) continue;
-
-    let unitX = Number(target.target_position_x);
-    let unitY = Number(target.target_position_y);
-
-    if ((!Number.isFinite(unitX) || !Number.isFinite(unitY)) && String(target.citizen_id || '').trim()) {
-      const byCitizen = findActiveLinkByCitizenId(target.citizen_id);
-      unitX = Number(byCitizen?.position_x);
-      unitY = Number(byCitizen?.position_y);
-    }
-    if (!Number.isFinite(unitX) || !Number.isFinite(unitY)) continue;
-
-    const declineKey = getDeclineKey(callId, unitId);
-    const declinedAt = Number(closestCallDeclines.get(declineKey) || 0);
-    if (!force && declinedAt > 0 && (Date.now() - declinedAt) < CLOSEST_CALL_DECLINE_COOLDOWN_MS) {
+  for (const departmentId of requestedDeptIds) {
+    if (isClosestCallDepartmentEscalated(callId, departmentId)) {
+      clearClosestCallPrompt(callId, departmentId);
       continue;
     }
 
-    const dx = unitX - callPosition.x;
-    const dy = unitY - callPosition.y;
-    const distance = Math.sqrt((dx * dx) + (dy * dy));
-    if (!Number.isFinite(distance)) continue;
+    let best = null;
+    for (const unit of availableUnits) {
+      const unitId = Number(unit?.id || 0);
+      const unitDeptId = Number(unit?.department_id || 0);
+      if (!unitId || unitDeptId !== departmentId) continue;
+      if (assignedUnits.some(assigned => Number(assigned?.id || 0) === unitId)) continue;
 
-    if (!best || distance < best.distance) {
-      best = {
-        unit,
-        target,
-        distance,
-      };
+      const target = resolveRouteTargetForUnit(unit);
+      if (!hasRouteTarget(target)) continue;
+
+      let unitX = Number(target.target_position_x);
+      let unitY = Number(target.target_position_y);
+
+      if ((!Number.isFinite(unitX) || !Number.isFinite(unitY)) && String(target.citizen_id || '').trim()) {
+        const byCitizen = findActiveLinkByCitizenId(target.citizen_id);
+        unitX = Number(byCitizen?.position_x);
+        unitY = Number(byCitizen?.position_y);
+      }
+      if (!Number.isFinite(unitX) || !Number.isFinite(unitY)) continue;
+
+      const declineKey = getDeclineKey(callId, departmentId, unitId);
+      const declinedAt = Number(closestCallDeclines.get(declineKey) || 0);
+      if (!force && declinedAt > 0 && (Date.now() - declinedAt) < CLOSEST_CALL_DECLINE_COOLDOWN_MS) {
+        continue;
+      }
+
+      const dx = unitX - callPosition.x;
+      const dy = unitY - callPosition.y;
+      const distance = Math.sqrt((dx * dx) + (dy * dy));
+      if (!Number.isFinite(distance)) continue;
+
+      if (!best || distance < best.distance) {
+        best = {
+          unit,
+          target,
+          distance,
+        };
+      }
     }
+
+    if (!best) {
+      clearClosestCallPrompt(callId, departmentId);
+      continue;
+    }
+
+    const promptId = getCallPromptId(callId, departmentId);
+    const existingJob = pendingClosestCallPrompts.get(promptId) || null;
+    if (
+      !force
+      && existingJob
+      && Number(existingJob.unit_id || 0) === Number(best.unit.id || 0)
+      && Number(existingJob.dispatched_at || 0) > 0
+    ) {
+      queuedPromptJobs.push(existingJob);
+      continue;
+    }
+
+    const department = Departments.findById(departmentId) || null;
+    const routePostal = String(resolveCallPostal(resolvedCall) || '').trim();
+    const job = {
+      id: promptId,
+      call_id: callId,
+      department_id: departmentId,
+      department_name: String(department?.name || '').trim(),
+      department_short_name: String(department?.short_name || '').trim(),
+      unit_id: Number(best.unit.id || 0),
+      distance_meters: Number(best.distance.toFixed(2)),
+      title: String(resolvedCall.title || '').trim(),
+      priority: String(resolvedCall.priority || '').trim(),
+      location: String(resolvedCall.location || '').trim(),
+      postal: routePostal,
+      position_x: callPosition.x,
+      position_y: callPosition.y,
+      position_z: callPosition.z,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      dispatched_at: 0,
+    };
+
+    pendingClosestCallPrompts.set(promptId, enrichRouteJobWithTarget(job, best.target));
+    queuedPromptJobs.push(pendingClosestCallPrompts.get(promptId));
   }
 
-  if (!best) {
-    clearClosestCallPrompt(callId);
-    return null;
-  }
-
-  const promptId = getCallPromptId(callId);
-  const existingJob = pendingClosestCallPrompts.get(promptId) || null;
-  if (
-    !force
-    && existingJob
-    && Number(existingJob.unit_id || 0) === Number(best.unit.id || 0)
-    && Number(existingJob.dispatched_at || 0) > 0
-  ) {
-    return existingJob;
-  }
-
-  const routePostal = String(resolveCallPostal(resolvedCall) || '').trim();
-  const job = {
-    id: promptId,
+  return {
     call_id: callId,
-    unit_id: Number(best.unit.id || 0),
-    distance_meters: Number(best.distance.toFixed(2)),
-    title: String(resolvedCall.title || '').trim(),
-    priority: String(resolvedCall.priority || '').trim(),
-    location: String(resolvedCall.location || '').trim(),
-    postal: routePostal,
-    position_x: callPosition.x,
-    position_y: callPosition.y,
-    position_z: callPosition.z,
-    created_at: Date.now(),
-    updated_at: Date.now(),
-    dispatched_at: 0,
+    queued_prompt_count: queuedPromptJobs.length,
+    requested_department_ids: requestedDeptIds,
+    queued_prompt_ids: queuedPromptJobs
+      .map(job => String(job?.id || '').trim())
+      .filter(Boolean),
   };
-
-  pendingClosestCallPrompts.set(promptId, enrichRouteJobWithTarget(job, best.target));
-  return pendingClosestCallPrompts.get(promptId) || null;
 }
 
 function resolveActiveLinkForBridgeJob(job = {}) {
@@ -1408,10 +1689,11 @@ function shouldAutoSetUnitOnScene(unit, playerPayload, assignedCall) {
 
 function refreshClosestPromptForCall(call, options = {}) {
   try {
-    queueClosestCallPromptForCall(call, options);
+    return queueClosestCallPromptForCall(call, options);
   } catch (err) {
     console.warn('[FiveMBridge] Could not evaluate closest-unit prompt:', err?.message || err);
   }
+  return null;
 }
 
 bus.on('call:create', ({ call }) => {
@@ -1424,6 +1706,8 @@ bus.on('call:update', ({ call }) => {
 
 bus.on('call:assign', ({ call, unit }) => {
   clearClosestCallPrompt(call?.id);
+  clearClosestCallDeclines(call?.id);
+  clearClosestCallEscalations(call?.id);
   clearClosestCallPromptsForUnit(unit?.id);
   try {
     queueRouteJobForAssignment(call, unit);
@@ -1452,6 +1736,7 @@ bus.on('call:close', ({ call }) => {
   const callId = Number(call?.id || 0);
   clearClosestCallPrompt(callId);
   clearClosestCallDeclines(callId);
+  clearClosestCallEscalations(callId);
   const resolvedCall = (callId && Array.isArray(call?.assigned_units))
     ? call
     : (callId ? (Calls.findById(callId) || call) : call);
@@ -1634,9 +1919,12 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       .map(d => Number(d.id))
       .filter(id => Number.isInteger(id) && id > 0);
     if (dispatchVisibleIds.length > 0) {
-      for (const activeCall of Calls.listByDepartmentIds(dispatchVisibleIds, false)) {
-        if (String(activeCall?.status || '').trim().toLowerCase() === 'closed') continue;
-        refreshClosestPromptForCall(activeCall);
+      for (const activeCall of Calls.listByDepartmentIds(dispatchVisibleIds, true)) {
+        if (normalizeCallStatus(activeCall?.status) !== CALL_STATUS_PENDING_DISPATCH) continue;
+        const promptResult = refreshClosestPromptForCall(activeCall);
+        if (Number(promptResult?.queued_prompt_count || 0) <= 0) {
+          publishPendingDispatchCall(activeCall, { reason: 'closest_prompt_unavailable' });
+        }
       }
     }
   }
@@ -1721,7 +2009,6 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     return res.status(400).json({ error: 'No active department available to create call' });
   }
   const requestedDepartmentIds = resolveRequestedDepartmentIds(payload.requested_department_ids, departmentId);
-  const departmentsById = new Map(getDispatchVisibleDepartments().map(dept => [Number(dept.id), dept]));
 
   const location = formatCallLocation(payload);
   const postal = String(payload?.postal || extractPostalFromLocation(location) || '').trim();
@@ -1729,25 +2016,11 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   const positionY = Number(payload?.position?.y);
   const positionZ = Number(payload?.position?.z);
   const title = String(payload.title || '').trim() || (details ? details.slice(0, 120) : `000 Call from ${playerName}`);
-  const descriptionParts = [];
-  descriptionParts.push(`000 call from ${playerName}${sourceId ? ` (#${sourceId})` : ''}`);
-  if (requestedDepartmentIds.length > 0) {
-    const requestedLabels = requestedDepartmentIds
-      .map((id) => {
-        const dept = departmentsById.get(Number(id));
-        if (!dept) return `#${id}`;
-        return dept.short_name
-          ? `${dept.name} (${dept.short_name})`
-          : dept.name;
-      })
-      .filter(Boolean);
-    if (requestedLabels.length > 0) {
-      descriptionParts.push(`Requested departments: ${requestedLabels.join(', ')}`);
-    }
-  }
-  if (details) descriptionParts.push(details);
-  if (ids.linkKey) descriptionParts.push(`Link: ${ids.linkKey}`);
-  const description = descriptionParts.join(' | ');
+  const reasonForCall = details || title;
+  const descriptionLines = [];
+  descriptionLines.push(`Caller: ${playerName}`);
+  if (reasonForCall) descriptionLines.push(`Reason: ${reasonForCall}`);
+  const description = descriptionLines.join('\n');
 
   const call = Calls.create({
     department_id: departmentId,
@@ -1756,7 +2029,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     location,
     description,
     job_code: '000',
-    status: 'active',
+    status: CALL_STATUS_PENDING_DISPATCH,
     requested_department_ids: requestedDepartmentIds,
     created_by: cadUser?.id || null,
     postal,
@@ -1764,7 +2037,12 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     position_y: Number.isFinite(positionY) ? positionY : null,
     position_z: Number.isFinite(positionZ) ? positionZ : null,
   });
-  bus.emit('call:create', { departmentId, call });
+
+  const promptResult = refreshClosestPromptForCall(call, { force: true });
+  let responseCall = call;
+  if (Number(promptResult?.queued_prompt_count || 0) <= 0) {
+    responseCall = publishPendingDispatchCall(call, { reason: 'closest_prompt_unavailable' }) || call;
+  }
 
   audit(cadUser?.id || null, 'fivem_000_call_created', {
     callId: call.id,
@@ -1773,11 +2051,13 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     sourceId,
     sourceType,
     matchedUserId: cadUser?.id || null,
+    initial_status: call?.status || CALL_STATUS_PENDING_DISPATCH,
+    closest_prompt_count: Number(promptResult?.queued_prompt_count || 0),
   });
 
   res.status(201).json({
     ok: true,
-    call,
+    call: responseCall,
     source_type: sourceType,
   });
 });
@@ -1947,7 +2227,7 @@ router.post('/licenses', requireBridgeAuth, async (req, res) => {
 });
 
 // Read a driver's current license record for in-game /showid display.
-router.get('/licenses/:citizenid', requireBridgeAuth, (req, res) => {
+router.get('/licenses/:citizenid', requireBridgeAuth, async (req, res) => {
   try {
     DriverLicenses.markExpiredDue();
 
@@ -1961,7 +2241,21 @@ router.get('/licenses/:citizenid', requireBridgeAuth, (req, res) => {
       return res.status(404).json({ error: 'License not found' });
     }
 
-    return res.json({ ok: true, license: record });
+    let qboxCharacter = null;
+    try {
+      qboxCharacter = await getCharacterById(citizenId);
+    } catch (_lookupError) {}
+
+    const resolvedFirstName = String(qboxCharacter?.firstname || '').trim() || extractFirstName(record?.full_name || '');
+    const resolvedAddress = String(qboxCharacter?.address || '').trim();
+    return res.json({
+      ok: true,
+      license: {
+        ...record,
+        first_name: resolvedFirstName,
+        address: resolvedAddress,
+      },
+    });
   } catch (error) {
     writeBridgeLicenseLog('license_read_failed', {
       citizenid: String(req.params.citizenid || '').trim(),
@@ -2362,7 +2656,7 @@ router.get('/call-prompts', requireBridgeAuth, (req, res) => {
 
     const callId = Number(job?.call_id || 0);
     const call = callId ? Calls.findById(callId) : null;
-    if (!call || String(call.status || '').trim().toLowerCase() === 'closed') {
+    if (!call || normalizeCallStatus(call.status) !== CALL_STATUS_PENDING_DISPATCH) {
       pendingClosestCallPrompts.delete(id);
       continue;
     }
@@ -2418,14 +2712,18 @@ router.post('/call-prompts/:id/accept', requireBridgeAuth, (req, res) => {
   const unitId = Number(job.unit_id || 0);
   const call = callId ? Calls.findById(callId) : null;
   const unit = unitId ? Units.findById(unitId) : null;
+  const callWasPendingDispatch = isPendingDispatchCall(call);
 
-  if (!call || String(call.status || '').trim().toLowerCase() === 'closed') {
+  if (!call || normalizeCallStatus(call.status) === 'closed') {
     pendingClosestCallPrompts.delete(id);
     return res.status(409).json({ error: 'Call is no longer active' });
   }
   if (!unit) {
     pendingClosestCallPrompts.delete(id);
-    refreshClosestPromptForCall({ id: callId }, { force: true });
+    const promptResult = refreshClosestPromptForCall({ id: callId }, { force: true });
+    if (Number(promptResult?.queued_prompt_count || 0) <= 0) {
+      publishPendingDispatchCall({ id: callId }, { reason: 'closest_prompt_unavailable' });
+    }
     return res.status(409).json({ error: 'Unit is no longer available' });
   }
 
@@ -2433,30 +2731,51 @@ router.post('/call-prompts/:id/accept', requireBridgeAuth, (req, res) => {
     && call.assigned_units.some(assigned => Number(assigned?.id || 0) === unitId);
   if (!alreadyAssigned && String(unit.status || '').trim().toLowerCase() !== 'available') {
     pendingClosestCallPrompts.delete(id);
-    refreshClosestPromptForCall({ id: callId }, { force: true });
+    const promptResult = refreshClosestPromptForCall({ id: callId }, { force: true });
+    if (Number(promptResult?.queued_prompt_count || 0) <= 0) {
+      publishPendingDispatchCall({ id: callId }, { reason: 'closest_prompt_unavailable' });
+    }
     return res.status(409).json({ error: 'Unit is no longer available for assignment' });
   }
 
   const assignmentChanges = Calls.assignUnit(call.id, unit.id);
   Calls.update(call.id, {
-    status: 'active',
+    status: CALL_STATUS_ACTIVE,
     was_ever_assigned: 1,
   });
   Units.update(unit.id, { status: 'enroute' });
 
   const refreshedUnit = Units.findById(unit.id) || unit;
   const updatedCall = Calls.findById(call.id) || call;
-  pendingClosestCallPrompts.delete(id);
+  clearClosestCallPrompt(call.id);
   clearClosestCallDeclines(call.id);
+  clearClosestCallEscalations(call.id);
+
+  if (callWasPendingDispatch) {
+    bus.emit('call:create', {
+      departmentId: updatedCall.department_id,
+      call: updatedCall,
+      from_fivem_pending_dispatch: true,
+      fivem_pending_dispatch_reason: 'closest_unit_accepted',
+      play_emergency_sound: false,
+    });
+  }
 
   bus.emit('unit:update', { departmentId: refreshedUnit.department_id, unit: refreshedUnit });
-  bus.emit('call:assign', { departmentId: call.department_id, call: updatedCall, unit: refreshedUnit });
+  bus.emit('call:assign', {
+    departmentId: updatedCall.department_id,
+    call: updatedCall,
+    unit: refreshedUnit,
+    from_fivem_pending_dispatch: callWasPendingDispatch,
+    suppress_assignment_sound: callWasPendingDispatch,
+  });
   audit(null, 'fivem_call_prompt_accepted', {
     callId: call.id,
     unitId: unit.id,
     callsign: refreshedUnit?.callsign || '',
     assignment_created: assignmentChanges > 0,
     source: 'fivem_bridge_prompt',
+    was_pending_dispatch: callWasPendingDispatch,
   });
 
   return res.json({ ok: true, call: updatedCall, unit: refreshedUnit });
@@ -2480,18 +2799,32 @@ router.post('/call-prompts/:id/decline', requireBridgeAuth, (req, res) => {
 
   const callId = Number(job.call_id || 0);
   const unitId = Number(job.unit_id || 0);
+  const departmentId = Number(job.department_id || 0);
+  const call = callId ? Calls.findById(callId) : null;
+
   pendingClosestCallPrompts.delete(id);
-  if (callId > 0 && unitId > 0) {
-    closestCallDeclines.set(getDeclineKey(callId, unitId), Date.now());
+  clearClosestCallPrompt(callId, departmentId);
+
+  if (callId > 0 && departmentId > 0 && unitId > 0) {
+    closestCallDeclines.set(getDeclineKey(callId, departmentId, unitId), Date.now());
+  }
+  if (callId > 0 && departmentId > 0) {
+    markClosestCallDepartmentEscalated(callId, departmentId);
+  }
+
+  let publishedCall = call;
+  if (call && isPendingDispatchCall(call)) {
+    publishedCall = publishPendingDispatchCall(call, { reason: 'closest_unit_declined' }) || call;
   }
 
   audit(null, 'fivem_call_prompt_declined', {
     callId,
+    departmentId,
     unitId,
     source: 'fivem_bridge_prompt',
+    published_to_cad: !!(call && isPendingDispatchCall(call)),
   });
-  refreshClosestPromptForCall({ id: callId }, { force: true });
-  return res.json({ ok: true });
+  return res.json({ ok: true, call: publishedCall || null });
 });
 
 // MiniCAD: Return active call details for a unit identified by game_id (source).
@@ -2510,6 +2843,7 @@ router.get('/unit-active-call', requireBridgeAuth, (req, res) => {
 
   const call = Calls.findById(assigned.id) || assigned;
   const department = Departments.findById(Number(call.department_id));
+  const emergencyMeta = extractMiniCadCallerAndReason(call);
 
   // Build a list of all active (non-closed) calls this unit is assigned to for navigation.
   const allAssignedCalls = [];
@@ -2549,6 +2883,8 @@ router.get('/unit-active-call', requireBridgeAuth, (req, res) => {
     location: call.location || '',
     postal: call.postal || '',
     description: call.description || '',
+    caller_name: emergencyMeta.caller_name || '',
+    reason_for_call: emergencyMeta.reason_for_call || '',
     status: call.status || 'active',
     department_name: department?.name || '',
     department_short_name: department?.short_name || '',

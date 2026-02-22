@@ -47,6 +47,78 @@ function parseMaybeJson(value) {
   }
 }
 
+function normalizeAddressText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  const text = String(value || '');
+  if (!text) return '';
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => String(line || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function pickFirstAddressString(source, keys = []) {
+  if (!source || typeof source !== 'object') return '';
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    const value = normalizeAddressText(source[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+function formatAddressObject(addressObj = {}) {
+  if (!addressObj || typeof addressObj !== 'object' || Array.isArray(addressObj)) return '';
+
+  const unit = pickFirstAddressString(addressObj, ['unit', 'flat', 'apartment', 'apt', 'suite']);
+  const streetNumber = pickFirstAddressString(addressObj, ['street_number', 'streetno', 'house_number', 'housenumber', 'number']);
+  const streetName = pickFirstAddressString(addressObj, ['street_name', 'street', 'road', 'streetname']);
+  const streetLine = [unit, streetNumber, streetName].filter(Boolean).join(' ').trim();
+
+  const line1 = streetLine || pickFirstAddressString(addressObj, ['line1', 'line_1', 'address1', 'address_1']);
+  const line2 = pickFirstAddressString(addressObj, ['line2', 'line_2', 'address2', 'address_2']);
+  const suburb = pickFirstAddressString(addressObj, ['suburb', 'city', 'town', 'district']);
+  const state = pickFirstAddressString(addressObj, ['state', 'province', 'region']);
+  const postcode = pickFirstAddressString(addressObj, ['postcode', 'postal_code', 'postal', 'zip', 'zip_code']);
+  const locality = [suburb, state, postcode].filter(Boolean).join(' ').trim();
+
+  return [line1, line2, locality].filter(Boolean).join('\n').trim();
+}
+
+function resolveAddressFromCharInfo(info = {}) {
+  if (!info || typeof info !== 'object') return '';
+
+  const directAddress = pickFirstAddressString(info, [
+    'address',
+    'home_address',
+    'residential_address',
+    'street_address',
+  ]);
+  if (directAddress) return directAddress;
+
+  const nestedAddress = info.address;
+  if (nestedAddress && typeof nestedAddress === 'object' && !Array.isArray(nestedAddress)) {
+    const formattedNested = formatAddressObject(nestedAddress);
+    if (formattedNested) return formattedNested;
+  }
+
+  const unit = pickFirstAddressString(info, ['unit', 'flat', 'apartment', 'apt', 'suite']);
+  const streetNumber = pickFirstAddressString(info, ['street_number', 'streetno', 'house_number', 'housenumber', 'number']);
+  const streetName = pickFirstAddressString(info, ['street_name', 'street', 'road', 'streetname']);
+  const streetLine = [unit, streetNumber, streetName].filter(Boolean).join(' ').trim();
+  const line1 = streetLine || pickFirstAddressString(info, ['line1', 'line_1', 'address1', 'address_1']);
+
+  const suburb = pickFirstAddressString(info, ['suburb', 'city', 'town', 'district']);
+  const state = pickFirstAddressString(info, ['state', 'province', 'region']);
+  const postcode = pickFirstAddressString(info, ['postcode', 'postal_code', 'postal', 'zip', 'zip_code']);
+  const locality = [suburb, state, postcode].filter(Boolean).join(' ').trim();
+
+  return [line1, locality].filter(Boolean).join('\n').trim();
+}
+
 function getPathValue(source, path) {
   if (!path) return source;
   const parts = String(path).split('.').filter(Boolean);
@@ -750,6 +822,7 @@ async function getCharacterById(citizenId) {
       gender: info.gender !== undefined ? String(info.gender) : '',
       phone: info.phone || '',
       nationality: info.nationality || '',
+      address: resolveAddressFromCharInfo(info),
       job: extractedJob,
       custom_fields: {},
       mapped_categories: [],

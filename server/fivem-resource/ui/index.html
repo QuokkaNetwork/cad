@@ -22,7 +22,7 @@
 
         <form id="emergencyForm" class="form" novalidate>
           <div class="field">
-            <label for="titleInput">Title <span class="required">*</span></label>
+            <label for="titleInput">What Is Happening? <span class="required">*</span></label>
             <input
               id="titleInput"
               type="text"
@@ -38,27 +38,28 @@
           </div>
 
           <div class="field">
-            <label for="detailsInput">Details</label>
+            <label for="detailsInput">Reason For Calling <span class="required">*</span></label>
             <textarea
               id="detailsInput"
               maxlength="600"
-              placeholder="Suspects, vehicle, injuries, direction of travel, any immediate hazards..."
+              placeholder="What is wrong right now, what is urgent, and any key details responders need."
             ></textarea>
             <div class="meta-row">
-              <span></span>
+              <span id="detailsError" class="error hidden">Reason for calling is required.</span>
               <span id="detailsCounter" class="counter">0 / 600</span>
             </div>
           </div>
 
           <div class="field">
             <div class="dept-header">
-              <label>Departments Required</label>
-              <span class="dept-hint">Optional, select all that apply</span>
+              <label>Who Is Required? <span class="required">*</span></label>
+              <span class="dept-hint">Select all departments needed on this call</span>
             </div>
             <div id="departmentsEmpty" class="empty-state">
               No department options were provided by CAD.
             </div>
             <div id="departmentsList" class="dept-grid hidden"></div>
+            <div id="departmentsError" class="error hidden">Select at least one department.</div>
           </div>
 
           <footer class="actions">
@@ -193,26 +194,39 @@
       </header>
 
       <div class="minicad-body">
-        <div class="minicad-call-header">
-          <div id="miniCadJobCode" class="minicad-job-code"></div>
-          <div id="miniCadTitle" class="minicad-title"></div>
-        </div>
-        <div id="miniCadLocation" class="minicad-location"></div>
-        <div class="minicad-badges">
-          <span id="miniCadPostal" class="minicad-postal"></span>
-        </div>
-        <div id="miniCadUnits" class="minicad-units"></div>
-
-        <nav class="minicad-nav">
-          <button id="miniCadPrev" class="minicad-nav-btn" type="button"><i class="fas fa-chevron-left"></i> Prev</button>
-          <button id="miniCadDetach" class="minicad-nav-btn" type="button">Detach</button>
-          <button id="miniCadNext" class="minicad-nav-btn" type="button">Next <i class="fas fa-chevron-right"></i></button>
-        </nav>
-
-        <section class="minicad-section">
-          <h4 class="minicad-section-label">DESCRIPTION:</h4>
-          <div id="miniCadDescription" class="minicad-description"></div>
+        <section id="miniCadClosestPrompt" class="minicad-closest hidden">
+          <div class="minicad-closest-header">
+            <span id="miniCadClosestLabel" class="minicad-closest-label">Closest Unit Offer</span>
+            <span id="miniCadClosestTimer" class="minicad-closest-timer"></span>
+          </div>
+          <div id="miniCadClosestTitle" class="minicad-closest-title"></div>
+          <div id="miniCadClosestMeta" class="minicad-closest-meta"></div>
+          <div id="miniCadClosestLocation" class="minicad-closest-location"></div>
+          <div class="minicad-closest-actions">
+            <button id="miniCadClosestAttach" class="minicad-nav-btn minicad-closest-attach" type="button">Attach</button>
+            <button id="miniCadClosestDecline" class="minicad-nav-btn minicad-closest-decline" type="button">Decline</button>
+          </div>
         </section>
+
+        <div id="miniCadCallView">
+          <div class="minicad-call-header">
+            <div id="miniCadTitle" class="minicad-title"></div>
+            <div id="miniCadCaller" class="minicad-caller"></div>
+          </div>
+          <div id="miniCadLocation" class="minicad-location"></div>
+          <div class="minicad-badges">
+            <span id="miniCadPostal" class="minicad-postal"></span>
+          </div>
+
+          <nav class="minicad-nav">
+            <button id="miniCadDetach" class="minicad-nav-btn" type="button">Detach (End)</button>
+          </nav>
+
+          <section class="minicad-section">
+            <h4 class="minicad-section-label">REASON FOR CALL:</h4>
+            <div id="miniCadDescription" class="minicad-description"></div>
+          </section>
+        </div>
       </div>
     </div>
 

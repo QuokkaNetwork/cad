@@ -267,7 +267,7 @@ local DEFAULT_DRIVER_LICENSE_CLASS_OPTIONS = {
 local DEFAULT_DRIVER_LICENSE_DEFAULT_CLASSES = { 'CAR' }
 local DEFAULT_DURATION_OPTIONS = { 6, 14, 35, 70 }
 local DEFAULT_DRIVER_LICENSE_PED_COORDS = { x = 240.87, y = -1378.69, z = 32.74, w = 140.89 }
-local DEFAULT_VEHICLE_REGISTRATION_PED_COORDS = { x = -30.67, y = -1096.12, z = 26.27, w = 65.43 }
+local DEFAULT_VEHICLE_REGISTRATION_PED_COORDS = { x = -30.17, y = -1096.28, z = 26.27, w = 67.98 }
 local DEFAULT_DOCUMENT_INTERACTION_PEDS = {
   {
     id = 'city_hall',
@@ -280,7 +280,7 @@ local DEFAULT_DOCUMENT_INTERACTION_PEDS = {
   {
     id = 'pdm',
     model = 's_m_y_dealer_01',
-    coords = { x = -30.67, y = -1096.12, z = 26.27, w = 65.43 },
+    coords = { x = -30.17, y = -1096.28, z = 26.27, w = 67.98 },
     scenario = 'WORLD_HUMAN_CLIPBOARD',
     allows_license = false,
     allows_registration = true,

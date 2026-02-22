@@ -9,19 +9,23 @@
     </header>
 
     <h2 id="idCardTitle" class="id-card-title">Victorian Driver Licence</h2>
-    <div id="idCardViewerNote" class="id-card-note" data-license-field="viewer_note"></div>
 
     <div class="id-card-body">
       <div class="id-card-main">
         <div class="id-card-top">
           <div class="id-card-name-block">
-            <span class="id-card-top-label">Name</span>
-            <span id="idCardName" class="id-card-name" data-license-field="full_name"></span>
+            <span class="id-card-top-label">First Name</span>
+            <span id="idCardFirstName" class="id-card-name" data-license-field="first_name"></span>
           </div>
           <div class="id-card-licence-block">
             <span class="id-card-top-label">Licence No.</span>
             <span id="idCardNumber" class="id-card-licence-no" data-license-field="license_number"></span>
           </div>
+        </div>
+
+        <div class="id-card-address-block">
+          <span class="id-label">Address</span>
+          <span id="idCardAddress" class="id-value id-card-address-value" data-license-field="address"></span>
         </div>
 
         <div class="id-card-bottom-grid">
@@ -42,11 +46,6 @@
             <span id="idCardConditions" class="id-value" data-license-field="conditions"></span>
           </div>
         </div>
-
-        <div class="id-card-meta">
-          <span class="id-card-meta-chip">Status: <strong id="idCardStatus" data-license-field="status"></strong></span>
-          <span class="id-card-meta-chip">Gender: <strong id="idCardGender" data-license-field="gender"></strong></span>
-        </div>
       </div>
 
       <div class="id-card-photo-panel">
@@ -55,6 +54,7 @@
       </div>
     </div>
 
+    <div id="idCardViewerNote" class="id-card-note" data-license-field="viewer_note"></div>
     <div class="id-card-footer">Press <strong>PGDN</strong> to show or hide</div>
   </section>
 </div>

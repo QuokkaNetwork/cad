@@ -166,6 +166,7 @@ end)
 RegisterNUICallback('cadBridge000Submit', function(data, cb)
   local title = trim(data and data.title or '')
   local details = trim(data and data.details or '')
+  local departmentsAvailable = tonumber(data and data.departments_available or 0) or 0
   local requestedDepartmentIds = {}
   if type(util.normalizeDepartmentIdList) == 'function' then
     requestedDepartmentIds = util.normalizeDepartmentIdList(data and data.requested_department_ids or {})
@@ -173,6 +174,14 @@ RegisterNUICallback('cadBridge000Submit', function(data, cb)
 
   if title == '' then
     if cb then cb({ ok = false, error = 'title_required' }) end
+    return
+  end
+  if details == '' then
+    if cb then cb({ ok = false, error = 'details_required' }) end
+    return
+  end
+  if departmentsAvailable > 0 and (type(requestedDepartmentIds) ~= 'table' or #requestedDepartmentIds == 0) then
+    if cb then cb({ ok = false, error = 'departments_required' }) end
     return
   end
 
@@ -184,6 +193,7 @@ RegisterNUICallback('cadBridge000Submit', function(data, cb)
     title = title,
     details = details,
     requested_department_ids = requestedDepartmentIds,
+    departments_available = departmentsAvailable,
   })
 
   if cb then cb({ ok = true }) end

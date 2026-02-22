@@ -178,6 +178,10 @@ export default function Sidebar() {
     'call:create': (payload) => {
       if (!isOnDuty) return;
       if (isEmergency000CallEvent(payload)) {
+        const fromPendingDispatch = payload?.from_fivem_pending_dispatch === true;
+        if (fromPendingDispatch && payload?.play_emergency_sound !== true) {
+          return;
+        }
         playEmergencyCallSound();
       }
     },
@@ -191,8 +195,11 @@ export default function Sidebar() {
       fetchOnDutyStatus();
       fetchActiveCallStatus();
     },
-    'call:assign': () => {
+    'call:assign': (payload) => {
       fetchActiveCallStatus();
+      if (payload?.suppress_assignment_sound === true) {
+        return;
+      }
       if (isOnDuty) {
         playCallAssignSound();
       }

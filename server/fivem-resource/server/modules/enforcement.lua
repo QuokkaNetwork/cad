@@ -1,3 +1,125 @@
+if Config.EnableDocumentCommands == true then
+  RegisterCommand(trim(Config.DriverLicenseCommand or 'cadlicense'), function(src, _args)
+    openDriverLicensePromptForSource(src)
+  end, false)
+
+  RegisterCommand(trim(Config.VehicleRegistrationCommand or 'cadrego'), function(src, _args)
+    openVehicleRegistrationPromptForSource(src)
+  end, false)
+end
+
+local heartbeatInFlight = false
+local heartbeatInFlightSinceMs = 0
+local pollFineJobs = nil
+local pollJailJobs = nil
+local lastFastEnforcementPollMs = 0
+
+local function getServerPedPositionSnapshot(sourceId)
+  local s = tonumber(sourceId) or 0
+  if s <= 0 then return nil end
+  local ped = GetPlayerPed(s)
+  if not ped or ped <= 0 then return nil end
+  local coords = GetEntityCoords(ped)
+  if not coords then return nil end
+  return {
+    x = tonumber(coords.x) or 0.0,
+    y = tonumber(coords.y) or 0.0,
+    z = tonumber(coords.z) or 0.0,
+    heading = tonumber(GetEntityHeading(ped)) or 0.0,
+    speed = tonumber(GetEntitySpeed(ped)) or 0.0,
+  }
+end
+
+local function triggerFastEnforcementPoll()
+  local now = nowMs()
+  if (now - lastFastEnforcementPollMs) < 800 then
+    return
+  end
+  lastFastEnforcementPollMs = now
+  if pollFineJobs then
+    pollFineJobs()
+  end
+  if pollJailJobs then
+    pollJailJobs()
+  end
+end
+
+local function resetHeartbeatInFlight(reason)
+  heartbeatInFlight = false
+  heartbeatInFlightSinceMs = 0
+  if reason and reason ~= '' then
+    print(('[cad_bridge] heartbeat in-flight reset (%s)'):format(tostring(reason)))
+  end
+end
+
+local function clearStuckHeartbeatIfNeeded()
+  if not heartbeatInFlight then return false end
+  local timeoutMs = math.max(10000, math.floor((tonumber(Config.HeartbeatIntervalMs) or 500) * 8))
+  if heartbeatInFlightSinceMs <= 0 then
+    heartbeatInFlightSinceMs = nowMs()
+    return false
+  end
+  local elapsed = nowMs() - heartbeatInFlightSinceMs
+  if elapsed < timeoutMs then
+    return false
+  end
+  resetHeartbeatInFlight(('watchdog timeout after %sms'):format(math.floor(elapsed)))
+  setBridgeBackoff('heartbeat', nil, 3000, 'heartbeat watchdog')
+  return true
+end
+
+CreateThread(function()
+  while true do
+    Wait(math.max(250, tonumber(Config.HeartbeatIntervalMs) or 500))
+    if not hasBridgeConfig() then
+      goto continue
+    end
+    if heartbeatInFlight and not clearStuckHeartbeatIfNeeded() then
+      goto continue
+    end
+    if isBridgeBackoffActive('heartbeat') then
+      goto continue
+    end
+
+    local payloadPlayers = {}
+    for _, src in ipairs(GetPlayers()) do
+      local s = tonumber(src)
+      if s then
+        local identifiers = GetPlayerIdentifiers(s)
+        if Config.PublishAllPlayers or hasTrackedIdentifier(identifiers) then
+          local pos = PlayerPositions[s]
+          local fallbackSnapshot = getServerPedPositionSnapshot(s)
+          if fallbackSnapshot and (type(pos) ~= 'table' or ((tonumber(pos.x) or 0.0) == 0.0 and (tonumber(pos.y) or 0.0) == 0.0)) then
+            if type(pos) ~= 'table' then pos = {} end
+            pos.x = fallbackSnapshot.x
+            pos.y = fallbackSnapshot.y
+            pos.z = fallbackSnapshot.z
+            pos.heading = fallbackSnapshot.heading
+            pos.speed = fallbackSnapshot.speed
+            PlayerPositions[s] = pos
+          end
+          if type(pos) ~= 'table' then
+            pos = {
+              x = 0.0,
+              y = 0.0,
+              z = 0.0,
+              heading = 0.0,
+              speed = 0.0,
+              street = '',
+              crossing = '',
+              postal = '',
+              location = '',
+              vehicle = '',
+              license_plate = '',
+              has_siren_enabled = false,
+              icon = 6,
+              weapon = '',
+            }
+          end
+          local platformName = trim(GetPlayerName(s) or '')
+          local characterName = getCharacterDisplayName(s)
+          local displayName = platformName ~= '' and platformName or characterName
+
           payloadPlayers[#payloadPlayers + 1] = {
             source = s,
             player_id = s,
@@ -501,6 +623,9 @@ local function applyCallPromptJob(job)
     location = tostring(job.location or ''),
     postal = tostring(job.postal or ''),
     distance_meters = tonumber(job.distance_meters) or 0,
+    department_id = tonumber(job.department_id) or 0,
+    department_name = tostring(job.department_name or ''),
+    department_short_name = tostring(job.department_short_name or ''),
     expires_in_ms = math.max(6000, tonumber(Config.ClosestCallPromptTimeoutMs) or 15000),
   }
 

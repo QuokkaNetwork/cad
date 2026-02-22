@@ -14,7 +14,6 @@ client_scripts {
   'client/modules/registration.lua',
   'client/modules/documents_ui.lua',
   'client/modules/peds.lua',
-  'client/modules/call_prompt.lua',
   'client/modules/call_popup.lua',
 }
 server_script 'server.lua'

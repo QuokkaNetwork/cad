@@ -1,7 +1,12 @@
-      status = trim(license.status or ''),
+      first_name = trim(license.first_name or ''),
+      address = trim(license.address or ''),
       expiry_at = trim(license.expiry_at or ''),
       mugshot_url = '',
     }
+
+    if payload.first_name == '' then
+      payload.first_name = trim((payload.full_name or ''):match('^([^%s]+)') or '')
+    end
 
     -- Fetch the mugshot image server-side and convert to a data URI so the NUI
     -- doesn't hit mixed-content blocks (cfx-nui is HTTPS, CAD is HTTP).
@@ -9,13 +14,13 @@
       payload.mugshot_url = mugshotDataUri or ''
 
       TriggerClientEvent('cad_bridge:showIdCard', src, {
+        first_name = payload.first_name,
         full_name = payload.full_name,
+        address = payload.address,
         date_of_birth = payload.date_of_birth,
-        gender = payload.gender,
         license_number = payload.license_number,
         license_classes = payload.license_classes,
         conditions = payload.conditions,
-        status = payload.status,
         expiry_at = payload.expiry_at,
         mugshot_url = payload.mugshot_url,
         viewer_note = 'Your licence record',
@@ -25,13 +30,13 @@
       for _, viewerSource in ipairs(viewerTargets) do
         if tonumber(viewerSource) and viewerSource ~= src and GetPlayerName(viewerSource) then
           TriggerClientEvent('cad_bridge:showIdCard', viewerSource, {
+          first_name = payload.first_name,
           full_name = payload.full_name,
+          address = payload.address,
           date_of_birth = payload.date_of_birth,
-          gender = payload.gender,
           license_number = payload.license_number,
           license_classes = payload.license_classes,
           conditions = payload.conditions,
-          status = payload.status,
           expiry_at = payload.expiry_at,
           mugshot_url = payload.mugshot_url,
           viewer_note = ('Shown by %s'):format(getCharacterDisplayName(src)),

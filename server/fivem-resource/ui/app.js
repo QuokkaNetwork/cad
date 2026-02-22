@@ -8,8 +8,10 @@ var detailsInput = document.getElementById("detailsInput");
 var titleCounter = document.getElementById("titleCounter");
 var detailsCounter = document.getElementById("detailsCounter");
 var titleError = document.getElementById("titleError");
+var detailsError = document.getElementById("detailsError");
 var departmentsEmpty = document.getElementById("departmentsEmpty");
 var departmentsList = document.getElementById("departmentsList");
+var departmentsError = document.getElementById("departmentsError");
 
 var licenseOverlay = document.getElementById("licenseOverlay");
 var licenseForm = document.getElementById("licenseForm");
@@ -46,12 +48,11 @@ var idCardOverlay = null;
 var idCardCloseBtn = null;
 var idCardViewerNote = null;
 var idCardPhoto = null;
-var idCardName = null;
+var idCardFirstName = null;
+var idCardAddress = null;
 var idCardDob = null;
-var idCardGender = null;
 var idCardNumber = null;
 var idCardClasses = null;
-var idCardStatus = null;
 var idCardExpiry = null;
 var idCardConditions = null;
 var idCardTemplateReady = false;
@@ -84,12 +85,11 @@ function bindIdCardNodes() {
   idCardCloseBtn = document.getElementById("idCardCloseBtn");
   idCardViewerNote = document.getElementById("idCardViewerNote");
   idCardPhoto = document.getElementById("idCardPhoto");
-  idCardName = document.getElementById("idCardName");
+  idCardFirstName = document.getElementById("idCardFirstName");
+  idCardAddress = document.getElementById("idCardAddress");
   idCardDob = document.getElementById("idCardDob");
-  idCardGender = document.getElementById("idCardGender");
   idCardNumber = document.getElementById("idCardNumber");
   idCardClasses = document.getElementById("idCardClasses");
-  idCardStatus = document.getElementById("idCardStatus");
   idCardExpiry = document.getElementById("idCardExpiry");
   idCardConditions = document.getElementById("idCardConditions");
   if (idCardCloseBtn && idCardCloseBtn.dataset.bound !== "1") {
@@ -301,6 +301,7 @@ function updateCounters() {
 function renderDepartments() {
   if (!departmentsList || !departmentsEmpty) return;
   departmentsList.innerHTML = "";
+  showErrorNode(departmentsError, "");
   if (departments.length === 0) {
     departmentsEmpty.classList.remove("hidden");
     departmentsList.classList.add("hidden");
@@ -359,6 +360,8 @@ function resetEmergencyForm(payload) {
   titleInput.value = "";
   detailsInput.value = "";
   showErrorNode(titleError, "");
+  showErrorNode(detailsError, "");
+  showErrorNode(departmentsError, "");
 
   departments = sanitizeDepartments(safeGet(data, "departments", []));
   selectedDepartmentIds = [];
@@ -388,19 +391,35 @@ function closeEmergencyForm() {
 
 async function submitEmergencyForm() {
   var title = String(titleInput.value || "").trim();
+  var details = String(detailsInput.value || "").trim();
+  var selectedDepartments = collectSelectedDepartmentIds();
+
   if (!title) {
     showErrorNode(titleError, "Title is required.");
     if (titleInput) titleInput.focus();
     return;
   }
+  if (!details) {
+    showErrorNode(detailsError, "Reason for calling is required.");
+    if (detailsInput) detailsInput.focus();
+    return;
+  }
+  if (departments.length > 0 && selectedDepartments.length === 0) {
+    showErrorNode(departmentsError, "Select at least one department.");
+    return;
+  }
+
   showErrorNode(titleError, "");
+  showErrorNode(detailsError, "");
+  showErrorNode(departmentsError, "");
   submitBtn.disabled = true;
 
   try {
     var response = await postNui("cadBridge000Submit", {
       title: title,
-      details: String(detailsInput.value || "").trim(),
-      requested_department_ids: collectSelectedDepartmentIds(),
+      details: details,
+      requested_department_ids: selectedDepartments,
+      departments_available: departments.length,
     });
     var result = null;
     try {
@@ -411,6 +430,10 @@ async function submitEmergencyForm() {
     if (!response.ok || (result && result.ok === false)) {
       if (result && result.error === "title_required") {
         showErrorNode(titleError, "Title is required.");
+      } else if (result && result.error === "details_required") {
+        showErrorNode(detailsError, "Reason for calling is required.");
+      } else if (result && result.error === "departments_required") {
+        showErrorNode(departmentsError, "Select at least one department.");
       }
       submitBtn.disabled = false;
       return;
@@ -1027,18 +1050,34 @@ function setIdCardImage(fieldName, src, legacyNode) {
   if (!wrotePlaceholder) return;
 }
 
-function normalizeStatusLabel(value) {
-  var normalized = String(value || "").trim().toLowerCase();
-  if (!normalized) return "Unknown";
-  if (normalized === "valid") return "Valid";
-  if (normalized === "suspended") return "Suspended";
-  if (normalized === "disqualified") return "Disqualified";
-  if (normalized === "expired") return "Expired";
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+function extractFirstNameForCard(payload) {
+  var explicit = String(safeGet(payload || {}, "first_name", "") || "").trim();
+  if (explicit) return explicit;
+
+  var fullName = String(safeGet(payload || {}, "full_name", "") || "").trim();
+  if (!fullName) return "";
+  var normalized = fullName.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return String(normalized.split(" ")[0] || "").trim();
+}
+
+function formatDateForCard(value) {
+  var normalized = normalizeDateForDateInput(value);
+  if (!normalized) return String(value || "").trim();
+  var parts = normalized.split("-");
+  if (parts.length !== 3) return normalized;
+  return parts[2] + "-" + parts[1] + "-" + parts[0];
 }
 
 function listToText(value, fallback) {
-  var list = sanitizeStringArray(Array.isArray(value) ? value : [], false);
+  var listSource = [];
+  if (Array.isArray(value)) {
+    listSource = value;
+  } else {
+    var single = String(value || "").trim();
+    if (single) listSource = [single];
+  }
+  var list = sanitizeStringArray(listSource, false);
   if (list.length === 0) return String(fallback || "None");
   return list.join(", ");
 }
@@ -1061,15 +1100,16 @@ function openIdCard(payload) {
   }
   var data = payload || {};
   var mugshot = String(safeGet(data, "mugshot_url", "") || "").trim();
+  var firstName = extractFirstNameForCard(data);
+  var address = String(safeGet(data, "address", "") || "").trim();
   setIdCardImage("mugshot_url", mugshot, idCardPhoto);
   setIdCardField("viewer_note", safeGet(data, "viewer_note", ""), "", idCardViewerNote);
-  setIdCardField("full_name", safeGet(data, "full_name", ""), "Unknown", idCardName);
-  setIdCardField("date_of_birth", safeGet(data, "date_of_birth", ""), "Unknown", idCardDob);
-  setIdCardField("gender", safeGet(data, "gender", ""), "Unknown", idCardGender);
+  setIdCardField("first_name", firstName, "Unknown", idCardFirstName);
+  setIdCardField("address", address, "Not recorded", idCardAddress);
+  setIdCardField("date_of_birth", formatDateForCard(safeGet(data, "date_of_birth", "")), "Unknown", idCardDob);
   setIdCardField("license_number", safeGet(data, "license_number", ""), "Auto", idCardNumber);
   setIdCardField("license_classes", listToText(safeGet(data, "license_classes", []), "None"), "None", idCardClasses);
-  setIdCardField("status", normalizeStatusLabel(safeGet(data, "status", "")), "Unknown", idCardStatus);
-  setIdCardField("expiry_at", safeGet(data, "expiry_at", ""), "None", idCardExpiry);
+  setIdCardField("expiry_at", formatDateForCard(safeGet(data, "expiry_at", "")), "None", idCardExpiry);
   setIdCardField("conditions", listToText(safeGet(data, "conditions", []), "None"), "None", idCardConditions);
 
   idCardOpen = true;
@@ -1147,12 +1187,20 @@ window.addEventListener("message", function onMessage(event) {
     updateMiniCad(message.payload || null);
     return;
   }
+  if (message.action === "cadBridgeMiniCad:closestPrompt") {
+    setMiniCadClosestPrompt(message.payload || {});
+    return;
+  }
+  if (message.action === "cadBridgeMiniCad:closestPromptClear") {
+    clearMiniCadClosestPrompt();
+    return;
+  }
   if (message.action === "cadBridgeMiniCad:show") {
-    if (miniCadData && miniCadData.call_id) showMiniCad();
+    if ((miniCadData && miniCadData.call_id) || isMiniCadClosestPromptActive()) showMiniCad();
     return;
   }
   if (message.action === "cadBridgeMiniCad:hide") {
-    hideMiniCad();
+    if (!isMiniCadClosestPromptActive()) hideMiniCadSilently();
     return;
   }
   if (message.action === "cadBridgeMugshot:showBackdrop") {
@@ -1192,89 +1240,231 @@ window.addEventListener("message", function onMessage(event) {
   }
 });
 
-// ─── Mini-CAD Popup ───
+// Mini-CAD Popup
 var miniCadPopup = document.getElementById("miniCadPopup");
 var miniCadCallIndex = document.getElementById("miniCadCallIndex");
-var miniCadJobCode = document.getElementById("miniCadJobCode");
+var miniCadCallView = document.getElementById("miniCadCallView");
 var miniCadTitle = document.getElementById("miniCadTitle");
+var miniCadCaller = document.getElementById("miniCadCaller");
 var miniCadLocation = document.getElementById("miniCadLocation");
 var miniCadPostal = document.getElementById("miniCadPostal");
-var miniCadUnits = document.getElementById("miniCadUnits");
 var miniCadDescription = document.getElementById("miniCadDescription");
-var miniCadPrevBtn = document.getElementById("miniCadPrev");
-var miniCadNextBtn = document.getElementById("miniCadNext");
 var miniCadDetachBtn = document.getElementById("miniCadDetach");
 var miniCadHideBtn = document.getElementById("miniCadHideBtn");
+var miniCadClosestPromptPanel = document.getElementById("miniCadClosestPrompt");
+var miniCadClosestLabel = document.getElementById("miniCadClosestLabel");
+var miniCadClosestTimer = document.getElementById("miniCadClosestTimer");
+var miniCadClosestTitle = document.getElementById("miniCadClosestTitle");
+var miniCadClosestMeta = document.getElementById("miniCadClosestMeta");
+var miniCadClosestLocation = document.getElementById("miniCadClosestLocation");
+var miniCadClosestAttachBtn = document.getElementById("miniCadClosestAttach");
+var miniCadClosestDeclineBtn = document.getElementById("miniCadClosestDecline");
 var miniCadOpen = false;
 var miniCadData = null;
-var miniCadCurrentIndex = 0;
+var miniCadClosestPromptData = null;
+var miniCadClosestPromptDeadlineMs = 0;
+var miniCadClosestPromptTimerHandle = null;
+
+function isMiniCadClosestPromptActive() {
+  return !!(miniCadClosestPromptData && miniCadClosestPromptData.id);
+}
 
 function showMiniCad() {
   if (!miniCadPopup) return;
+  if (!isMiniCadClosestPromptActive() && (!miniCadData || !miniCadData.call_id)) return;
   miniCadOpen = true;
   miniCadPopup.classList.remove("hidden");
 }
 
-function hideMiniCad() {
+function hideMiniCadSilently() {
   if (!miniCadPopup) return;
   miniCadOpen = false;
   miniCadPopup.classList.add("hidden");
+}
+
+function hideMiniCad() {
+  if (!miniCadPopup) return;
+  if (isMiniCadClosestPromptActive()) return;
+  hideMiniCadSilently();
   postNui("cadBridgeMiniCadHidden", {}).catch(function ignore() {});
+}
+
+function clearMiniCadClosestPromptTimer() {
+  if (miniCadClosestPromptTimerHandle) {
+    window.clearInterval(miniCadClosestPromptTimerHandle);
+    miniCadClosestPromptTimerHandle = null;
+  }
+}
+
+function formatMiniCadClosestLocation(prompt) {
+  var location = String(prompt.location || "").trim();
+  var postal = String(prompt.postal || "").trim();
+  if (location && postal) return location + " (Postal " + postal + ")";
+  if (location) return location;
+  if (postal) return "Postal " + postal;
+  return "Location pending";
+}
+
+function formatMiniCadClosestDistance(distanceMeters) {
+  var value = Number(distanceMeters);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (value < 1000) return Math.round(value) + "m";
+  return (value / 1000).toFixed(2) + "km";
+}
+
+function updateMiniCadClosestTimerLabel() {
+  if (!miniCadClosestTimer) return;
+  if (!isMiniCadClosestPromptActive() || !miniCadClosestPromptDeadlineMs) {
+    miniCadClosestTimer.textContent = "";
+    return;
+  }
+  var remainingMs = Math.max(0, miniCadClosestPromptDeadlineMs - Date.now());
+  var remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  miniCadClosestTimer.textContent = remainingSeconds > 0 ? String(remainingSeconds) + "s" : "0s";
+}
+
+function renderMiniCadClosestPrompt() {
+  if (!miniCadClosestPromptPanel) return;
+  if (!isMiniCadClosestPromptActive()) {
+    miniCadClosestPromptPanel.classList.add("hidden");
+    if (miniCadCallView) miniCadCallView.classList.remove("hidden");
+    if (miniCadHideBtn) miniCadHideBtn.disabled = false;
+    updateMiniCadClosestTimerLabel();
+    return;
+  }
+
+  var prompt = miniCadClosestPromptData || {};
+  if (miniCadCallView) miniCadCallView.classList.add("hidden");
+  miniCadClosestPromptPanel.classList.remove("hidden");
+  if (miniCadHideBtn) miniCadHideBtn.disabled = true;
+
+  var deptShort = String(prompt.department_short_name || "").trim();
+  var deptName = String(prompt.department_name || "").trim();
+  var deptLabel = deptShort || deptName;
+  if (miniCadClosestLabel) {
+    miniCadClosestLabel.textContent = deptLabel ? "Closest Unit Offer - " + deptLabel : "Closest Unit Offer";
+  }
+  if (miniCadClosestTitle) {
+    miniCadClosestTitle.textContent = String(prompt.title || "").trim() || "Incoming CAD Call";
+  }
+  if (miniCadClosestMeta) {
+    var metaParts = [];
+    var priority = String(prompt.priority || "").trim();
+    if (priority) metaParts.push("Priority " + priority);
+    var distanceLabel = formatMiniCadClosestDistance(prompt.distance_meters);
+    if (distanceLabel) metaParts.push(distanceLabel + " away");
+    miniCadClosestMeta.textContent = metaParts.join(" | ");
+  }
+  if (miniCadClosestLocation) {
+    miniCadClosestLocation.textContent = formatMiniCadClosestLocation(prompt);
+  }
+  updateMiniCadClosestTimerLabel();
+}
+
+function setMiniCadClosestPrompt(payload) {
+  var prompt = payload || {};
+  var promptId = String(prompt.id || prompt.prompt_id || "").trim();
+  var callId = Number(prompt.call_id || 0);
+  if (!promptId || !Number.isFinite(callId) || callId <= 0) return;
+
+  miniCadClosestPromptData = {
+    id: promptId,
+    call_id: callId,
+    title: String(prompt.title || prompt.call_title || "").trim(),
+    priority: String(prompt.priority || "").trim(),
+    location: String(prompt.location || "").trim(),
+    postal: String(prompt.postal || "").trim(),
+    distance_meters: Number(prompt.distance_meters || 0) || 0,
+    department_name: String(prompt.department_name || "").trim(),
+    department_short_name: String(prompt.department_short_name || "").trim(),
+  };
+
+  var expiresInMs = Math.max(1000, Number(prompt.expires_in_ms || 15000) || 15000);
+  miniCadClosestPromptDeadlineMs = Date.now() + expiresInMs;
+
+  clearMiniCadClosestPromptTimer();
+  miniCadClosestPromptTimerHandle = window.setInterval(updateMiniCadClosestTimerLabel, 500);
+  renderMiniCadCall();
+  showMiniCad();
+}
+
+function clearMiniCadClosestPrompt() {
+  miniCadClosestPromptData = null;
+  miniCadClosestPromptDeadlineMs = 0;
+  clearMiniCadClosestPromptTimer();
+  renderMiniCadCall();
+  if ((!miniCadData || !miniCadData.call_id) && miniCadOpen) {
+    hideMiniCadSilently();
+  }
+}
+
+function miniCadClosestDecision(action) {
+  if (!isMiniCadClosestPromptActive()) return;
+  var normalizedAction = String(action || "").trim().toLowerCase();
+  if (normalizedAction !== "accept" && normalizedAction !== "decline") {
+    normalizedAction = "decline";
+  }
+  postNui("cadBridgeMiniCadClosestDecision", {
+    id: String(miniCadClosestPromptData.id || ""),
+    action: normalizedAction,
+    reason: normalizedAction === "accept" ? "player_accept_ui" : "player_decline_ui",
+  }).catch(function ignore() {});
+}
+
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function formatMiniCadLocation(location, postal) {
+  var locationText = String(location || "").trim();
+  var postalText = String(postal || "").trim();
+  if (!locationText) return "No location set";
+
+  if (postalText) {
+    var escapedPostal = escapeRegex(postalText);
+    locationText = locationText
+      .replace(new RegExp("\\s*\\(" + escapedPostal + "\\)\\s*$", "i"), "")
+      .replace(new RegExp("\\s*-?\\s*postal\\s*" + escapedPostal + "\\s*$", "i"), "");
+  }
+
+  locationText = locationText.trim();
+  return locationText || "No location set";
 }
 
 function updateMiniCad(payload) {
   miniCadData = payload || null;
   if (!miniCadData || !miniCadData.call_id) {
-    if (miniCadOpen) hideMiniCad();
+    renderMiniCadCall();
+    if (miniCadOpen && !isMiniCadClosestPromptActive()) hideMiniCadSilently();
     return;
-  }
-
-  var allCalls = Array.isArray(miniCadData.all_assigned_calls) ? miniCadData.all_assigned_calls : [];
-  var totalCalls = Math.max(1, allCalls.length);
-
-  // Find current call index in the list.
-  var foundIndex = -1;
-  for (var i = 0; i < allCalls.length; i++) {
-    if (Number(allCalls[i].id) === Number(miniCadData.call_id)) {
-      foundIndex = i;
-      break;
-    }
-  }
-  if (foundIndex >= 0) {
-    miniCadCurrentIndex = foundIndex;
-  } else {
-    miniCadCurrentIndex = 0;
   }
 
   renderMiniCadCall();
 }
 
 function renderMiniCadCall() {
-  if (!miniCadData) return;
-
-  var allCalls = Array.isArray(miniCadData.all_assigned_calls) ? miniCadData.all_assigned_calls : [];
-  var totalCalls = Math.max(1, allCalls.length);
-  var displayIndex = miniCadCurrentIndex + 1;
-  var currentCall = allCalls[miniCadCurrentIndex] || miniCadData;
-
-  if (miniCadCallIndex) miniCadCallIndex.textContent = String(displayIndex) + "/" + String(totalCalls);
-
-  var jobCode = String(currentCall.job_code || "").trim();
-  var title = String(currentCall.title || "").trim();
-  var priority = String(currentCall.priority || "").trim();
-  if (miniCadJobCode) {
-    var headerParts = [];
-    if (jobCode) headerParts.push(jobCode);
-    if (priority) headerParts.push("P" + priority);
-    miniCadJobCode.textContent = headerParts.length > 0 ? headerParts.join(" | ") : "";
-    miniCadJobCode.style.display = headerParts.length > 0 ? "" : "none";
+  renderMiniCadClosestPrompt();
+  if (isMiniCadClosestPromptActive()) {
+    if (miniCadCallIndex) miniCadCallIndex.textContent = "!";
+    return;
   }
+  if (!miniCadData || !miniCadData.call_id) return;
+
+  var currentCall = miniCadData;
+  if (miniCadCallIndex) miniCadCallIndex.textContent = "1/1";
+
+  var title = String(currentCall.title || "").trim();
   if (miniCadTitle) {
     miniCadTitle.textContent = title.toUpperCase();
   }
+  if (miniCadCaller) {
+    var caller = String(currentCall.caller_name || miniCadData.caller_name || "").trim();
+    miniCadCaller.textContent = caller;
+    miniCadCaller.style.display = caller ? "" : "none";
+  }
 
   if (miniCadLocation) {
-    miniCadLocation.textContent = String(currentCall.location || "").trim() || "No location set";
+    miniCadLocation.textContent = formatMiniCadLocation(currentCall.location, currentCall.postal);
   }
 
   if (miniCadPostal) {
@@ -1282,56 +1472,18 @@ function renderMiniCadCall() {
     miniCadPostal.textContent = postalVal;
   }
 
-  // Render assigned unit badges.
-  if (miniCadUnits) {
-    miniCadUnits.innerHTML = "";
-    var units = Array.isArray(miniCadData.assigned_units) ? miniCadData.assigned_units : [];
-    for (var u = 0; u < units.length; u++) {
-      var badge = document.createElement("span");
-      badge.className = "minicad-unit-badge";
-      badge.textContent = String(units[u].callsign || "?");
-      var color = String(units[u].department_color || "").trim();
-      if (color) badge.style.backgroundColor = color;
-      miniCadUnits.appendChild(badge);
-    }
-  }
-
   // Description: for the current call being viewed use the main description if it's the primary call.
   if (miniCadDescription) {
-    var desc = "";
-    if (Number(currentCall.id || currentCall.call_id) === Number(miniCadData.call_id)) {
-      desc = String(miniCadData.description || "").trim();
-    } else {
-      desc = String(currentCall.description || "").trim();
-    }
+    var desc = String(currentCall.reason_for_call || miniCadData.reason_for_call || "").trim();
+    if (!desc) desc = String(currentCall.description || "").trim();
     miniCadDescription.textContent = desc;
-  }
-
-  // Prev/next buttons.
-  if (miniCadPrevBtn) miniCadPrevBtn.disabled = miniCadCurrentIndex <= 0;
-  if (miniCadNextBtn) miniCadNextBtn.disabled = miniCadCurrentIndex >= totalCalls - 1;
-}
-
-function miniCadPrev() {
-  if (miniCadCurrentIndex > 0) {
-    miniCadCurrentIndex -= 1;
-    renderMiniCadCall();
-  }
-}
-
-function miniCadNext() {
-  var allCalls = miniCadData && Array.isArray(miniCadData.all_assigned_calls) ? miniCadData.all_assigned_calls : [];
-  if (miniCadCurrentIndex < allCalls.length - 1) {
-    miniCadCurrentIndex += 1;
-    renderMiniCadCall();
   }
 }
 
 function miniCadDetach() {
+  if (isMiniCadClosestPromptActive()) return;
   if (!miniCadData) return;
-  var allCalls = Array.isArray(miniCadData.all_assigned_calls) ? miniCadData.all_assigned_calls : [];
-  var currentCall = allCalls[miniCadCurrentIndex] || miniCadData;
-  var callId = Number(currentCall.id || currentCall.call_id || 0);
+  var callId = Number(miniCadData.call_id || 0);
   if (callId > 0) {
     postNui("cadBridgeMiniCadDetach", { call_id: callId }).catch(function ignore() {});
   }
@@ -1370,7 +1522,14 @@ function initialize() {
       updateCounters();
     });
   }
-  if (detailsInput) detailsInput.addEventListener("input", updateCounters);
+  if (detailsInput) {
+    detailsInput.addEventListener("input", function onDetailsInput() {
+      if (String(detailsInput.value || "").trim()) {
+        showErrorNode(detailsError, "");
+      }
+      updateCounters();
+    });
+  }
   updateCounters();
 
   if (licenseForm) {
@@ -1403,9 +1562,13 @@ function initialize() {
 
   // Mini-CAD bindings.
   if (miniCadHideBtn) miniCadHideBtn.addEventListener("click", hideMiniCad);
-  if (miniCadPrevBtn) miniCadPrevBtn.addEventListener("click", miniCadPrev);
-  if (miniCadNextBtn) miniCadNextBtn.addEventListener("click", miniCadNext);
   if (miniCadDetachBtn) miniCadDetachBtn.addEventListener("click", miniCadDetach);
+  if (miniCadClosestAttachBtn) miniCadClosestAttachBtn.addEventListener("click", function onMiniCadClosestAttach() {
+    miniCadClosestDecision("accept");
+  });
+  if (miniCadClosestDeclineBtn) miniCadClosestDeclineBtn.addEventListener("click", function onMiniCadClosestDecline() {
+    miniCadClosestDecision("decline");
+  });
 
   window.addEventListener("keydown", function onKeyDown(event) {
     if (!anyModalOpen()) return;

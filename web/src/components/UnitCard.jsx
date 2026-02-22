@@ -2,7 +2,7 @@ import StatusBadge from './StatusBadge';
 import { getHighContrastBadgeStyle } from '../utils/color';
 
 export default function UnitCard({ unit, onStatusChange, compact = false, showDepartment = false }) {
-  const statuses = ['available', 'busy', 'enroute', 'on-scene'];
+  const statuses = ['available', 'busy', 'enroute', 'on-scene', 'unavailable'];
   const unitNote = String(unit.note || '').trim();
   const showNote = !!unitNote && !/^in-game\s*#\d+\b/i.test(unitNote);
   const departmentBadgeStyle = getHighContrastBadgeStyle(unit.department_color, '#64748b');
@@ -85,7 +85,13 @@ export default function UnitCard({ unit, onStatusChange, compact = false, showDe
                   : 'bg-cad-surface text-cad-muted hover:text-cad-ink hover:bg-cad-card'
               }`}
             >
-              {s === 'on-scene' ? 'On Scene' : s === 'enroute' ? 'En Route' : s.charAt(0).toUpperCase() + s.slice(1)}
+              {s === 'on-scene'
+                ? 'On Scene'
+                : s === 'enroute'
+                  ? 'En Route'
+                  : s === 'unavailable'
+                    ? 'Unavailable'
+                    : s.charAt(0).toUpperCase() + s.slice(1)}
             </button>
           ))}
         </div>

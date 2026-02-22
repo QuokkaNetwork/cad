@@ -31,7 +31,7 @@ function normalizeUnitStatus(status) {
 }
 
 function getEditableUnitStatuses() {
-  return new Set(['available', 'busy', 'enroute', 'on-scene']);
+  return new Set(['available', 'busy', 'enroute', 'on-scene', 'unavailable']);
 }
 
 function emitRouteClearOnAvailable(unit, statusValue) {
@@ -315,8 +315,7 @@ router.patch('/me', requireAuth, (req, res) => {
   const updates = {};
   if (status !== undefined) {
     const normalizedStatus = String(status || '').trim().toLowerCase();
-    const allowed = new Set(['available', 'busy', 'enroute', 'on-scene']);
-    if (!allowed.has(normalizedStatus)) {
+    if (!getEditableUnitStatuses().has(normalizedStatus)) {
       return res.status(400).json({ error: 'Invalid status value' });
     }
     updates.status = normalizedStatus;

@@ -10,6 +10,7 @@ const UNIT_STATUSES = [
   { value: 'busy', label: 'Busy' },
   { value: 'enroute', label: 'En Route' },
   { value: 'on-scene', label: 'On Scene' },
+  { value: 'unavailable', label: 'Unavailable' },
 ];
 
 export default function Header() {

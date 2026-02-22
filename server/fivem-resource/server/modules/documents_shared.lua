@@ -156,12 +156,19 @@ local function parseEmergencyPopupReport(payload)
 
   local emergencyType = trim(payload.title or payload.emergency_type or '')
   local details = trim(payload.details or payload.message or '')
+  local departmentsAvailable = tonumber(payload.departments_available or 0) or 0
   local requestedDepartmentIds = normalizeDepartmentIdList(
     payload.requested_department_ids or payload.requested_departments or payload.department_ids or {}
   )
 
   if emergencyType == '' then
     return nil, 'Emergency title is required.'
+  end
+  if details == '' then
+    return nil, 'Emergency details are required.'
+  end
+  if departmentsAvailable > 0 and #requestedDepartmentIds == 0 then
+    return nil, 'Select at least one required department.'
   end
 
   if #emergencyType > 80 then

@@ -219,7 +219,7 @@ end
 
 local function createDocumentPedBlip(pedConfig)
   if type(pedConfig) ~= 'table' then return end
-  if pedConfig.allows_registration ~= true then return end
+  if pedConfig.allows_registration ~= true and pedConfig.allows_license ~= true then return end
   local coords = type(pedConfig.coords) == 'table' and pedConfig.coords or nil
   if not coords then return end
   local x = tonumber(coords.x) or 0.0
