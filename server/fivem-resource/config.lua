@@ -281,7 +281,7 @@ local DEFAULT_DOCUMENT_INTERACTION_PEDS = {
     id = 'pdm',
     model = 's_m_y_dealer_01',
     coords = { x = -30.17, y = -1096.28, z = 26.27, w = 67.98 },
-    scenario = 'WORLD_HUMAN_CLIPBOARD',
+    scenario = 'WORLD_HUMAN_STAND_IMPATIENT',
     allows_license = false,
     allows_registration = true,
     registration_duration_options = { 1 },
@@ -429,7 +429,7 @@ Config.VehicleRegistrationPed = {
   enabled = getBoolean('cad_bridge_registration_ped_enabled', true),
   model = trim(getString('cad_bridge_registration_ped_model', 's_m_y_dealer_01')),
   coords = parseVec4String(getString('cad_bridge_registration_ped_coords', ''), DEFAULT_VEHICLE_REGISTRATION_PED_COORDS),
-  scenario = trim(getString('cad_bridge_registration_ped_scenario', 'WORLD_HUMAN_CLIPBOARD')),
+  scenario = trim(getString('cad_bridge_registration_ped_scenario', 'WORLD_HUMAN_STAND_IMPATIENT')),
   label = trim(getString('cad_bridge_registration_ped_label', 'Press ~INPUT_CONTEXT~ to manage vehicle rego')),
 }
 if Config.VehicleRegistrationPed.model == '' then Config.VehicleRegistrationPed.model = 's_m_y_dealer_01' end
