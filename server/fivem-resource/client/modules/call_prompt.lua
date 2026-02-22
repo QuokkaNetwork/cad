@@ -47,14 +47,6 @@ local function notifyClosestCallPrompt(state)
       position = trim(Config and Config.OxNotifyPosition or '') ~= '' and Config.OxNotifyPosition or 'center-right',
       duration = 6000,
     })
-    return
-  end
-
-  if GetResourceState('chat') == 'started' then
-    TriggerEvent('chat:addMessage', {
-      color = { 0, 170, 255 },
-      args = { 'CAD', message },
-    })
   end
 end
 

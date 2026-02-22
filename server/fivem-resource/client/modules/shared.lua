@@ -308,13 +308,6 @@ function notify.route(route, hadWaypoint)
   }) then
     return
   end
-
-  if GetResourceState('chat') == 'started' then
-    TriggerEvent('chat:addMessage', {
-      color = hadWaypoint and { 0, 170, 255 } or { 255, 170, 0 },
-      args = { 'CAD', message },
-    })
-  end
 end
 
 function notify.routeCleared(route)
@@ -327,12 +320,6 @@ function notify.routeCleared(route)
   }) then
     return
   end
-  if GetResourceState('chat') == 'started' then
-    TriggerEvent('chat:addMessage', {
-      color = { 148, 163, 184 },
-      args = { 'CAD', message },
-    })
-  end
 end
 
 function notify.fine(payload)
@@ -344,12 +331,6 @@ function notify.fine(payload)
     type = 'error',
   }) then
     return
-  end
-  if GetResourceState('chat') == 'started' then
-    TriggerEvent('chat:addMessage', {
-      color = { 255, 85, 85 },
-      args = { 'CAD', description },
-    })
   end
 end
 
@@ -366,14 +347,11 @@ function notify.alert(payload)
   }) then
     return
   end
-
-  if GetResourceState('chat') == 'started' then
-    TriggerEvent('chat:addMessage', {
-      color = { 255, 170, 0 },
-      args = { 'CAD', description ~= '' and description or title },
-    })
-  end
 end
+
+RegisterNetEvent('cad_bridge:notifyAlert', function(payload)
+  notify.alert(type(payload) == 'table' and payload or {})
+end)
 
 function util.normalizeDepartmentIdList(value)
   local normalized = {}

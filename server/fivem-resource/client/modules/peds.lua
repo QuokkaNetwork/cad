@@ -160,9 +160,13 @@ local function spawnDocumentPed(pedConfig)
   SetEntityInvincible(entity, true)
   SetBlockingOfNonTemporaryEvents(entity, true)
   SetPedCanRagdoll(entity, false)
+  SetPedCanPlayAmbientAnims(entity, false)
+  SetPedCanPlayAmbientBaseAnims(entity, false)
 
   local scenario = trim(pedConfig.scenario or '')
-  if scenario ~= '' then
+  local forceStanding = pedConfig.force_standing == true
+  local appliedScenario = false
+  if scenario ~= '' and not forceStanding then
     TaskStartScenarioInPlace(entity, scenario, 0, true)
     Wait(75)
     local afterScenarioCoords = GetEntityCoords(entity)
@@ -171,6 +175,13 @@ local function spawnDocumentPed(pedConfig)
       SetEntityCoordsNoOffset(entity, x + 0.0, y + 0.0, spawnZ, false, false, false)
       SetEntityHeading(entity, w + 0.0)
     end
+    appliedScenario = true
+  end
+
+  if not appliedScenario then
+    ClearPedTasksImmediately(entity)
+    TaskStandStill(entity, -1)
+    SetEntityHeading(entity, w + 0.0)
   end
   FreezeEntityPosition(entity, true)
 

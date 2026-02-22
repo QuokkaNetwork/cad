@@ -26,13 +26,7 @@ local function notifyEmergencyUiIssue(message)
   }) then
     return
   end
-
-  if GetResourceState('chat') == 'started' then
-    TriggerEvent('chat:addMessage', {
-      color = { 255, 170, 0 },
-      args = { 'CAD', text },
-    })
-  end
+  print(('[cad_bridge] %s'):format(text))
 end
 
 local function setEmergencyUiVisible(isVisible, payload)

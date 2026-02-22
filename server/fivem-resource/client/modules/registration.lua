@@ -26,13 +26,7 @@ local function notifyWarn(title, description)
   }) then
     return
   end
-
-  if GetResourceState('chat') == 'started' then
-    TriggerEvent('chat:addMessage', {
-      color = { 255, 170, 0 },
-      args = { 'CAD', tostring(description or '') },
-    })
-  end
+  print(('[cad_bridge] %s'):format(tostring(description or '')))
 end
 
 local GTA_COLOUR_NAMES = {

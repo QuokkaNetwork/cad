@@ -370,10 +370,10 @@ end)
 
 local function notifyPlayer(src, message)
   if not src or src <= 0 then return end
-  if GetResourceState('chat') ~= 'started' then return end
-  TriggerClientEvent('chat:addMessage', src, {
-    color = { 0, 170, 255 },
-    args = { 'CAD', tostring(message or '') },
+  TriggerClientEvent('cad_bridge:notifyAlert', src, {
+    title = 'CAD',
+    description = tostring(message or ''),
+    type = 'inform',
   })
 end
 
@@ -388,25 +388,6 @@ local function notifyAlert(src, title, message, level)
 end
 
 local function registerEmergencySuggestion(target)
-  if GetResourceState('chat') ~= 'started' then return end
-  TriggerClientEvent('chat:addSuggestion', target, '/000', 'Send emergency call to CAD', {
-    { name = 'message', help = 'Leave blank to open popup. Optional chat format: /000 <type> | <details> | <suspects> | <vehicle> | <hazards/injuries>' },
-  })
-
-  if Config.EnableDocumentCommands == true then
-    local licenseCommand = trim(Config.DriverLicenseCommand or 'cadlicense')
-    if licenseCommand ~= '' then
-      TriggerClientEvent('chat:addSuggestion', target, '/' .. licenseCommand, 'Open CAD driver license quiz')
-    end
-
-    local regoCommand = trim(Config.VehicleRegistrationCommand or 'cadrego')
-    if regoCommand ~= '' then
-      TriggerClientEvent('chat:addSuggestion', target, '/' .. regoCommand, 'Open CAD vehicle registration form')
-    end
-  end
-
-  local showIdCommand = trim(Config.ShowIdCommand or 'showid')
-  if showIdCommand ~= '' then
-    TriggerClientEvent('chat:addSuggestion', target, '/' .. showIdCommand, 'Show your driver licence to nearby players')
-  end
+  -- Intentionally disabled: avoid injecting chat suggestions/messages from CAD bridge.
+  return target
 end

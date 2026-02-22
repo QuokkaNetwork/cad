@@ -194,6 +194,7 @@ end)
 
 local autoAmbulanceCallStateBySource = {}
 local lastAutoAmbulanceMissingResourceLogAtMs = 0
+local lastAutoAmbulanceExportErrorLogAtMs = 0
 
 local function toBoolean(value)
   if value == true then return true end
@@ -203,24 +204,72 @@ local function toBoolean(value)
   return text == 'true' or text == 'yes'
 end
 
+local function parseWasabiDeadResult(value)
+  if type(value) == 'table' then
+    if value.isDead ~= nil then return toBoolean(value.isDead) end
+    if value.dead ~= nil then return toBoolean(value.dead) end
+    if value.value ~= nil then return toBoolean(value.value) end
+
+    local status = trim(value.status or value.state or '')
+    if status ~= '' then
+      local normalized = status:lower()
+      if normalized == 'dead' or normalized == 'down' or normalized == 'dying' then return true end
+      if normalized == 'alive' or normalized == 'healthy' then return false end
+      return toBoolean(status)
+    end
+
+    if value[1] ~= nil then return toBoolean(value[1]) end
+    return false
+  end
+
+  return toBoolean(value)
+end
+
 local function isPlayerDeadFromWasabi(sourceId)
   if GetResourceState('wasabi_ambulance') ~= 'started' then
     return false
   end
-  local ok, result = pcall(function()
-    return exports.wasabi_ambulance:isPlayerDead(sourceId)
-  end)
-  if not ok then
-    return false
-  end
-  return toBoolean(result)
-end
-
-local function submitAutoAmbulanceCall(sourceId)
   local s = tonumber(sourceId) or 0
   if s <= 0 then return false end
-  if not GetPlayerName(s) then return false end
-  if isBridgeBackoffActive('calls') then return false end
+
+  local ok, result = pcall(function()
+    return exports.wasabi_ambulance:isPlayerDead(s)
+  end)
+  if not ok then
+    local now = nowMs()
+    if (now - lastAutoAmbulanceExportErrorLogAtMs) >= 60000 then
+      lastAutoAmbulanceExportErrorLogAtMs = now
+      print(('[cad_bridge] Auto ambulance check failed calling wasabi_ambulance:isPlayerDead(%s): %s')
+        :format(tostring(s), tostring(result)))
+    end
+    return false
+  end
+  return parseWasabiDeadResult(result)
+end
+
+local function submitAutoAmbulanceCall(sourceId, onResult)
+  local function finish(ok, status, body)
+    if type(onResult) ~= 'function' then return end
+    local cbOk, cbErr = pcall(onResult, ok == true, tonumber(status) or 0, body)
+    if not cbOk then
+      print(('[cad_bridge] Auto ambulance callback error for source %s: %s')
+        :format(tostring(sourceId), tostring(cbErr)))
+    end
+  end
+
+  local s = tonumber(sourceId) or 0
+  if s <= 0 then
+    finish(false, 0, 'invalid_source')
+    return false
+  end
+  if not GetPlayerName(s) then
+    finish(false, 0, 'player_not_found')
+    return false
+  end
+  if isBridgeBackoffActive('calls') then
+    finish(false, 429, 'calls_backoff_active')
+    return false
+  end
 
   local characterName = trim(getCharacterDisplayName(s) or '')
   local platformName = trim(GetPlayerName(s) or '')
@@ -269,6 +318,7 @@ local function submitAutoAmbulanceCall(sourceId)
       end
       print(('[cad_bridge] Auto ambulance call created for %s (#%s) as CAD call #%s')
         :format(callerName, tostring(s), callId))
+      finish(true, status, body)
       return
     end
 
@@ -282,6 +332,7 @@ local function submitAutoAmbulanceCall(sourceId)
       err = err .. ': ' .. tostring(parsed.error)
     end
     print('[cad_bridge] ' .. err)
+    finish(false, status, body)
   end)
 
   return true
@@ -295,6 +346,8 @@ CreateThread(function()
         if GetPlayerName(sourceId) then
           if type(state) == 'table' then
             state.dead_reported = false
+            state.call_submit_in_flight = false
+            state.call_submit_started_ms = 0
           end
         else
           autoAmbulanceCallStateBySource[sourceId] = nil
@@ -317,6 +370,8 @@ CreateThread(function()
         if GetPlayerName(sourceId) then
           if type(state) == 'table' then
             state.dead_reported = false
+            state.call_submit_in_flight = false
+            state.call_submit_started_ms = 0
           end
         else
           autoAmbulanceCallStateBySource[sourceId] = nil
@@ -338,23 +393,57 @@ CreateThread(function()
           state = {
             dead_reported = false,
             last_call_ms = 0,
+            last_attempt_ms = 0,
+            call_submit_in_flight = false,
+            call_submit_started_ms = 0,
           }
           autoAmbulanceCallStateBySource[s] = state
         end
 
         local isDead = isPlayerDeadFromWasabi(s)
         if isDead then
-          if state.dead_reported ~= true then
-            local lastCallMs = tonumber(state.last_call_ms) or 0
-            if (now - lastCallMs) >= cooldownMs then
-              if submitAutoAmbulanceCall(s) then
-                state.last_call_ms = now
+          if state.call_submit_in_flight == true then
+            local startedAt = tonumber(state.call_submit_started_ms) or 0
+            if startedAt > 0 and (now - startedAt) > 20000 then
+              state.call_submit_in_flight = false
+              state.call_submit_started_ms = 0
+            end
+          end
+
+          if state.dead_reported ~= true and state.call_submit_in_flight ~= true then
+            local retryIntervalMs = math.max(3000, tonumber(Config.AutoAmbulanceCallPollIntervalMs) or 2500)
+            local lastAttemptMs = tonumber(state.last_attempt_ms) or 0
+            if (now - lastAttemptMs) >= retryIntervalMs then
+              local lastCallMs = tonumber(state.last_call_ms) or 0
+              state.last_attempt_ms = now
+              if (now - lastCallMs) >= cooldownMs then
+                state.call_submit_in_flight = true
+                state.call_submit_started_ms = now
+                local dispatched = submitAutoAmbulanceCall(s, function(success)
+                  local current = autoAmbulanceCallStateBySource[s]
+                  if type(current) ~= 'table' then return end
+                  current.call_submit_in_flight = false
+                  current.call_submit_started_ms = 0
+                  if success == true then
+                    current.last_call_ms = nowMs()
+                    if isPlayerDeadFromWasabi(s) then
+                      current.dead_reported = true
+                    end
+                  end
+                end)
+                if not dispatched then
+                  state.call_submit_in_flight = false
+                  state.call_submit_started_ms = 0
+                end
+              else
+                state.dead_reported = true
               end
             end
           end
-          state.dead_reported = true
         else
           state.dead_reported = false
+          state.call_submit_in_flight = false
+          state.call_submit_started_ms = 0
         end
       end
     end
