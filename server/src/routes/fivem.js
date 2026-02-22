@@ -2282,6 +2282,94 @@ router.get('/plate-status/:plate', requireBridgeAuth, (req, res) => {
   }
 });
 
+router.get('/fine-jobs', requireBridgeAuth, (req, res) => {
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+  if (getFineDeliveryMode() !== 'bridge') {
+    return res.json([]);
+  }
+
+  const account = getFineAccountKey();
+  const jobs = FiveMFineJobs.listPending(limit).map((job) => {
+    const activeLink = resolveActiveLinkForBridgeJob(job);
+    return {
+      ...job,
+      account,
+      game_id: String(job.game_id || activeLink?.game_id || ''),
+      steam_id: String(job.steam_id || activeLink?.steam_id || ''),
+      citizen_id: String(job.citizen_id || activeLink?.citizen_id || ''),
+      player_name: String(job.player_name || activeLink?.player_name || ''),
+    };
+  });
+
+  return res.json(jobs);
+});
+
+router.post('/fine-jobs/:id/sent', requireBridgeAuth, (req, res) => {
+  const id = Number.parseInt(String(req.params.id || '').trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid fine job id' });
+  }
+  const job = FiveMFineJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Fine job not found' });
+
+  FiveMFineJobs.markSent(id);
+  return res.json({ ok: true });
+});
+
+router.post('/fine-jobs/:id/failed', requireBridgeAuth, (req, res) => {
+  const id = Number.parseInt(String(req.params.id || '').trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid fine job id' });
+  }
+  const job = FiveMFineJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Fine job not found' });
+
+  const error = String(req.body?.error || 'Fine adapter failed').trim() || 'Fine adapter failed';
+  FiveMFineJobs.markFailed(id, error);
+  return res.json({ ok: true });
+});
+
+router.get('/jail-jobs', requireBridgeAuth, (req, res) => {
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+  const jobs = FiveMJailJobs.listPending(limit).map((job) => {
+    const activeLink = resolveActiveLinkForBridgeJob(job);
+    return {
+      ...job,
+      game_id: String(job.game_id || activeLink?.game_id || ''),
+      steam_id: String(job.steam_id || activeLink?.steam_id || ''),
+      citizen_id: String(job.citizen_id || activeLink?.citizen_id || ''),
+      player_name: String(job.player_name || activeLink?.player_name || ''),
+    };
+  });
+
+  return res.json(jobs);
+});
+
+router.post('/jail-jobs/:id/sent', requireBridgeAuth, (req, res) => {
+  const id = Number.parseInt(String(req.params.id || '').trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid jail job id' });
+  }
+  const job = FiveMJailJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Jail job not found' });
+
+  FiveMJailJobs.markSent(id);
+  return res.json({ ok: true });
+});
+
+router.post('/jail-jobs/:id/failed', requireBridgeAuth, (req, res) => {
+  const id = Number.parseInt(String(req.params.id || '').trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid jail job id' });
+  }
+  const job = FiveMJailJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Jail job not found' });
+
+  const error = String(req.body?.error || 'Jail adapter failed').trim() || 'Jail adapter failed';
+  FiveMJailJobs.markFailed(id, error);
+  return res.json({ ok: true });
+});
+
 // FiveM resource polls pending route jobs to set in-game waypoints for assigned calls.
 router.get('/route-jobs', requireBridgeAuth, (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
