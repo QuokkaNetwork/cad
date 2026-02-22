@@ -58,6 +58,7 @@ const CLOSEST_CALL_PROMPT_RESEND_INTERVAL_MS = Math.max(
 let lastClosestCallPromptRefreshAtMs = 0;
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
 const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
+const ALPR_IGNORED_PLATES = new Set(['BUYME']);
 const BRIDGE_MUGSHOT_MAX_CHARS = Math.max(
   250000,
   Number.parseInt(process.env.FIVEM_BRIDGE_MUGSHOT_MAX_CHARS || '4000000', 10) || 4000000
@@ -2202,6 +2203,22 @@ router.get('/plate-status/:plate', requireBridgeAuth, (req, res) => {
       return res.status(400).json({ error: 'plate is required' });
     }
     const normalizedPlate = normalizePlateKey(rawPlate);
+    if (ALPR_IGNORED_PLATES.has(normalizedPlate)) {
+      return res.json({
+        ok: true,
+        found: false,
+        plate: rawPlate.toUpperCase(),
+        plate_normalized: normalizedPlate,
+        registration_status: 'ignored',
+        registration_alert: false,
+        bolo_alert: false,
+        bolo_flags: [],
+        bolo_count: 0,
+        bolo_matches: [],
+        alert: false,
+        message: 'Plate excluded from ALPR alerts',
+      });
+    }
     const boloMatches = Bolos.listActiveVehicleByPlate(normalizedPlate).map((bolo) => {
       const details = parseJsonObject(bolo.details_json);
       const flags = normalizeVehicleBoloFlags(details.flags);

@@ -6,9 +6,9 @@ import { api } from '../../api/client';
 import { useDepartment } from '../../context/DepartmentContext';
 import { blipTypes } from './liveMap/blips';
 
-const TILE_SIZE = 1024;
-const TILE_ROWS = 3;
-const TILE_COLUMNS = 2;
+const DEFAULT_TILE_SIZE = 1024;
+const DEFAULT_TILE_ROWS = 3;
+const DEFAULT_TILE_COLUMNS = 2;
 const TILES_URL = '/tiles/minimap_sea_{y}_{x}.webp';
 const BLIPS_URL = '/api/units/live-map/blips';
 const BLIPS_FALLBACK_URLS = [
@@ -16,7 +16,7 @@ const BLIPS_FALLBACK_URLS = [
   '/blips.json',
 ];
 const MAP_POLL_INTERVAL_MS = 1500;
-const BLIPS_POLL_INTERVAL_MS = 20_000;
+const BLIPS_POLL_INTERVAL_MS = 2_000;
 const ACTIVE_MAX_AGE_MS = 30_000;
 const DEFAULT_ZOOM = -2;
 const MIN_ZOOM = -2;
@@ -24,12 +24,18 @@ const MAX_ZOOM = 2;
 const BLIP_SIZES = { width: 32, height: 32 };
 
 // SnailyCAD's canonical GTA coordinate bounds for map projection.
-const GAME = {
+const DEFAULT_GAME_BOUNDS = {
   x_1: -4000.0 - 230,
   y_1: 8000.0 + 420,
   x_2: 400.0 - 30,
   y_2: -300.0 - 340.0,
 };
+const DEFAULT_MAP_CONFIG = Object.freeze({
+  tileSize: DEFAULT_TILE_SIZE,
+  tileRows: DEFAULT_TILE_ROWS,
+  tileColumns: DEFAULT_TILE_COLUMNS,
+  gameBounds: { ...DEFAULT_GAME_BOUNDS },
+});
 
 const PLAYER_ICON = leafletIcon({
   iconUrl: '/map/ped.png',
@@ -81,27 +87,73 @@ function toFloat(value) {
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
-function getMapBounds(map) {
-  const height = TILE_SIZE * TILE_ROWS;
-  const width = TILE_SIZE * TILE_COLUMNS;
+function toPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function toFiniteNumberOrNull(value) {
+  const parsed = Number(String(value ?? '').trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeGameBounds(rawBounds) {
+  if (!rawBounds || typeof rawBounds !== 'object') return null;
+
+  const x1 = toFiniteNumberOrNull(rawBounds?.x_1 ?? rawBounds?.x1);
+  const y1 = toFiniteNumberOrNull(rawBounds?.y_1 ?? rawBounds?.y1);
+  const x2 = toFiniteNumberOrNull(rawBounds?.x_2 ?? rawBounds?.x2);
+  const y2 = toFiniteNumberOrNull(rawBounds?.y_2 ?? rawBounds?.y2);
+  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return null;
+  if (!(x2 > x1) || !(y1 > y2)) return null;
+
+  return { x_1: x1, y_1: y1, x_2: x2, y_2: y2 };
+}
+
+function normalizeMapConfig(payload) {
+  const tileSize = toPositiveInt(payload?.tile_size, DEFAULT_TILE_SIZE);
+  const tileRows = toPositiveInt(payload?.tile_rows, DEFAULT_TILE_ROWS);
+  const tileColumns = toPositiveInt(payload?.tile_columns, DEFAULT_TILE_COLUMNS);
+  const gameBounds = normalizeGameBounds(payload?.transform?.game_bounds)
+    || normalizeGameBounds(payload?.game_bounds)
+    || { ...DEFAULT_GAME_BOUNDS };
+
+  return { tileSize, tileRows, tileColumns, gameBounds };
+}
+
+function getMapDimensions(mapConfig) {
+  const config = mapConfig || DEFAULT_MAP_CONFIG;
+  const height = config.tileSize * config.tileRows;
+  const width = config.tileSize * config.tileColumns;
+  return { height, width };
+}
+
+function getMapBounds(map, mapConfig) {
+  const { height, width } = getMapDimensions(mapConfig);
   const southWest = map.unproject([0, height], 0);
   const northEast = map.unproject([width, 0], 0);
   return new LatLngBounds(southWest, northEast);
 }
 
-function convertToMap(rawX, rawY, map) {
+function convertToMap(rawX, rawY, map, mapConfig) {
   const x = toFloat(rawX);
   const y = toFloat(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
-  const height = TILE_SIZE * TILE_ROWS;
-  const width = TILE_SIZE * TILE_COLUMNS;
-  const latLng1 = map.unproject([0, 0], 0);
-  const latLng2 = map.unproject([width / 2, height - TILE_SIZE], 0);
+  const config = mapConfig || DEFAULT_MAP_CONFIG;
+  const bounds = config.gameBounds || DEFAULT_GAME_BOUNDS;
+  const { height, width } = getMapDimensions(config);
+  const playableWidth = width / 2;
+  const playableHeight = height - config.tileSize;
+  const xRange = bounds.x_2 - bounds.x_1;
+  const yRange = bounds.y_1 - bounds.y_2;
+  if (xRange <= 0 || yRange <= 0 || playableWidth <= 0 || playableHeight <= 0) return null;
 
-  const lng = latLng1.lng + ((x - GAME.x_1) * (latLng1.lng - latLng2.lng)) / (GAME.x_1 - GAME.x_2);
-  const lat = latLng1.lat + ((y - GAME.y_1) * (latLng1.lat - latLng2.lat)) / (GAME.y_1 - GAME.y_2);
-  return { lat, lng };
+  const mapX = ((x - bounds.x_1) * playableWidth) / xRange;
+  const mapY = ((bounds.y_1 - y) * playableHeight) / yRange;
+  const latLng = map.unproject([mapX, mapY], 0);
+  return { lat: latLng.lat, lng: latLng.lng };
 }
 
 function normalizeMapPlayer(entry) {
@@ -342,36 +394,67 @@ export default function LiveMap() {
   const isDispatchDepartment = !!activeDepartment?.is_dispatch;
 
   const [map, setMap] = useState(null);
+  const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
   const [mapBounds, setMapBounds] = useState(null);
   const [players, setPlayers] = useState([]);
   const [blips, setBlips] = useState([]);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [loadingPlayers, setLoadingPlayers] = useState(true);
+  const [mapConfigError, setMapConfigError] = useState('');
   const [playerError, setPlayerError] = useState('');
   const [blipError, setBlipError] = useState('');
   const [lastPlayersRefreshAt, setLastPlayersRefreshAt] = useState(0);
   const [lastBlipsRefreshAt, setLastBlipsRefreshAt] = useState(0);
+  const [lastConfigRefreshAt, setLastConfigRefreshAt] = useState(0);
 
   const initializedMapRef = useRef(null);
   const markerTypes = useMemo(() => generateMarkerTypes(), []);
+  const mapConfigKey = useMemo(() => {
+    const bounds = mapConfig?.gameBounds || DEFAULT_GAME_BOUNDS;
+    return [
+      mapConfig?.tileSize || DEFAULT_TILE_SIZE,
+      mapConfig?.tileRows || DEFAULT_TILE_ROWS,
+      mapConfig?.tileColumns || DEFAULT_TILE_COLUMNS,
+      bounds.x_1,
+      bounds.y_1,
+      bounds.x_2,
+      bounds.y_2,
+    ].join(':');
+  }, [mapConfig]);
 
   const onMapReady = useCallback((nextMap) => {
     setMap(nextMap);
   }, []);
 
+  const fetchMapConfig = useCallback(async () => {
+    try {
+      const data = await api.get('/api/units/map-config');
+      setMapConfig(normalizeMapConfig(data || {}));
+      setMapConfigError('');
+      setLastConfigRefreshAt(Date.now());
+    } catch (error) {
+      setMapConfig({ ...DEFAULT_MAP_CONFIG, gameBounds: { ...DEFAULT_GAME_BOUNDS } });
+      setMapConfigError(error?.message || 'Failed to load live map config');
+    }
+  }, []);
+
   useEffect(() => {
     if (!map) return;
-    if (initializedMapRef.current === map) return;
+    if (initializedMapRef.current?.map === map && initializedMapRef.current?.key === mapConfigKey) return;
 
-    const bounds = getMapBounds(map);
+    const bounds = getMapBounds(map, mapConfig);
     map.setMaxBounds(bounds);
     map.fitBounds(bounds);
     map.setMinZoom(MIN_ZOOM);
     map.setMaxZoom(MAX_ZOOM);
     map.setZoom(DEFAULT_ZOOM);
     setMapBounds(bounds);
-    initializedMapRef.current = map;
-  }, [map]);
+    initializedMapRef.current = { map, key: mapConfigKey };
+  }, [map, mapConfig, mapConfigKey]);
+
+  useEffect(() => {
+    fetchMapConfig();
+  }, [fetchMapConfig, locationKey]);
 
   const fetchPlayers = useCallback(async () => {
     if (!deptId) {
@@ -429,7 +512,7 @@ export default function LiveMap() {
     if (!map) return [];
     return players
       .map((player) => {
-        const position = convertToMap(player.pos?.x, player.pos?.y, map);
+        const position = convertToMap(player.pos?.x, player.pos?.y, map, mapConfig);
         if (!position) return null;
         return {
           player,
@@ -439,13 +522,13 @@ export default function LiveMap() {
         };
       })
       .filter(Boolean);
-  }, [players, map, markerTypes]);
+  }, [players, map, mapConfig, markerTypes]);
 
   const blipMarkers = useMemo(() => {
     if (!map) return [];
     return blips
       .map((blip, idx) => {
-        const position = convertToMap(blip.x, blip.y, map);
+        const position = convertToMap(blip.x, blip.y, map, mapConfig);
         if (!position) return null;
         const icon = getBlipIcon(blip.blipId, markerTypes);
         if (!icon) return null;
@@ -458,7 +541,7 @@ export default function LiveMap() {
         };
       })
       .filter(Boolean);
-  }, [blips, map, markerTypes]);
+  }, [blips, map, mapConfig, markerTypes]);
 
   useEffect(() => {
     if (!selectedPlayerId) return;
@@ -475,15 +558,16 @@ export default function LiveMap() {
 
   const handleResetView = useCallback(() => {
     if (!map) return;
-    const bounds = mapBounds || getMapBounds(map);
+    const bounds = mapBounds || getMapBounds(map, mapConfig);
     map.fitBounds(bounds);
     map.setZoom(DEFAULT_ZOOM);
-  }, [map, mapBounds]);
+  }, [map, mapBounds, mapConfig]);
 
   const handleRefresh = useCallback(() => {
+    fetchMapConfig();
     fetchPlayers();
     fetchBlips();
-  }, [fetchPlayers, fetchBlips]);
+  }, [fetchMapConfig, fetchPlayers, fetchBlips]);
 
   return (
     <div className="space-y-4">
@@ -537,10 +621,11 @@ export default function LiveMap() {
               <MapInitializer onReady={onMapReady} />
 
               <TileLayer
+                key={`tiles:${mapConfig.tileSize}:${mapConfig.tileRows}:${mapConfig.tileColumns}`}
                 url={TILES_URL}
                 minZoom={MIN_ZOOM}
                 maxZoom={MAX_ZOOM}
-                tileSize={TILE_SIZE}
+                tileSize={mapConfig.tileSize}
                 maxNativeZoom={0}
                 minNativeZoom={0}
               />
@@ -619,11 +704,15 @@ export default function LiveMap() {
 
           <div className="bg-cad-card border border-cad-border rounded-lg p-3 text-xs text-cad-muted space-y-1">
             <p>Tile source: <span className="font-mono">/tiles/minimap_sea_&#123;y&#125;_&#123;x&#125;.webp</span></p>
+            <p>Tile size: <span className="font-mono">{mapConfig.tileSize}</span> px</p>
+            <p>Grid: <span className="font-mono">{mapConfig.tileRows}</span> rows x <span className="font-mono">{mapConfig.tileColumns}</span> columns</p>
             <p>Players source: <span className="font-mono">/api/units/live-map/players</span></p>
             <p>Blips source: <span className="font-mono">{BLIPS_URL}</span></p>
             <p>Player refresh: {MAP_POLL_INTERVAL_MS}ms</p>
             <p>Blip refresh: {Math.round(BLIPS_POLL_INTERVAL_MS / 1000)}s</p>
             <p>Latest blips update: {lastBlipsRefreshAt ? new Date(lastBlipsRefreshAt).toLocaleTimeString() : 'never'}</p>
+            <p>Latest map config: {lastConfigRefreshAt ? new Date(lastConfigRefreshAt).toLocaleTimeString() : 'never'}</p>
+            {mapConfigError ? <p className="text-red-400 whitespace-pre-wrap">{mapConfigError}</p> : null}
             {playerError ? <p className="text-red-400 whitespace-pre-wrap">{playerError}</p> : null}
             {blipError ? <p className="text-red-400 whitespace-pre-wrap">{blipError}</p> : null}
           </div>
