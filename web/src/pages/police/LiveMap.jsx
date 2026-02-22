@@ -1,27 +1,103 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { CRS, LatLngBounds, icon as leafletIcon } from 'leaflet';
+import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import { api } from '../../api/client';
 import { useDepartment } from '../../context/DepartmentContext';
+import { blipTypes } from './liveMap/blips';
 
-const DEFAULT_MAP_IMAGE_URL = '/maps/FullMap.png';
-const MAP_WIDTH = 2048;
-const MAP_HEIGHT = 3072;
+const TILE_SIZE = 1024;
+const TILE_ROWS = 3;
+const TILE_COLUMNS = 2;
+const TILES_URL = '/tiles/minimap_sea_{y}_{x}.webp';
+const BLIPS_URL = '/live-map-interface/proxy/blips.json';
 const MAP_POLL_INTERVAL_MS = 1500;
-const MAP_ACTIVE_MAX_AGE_MS = 30_000;
-const MAP_MIN_WIDTH = MAP_WIDTH * 0.05;
-const MAP_MAX_WIDTH = MAP_WIDTH * 3.5;
-const LEGACY_REFERENCE_SIZE = 4096;
-const LEGACY_ZERO_X = 1877.25;
-const LEGACY_ZERO_Y = 2765;
-const LEGACY_SCALE = 3.037861303705727;
+const BLIPS_POLL_INTERVAL_MS = 20_000;
+const ACTIVE_MAX_AGE_MS = 30_000;
+const DEFAULT_ZOOM = -2;
+const MIN_ZOOM = -2;
+const MAX_ZOOM = 2;
+const BLIP_SIZES = { width: 32, height: 32 };
 
-function createInitialViewBox() {
-  return {
-    x: 0,
-    y: 0,
-    width: 1024,
-    height: 2048,
-  };
+// SnailyCAD's canonical GTA coordinate bounds for map projection.
+const GAME = {
+  x_1: -4000.0 - 230,
+  y_1: 8000.0 + 420,
+  x_2: 400.0 - 30,
+  y_2: -300.0 - 340.0,
+};
+
+const PLAYER_ICON = leafletIcon({
+  iconUrl: '/map/ped.png',
+  iconSize: [40, 40],
+  popupAnchor: [0, -20],
+  iconAnchor: [20, 20],
+  tooltipAnchor: [0, -20],
+});
+
+const UNIT_FOOT_ICON = leafletIcon({
+  iconUrl: '/map/unit_ped.png',
+  iconSize: [20, 43],
+  iconAnchor: [10, 22],
+  popupAnchor: [0, -15],
+  tooltipAnchor: [0, -15],
+});
+
+const PANIC_ICON = leafletIcon({
+  iconUrl: '/map/panic.gif',
+  iconSize: [25, 25],
+  iconAnchor: [12.5, 12.5],
+  popupAnchor: [0, -10],
+  tooltipAnchor: [0, -10],
+});
+
+const SIREN_ICON = leafletIcon({
+  iconUrl: '/map/siren.gif',
+  iconSize: [35, 35],
+  iconAnchor: [17.5, 17.5],
+  popupAnchor: [0, 0],
+});
+
+const TRANSPARENT_PIXEL_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAFElEQVR4XgXAAQ0AAABAMP1L30IDCPwC/o5WcS4AAAAASUVORK5CYII=';
+const MARKER_TYPE_CACHE = new Map();
+const LEAFLET_ICON_CACHE = new Map();
+
+function MapInitializer({ onReady }) {
+  const map = useMap();
+
+  useEffect(() => {
+    onReady(map);
+  }, [map, onReady]);
+
+  return null;
+}
+
+function toFloat(value) {
+  const parsed = Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function getMapBounds(map) {
+  const height = TILE_SIZE * TILE_ROWS;
+  const width = TILE_SIZE * TILE_COLUMNS;
+  const southWest = map.unproject([0, height], 0);
+  const northEast = map.unproject([width, 0], 0);
+  return new LatLngBounds(southWest, northEast);
+}
+
+function convertToMap(rawX, rawY, map) {
+  const x = toFloat(rawX);
+  const y = toFloat(rawY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+  const height = TILE_SIZE * TILE_ROWS;
+  const width = TILE_SIZE * TILE_COLUMNS;
+  const latLng1 = map.unproject([0, 0], 0);
+  const latLng2 = map.unproject([width / 2, height - TILE_SIZE], 0);
+
+  const lng = latLng1.lng + ((x - GAME.x_1) * (latLng1.lng - latLng2.lng)) / (GAME.x_1 - GAME.x_2);
+  const lat = latLng1.lat + ((y - GAME.y_1) * (latLng1.lat - latLng2.lat)) / (GAME.y_1 - GAME.y_2);
+  return { lat, lng };
 }
 
 function normalizeMapPlayer(entry) {
@@ -29,6 +105,7 @@ function normalizeMapPlayer(entry) {
   return {
     identifier: String(entry?.identifier || '').trim(),
     name: String(entry?.name || 'Unknown').trim() || 'Unknown',
+    callsign: String(entry?.callsign || '').trim(),
     location: String(entry?.location || '').trim(),
     vehicle: String(entry?.vehicle || '').trim(),
     licensePlate: String(entry?.licensePlate || entry?.license_plate || '').trim(),
@@ -37,6 +114,7 @@ function normalizeMapPlayer(entry) {
     hasSirenEnabled: entry?.hasSirenEnabled === true || entry?.has_siren_enabled === true,
     speed: Number(entry?.speed || 0),
     heading: Number(entry?.heading || 0),
+    status: String(entry?.status || '').trim(),
     pos: {
       x: Number(pos.x || 0),
       y: Number(pos.y || 0),
@@ -60,20 +138,26 @@ function normalizePlayers(payload) {
   return players;
 }
 
-function convertToMapPoint(rawX, rawY) {
-  const x = Number(rawX);
-  const y = Number(rawY);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+function normalizeBlipsPayload(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  const list = [];
+  for (const [rawBlipId, rawEntries] of Object.entries(payload)) {
+    const blipId = Number.parseInt(rawBlipId, 10);
+    if (!Number.isFinite(blipId)) continue;
+    if (!Array.isArray(rawEntries)) continue;
 
-  const legacyX = LEGACY_ZERO_X + (x / LEGACY_SCALE);
-  const legacyY = LEGACY_ZERO_Y - (y / LEGACY_SCALE);
-  const normalizedX = legacyX / LEGACY_REFERENCE_SIZE;
-  const normalizedY = legacyY / LEGACY_REFERENCE_SIZE;
-
-  return {
-    x: normalizedX * MAP_WIDTH,
-    y: normalizedY * MAP_HEIGHT,
-  };
+    for (const rawEntry of rawEntries) {
+      const sourcePos = rawEntry && typeof rawEntry === 'object' && rawEntry.pos && typeof rawEntry.pos === 'object'
+        ? rawEntry.pos
+        : rawEntry;
+      const x = Number(sourcePos?.x);
+      const y = Number(sourcePos?.y);
+      const z = Number(sourcePos?.z || 0);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      list.push({ blipId, x, y, z });
+    }
+  }
+  return list;
 }
 
 function formatSpeedMph(value) {
@@ -82,12 +166,128 @@ function formatSpeedMph(value) {
   return `${Math.round(speed * 2.23694)} mph`;
 }
 
-function markerColor(player) {
-  if (player.hasSirenEnabled) return '#ef4444';
-  if (player.icon === 56) return '#3b82f6';
-  if (player.icon === 64) return '#8b5cf6';
-  if (player.icon === 68) return '#f59e0b';
-  return '#22c55e';
+function makeLabel(player) {
+  const callsign = String(player?.callsign || '').trim();
+  const name = String(player?.name || '').trim();
+  return `${callsign} ${name}`.trim() || name || callsign || 'Unknown';
+}
+
+function generateMarkerTypes() {
+  if (MARKER_TYPE_CACHE.size > 0) {
+    return Object.fromEntries(MARKER_TYPE_CACHE);
+  }
+
+  const markerTypes = {};
+  let blipCss = `.blip {
+    background: url("/map/blips_texturesheet.png");
+    background-size: ${1024 / 2}px ${2000 / 2}px;
+    display: inline-block;
+    width: ${BLIP_SIZES.width}px;
+    height: ${BLIP_SIZES.height}px;
+  }`;
+
+  const current = {
+    x: 0,
+    y: 0,
+    id: 0,
+  };
+
+  for (const blipName in blipTypes) {
+    const blip = blipTypes[blipName];
+
+    if (!blip.id) {
+      current.id += 1;
+    } else {
+      current.id = blip.id;
+    }
+
+    if (!blip.x) {
+      current.x += 1;
+    } else {
+      current.x = blip.x;
+    }
+
+    if (blip.y) {
+      current.y = blip.y;
+    }
+
+    markerTypes[current.id] = {
+      name: blipName.replace(/([A-Z0-9])/g, ' $1').trim(),
+      className: `blip blip-${blipName}`,
+      iconUrl: TRANSPARENT_PIXEL_DATA_URL,
+      iconSize: [BLIP_SIZES.width, BLIP_SIZES.height],
+      iconAnchor: [BLIP_SIZES.width / 2, 0],
+      popupAnchor: [0, 0],
+    };
+
+    const left = current.x * BLIP_SIZES.width;
+    const top = current.y * BLIP_SIZES.height;
+    blipCss += `.blip-${blipName} { background-position: -${left}px -${top}px }`;
+  }
+
+  if (typeof document !== 'undefined' && !document.getElementById('cad-live-map-blips-style')) {
+    const style = document.createElement('style');
+    style.id = 'cad-live-map-blips-style';
+    style.innerHTML = blipCss;
+    document.head.appendChild(style);
+  }
+
+  for (const [id, marker] of Object.entries(markerTypes)) {
+    MARKER_TYPE_CACHE.set(Number(id), marker);
+  }
+
+  return markerTypes;
+}
+
+function getBlipIcon(blipId, markerTypes) {
+  const numericId = Number(blipId);
+  if (!Number.isFinite(numericId)) return null;
+  const markerData = markerTypes[numericId];
+  if (!markerData) return null;
+  const cacheKey = `blip:${numericId}`;
+  if (!LEAFLET_ICON_CACHE.has(cacheKey)) {
+    LEAFLET_ICON_CACHE.set(cacheKey, leafletIcon(markerData));
+  }
+  return LEAFLET_ICON_CACHE.get(cacheKey);
+}
+
+function getPlayerIcon(player, markerTypes) {
+  const iconId = Number.parseInt(String(player?.icon || 0), 10);
+  if (iconId === 56 && player?.hasSirenEnabled) {
+    return SIREN_ICON;
+  }
+
+  const blipIcon = getBlipIcon(iconId, markerTypes);
+  if (blipIcon) return blipIcon;
+
+  if (String(player?.status || '').trim().toLowerCase() === 'panic') {
+    return PANIC_ICON;
+  }
+
+  if (!String(player?.vehicle || '').trim()) {
+    return UNIT_FOOT_ICON;
+  }
+
+  return PLAYER_ICON;
+}
+
+async function fetchBlipsFromProxy() {
+  const response = await fetch(BLIPS_URL, {
+    method: 'GET',
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load blips (${response.status})`);
+  }
+
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('json')) {
+    throw new Error('Live map blips endpoint did not return JSON');
+  }
+
+  return response.json();
 }
 
 export default function LiveMap() {
@@ -95,163 +295,150 @@ export default function LiveMap() {
   const { activeDepartment } = useDepartment();
   const deptId = Number(activeDepartment?.id || 0);
   const isDispatchDepartment = !!activeDepartment?.is_dispatch;
-  const [viewBox, setViewBox] = useState(createInitialViewBox);
-  const [players, setPlayers] = useState([]);
-  const [selectedPlayerId, setSelectedPlayerId] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [lastRefreshAt, setLastRefreshAt] = useState(0);
 
-  const svgRef = useRef(null);
-  const dragRef = useRef(null);
+  const [map, setMap] = useState(null);
+  const [mapBounds, setMapBounds] = useState(null);
+  const [players, setPlayers] = useState([]);
+  const [blips, setBlips] = useState([]);
+  const [selectedPlayerId, setSelectedPlayerId] = useState(null);
+  const [loadingPlayers, setLoadingPlayers] = useState(true);
+  const [playerError, setPlayerError] = useState('');
+  const [blipError, setBlipError] = useState('');
+  const [lastPlayersRefreshAt, setLastPlayersRefreshAt] = useState(0);
+  const [lastBlipsRefreshAt, setLastBlipsRefreshAt] = useState(0);
+
+  const initializedMapRef = useRef(null);
+  const markerTypes = useMemo(() => generateMarkerTypes(), []);
+
+  const onMapReady = useCallback((nextMap) => {
+    setMap(nextMap);
+  }, []);
+
+  useEffect(() => {
+    if (!map) return;
+    if (initializedMapRef.current === map) return;
+
+    const bounds = getMapBounds(map);
+    map.setMaxBounds(bounds);
+    map.fitBounds(bounds);
+    map.setMinZoom(MIN_ZOOM);
+    map.setMaxZoom(MAX_ZOOM);
+    map.setZoom(DEFAULT_ZOOM);
+    setMapBounds(bounds);
+    initializedMapRef.current = map;
+  }, [map]);
 
   const fetchPlayers = useCallback(async () => {
     if (!deptId) {
       setPlayers([]);
-      setError('No active department selected.');
-      setLoading(false);
+      setPlayerError('No active department selected.');
+      setLoadingPlayers(false);
       return;
     }
 
     try {
       const dispatchQuery = isDispatchDepartment ? 'true' : 'false';
       const data = await api.get(
-        `/api/units/live-map/players?department_id=${deptId}&dispatch=${dispatchQuery}&max_age_ms=${MAP_ACTIVE_MAX_AGE_MS}`
+        `/api/units/live-map/players?department_id=${deptId}&dispatch=${dispatchQuery}&max_age_ms=${ACTIVE_MAX_AGE_MS}`
       );
-      const nextPlayers = normalizePlayers(data?.payload || []);
-      setPlayers(nextPlayers);
-      setError('');
-      setLastRefreshAt(Date.now());
-    } catch (err) {
-      setError(err?.message || 'Failed to load live map players');
+      setPlayers(normalizePlayers(data?.payload));
+      setPlayerError('');
+      setLastPlayersRefreshAt(Date.now());
+    } catch (error) {
+      setPlayerError(error?.message || 'Failed to load live map players');
     } finally {
-      setLoading(false);
+      setLoadingPlayers(false);
     }
   }, [deptId, isDispatchDepartment]);
 
+  const fetchBlips = useCallback(async () => {
+    if (!map) return;
+    try {
+      const data = await fetchBlipsFromProxy();
+      setBlips(normalizeBlipsPayload(data));
+      setBlipError('');
+      setLastBlipsRefreshAt(Date.now());
+    } catch (error) {
+      setBlipError(error?.message || 'Failed to load map blips');
+    }
+  }, [map]);
+
   useEffect(() => {
-    setLoading(true);
+    setLoadingPlayers(true);
     fetchPlayers();
   }, [fetchPlayers, locationKey]);
 
   useEffect(() => {
-    const id = setInterval(fetchPlayers, MAP_POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+    const id = window.setInterval(fetchPlayers, MAP_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [fetchPlayers]);
 
-  const markers = useMemo(() => {
+  useEffect(() => {
+    if (!map) return undefined;
+    fetchBlips();
+    const id = window.setInterval(fetchBlips, BLIPS_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [map, fetchBlips]);
+
+  const playerMarkers = useMemo(() => {
+    if (!map) return [];
     return players
       .map((player) => {
-        const point = convertToMapPoint(player.pos.x, player.pos.y);
-        if (!point) return null;
-        return { player, point };
+        const position = convertToMap(player.pos?.x, player.pos?.y, map);
+        if (!position) return null;
+        return {
+          player,
+          position,
+          icon: getPlayerIcon(player, markerTypes),
+          label: makeLabel(player),
+        };
       })
       .filter(Boolean);
-  }, [players]);
+  }, [players, map, markerTypes]);
 
-  const selectedMarker = useMemo(() => {
-    const byId = markers.find(marker => marker.player.identifier === selectedPlayerId);
-    return byId || markers[0] || null;
-  }, [markers, selectedPlayerId]);
+  const blipMarkers = useMemo(() => {
+    if (!map) return [];
+    return blips
+      .map((blip, idx) => {
+        const position = convertToMap(blip.x, blip.y, map);
+        if (!position) return null;
+        const icon = getBlipIcon(blip.blipId, markerTypes);
+        if (!icon) return null;
+        return {
+          id: `${blip.blipId}:${blip.x}:${blip.y}:${idx}`,
+          position,
+          icon,
+          name: markerTypes[blip.blipId]?.name || String(blip.blipId),
+          blipId: blip.blipId,
+        };
+      })
+      .filter(Boolean);
+  }, [blips, map, markerTypes]);
 
   useEffect(() => {
     if (!selectedPlayerId) return;
-    if (!markers.some(marker => marker.player.identifier === selectedPlayerId)) {
+    const stillExists = playerMarkers.some((marker) => marker.player.identifier === selectedPlayerId);
+    if (!stillExists) {
       setSelectedPlayerId(null);
     }
-  }, [markers, selectedPlayerId]);
+  }, [selectedPlayerId, playerMarkers]);
 
-  const clampViewBox = useCallback((next) => {
-    const width = Math.min(MAP_MAX_WIDTH, Math.max(MAP_MIN_WIDTH, next.width));
-    const height = width * (MAP_HEIGHT / MAP_WIDTH);
-    const maxX = Math.max(0, MAP_WIDTH - width);
-    const maxY = Math.max(0, MAP_HEIGHT - height);
-    return {
-      x: Math.max(0, Math.min(maxX, next.x)),
-      y: Math.max(0, Math.min(maxY, next.y)),
-      width,
-      height,
-    };
-  }, []);
+  const selectedMarker = useMemo(() => {
+    const byId = playerMarkers.find((marker) => marker.player.identifier === selectedPlayerId);
+    return byId || playerMarkers[0] || null;
+  }, [playerMarkers, selectedPlayerId]);
 
-  const screenToMap = useCallback((clientX, clientY, currentViewBox = viewBox) => {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const rect = svg.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    const px = (clientX - rect.left) / rect.width;
-    const py = (clientY - rect.top) / rect.height;
-    return {
-      x: currentViewBox.x + (px * currentViewBox.width),
-      y: currentViewBox.y + (py * currentViewBox.height),
-    };
-  }, [viewBox]);
+  const handleResetView = useCallback(() => {
+    if (!map) return;
+    const bounds = mapBounds || getMapBounds(map);
+    map.fitBounds(bounds);
+    map.setZoom(DEFAULT_ZOOM);
+  }, [map, mapBounds]);
 
-  const zoomAt = useCallback((factor, clientX, clientY) => {
-    setViewBox((current) => {
-      const pivot = screenToMap(clientX, clientY, current);
-      if (!pivot) return current;
-      const width = current.width * factor;
-      const height = current.height * factor;
-      const next = {
-        x: pivot.x - ((pivot.x - current.x) * (width / current.width)),
-        y: pivot.y - ((pivot.y - current.y) * (height / current.height)),
-        width,
-        height,
-      };
-      return clampViewBox(next);
-    });
-  }, [clampViewBox, screenToMap]);
-
-  const handleWheel = useCallback((event) => {
-    event.preventDefault();
-    const factor = event.deltaY < 0 ? 0.88 : 1.14;
-    zoomAt(factor, event.clientX, event.clientY);
-  }, [zoomAt]);
-
-  const handlePointerDown = useCallback((event) => {
-    if (event.button !== 0) return;
-    const svg = svgRef.current;
-    if (!svg) return;
-    dragRef.current = {
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startViewBox: { ...viewBox },
-    };
-    svg.setPointerCapture(event.pointerId);
-  }, [viewBox]);
-
-  const handlePointerMove = useCallback((event) => {
-    const svg = svgRef.current;
-    if (!svg || !dragRef.current) return;
-    if (dragRef.current.pointerId !== event.pointerId) return;
-    const rect = svg.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-
-    const deltaX = event.clientX - dragRef.current.startClientX;
-    const deltaY = event.clientY - dragRef.current.startClientY;
-    const worldDx = deltaX * (dragRef.current.startViewBox.width / rect.width);
-    const worldDy = deltaY * (dragRef.current.startViewBox.height / rect.height);
-
-    setViewBox(clampViewBox({
-      x: dragRef.current.startViewBox.x - worldDx,
-      y: dragRef.current.startViewBox.y - worldDy,
-      width: dragRef.current.startViewBox.width,
-      height: dragRef.current.startViewBox.height,
-    }));
-  }, [clampViewBox]);
-
-  const handlePointerUp = useCallback((event) => {
-    const svg = svgRef.current;
-    if (!svg || !dragRef.current) return;
-    if (dragRef.current.pointerId !== event.pointerId) return;
-    svg.releasePointerCapture(event.pointerId);
-    dragRef.current = null;
-  }, []);
-
-  const markerRadius = viewBox.width * 0.006;
-  const labelSize = Math.max(8, markerRadius * 2.2);
+  const handleRefresh = useCallback(() => {
+    fetchPlayers();
+    fetchBlips();
+  }, [fetchPlayers, fetchBlips]);
 
   return (
     <div className="space-y-4">
@@ -259,18 +446,19 @@ export default function LiveMap() {
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
           <p className="text-sm text-cad-muted">
-            Legacy Zero/Scale conversion with no runtime calibration controls.
+            Snaily-style tile map with native GTA bounds projection and no manual calibration.
           </p>
         </div>
+
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setViewBox(createInitialViewBox())}
+            onClick={handleResetView}
             className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
           >
             Reset View
           </button>
           <button
-            onClick={fetchPlayers}
+            onClick={handleRefresh}
             className="px-3 py-1.5 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
           >
             Refresh
@@ -281,74 +469,69 @@ export default function LiveMap() {
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
         <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden">
           <div className="px-3 py-2 border-b border-cad-border flex flex-wrap items-center justify-between gap-2 text-xs text-cad-muted">
-            <span>{markers.length} live marker{markers.length !== 1 ? 's' : ''}</span>
+            <span>{playerMarkers.length} live unit marker{playerMarkers.length !== 1 ? 's' : ''}</span>
+            <span>{blipMarkers.length} static blip{blipMarkers.length !== 1 ? 's' : ''}</span>
             <span>
-              {loading ? 'Loading...' : `Updated ${lastRefreshAt ? new Date(lastRefreshAt).toLocaleTimeString() : 'never'}`}
+              {loadingPlayers
+                ? 'Loading...'
+                : `Players ${lastPlayersRefreshAt ? new Date(lastPlayersRefreshAt).toLocaleTimeString() : 'never'}`}
             </span>
           </div>
 
-          <div className="relative h-[72vh] min-h-[500px] bg-[#0b1525]">
-            <svg
-              ref={svgRef}
-              viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
-              className="w-full h-full touch-none cursor-grab active:cursor-grabbing"
-              onWheel={handleWheel}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerCancel={handlePointerUp}
+          <div className="relative h-[72vh] min-h-[500px] bg-[#09111d]">
+            <MapContainer
+              className="w-full h-full"
+              style={{ zIndex: 1 }}
+              crs={CRS.Simple}
+              center={[0, 0]}
+              zoom={DEFAULT_ZOOM}
+              zoomControl={false}
+              minZoom={MIN_ZOOM}
+              maxZoom={MAX_ZOOM}
             >
-              <rect x={0} y={0} width={MAP_WIDTH} height={MAP_HEIGHT} fill="#09111d" />
+              <MapInitializer onReady={onMapReady} />
 
-              <image
-                href={DEFAULT_MAP_IMAGE_URL}
-                x={0}
-                y={0}
-                width={MAP_WIDTH}
-                height={MAP_HEIGHT}
-                preserveAspectRatio="none"
-                opacity="0.94"
+              <TileLayer
+                url={TILES_URL}
+                minZoom={MIN_ZOOM}
+                maxZoom={MAX_ZOOM}
+                tileSize={TILE_SIZE}
+                maxNativeZoom={0}
+                minNativeZoom={0}
               />
 
-              {markers.map(({ player, point }) => {
-                const selected = selectedMarker?.player.identifier === player.identifier;
-                const color = markerColor(player);
-                return (
-                  <g
-                    key={player.identifier}
-                    transform={`translate(${point.x} ${point.y})`}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => setSelectedPlayerId(player.identifier)}
-                  >
-                    <circle
-                      r={selected ? markerRadius * 1.35 : markerRadius}
-                      fill={color}
-                      stroke={selected ? '#ffffff' : '#0b1320'}
-                      strokeWidth={selected ? markerRadius * 0.24 : markerRadius * 0.18}
-                    />
-                    <text
-                      x={markerRadius * 1.2}
-                      y={-markerRadius * 1.1}
-                      fill="#e2e8f0"
-                      fontSize={labelSize}
-                      fontWeight="700"
-                    >
-                      {player.name}
-                    </text>
-                    {player.vehicle && (
-                      <text
-                        x={markerRadius * 1.2}
-                        y={markerRadius * 1.35}
-                        fill="#94a3b8"
-                        fontSize={Math.max(7, labelSize * 0.68)}
-                      >
-                        {player.vehicle}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-            </svg>
+              {blipMarkers.map((blip) => (
+                <Marker key={blip.id} draggable={false} icon={blip.icon} position={blip.position}>
+                  <Tooltip direction="top">{blip.name}</Tooltip>
+                </Marker>
+              ))}
+
+              {playerMarkers.map((marker) => (
+                <Marker
+                  key={marker.player.identifier}
+                  icon={marker.icon}
+                  position={marker.position}
+                  eventHandlers={{
+                    click: () => setSelectedPlayerId(marker.player.identifier),
+                  }}
+                >
+                  <Tooltip direction="top">{marker.label}</Tooltip>
+                  <Popup minWidth={320}>
+                    <p><strong>Unit:</strong> {marker.label}</p>
+                    <p><strong>Status:</strong> {marker.player.status || 'unknown'}</p>
+                    <p><strong>Location:</strong> {marker.player.location || 'Unknown'}</p>
+                    <p><strong>Vehicle:</strong> {marker.player.vehicle || 'On Foot'}</p>
+                    {marker.player.licensePlate ? (
+                      <p><strong>Plate:</strong> {marker.player.licensePlate}</p>
+                    ) : null}
+                    {marker.player.weapon ? (
+                      <p><strong>Weapon:</strong> {marker.player.weapon}</p>
+                    ) : null}
+                    <p><strong>Speed:</strong> {formatSpeedMph(marker.player.speed)}</p>
+                  </Popup>
+                </Marker>
+              ))}
+            </MapContainer>
 
             <div className="absolute left-3 bottom-3 bg-cad-surface/90 border border-cad-border rounded px-2 py-1 text-[11px] text-cad-muted">
               Mouse wheel to zoom | Drag to pan
@@ -358,28 +541,27 @@ export default function LiveMap() {
 
         <div className="space-y-3">
           <div className="bg-cad-card border border-cad-border rounded-lg p-3">
-            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Selected Marker</h3>
+            <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Selected Unit</h3>
             {selectedMarker ? (
               <div className="space-y-1 text-sm">
-                <p className="font-mono text-cad-accent-light">{selectedMarker.player.name}</p>
-                {selectedMarker.player.location && (
+                <p className="font-mono text-cad-accent-light">{selectedMarker.label}</p>
+                <p className="text-cad-muted">Status: {selectedMarker.player.status || 'unknown'}</p>
+                {selectedMarker.player.location ? (
                   <p className="text-cad-muted break-words">Location: {selectedMarker.player.location}</p>
-                )}
+                ) : null}
                 <p className="text-cad-muted">Speed: {formatSpeedMph(selectedMarker.player.speed)}</p>
                 <p className="text-cad-muted">
                   X {Number(selectedMarker.player.pos.x || 0).toFixed(1)} | Y {Number(selectedMarker.player.pos.y || 0).toFixed(1)}
                 </p>
-                {selectedMarker.player.vehicle ? (
-                  <p className="text-cad-muted">Vehicle: {selectedMarker.player.vehicle}</p>
-                ) : (
-                  <p className="text-cad-muted">Vehicle: On Foot</p>
-                )}
-                {selectedMarker.player.licensePlate && (
+                <p className="text-cad-muted">
+                  Vehicle: {selectedMarker.player.vehicle || 'On Foot'}
+                </p>
+                {selectedMarker.player.licensePlate ? (
                   <p className="text-cad-muted">Plate: {selectedMarker.player.licensePlate}</p>
-                )}
-                {selectedMarker.player.weapon && (
+                ) : null}
+                {selectedMarker.player.weapon ? (
                   <p className="text-cad-muted">Weapon: {selectedMarker.player.weapon}</p>
-                )}
+                ) : null}
                 <p className="text-xs text-cad-muted break-all">Identifier: {selectedMarker.player.identifier}</p>
                 <p className="text-xs text-cad-muted">
                   Last update: {new Date(selectedMarker.player.updatedAtMs).toLocaleTimeString()}
@@ -391,13 +573,14 @@ export default function LiveMap() {
           </div>
 
           <div className="bg-cad-card border border-cad-border rounded-lg p-3 text-xs text-cad-muted space-y-1">
-            <p>Data source: <span className="font-mono">/api/units/live-map/players</span></p>
-            <p>Refresh interval: {MAP_POLL_INTERVAL_MS}ms</p>
-            <p>Max age window: {Math.round(MAP_ACTIVE_MAX_AGE_MS / 1000)}s</p>
-            <p>
-              Legacy transform: ZeroX {LEGACY_ZERO_X}, ZeroY {LEGACY_ZERO_Y}, Scale {LEGACY_SCALE}
-            </p>
-            {error && <p className="text-red-400 whitespace-pre-wrap">{error}</p>}
+            <p>Tile source: <span className="font-mono">/tiles/minimap_sea_&#123;y&#125;_&#123;x&#125;.webp</span></p>
+            <p>Players source: <span className="font-mono">/api/units/live-map/players</span></p>
+            <p>Blips source: <span className="font-mono">{BLIPS_URL}</span></p>
+            <p>Player refresh: {MAP_POLL_INTERVAL_MS}ms</p>
+            <p>Blip refresh: {Math.round(BLIPS_POLL_INTERVAL_MS / 1000)}s</p>
+            <p>Latest blips update: {lastBlipsRefreshAt ? new Date(lastBlipsRefreshAt).toLocaleTimeString() : 'never'}</p>
+            {playerError ? <p className="text-red-400 whitespace-pre-wrap">{playerError}</p> : null}
+            {blipError ? <p className="text-red-400 whitespace-pre-wrap">{blipError}</p> : null}
           </div>
         </div>
       </div>
