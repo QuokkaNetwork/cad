@@ -14,8 +14,6 @@ const WORLD_BOUNDS = {
 const WORLD_WIDTH = WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX;
 const WORLD_HEIGHT = WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY;
 const DEFAULT_MAP_BACKGROUND_URL = '/maps/FullMap.png';
-const MAP_BACKGROUND_ENV_URL = String(import.meta.env.VITE_CAD_MAP_IMAGE || '').trim();
-const INITIAL_MAP_BACKGROUND_URL = MAP_BACKGROUND_ENV_URL || DEFAULT_MAP_BACKGROUND_URL;
 const DEFAULT_MAP_TRANSFORM = {
   scaleX: 1,
   scaleY: 1,
@@ -83,7 +81,7 @@ export default function LiveMap() {
   const [showStale, setShowStale] = useState(true);
   const [selectedUnitId, setSelectedUnitId] = useState(null);
   const [viewBox, setViewBox] = useState(createInitialViewBox);
-  const [mapBackgroundUrl, setMapBackgroundUrl] = useState(INITIAL_MAP_BACKGROUND_URL);
+  const [mapBackgroundUrl, setMapBackgroundUrl] = useState(DEFAULT_MAP_BACKGROUND_URL);
   const [mapTransform, setMapTransform] = useState(DEFAULT_MAP_TRANSFORM);
 
   const svgRef = useRef(null);
@@ -107,8 +105,8 @@ export default function LiveMap() {
   const fetchMapConfig = useCallback(async () => {
     try {
       const config = await api.get('/api/units/map-config');
-      const configured = String(config?.map_image_url || '').trim();
-      setMapBackgroundUrl(configured || INITIAL_MAP_BACKGROUND_URL);
+      // Keep the map image pinned to the bundled FullMap asset.
+      setMapBackgroundUrl(DEFAULT_MAP_BACKGROUND_URL);
       setMapTransform({
         scaleX: parseMapNumber(config?.map_scale_x, DEFAULT_MAP_TRANSFORM.scaleX),
         scaleY: parseMapNumber(config?.map_scale_y, DEFAULT_MAP_TRANSFORM.scaleY),
@@ -116,7 +114,7 @@ export default function LiveMap() {
         offsetY: parseMapNumber(config?.map_offset_y, DEFAULT_MAP_TRANSFORM.offsetY),
       });
     } catch {
-      setMapBackgroundUrl(INITIAL_MAP_BACKGROUND_URL);
+      setMapBackgroundUrl(DEFAULT_MAP_BACKGROUND_URL);
       setMapTransform(DEFAULT_MAP_TRANSFORM);
     }
   }, []);
@@ -465,8 +463,7 @@ export default function LiveMap() {
 
           <div className="bg-cad-card border border-cad-border rounded-lg p-3 text-xs text-cad-muted">
             <p>
-              Default map image is hardcoded to <span className="font-mono">/maps/FullMap.png</span>.
-              Admins can upload a replacement PNG in <span className="font-semibold">System Settings</span>.
+              Map image is pinned to <span className="font-mono">/maps/FullMap.png</span>.
             </p>
             <p className="mt-1">
               Calibration: X = (gameX * {mapTransform.scaleX}) + {mapTransform.offsetX}, Y = ((-gameY) * {mapTransform.scaleY}) + {mapTransform.offsetY}
