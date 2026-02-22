@@ -84,6 +84,7 @@ const BRIDGE_LICENSE_LOG_FILE = String(
 ).trim();
 let bridgeLicenseLogStream = null;
 let bridgeLicenseLogInitFailed = false;
+const DEPARTMENT_LAYOUT_TYPES = new Set(['law_enforcement', 'paramedics', 'fire']);
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
@@ -852,6 +853,12 @@ function getDispatchVisibleDepartments() {
   return Departments.listDispatchVisible().filter(dept => dept.is_active && !dept.is_dispatch);
 }
 
+function normalizeDepartmentLayoutType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (DEPARTMENT_LAYOUT_TYPES.has(normalized)) return normalized;
+  return '';
+}
+
 function normalizeRequestedDepartmentIds(value) {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(
@@ -861,8 +868,16 @@ function normalizeRequestedDepartmentIds(value) {
   ));
 }
 
-function resolveRequestedDepartmentIds(value, fallbackDepartmentId) {
-  const visibleIds = new Set(getDispatchVisibleDepartments().map(dept => Number(dept.id)));
+function resolveRequestedDepartmentIds(value, fallbackDepartmentId, options = {}) {
+  const preferredLayoutType = normalizeDepartmentLayoutType(options.preferred_layout_type || options.preferredLayoutType);
+  const visibleDepartments = getDispatchVisibleDepartments();
+  const preferredDepartments = preferredLayoutType
+    ? visibleDepartments.filter(
+      dept => normalizeDepartmentLayoutType(dept?.layout_type) === preferredLayoutType
+    )
+    : [];
+  const candidateDepartments = preferredDepartments.length > 0 ? preferredDepartments : visibleDepartments;
+  const visibleIds = new Set(candidateDepartments.map(dept => Number(dept.id)));
   const normalized = normalizeRequestedDepartmentIds(value).filter(id => visibleIds.has(id));
   if (normalized.length > 0) return normalized;
 
@@ -873,12 +888,17 @@ function resolveRequestedDepartmentIds(value, fallbackDepartmentId) {
   return firstVisibleId ? [firstVisibleId] : [];
 }
 
-function chooseCallDepartmentId(cadUser, requestedDepartmentId) {
+function chooseCallDepartmentId(cadUser, requestedDepartmentId, options = {}) {
+  const preferredLayoutType = normalizeDepartmentLayoutType(options.preferred_layout_type || options.preferredLayoutType);
+  const matchesPreferredLayout = (dept) => (
+    !preferredLayoutType || normalizeDepartmentLayoutType(dept?.layout_type) === preferredLayoutType
+  );
+
   if (cadUser) {
     const onDutyUnit = Units.findByUserId(cadUser.id);
     if (onDutyUnit) {
       const unitDept = Departments.findById(onDutyUnit.department_id);
-      if (unitDept && unitDept.is_active && !unitDept.is_dispatch) {
+      if (unitDept && unitDept.is_active && !unitDept.is_dispatch && matchesPreferredLayout(unitDept)) {
         return unitDept.id;
       }
     }
@@ -887,17 +907,27 @@ function chooseCallDepartmentId(cadUser, requestedDepartmentId) {
   const requestedId = parseInt(requestedDepartmentId, 10);
   if (requestedId) {
     const requestedDept = Departments.findById(requestedId);
-    if (requestedDept && requestedDept.is_active) return requestedDept.id;
+    if (requestedDept && requestedDept.is_active && !requestedDept.is_dispatch && matchesPreferredLayout(requestedDept)) {
+      return requestedDept.id;
+    }
   }
 
-  const dispatchVisible = Departments.listDispatchVisible().find(d => d.is_active && !d.is_dispatch);
+  const dispatchVisible = Departments.listDispatchVisible().find(
+    d => d.is_active && !d.is_dispatch && matchesPreferredLayout(d)
+  );
   if (dispatchVisible) return dispatchVisible.id;
 
-  const activeNonDispatch = Departments.listActive().find(d => !d.is_dispatch);
+  const activeNonDispatch = Departments.listActive().find(
+    d => !d.is_dispatch && matchesPreferredLayout(d)
+  );
   if (activeNonDispatch) return activeNonDispatch.id;
 
-  const activeAny = Departments.listActive()[0];
-  return activeAny ? activeAny.id : null;
+  if (!preferredLayoutType) {
+    const activeAny = Departments.listActive()[0];
+    return activeAny ? activeAny.id : null;
+  }
+
+  return null;
 }
 
 function chooseActiveLinkForUser(user) {
@@ -1985,6 +2015,9 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
   const sourceType = normalizeEmergencySourceType(
     payload.source_type || payload.call_source || payload.origin || payload.entry_type
   );
+  const preferredLayoutType = normalizeDepartmentLayoutType(
+    payload.requested_department_layout_type || payload.department_layout_type || payload.layout_type
+  );
   const details = String(payload.message || payload.details || '').trim();
 
   let cadUser = resolveCadUserFromIdentifiers(ids);
@@ -2004,11 +2037,15 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
   }
 
-  const departmentId = chooseCallDepartmentId(cadUser, payload.department_id);
+  const departmentId = chooseCallDepartmentId(cadUser, payload.department_id, {
+    preferred_layout_type: preferredLayoutType,
+  });
   if (!departmentId) {
     return res.status(400).json({ error: 'No active department available to create call' });
   }
-  const requestedDepartmentIds = resolveRequestedDepartmentIds(payload.requested_department_ids, departmentId);
+  const requestedDepartmentIds = resolveRequestedDepartmentIds(payload.requested_department_ids, departmentId, {
+    preferred_layout_type: preferredLayoutType,
+  });
 
   const location = formatCallLocation(payload);
   const postal = String(payload?.postal || extractPostalFromLocation(location) || '').trim();
@@ -2050,6 +2087,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     playerName,
     sourceId,
     sourceType,
+    preferred_layout_type: preferredLayoutType || '',
     matchedUserId: cadUser?.id || null,
     initial_status: call?.status || CALL_STATUS_PENDING_DISPATCH,
     closest_prompt_count: Number(promptResult?.queued_prompt_count || 0),

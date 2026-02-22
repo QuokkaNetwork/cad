@@ -351,6 +351,11 @@ Config.RoutePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_rou
 Config.ClosestCallPromptPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_call_prompt_poll_ms', 2500)))
 Config.ClosestCallPromptTimeoutMs = math.max(6000, math.floor(getNumber('cad_bridge_call_prompt_timeout_ms', 15000)))
 Config.JailPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_jail_poll_ms', 7000)))
+Config.AutoAmbulanceCallEnabled = getBoolean('cad_bridge_auto_ambulance_call_enabled', true)
+Config.AutoAmbulanceCallPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_auto_ambulance_call_poll_ms', 2500)))
+Config.AutoAmbulanceCallCooldownMs = math.max(10000, math.floor(getNumber('cad_bridge_auto_ambulance_call_cooldown_ms', 180000)))
+Config.AutoAmbulanceCallPriority = trim(getString('cad_bridge_auto_ambulance_call_priority', '1'))
+if Config.AutoAmbulanceCallPriority == '' then Config.AutoAmbulanceCallPriority = '1' end
 
 Config.PublishAllPlayers = getBoolean('cad_bridge_publish_all_players', true)
 

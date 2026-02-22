@@ -192,6 +192,183 @@ CreateThread(function()
   end
 end)
 
+local autoAmbulanceCallStateBySource = {}
+local lastAutoAmbulanceMissingResourceLogAtMs = 0
+
+local function toBoolean(value)
+  if value == true then return true end
+  local numeric = tonumber(value)
+  if numeric and numeric ~= 0 then return true end
+  local text = trim(value):lower()
+  return text == 'true' or text == 'yes'
+end
+
+local function isPlayerDeadFromWasabi(sourceId)
+  if GetResourceState('wasabi_ambulance') ~= 'started' then
+    return false
+  end
+  local ok, result = pcall(function()
+    return exports.wasabi_ambulance:isPlayerDead(sourceId)
+  end)
+  if not ok then
+    return false
+  end
+  return toBoolean(result)
+end
+
+local function submitAutoAmbulanceCall(sourceId)
+  local s = tonumber(sourceId) or 0
+  if s <= 0 then return false end
+  if not GetPlayerName(s) then return false end
+  if isBridgeBackoffActive('calls') then return false end
+
+  local characterName = trim(getCharacterDisplayName(s) or '')
+  local platformName = trim(GetPlayerName(s) or '')
+  local callerName = characterName ~= '' and characterName or platformName
+  if callerName == '' then
+    callerName = ('Player #%s'):format(tostring(s))
+  end
+
+  local payload = {
+    source = s,
+    player_name = callerName,
+    platform_name = platformName,
+    identifiers = GetPlayerIdentifiers(s),
+    title = 'Medical Emergency',
+    message = 'Automatic alert: player down and requiring ambulance assistance.',
+    priority = trim(Config.AutoAmbulanceCallPriority or '1'),
+    job_code = '000',
+    source_type = 'auto_medical_down',
+    requested_department_layout_type = 'paramedics',
+  }
+  if payload.priority == '' then
+    payload.priority = '1'
+  end
+
+  local pos = PlayerPositions[s]
+  if type(pos) == 'table' then
+    payload.position = {
+      x = tonumber(pos.x) or 0.0,
+      y = tonumber(pos.y) or 0.0,
+      z = tonumber(pos.z) or 0.0,
+    }
+    payload.heading = tonumber(pos.heading) or 0.0
+    payload.speed = tonumber(pos.speed) or 0.0
+    payload.street = tostring(pos.street or '')
+    payload.crossing = tostring(pos.crossing or '')
+    payload.postal = tostring(pos.postal or '')
+    payload.location = tostring(pos.location or '')
+  end
+
+  request('POST', '/api/integration/fivem/calls', payload, function(status, body, responseHeaders)
+    if status >= 200 and status < 300 then
+      local callId = '?'
+      local ok, parsed = pcall(json.decode, body or '{}')
+      if ok and type(parsed) == 'table' and type(parsed.call) == 'table' and parsed.call.id then
+        callId = tostring(parsed.call.id)
+      end
+      print(('[cad_bridge] Auto ambulance call created for %s (#%s) as CAD call #%s')
+        :format(callerName, tostring(s), callId))
+      return
+    end
+
+    if status == 429 then
+      setBridgeBackoff('calls', responseHeaders, 15000, 'auto ambulance call')
+    end
+
+    local err = ('Auto ambulance call failed (HTTP %s)'):format(tostring(status))
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if ok and type(parsed) == 'table' and parsed.error then
+      err = err .. ': ' .. tostring(parsed.error)
+    end
+    print('[cad_bridge] ' .. err)
+  end)
+
+  return true
+end
+
+CreateThread(function()
+  while true do
+    Wait(math.max(1000, tonumber(Config.AutoAmbulanceCallPollIntervalMs) or 2500))
+    if Config.AutoAmbulanceCallEnabled ~= true then
+      for sourceId, state in pairs(autoAmbulanceCallStateBySource) do
+        if GetPlayerName(sourceId) then
+          if type(state) == 'table' then
+            state.dead_reported = false
+          end
+        else
+          autoAmbulanceCallStateBySource[sourceId] = nil
+        end
+      end
+      goto continue
+    end
+    if not hasBridgeConfig() then
+      goto continue
+    end
+
+    local wasabiState = GetResourceState('wasabi_ambulance')
+    if wasabiState ~= 'started' then
+      local now = nowMs()
+      if (now - lastAutoAmbulanceMissingResourceLogAtMs) >= 60000 then
+        lastAutoAmbulanceMissingResourceLogAtMs = now
+        print(('[cad_bridge] Auto ambulance calls paused: wasabi_ambulance state=%s'):format(tostring(wasabiState)))
+      end
+      for sourceId, state in pairs(autoAmbulanceCallStateBySource) do
+        if GetPlayerName(sourceId) then
+          if type(state) == 'table' then
+            state.dead_reported = false
+          end
+        else
+          autoAmbulanceCallStateBySource[sourceId] = nil
+        end
+      end
+      goto continue
+    end
+
+    local cooldownMs = math.max(10000, tonumber(Config.AutoAmbulanceCallCooldownMs) or 180000)
+    local now = nowMs()
+    local onlineBySource = {}
+
+    for _, src in ipairs(GetPlayers()) do
+      local s = tonumber(src) or 0
+      if s > 0 and GetPlayerName(s) then
+        onlineBySource[s] = true
+        local state = autoAmbulanceCallStateBySource[s]
+        if type(state) ~= 'table' then
+          state = {
+            dead_reported = false,
+            last_call_ms = 0,
+          }
+          autoAmbulanceCallStateBySource[s] = state
+        end
+
+        local isDead = isPlayerDeadFromWasabi(s)
+        if isDead then
+          if state.dead_reported ~= true then
+            local lastCallMs = tonumber(state.last_call_ms) or 0
+            if (now - lastCallMs) >= cooldownMs then
+              if submitAutoAmbulanceCall(s) then
+                state.last_call_ms = now
+              end
+            end
+          end
+          state.dead_reported = true
+        else
+          state.dead_reported = false
+        end
+      end
+    end
+
+    for sourceId, _ in pairs(autoAmbulanceCallStateBySource) do
+      if not onlineBySource[sourceId] then
+        autoAmbulanceCallStateBySource[sourceId] = nil
+      end
+    end
+
+    ::continue::
+  end
+end)
+
 local function shellEscape(value)
   value = tostring(value or '')
   if value:find('%s') then
@@ -1685,5 +1862,6 @@ AddEventHandler('playerDropped', function()
   local src = source
   wraithLookupCooldownBySource[src] = nil
   wraithEmergencyPlateCacheByPlate = {}
+  autoAmbulanceCallStateBySource[src] = nil
   activeCallPromptBySource[src] = nil
 end)
