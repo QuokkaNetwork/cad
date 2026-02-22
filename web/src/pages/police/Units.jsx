@@ -189,7 +189,7 @@ export default function Units() {
                       Leave Call
                     </button>
                   )}
-                  {currentCall.status !== 'closed' && canSelfDispatch && (
+                  {currentCall.status !== 'closed' && (
                     <button
                       onClick={() => closeMyCall(currentCall.id)}
                       className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
@@ -270,14 +270,6 @@ export default function Units() {
                                 >
                                   Leave
                                 </button>
-                                {canSelfDispatch && (
-                                  <button
-                                    onClick={() => closeMyCall(call.id)}
-                                    className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
-                                  >
-                                    Close
-                                  </button>
-                                )}
                               </>
                             ) : (
                               <button
@@ -286,6 +278,14 @@ export default function Units() {
                                 className="px-2 py-1 text-xs bg-cad-accent/20 text-cad-accent-light border border-cad-accent/30 rounded hover:bg-cad-accent/30 transition-colors disabled:opacity-50"
                               >
                                 Self Assign
+                              </button>
+                            )}
+                            {call.status !== 'closed' && (
+                              <button
+                                onClick={() => closeMyCall(call.id)}
+                                className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
+                              >
+                                Close
                               </button>
                             )}
                           </div>
@@ -354,7 +354,7 @@ export default function Units() {
                   Leave Call
                 </button>
               )}
-              {myUnit && selectedCall.status !== 'closed' && canSelfDispatch && selectedCall.assigned_units?.some(u => u.id === myUnit.id) && (
+              {myUnit && selectedCall.status !== 'closed' && (
                 <button
                   onClick={() => closeMyCall(selectedCall.id)}
                   className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"

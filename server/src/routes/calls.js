@@ -181,13 +181,18 @@ router.patch('/:id', requireAuth, (req, res) => {
 
       const currentUnit = Units.findById(unitId);
       if (!currentUnit) continue;
-      if (normalizeUnitStatus(currentUnit.status) === 'busy') continue;
+      if (normalizeUnitStatus(currentUnit.status) === 'available') continue;
 
-      Units.update(unitId, { status: 'busy' });
-      const refreshedUnit = Units.findById(unitId) || { ...currentUnit, status: 'busy' };
+      Units.update(unitId, { status: 'available' });
+      const refreshedUnit = Units.findById(unitId) || { ...currentUnit, status: 'available' };
       bus.emit('unit:update', {
         departmentId: refreshedUnit.department_id,
         unit: refreshedUnit,
+      });
+      bus.emit('unit:status_available', {
+        departmentId: refreshedUnit.department_id,
+        unit: refreshedUnit,
+        call: updated || null,
       });
     }
   }
@@ -256,14 +261,22 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
   const unassignmentChanges = Calls.unassignUnit(call.id, parsedUnitId);
   const updated = Calls.findById(call.id);
   let refreshedUnit = unit;
-  let unitStatusSetToBusy = false;
+  let unitStatusSetToAvailable = false;
 
   if (unassignmentChanges > 0 && unit?.id) {
-    if (normalizeUnitStatus(unit.status) !== 'busy') {
-      Units.update(unit.id, { status: 'busy' });
+    if (normalizeUnitStatus(unit.status) !== 'available') {
+      Units.update(unit.id, { status: 'available' });
       refreshedUnit = Units.findById(unit.id) || unit;
-      unitStatusSetToBusy = true;
+      unitStatusSetToAvailable = true;
       bus.emit('unit:update', { departmentId: refreshedUnit.department_id, unit: refreshedUnit });
+    }
+    const availableUnit = refreshedUnit || unit;
+    if (availableUnit) {
+      bus.emit('unit:status_available', {
+        departmentId: availableUnit.department_id,
+        unit: availableUnit,
+        call: updated || null,
+      });
     }
   }
   const unitForEvent = refreshedUnit || detachedUnitSnapshot;
@@ -276,7 +289,8 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
     unit_id: parsedUnitId,
     removed: unassignmentChanges > 0,
     auto_closed: autoClosed,
-    unit_status_set_busy: unitStatusSetToBusy,
+    unit_status_set_available: unitStatusSetToAvailable,
+    unit_status_set_busy: false,
   });
   audit(req.user.id, 'call_unit_unassigned', {
     callId: call.id,
@@ -284,7 +298,8 @@ router.post('/:id/unassign', requireAuth, (req, res) => {
     callsign: unitForEvent?.callsign || '',
     assignment_removed: unassignmentChanges > 0,
     auto_closed: autoClosed,
-    unit_status_set_busy: unitStatusSetToBusy,
+    unit_status_set_available: unitStatusSetToAvailable,
+    unit_status_set_busy: false,
   });
   res.json(updated);
 });
