@@ -10,12 +10,10 @@ const MAP_POLL_INTERVAL_MS = 1500;
 const MAP_ACTIVE_MAX_AGE_MS = 30_000;
 const MAP_MIN_WIDTH = MAP_WIDTH * 0.05;
 const MAP_MAX_WIDTH = MAP_WIDTH * 3.5;
-const SNAILY_GAME_BOUNDS = {
-  x1: -4230,
-  y1: 8420,
-  x2: 370,
-  y2: -640,
-};
+const LEGACY_REFERENCE_SIZE = 4096;
+const LEGACY_ZERO_X = 1877.25;
+const LEGACY_ZERO_Y = 2765;
+const LEGACY_SCALE = 3.037861303705727;
 
 function createInitialViewBox() {
   return {
@@ -67,12 +65,10 @@ function convertToMapPoint(rawX, rawY) {
   const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
-  const gameWidth = SNAILY_GAME_BOUNDS.x2 - SNAILY_GAME_BOUNDS.x1;
-  const gameHeight = SNAILY_GAME_BOUNDS.y1 - SNAILY_GAME_BOUNDS.y2;
-  if (!gameWidth || !gameHeight) return null;
-
-  const normalizedX = (x - SNAILY_GAME_BOUNDS.x1) / gameWidth;
-  const normalizedY = (SNAILY_GAME_BOUNDS.y1 - y) / gameHeight;
+  const legacyX = LEGACY_ZERO_X + (x / LEGACY_SCALE);
+  const legacyY = LEGACY_ZERO_Y - (y / LEGACY_SCALE);
+  const normalizedX = legacyX / LEGACY_REFERENCE_SIZE;
+  const normalizedY = legacyY / LEGACY_REFERENCE_SIZE;
 
   return {
     x: normalizedX * MAP_WIDTH,
@@ -263,7 +259,7 @@ export default function LiveMap() {
         <div>
           <h2 className="text-xl font-bold">Live Unit Map</h2>
           <p className="text-sm text-cad-muted">
-            SnailyCAD conversion profile with no manual offset calibration.
+            Legacy Zero/Scale conversion with no runtime calibration controls.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -399,10 +395,7 @@ export default function LiveMap() {
             <p>Refresh interval: {MAP_POLL_INTERVAL_MS}ms</p>
             <p>Max age window: {Math.round(MAP_ACTIVE_MAX_AGE_MS / 1000)}s</p>
             <p>
-              Snaily bounds: X1 {SNAILY_GAME_BOUNDS.x1}, Y1 {SNAILY_GAME_BOUNDS.y1}, X2 {SNAILY_GAME_BOUNDS.x2}, Y2 {SNAILY_GAME_BOUNDS.y2}
-            </p>
-            <p>
-              Map projection uses full image scale only (no X/Y offset correction).
+              Legacy transform: ZeroX {LEGACY_ZERO_X}, ZeroY {LEGACY_ZERO_Y}, Scale {LEGACY_SCALE}
             </p>
             {error && <p className="text-red-400 whitespace-pre-wrap">{error}</p>}
           </div>
