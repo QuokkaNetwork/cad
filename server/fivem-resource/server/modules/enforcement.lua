@@ -242,10 +242,23 @@ RegisterNetEvent('cad_bridge:autoAmbulanceDeathState', function(payload)
     end
   end
 
+  local parsedDead = parseWasabiDeadResult(deadValue)
   autoAmbulanceDeathSnapshotBySource[src] = {
-    is_dead = parseWasabiDeadResult(deadValue),
+    is_dead = parsedDead,
     updated_ms = nowMs(),
   }
+
+  if parsedDead ~= true then
+    local state = autoAmbulanceCallStateBySource[src]
+    if type(state) == 'table' then
+      -- Player is alive again: clear one-shot dead tracking so next death can notify immediately.
+      state.dead_reported = false
+      state.last_call_ms = 0
+      state.last_attempt_ms = 0
+      state.call_submit_in_flight = false
+      state.call_submit_started_ms = 0
+    end
+  end
 end)
 
 local function isPlayerDeadFromWasabi(sourceId)
@@ -475,6 +488,8 @@ CreateThread(function()
           end
         else
           state.dead_reported = false
+          state.last_call_ms = 0
+          state.last_attempt_ms = 0
           state.call_submit_in_flight = false
           state.call_submit_started_ms = 0
         end
