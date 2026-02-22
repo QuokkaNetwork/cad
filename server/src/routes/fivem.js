@@ -516,6 +516,27 @@ function extractFirstName(value) {
   return String(parts[0] || '').trim();
 }
 
+function extractLastName(value) {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return '';
+  const parts = normalized.split(' ').filter(Boolean);
+  if (parts.length === 0) return '';
+  return String(parts[parts.length - 1] || '').trim();
+}
+
+function filterLicenseConditionsForDisplay(conditions) {
+  const source = Array.isArray(conditions) ? conditions : [];
+  const normalized = source
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+  const hadQuizPass = normalized.some(value => /quiz\s*pass/i.test(value));
+  return normalized.filter((value) => {
+    if (/quiz\s*pass/i.test(value)) return false;
+    if (hadQuizPass && /^\d{1,3}%$/.test(value)) return false;
+    return true;
+  });
+}
+
 function addDaysDateOnly(daysFromNow) {
   const days = Number(daysFromNow);
   const safeDays = Number.isFinite(days) ? Math.max(1, Math.trunc(days)) : 1;
@@ -2285,13 +2306,20 @@ router.get('/licenses/:citizenid', requireBridgeAuth, async (req, res) => {
     } catch (_lookupError) {}
 
     const resolvedFirstName = String(qboxCharacter?.firstname || '').trim() || extractFirstName(record?.full_name || '');
+    const resolvedLastName = String(qboxCharacter?.lastname || '').trim() || extractLastName(record?.full_name || '');
+    const resolvedFullName = String([resolvedFirstName, resolvedLastName].filter(Boolean).join(' ')).trim()
+      || String(record?.full_name || '').trim();
     const resolvedAddress = String(qboxCharacter?.address || '').trim();
+    const filteredConditions = filterLicenseConditionsForDisplay(record?.conditions);
     return res.json({
       ok: true,
       license: {
         ...record,
+        full_name: resolvedFullName,
         first_name: resolvedFirstName,
+        last_name: resolvedLastName,
         address: resolvedAddress,
+        conditions: filteredConditions,
       },
     });
   } catch (error) {

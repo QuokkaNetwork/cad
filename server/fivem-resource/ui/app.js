@@ -48,7 +48,7 @@ var idCardOverlay = null;
 var idCardCloseBtn = null;
 var idCardViewerNote = null;
 var idCardPhoto = null;
-var idCardFirstName = null;
+var idCardFullName = null;
 var idCardAddress = null;
 var idCardDob = null;
 var idCardNumber = null;
@@ -85,7 +85,7 @@ function bindIdCardNodes() {
   idCardCloseBtn = document.getElementById("idCardCloseBtn");
   idCardViewerNote = document.getElementById("idCardViewerNote");
   idCardPhoto = document.getElementById("idCardPhoto");
-  idCardFirstName = document.getElementById("idCardFirstName");
+  idCardFullName = document.getElementById("idCardFullName");
   idCardAddress = document.getElementById("idCardAddress");
   idCardDob = document.getElementById("idCardDob");
   idCardNumber = document.getElementById("idCardNumber");
@@ -768,7 +768,7 @@ async function submitLicenseForm() {
     date_of_birth: dateOfBirth,
     gender: gender,
     license_classes: ["CAR"],
-    conditions: ["Quiz pass " + String(scorePercent) + "%"],
+    conditions: [],
     expiry_days: 30,
     quiz_mode: true,
     quiz_score_percent: scorePercent,
@@ -1050,15 +1050,22 @@ function setIdCardImage(fieldName, src, legacyNode) {
   if (!wrotePlaceholder) return;
 }
 
-function extractFirstNameForCard(payload) {
-  var explicit = String(safeGet(payload || {}, "first_name", "") || "").trim();
-  if (explicit) return explicit;
+function extractDisplayNameForCard(payload) {
+  var firstName = String(safeGet(payload || {}, "first_name", "") || "").trim();
+  var lastName = String(safeGet(payload || {}, "last_name", "") || "").trim();
+  var combined = String(firstName + " " + lastName).trim();
+  if (combined) return combined;
 
   var fullName = String(safeGet(payload || {}, "full_name", "") || "").trim();
-  if (!fullName) return "";
-  var normalized = fullName.replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
-  return String(normalized.split(" ")[0] || "").trim();
+  if (fullName) {
+    var fullParts = fullName.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+    if (fullParts.length >= 2) {
+      return String(fullParts[0] + " " + fullParts[fullParts.length - 1]).trim();
+    }
+    return String(fullName).trim();
+  }
+
+  return firstName;
 }
 
 function formatDateForCard(value) {
@@ -1082,6 +1089,27 @@ function listToText(value, fallback) {
   return list.join(", ");
 }
 
+function sanitizeConditionsForCard(value) {
+  var source = [];
+  if (Array.isArray(value)) {
+    source = value.slice();
+  } else {
+    var single = String(value || "").trim();
+    if (single) source = [single];
+  }
+  var normalized = sanitizeStringArray(source, false);
+  var hadQuizPass = normalized.some(function hasQuizPass(entry) {
+    return /quiz\s*pass/i.test(String(entry || ""));
+  });
+  var cleaned = normalized.filter(function filterQuizPass(entry) {
+    var text = String(entry || "");
+    if (/quiz\s*pass/i.test(text)) return false;
+    if (hadQuizPass && /^\d{1,3}%$/.test(text)) return false;
+    return true;
+  });
+  return cleaned;
+}
+
 function closeIdCard() {
   idCardOpen = false;
   setVisible(idCardOverlay, false);
@@ -1100,17 +1128,18 @@ function openIdCard(payload) {
   }
   var data = payload || {};
   var mugshot = String(safeGet(data, "mugshot_url", "") || "").trim();
-  var firstName = extractFirstNameForCard(data);
+  var displayName = extractDisplayNameForCard(data);
   var address = String(safeGet(data, "address", "") || "").trim();
+  var conditions = sanitizeConditionsForCard(safeGet(data, "conditions", []));
   setIdCardImage("mugshot_url", mugshot, idCardPhoto);
   setIdCardField("viewer_note", safeGet(data, "viewer_note", ""), "", idCardViewerNote);
-  setIdCardField("first_name", firstName, "Unknown", idCardFirstName);
+  setIdCardField("full_name", displayName, "Unknown", idCardFullName);
   setIdCardField("address", address, "Not recorded", idCardAddress);
   setIdCardField("date_of_birth", formatDateForCard(safeGet(data, "date_of_birth", "")), "Unknown", idCardDob);
   setIdCardField("license_number", safeGet(data, "license_number", ""), "Auto", idCardNumber);
   setIdCardField("license_classes", listToText(safeGet(data, "license_classes", []), "None"), "None", idCardClasses);
   setIdCardField("expiry_at", formatDateForCard(safeGet(data, "expiry_at", "")), "None", idCardExpiry);
-  setIdCardField("conditions", listToText(safeGet(data, "conditions", []), "None"), "None", idCardConditions);
+  setIdCardField("conditions", listToText(conditions, "None"), "None", idCardConditions);
 
   idCardOpen = true;
   setVisible(idCardOverlay, true);

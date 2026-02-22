@@ -119,6 +119,70 @@ function resolveAddressFromCharInfo(info = {}) {
   return [line1, locality].filter(Boolean).join('\n').trim();
 }
 
+function formatAddressFromPropertyRow(row = {}) {
+  if (!row || typeof row !== 'object') return '';
+  const propertyName = normalizeAddressText(row.property_name);
+  const interior = normalizeAddressText(row.property_interior);
+  if (propertyName && interior) {
+    const propertyLower = propertyName.toLowerCase();
+    const interiorLower = interior.toLowerCase();
+    if (propertyLower.includes(interiorLower)) return propertyName;
+    return [propertyName, interior].join('\n');
+  }
+  return propertyName || interior;
+}
+
+async function resolveAddressFromPropertiesTable(poolConn, citizenId, propertiesConfig = {}) {
+  const normalizedCitizenId = String(citizenId || '').trim();
+  if (!normalizedCitizenId) return '';
+  if (!poolConn || typeof poolConn.query !== 'function') return '';
+
+  const propertiesTable = String(propertiesConfig.table || 'properties').trim();
+  const propertiesOwnerCol = String(propertiesConfig.ownerCol || 'owner').trim();
+  const propertiesNameCol = String(propertiesConfig.nameCol || 'property_name').trim();
+  const propertiesInteriorCol = String(propertiesConfig.interiorCol || 'interior').trim();
+  if (!propertiesTable || !propertiesOwnerCol || !propertiesNameCol || !propertiesInteriorCol) return '';
+  if (
+    !IDENTIFIER_RE.test(propertiesTable)
+    || !IDENTIFIER_RE.test(propertiesOwnerCol)
+    || !IDENTIFIER_RE.test(propertiesNameCol)
+    || !IDENTIFIER_RE.test(propertiesInteriorCol)
+  ) {
+    return '';
+  }
+
+  const tableSql = escapeIdentifier(propertiesTable, 'properties table');
+  const ownerColSql = escapeIdentifier(propertiesOwnerCol, 'properties owner column');
+  const nameColSql = escapeIdentifier(propertiesNameCol, 'properties name column');
+  const interiorColSql = escapeIdentifier(propertiesInteriorCol, 'properties interior column');
+
+  try {
+    const [rows] = await poolConn.query(
+      `SELECT ${nameColSql} AS property_name, ${interiorColSql} AS property_interior
+       FROM ${tableSql}
+       WHERE ${ownerColSql} = ?
+       LIMIT 5`,
+      [normalizedCitizenId]
+    );
+
+    for (const row of rows || []) {
+      const resolved = formatAddressFromPropertyRow(row);
+      if (resolved) return resolved;
+    }
+  } catch (err) {
+    const message = String(err?.message || '').toLowerCase();
+    const missingTable = message.includes("doesn't exist")
+      || message.includes('does not exist')
+      || message.includes('unknown column');
+    if (!missingTable) {
+      console.warn('QBox property address lookup failed:', err?.message || err);
+    }
+    return '';
+  }
+
+  return '';
+}
+
 function getPathValue(source, path) {
   if (!path) return source;
   const parts = String(path).split('.').filter(Boolean);
@@ -564,6 +628,10 @@ function getQboxTableConfig() {
   return {
     playersTable: getSetting('qbox_players_table', 'players'),
     vehiclesTable: getSetting('qbox_vehicles_table', 'player_vehicles'),
+    propertiesTable: getSetting('qbox_properties_table', 'properties'),
+    propertiesOwnerCol: getSetting('qbox_properties_owner_col', 'owner'),
+    propertiesNameCol: getSetting('qbox_properties_name_col', 'property_name'),
+    propertiesInteriorCol: getSetting('qbox_properties_interior_col', 'interior'),
     citizenIdCol: getSetting('qbox_citizenid_col', 'citizenid'),
     charInfoCol: getSetting('qbox_charinfo_col', 'charinfo'),
     moneyCol: getSetting('qbox_money_col', 'money'),
@@ -792,6 +860,10 @@ async function getCharacterById(citizenId) {
       citizenIdCol,
       charInfoCol,
       jobCol,
+      propertiesTable,
+      propertiesOwnerCol,
+      propertiesNameCol,
+      propertiesInteriorCol,
     } = getQboxTableConfig();
     const tableNameSql = escapeIdentifier(playersTable, 'players table');
     const citizenIdColSql = escapeIdentifier(citizenIdCol, 'citizen ID column');
@@ -807,6 +879,14 @@ async function getCharacterById(citizenId) {
     const info = parseMaybeJson(row[charInfoCol]);
     const normalizedCitizenId = String(row[citizenIdCol] || '').trim();
     const extractedJob = extractJobFromCharacterRow(row, info, jobCol);
+    const charInfoAddress = resolveAddressFromCharInfo(info);
+    const propertyAddress = await resolveAddressFromPropertiesTable(p, normalizedCitizenId, {
+      table: propertiesTable,
+      ownerCol: propertiesOwnerCol,
+      nameCol: propertiesNameCol,
+      interiorCol: propertiesInteriorCol,
+    });
+    const resolvedAddress = propertyAddress || charInfoAddress;
     const lookupFields = [
       { key: 'first_name', label: 'First Name', display_value: String(info.firstname || '').trim(), field_type: 'text', preview_width: 1, sort_order: 0, category_name: 'Identity' },
       { key: 'last_name', label: 'Last Name', display_value: String(info.lastname || '').trim(), field_type: 'text', preview_width: 1, sort_order: 1, category_name: 'Identity' },
@@ -822,7 +902,7 @@ async function getCharacterById(citizenId) {
       gender: info.gender !== undefined ? String(info.gender) : '',
       phone: info.phone || '',
       nationality: info.nationality || '',
-      address: resolveAddressFromCharInfo(info),
+      address: resolvedAddress,
       job: extractedJob,
       custom_fields: {},
       mapped_categories: [],

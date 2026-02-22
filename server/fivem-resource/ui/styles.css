@@ -542,17 +542,17 @@ select {
 }
 
 .id-card {
-  width: min(520px, 82vw);
-  max-height: 86vh;
+  width: min(560px, 84vw);
+  max-height: 78vh;
   overflow: auto;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid #7ca270;
   background:
     radial-gradient(circle at 18% 38%, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.12) 33%, transparent 52%),
     repeating-linear-gradient(168deg, rgba(93, 145, 78, 0.24) 0px, rgba(93, 145, 78, 0.24) 2px, rgba(226, 244, 216, 0.16) 2px, rgba(226, 244, 216, 0.16) 8px),
     linear-gradient(160deg, #dbeec9 0%, #c4e1a8 45%, #d8ecc6 100%);
   box-shadow: 0 14px 34px rgba(5, 24, 13, 0.34);
-  padding: 0.58rem 0.62rem 0.64rem;
+  padding: 0.48rem 0.54rem 0.52rem;
   font-family: "Bahnschrift", "Segoe UI", Tahoma, sans-serif;
 }
 
@@ -566,16 +566,16 @@ select {
 .id-card-banner {
   flex: 1;
   min-width: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   background: linear-gradient(135deg, #044497, #1c5dab);
   color: #ffffff;
   text-align: center;
-  padding: 0.31rem 0.58rem 0.28rem;
+  padding: 0.24rem 0.5rem 0.2rem;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .id-card-banner-line1 {
-  font-size: 1.1rem;
+  font-size: 1rem;
   line-height: 1;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -583,14 +583,14 @@ select {
 
 .id-card-banner-line2 {
   margin-top: 0.06rem;
-  font-size: 0.95rem;
+  font-size: 0.84rem;
   line-height: 1;
   font-weight: 700;
   letter-spacing: 0.07em;
 }
 
 .id-card-title {
-  margin: 0.24rem 0 0.28rem;
+  margin: 0.2rem 0 0.2rem;
   font-size: 0.61rem;
   color: #1d2a1a;
   text-transform: uppercase;
@@ -599,16 +599,16 @@ select {
 }
 
 .id-card-note {
-  margin: 0.35rem 0 0.02rem;
-  font-size: 0.66rem;
+  margin: 0.24rem 0 0.01rem;
+  font-size: 0.58rem;
   color: #2e4634;
   letter-spacing: 0.03em;
 }
 
 .id-card-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 132px;
-  gap: 0.58rem;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 0.45rem;
   align-items: stretch;
 }
 
@@ -620,7 +620,7 @@ select {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 0.55rem;
+  gap: 0.45rem;
 }
 
 .id-card-name-block,
@@ -630,7 +630,7 @@ select {
 
 .id-card-top-label {
   display: block;
-  font-size: 0.57rem;
+  font-size: 0.53rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: #2f4738;
@@ -640,7 +640,7 @@ select {
 .id-card-name {
   display: block;
   margin-top: 0.08rem;
-  font-size: 1.2rem;
+  font-size: 1.02rem;
   line-height: 1.06;
   color: #0f2215;
   font-weight: 800;
@@ -652,7 +652,7 @@ select {
 .id-card-licence-no {
   display: block;
   margin-top: 0.08rem;
-  font-size: 1.2rem;
+  font-size: 1rem;
   line-height: 1.06;
   color: #0f2215;
   font-weight: 800;
@@ -661,8 +661,8 @@ select {
 }
 
 .id-card-address-block {
-  margin-top: 0.34rem;
-  padding: 0.3rem 0.36rem;
+  margin-top: 0.25rem;
+  padding: 0.22rem 0.3rem;
   border-radius: 6px;
   border: 1px solid rgba(24, 56, 36, 0.2);
   background: rgba(255, 255, 255, 0.3);
@@ -671,7 +671,7 @@ select {
 .id-card-address-value {
   display: block;
   margin-top: 0.1rem;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   line-height: 1.22;
   white-space: pre-line;
   text-transform: uppercase;
@@ -679,28 +679,41 @@ select {
 }
 
 .id-card-bottom-grid {
-  margin-top: 0.42rem;
-  padding-top: 0.34rem;
+  margin-top: 0.28rem;
+  padding-top: 0.26rem;
   border-top: 1px solid rgba(24, 56, 36, 0.26);
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.42rem 0.62rem;
+  gap: 0.28rem 0.52rem;
 }
 
 .id-card-field {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.02rem;
+}
+
+.id-card-field .id-label {
+  display: block;
+}
+
+.id-card-field .id-value {
+  display: block;
+  margin-top: 0;
 }
 
 .id-card-photo-panel {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.34rem;
+  gap: 0.24rem;
 }
 
 .id-card-photo {
-  width: 132px;
-  height: 160px;
+  width: 120px;
+  height: 138px;
   object-fit: cover;
   object-position: top;
   border-radius: 6px;
@@ -709,7 +722,7 @@ select {
 }
 
 .id-card-vicroads-logo {
-  width: 96px;
+  width: 88px;
   height: auto;
   border: 1px solid rgba(24, 56, 36, 0.35);
   border-radius: 3px;
@@ -730,7 +743,7 @@ select {
 }
 
 .id-label {
-  font-size: 0.56rem;
+  font-size: 0.52rem;
   color: #32493a;
   text-transform: uppercase;
   letter-spacing: 0.07em;
@@ -738,7 +751,7 @@ select {
 }
 
 .id-value {
-  font-size: 0.96rem;
+  font-size: 0.82rem;
   line-height: 1.12;
   color: #0f2215;
   font-weight: 800;
@@ -747,8 +760,8 @@ select {
 }
 
 .id-card-footer {
-  margin-top: 0.34rem;
-  font-size: 0.62rem;
+  margin-top: 0.22rem;
+  font-size: 0.56rem;
   color: #2f4635;
   border-top: 1px solid rgba(24, 56, 36, 0.22);
   padding-top: 0.34rem;
@@ -756,9 +769,9 @@ select {
 }
 
 .id-card .icon-btn {
-  width: 1.85rem;
-  height: 1.85rem;
-  font-size: 0.9rem;
+  width: 1.72rem;
+  height: 1.72rem;
+  font-size: 0.82rem;
   background: rgba(255, 255, 255, 0.8);
   color: #2f493a;
   border-color: rgba(24, 56, 36, 0.34);
@@ -812,8 +825,8 @@ select {
 
   .id-card {
     width: 100%;
-    max-height: 86vh;
-    padding: 0.5rem 0.52rem 0.56rem;
+    max-height: 82vh;
+    padding: 0.44rem 0.46rem 0.5rem;
   }
 
   .id-card-body {
@@ -835,11 +848,11 @@ select {
 
   .id-card-name,
   .id-card-licence-no {
-    font-size: 1.02rem;
+    font-size: 0.94rem;
   }
 
   .id-card-address-value {
-    font-size: 0.84rem;
+    font-size: 0.76rem;
   }
 
   .id-card-bottom-grid {
@@ -847,7 +860,7 @@ select {
   }
 
   .id-value {
-    font-size: 0.88rem;
+    font-size: 0.78rem;
   }
 
   .id-card-photo-panel {
@@ -857,12 +870,12 @@ select {
   }
 
   .id-card-photo {
-    width: 112px;
-    height: 136px;
+    width: 102px;
+    height: 124px;
   }
 
   .id-card-vicroads-logo {
-    width: 82px;
+    width: 76px;
   }
 }
 
