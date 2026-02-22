@@ -6,6 +6,8 @@ local miniCadLastCallId = 0
 local miniCadPollIntervalMs = 3000
 local miniCadToggleCommand = 'cadbridge_minicad_toggle'
 local miniCadDetachCommand = 'cadbridge_minicad_detach'
+local miniCadClosestAcceptCommand = 'cadbridge_minicad_closest_accept'
+local miniCadClosestDeclineCommand = 'cadbridge_minicad_closest_decline'
 
 local function trim(value)
   if value == nil then return '' end
@@ -236,6 +238,20 @@ end, false)
 
 RegisterKeyMapping(miniCadDetachCommand, 'Mini-CAD: Detach from current call', 'keyboard', 'END')
 
+RegisterCommand(miniCadClosestAcceptCommand, function()
+  if type(miniCadClosestPrompt) ~= 'table' then return end
+  submitClosestCallPromptDecision('accept', 'player_accept_keybind')
+end, false)
+
+RegisterKeyMapping(miniCadClosestAcceptCommand, 'Mini-CAD closest prompt: Attach', 'keyboard', 'Y')
+
+RegisterCommand(miniCadClosestDeclineCommand, function()
+  if type(miniCadClosestPrompt) ~= 'table' then return end
+  submitClosestCallPromptDecision('decline', 'player_decline_keybind')
+end, false)
+
+RegisterKeyMapping(miniCadClosestDeclineCommand, 'Mini-CAD closest prompt: Decline', 'keyboard', 'N')
+
 -- Polling loop: periodically ask server for active call data.
 CreateThread(function()
   while true do
@@ -268,7 +284,22 @@ CreateThread(function()
       goto continue
     end
 
-    Wait(250)
+    Wait(0)
+    if IsPauseMenuActive() then
+      goto continue
+    end
+
+    -- Keep control-based fallback active for servers that don't keep key mappings.
+    if IsControlJustPressed(0, 246) then
+      submitClosestCallPromptDecision('accept', 'player_accept_control')
+      Wait(150)
+      goto continue
+    end
+    if IsControlJustPressed(0, 249) or IsControlJustPressed(0, 306) then
+      submitClosestCallPromptDecision('decline', 'player_decline_control')
+      Wait(150)
+      goto continue
+    end
 
     ::continue::
   end
