@@ -7,9 +7,6 @@ const RESOURCE_NAME = 'cad_bridge';
 
 const TEMPLATE_DIR = path.resolve(__dirname, '../../fivem-resource');
 const VERSION_FILE_NAME = '.cad_bridge_version';
-const OPTIONAL_MAP_RESOURCE_NAME = 'map';
-const OPTIONAL_MAP_TEMPLATE_DIR = path.resolve(__dirname, '../../../map');
-const OPTIONAL_MAP_VERSION_FILE_NAME = '.cad_map_version';
 let syncInterval = null;
 
 function getSetting(key, fallback = '') {
@@ -135,58 +132,12 @@ function readInstalledVersion(targetDir, fileName = VERSION_FILE_NAME) {
   }
 }
 
-function getOptionalMapStatus(targetRoot = '') {
-  const available = resourceHasManifest(OPTIONAL_MAP_TEMPLATE_DIR);
-  const targetDir = targetRoot ? path.join(targetRoot, OPTIONAL_MAP_RESOURCE_NAME) : '';
-
-  const status = {
-    resourceName: OPTIONAL_MAP_RESOURCE_NAME,
-    available,
-    targetDir,
-    installed: false,
-    upToDate: false,
-    installedVersion: '',
-    templateVersion: '',
-  };
-
-  if (!available || !targetRoot) return status;
-
-  status.templateVersion = buildTemplateHash(OPTIONAL_MAP_TEMPLATE_DIR);
-  status.installed = resourceHasManifest(targetDir);
-  if (status.installed) {
-    status.installedVersion = readInstalledVersion(targetDir, OPTIONAL_MAP_VERSION_FILE_NAME);
-    status.upToDate = Boolean(status.installedVersion && status.installedVersion === status.templateVersion);
-  }
-
-  return status;
-}
-
-function installOrUpdateOptionalMapResource(targetRoot) {
-  const status = getOptionalMapStatus(targetRoot);
-  if (!status.available || !status.targetDir || !status.templateVersion) return null;
-
-  if (!status.installed || !status.upToDate) {
-    fs.mkdirSync(status.targetDir, { recursive: true });
-    fs.cpSync(OPTIONAL_MAP_TEMPLATE_DIR, status.targetDir, { recursive: true, force: true });
-    writeVersionFile(status.targetDir, status.templateVersion, OPTIONAL_MAP_VERSION_FILE_NAME);
-  }
-
-  return {
-    resourceName: OPTIONAL_MAP_RESOURCE_NAME,
-    targetDir: status.targetDir,
-    version: status.templateVersion,
-    installed: true,
-    upToDate: true,
-  };
-}
-
 function installOrUpdateResource() {
   ensureTemplateExists();
   const targetDir = resolveTargetDir();
-  const targetRoot = path.dirname(targetDir);
   const version = buildTemplateHash();
 
-  fs.mkdirSync(targetRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
   fs.mkdirSync(targetDir, { recursive: true });
 
   fs.cpSync(TEMPLATE_DIR, targetDir, { recursive: true, force: true });
@@ -200,8 +151,6 @@ function installOrUpdateResource() {
     installed: true,
     upToDate: true,
   }];
-  const optionalMap = installOrUpdateOptionalMapResource(targetRoot);
-  if (optionalMap) resources.push(optionalMap);
 
   return {
     resourceName: RESOURCE_NAME,
@@ -218,21 +167,18 @@ function getStatus() {
   let installedVersion = '';
   let templateVersion = '';
   let targetDir = '';
-  let optionalMap = getOptionalMapStatus('');
   let error = '';
 
   try {
     ensureTemplateExists();
     templateVersion = buildTemplateHash();
     if (cfg.installPath) {
-      const targetRoot = path.resolve(cfg.installPath);
       targetDir = resolveTargetDir();
       installed = resourceHasManifest(targetDir);
       if (installed) {
         installedVersion = readInstalledVersion(targetDir);
         upToDate = installedVersion && installedVersion === templateVersion;
       }
-      optionalMap = getOptionalMapStatus(targetRoot);
     }
   } catch (err) {
     error = err.message;
@@ -249,7 +195,6 @@ function getStatus() {
     upToDate,
     installedVersion,
     templateVersion,
-    optionalMap,
     error,
   };
 }
@@ -270,19 +215,9 @@ function startFiveMResourceAutoSync() {
   const runSync = () => {
     try {
       const status = getStatus();
-      const shouldSyncBridge = !status.installed || !status.upToDate;
-      const shouldSyncOptionalMap = status.optionalMap?.available
-        && (!status.optionalMap.installed || !status.optionalMap.upToDate);
-
-      if (shouldSyncBridge || shouldSyncOptionalMap) {
+      if (!status.installed || !status.upToDate) {
         const result = installOrUpdateResource();
         console.log(`[FiveMBridge] Resource synced to ${result.targetDir}`);
-        if (Array.isArray(result.resources)) {
-          for (const resource of result.resources) {
-            if (resource.resourceName === RESOURCE_NAME) continue;
-            console.log(`[FiveMBridge] Resource synced to ${resource.targetDir}`);
-          }
-        }
       } else if (status.targetDir) {
         // Keep runtime token/base URL defaults in sync with CAD settings.
         applyRuntimeConfig(status.targetDir);

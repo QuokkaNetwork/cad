@@ -20,7 +20,6 @@ A modern, full-stack Computer-Aided Dispatch (CAD) system designed for FiveM rol
 - **Automatic Priority Assignment** - All emergency calls default to P1 (Urgent)
 - **Postal Code Integration** - Automatic location detection and routing
 - **GPS Waypoint System** - Automatic waypoint setting for assigned units
-- **Live Map** - Real-time unit tracking on an interactive map
 
 ### 👮 Law Enforcement Tools
 - **Records Management** - Person and vehicle records with BOLO system
@@ -303,12 +302,6 @@ Each department has a customizable color displayed on:
 2. Try test command: `/test000ui`
 3. Restart resource: `restart cad_bridge`
 4. Verify `ui_page` in `fxmanifest.lua`
-
-### Units Not Showing on Map
-1. Verify heartbeat in server console
-2. Check `Config.HeartbeatIntervalMs` setting
-3. Ensure postal script is running (if configured)
-4. Verify bridge token matches in config and admin panel
 
 ### Discord Login Issues
 1. Verify Discord application credentials in `.env`

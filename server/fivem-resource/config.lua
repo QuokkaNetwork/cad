@@ -328,8 +328,6 @@ local DEFAULT_REGISTRATION_FEES_BY_DAYS = {
   [70] = 22000,
 }
 
-local DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT1 = { x = -2672.40, y = 4285.00, z = 44.20 }
-local DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT2 = { x = 1707.50, y = -3290.20, z = 41.10 }
 local DEFAULT_WRAITH_EMERGENCY_PLATE_PREFIXES = {
   'POLICE',
   'LSPD',
@@ -381,24 +379,6 @@ Config.ShowIdTargetDistance = getNumber('cad_bridge_show_id_target_distance', 4.
 if Config.ShowIdTargetDistance < 0.5 then Config.ShowIdTargetDistance = 0.5 end
 Config.ShowIdNearbyDistance = getNumber('cad_bridge_show_id_nearby_distance', Config.ShowIdTargetDistance)
 if Config.ShowIdNearbyDistance < 1.0 then Config.ShowIdNearbyDistance = 1.0 end
-Config.LiveMapCalibrationEnabled = getBoolean('cad_bridge_live_map_calibration_enabled', true)
-Config.LiveMapCalibrationCommand = trim(getString('cad_bridge_live_map_calibration_command', 'calibrate'))
-if Config.LiveMapCalibrationCommand == '' then Config.LiveMapCalibrationCommand = 'calibrate' end
-Config.LiveMapCalibrationPadding = getNumber('cad_bridge_live_map_calibration_padding', 250.0)
-if Config.LiveMapCalibrationPadding < 0.0 then Config.LiveMapCalibrationPadding = 0.0 end
-Config.LiveMapCalibrationAce = trim(getString('cad_bridge_live_map_calibration_ace', ''))
-Config.LiveMapCalibrationAutoPoint1 = parseVec3String(
-  getString('cad_bridge_live_map_calibration_auto_point1', ''),
-  DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT1
-)
-Config.LiveMapCalibrationAutoPoint2 = parseVec3String(
-  getString('cad_bridge_live_map_calibration_auto_point2', ''),
-  DEFAULT_LIVE_MAP_CALIBRATION_AUTO_POINT2
-)
-Config.LiveMapCalibrationAutoTeleportDelayMs = math.max(
-  400,
-  math.floor(getNumber('cad_bridge_live_map_calibration_auto_delay_ms', 1200))
-)
 
 Config.DriverLicenseDefaultExpiryDays = math.max(1, math.floor(getNumber('cad_bridge_license_default_expiry_days', 35)))
 Config.VehicleRegistrationDefaultDays = math.max(1, math.floor(getNumber('cad_bridge_registration_default_days', 35)))

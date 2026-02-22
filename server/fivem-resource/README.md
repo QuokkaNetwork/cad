@@ -53,7 +53,6 @@ Command adapter execution now waits for the target character to be online.
 - CAD must have the same Steam IDs for logged-in users.
 - If nearest-postal export is unavailable, CAD falls back to street names and then XYZ.
 - Assigned call routes are pushed to in-game clients by postal/coords when available.
-- Heartbeat payload now includes map metadata (`weapon`, `vehicle`, `license_plate`, `icon`, siren status) used by CAD Live Map.
 - Wraith plate lookups can ignore emergency vehicles via:
   - `cad_bridge_wraith_ignore_emergency_vehicles=true`
   - `cad_bridge_wraith_ignore_emergency_seatbelt_alerts=true`

@@ -7,7 +7,6 @@ local modules = {
   'server/modules/registration.lua',
   'server/modules/dispatch_events.lua',
   'server/modules/document_prompts.lua',
-  'server/modules/livemap.lua',
   'server/modules/enforcement.lua',
   'server/modules/minicad.lua',
 }

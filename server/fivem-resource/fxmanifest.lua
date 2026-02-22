@@ -13,7 +13,6 @@ client_scripts {
   'client/modules/license.lua',
   'client/modules/registration.lua',
   'client/modules/documents_ui.lua',
-  'client/modules/livemap.lua',
   'client/modules/peds.lua',
   'client/modules/call_prompt.lua',
   'client/modules/call_popup.lua',

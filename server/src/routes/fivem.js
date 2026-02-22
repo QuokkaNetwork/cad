@@ -19,7 +19,6 @@ const {
 const { getVehicleByPlate } = require('../db/qbox');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
-const liveMapStore = require('../services/liveMapStore');
 
 const router = express.Router();
 const QUIET_BRIDGE_GET_PATHS = new Set([
@@ -317,16 +316,6 @@ function enforceInGamePresenceForOnDutyUnits(detectedCadUserIds, source) {
     if (offDutyIfNotDispatch(unit, source)) removed += 1;
   }
   return removed;
-}
-
-function parseBridgeBoolean(value) {
-  if (value === true || value === 1) return true;
-  if (value === false || value === 0) return false;
-  const normalized = String(value || '').trim().toLowerCase();
-  if (!normalized) return false;
-  if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
-  if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
-  return false;
 }
 
 function parseHeartbeatSource(player = {}) {
@@ -968,6 +957,37 @@ function findActiveLinkByGameId(gameId) {
   return null;
 }
 
+function resolveCadUserIdByGameId(gameId) {
+  const target = String(gameId || '').trim();
+  if (!target) return 0;
+
+  for (const link of FiveMPlayerLinks.list()) {
+    if (!isActiveFiveMLink(link)) continue;
+    if (String(link.game_id || '').trim() !== target) continue;
+
+    const linkKey = String(link.steam_id || '').trim();
+    const parsed = parseFiveMLinkKey(linkKey);
+
+    let cadUser = null;
+    if (parsed.type === 'steam' && parsed.value) {
+      cadUser = Users.findBySteamId(parsed.value) || null;
+    } else if (parsed.type === 'discord' && parsed.value) {
+      cadUser = Users.findByDiscordId(parsed.value) || null;
+    }
+
+    if (!cadUser && linkKey) {
+      const cachedUserId = liveLinkUserCache.get(linkKey);
+      if (cachedUserId) {
+        cadUser = Users.findById(cachedUserId) || null;
+      }
+    }
+
+    if (cadUser?.id) return Number(cadUser.id);
+  }
+
+  return 0;
+}
+
 function normalizePostalToken(value) {
   return String(value || '')
     .trim()
@@ -1480,7 +1500,6 @@ bus.on('unit:status_available', ({ unit, call }) => {
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {
   const players = Array.isArray(req.body?.players) ? req.body.players : [];
   const seenLinks = new Set();
-  const seenLiveMapIdentifiers = new Set();
   const detectedCadUserIds = new Set();
   const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
   let mappedUnits = 0;
@@ -1501,7 +1520,6 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     }
     if (!ids.linkKey) continue;
     seenLinks.add(ids.linkKey);
-    seenLiveMapIdentifiers.add(ids.linkKey);
     const playerSource = parseHeartbeatSource(player);
     const gameId = String(playerSource || player?.source || '').trim();
     const position = parseHeartbeatPosition(player);
@@ -1518,12 +1536,6 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
       || String(player.player_name || player.playerName || player.name || '').trim()
       || platformName;
     const location = String(player.location || '').trim() || formatUnitLocation({ ...player, position });
-    const vehicle = String(player.vehicle || '').trim();
-    const licensePlate = String(player.license_plate || player.licensePlate || '').trim();
-    const weapon = String(player.weapon || '').trim();
-    const iconRaw = Number(player.icon ?? 6);
-    const icon = Number.isFinite(iconRaw) ? iconRaw : 6;
-    const hasSirenEnabled = parseBridgeBoolean(player.has_siren_enabled ?? player.hasSirenEnabled);
     const heading = Number(player.heading || 0);
     const speed = Number(player.speed || 0);
 
@@ -1584,37 +1596,6 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     }
 
     const mappedUnit = cadUser ? Units.findByUserId(cadUser.id) : null;
-    liveMapStore.upsertPlayer(ids.linkKey, {
-      name: resolvedPlayerName,
-      character_name: characterName,
-      source: playerSource,
-      game_id: gameId,
-      player_id: Number(player.player_id || player.playerId || 0),
-      pos: {
-        x: position.x,
-        y: position.y,
-        z: position.z,
-      },
-      speed,
-      heading,
-      location,
-      vehicle,
-      license_plate: licensePlate,
-      licensePlate,
-      weapon,
-      icon,
-      has_siren_enabled: hasSirenEnabled,
-      hasSirenEnabled,
-      steam_id: ids.steamId,
-      discord_id: ids.discordId,
-      citizenid: citizenId,
-      cad_user_id: Number(cadUser?.id || 0),
-      unit_id: Number(mappedUnit?.id || 0),
-      callsign: String(mappedUnit?.callsign || ''),
-      unit_status: String(mappedUnit?.status || ''),
-      department_id: Number(mappedUnit?.department_id || 0),
-      cad_name: String(characterName || playerName || cadUser?.steam_name || ''),
-    });
 
     if (!cadUser) {
       unmatchedPlayers += 1;
@@ -1644,8 +1625,6 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
     const updated = Units.findById(unit.id);
     bus.emit('unit:update', { departmentId: unit.department_id, unit: updated });
   }
-
-  liveMapStore.retainOnly(seenLiveMapIdentifiers);
 
   // Keep closest-unit prompt queue current as fresh unit positions arrive.
   const nowMs = Date.now();
@@ -1688,60 +1667,12 @@ router.post('/offline', requireBridgeAuth, (req, res) => {
   if (ids.discordId) liveLinkUserCache.delete(`discord:${ids.discordId}`);
   if (ids.licenseId) liveLinkUserCache.delete(`license:${ids.licenseId}`);
   if (ids.linkKey) liveLinkUserCache.delete(ids.linkKey);
-  if (ids.steamId) liveMapStore.removePlayer(ids.steamId);
-  if (ids.discordId) liveMapStore.removePlayer(`discord:${ids.discordId}`);
-  if (ids.licenseId) liveMapStore.removePlayer(`license:${ids.licenseId}`);
-  if (ids.linkKey) liveMapStore.removePlayer(ids.linkKey);
 
   let autoOffDuty = false;
   if (cadUser) {
     autoOffDuty = offDutyIfNotDispatch(Units.findByUserId(cadUser.id), 'offline_event');
   }
   res.json({ ok: true, auto_off_duty: autoOffDuty });
-});
-
-router.post('/live-map/calibration', requireBridgeAuth, (req, res) => {
-  const body = req.body || {};
-  const x1 = Number(body.map_game_x1);
-  const y1 = Number(body.map_game_y1);
-  const x2 = Number(body.map_game_x2);
-  const y2 = Number(body.map_game_y2);
-
-  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) {
-    return res.status(400).json({ error: 'map_game_x1/map_game_y1/map_game_x2/map_game_y2 must be numbers' });
-  }
-  if (!(x2 > x1) || !(y1 > y2)) {
-    return res.status(400).json({ error: 'Invalid map bounds ordering' });
-  }
-  if ((x2 - x1) < 500 || (y1 - y2) < 500) {
-    return res.status(400).json({ error: 'Map bounds area too small' });
-  }
-
-  Settings.set('live_map_game_x1', String(x1));
-  Settings.set('live_map_game_y1', String(y1));
-  Settings.set('live_map_game_x2', String(x2));
-  Settings.set('live_map_game_y2', String(y2));
-  Settings.set('live_map_use_custom_bounds', 'true');
-
-  const scaleX = Number(body.map_scale_x);
-  const scaleY = Number(body.map_scale_y);
-  const offsetX = Number(body.map_offset_x);
-  const offsetY = Number(body.map_offset_y);
-
-  if (Number.isFinite(scaleX) && scaleX > 0) Settings.set('live_map_scale_x', String(scaleX));
-  if (Number.isFinite(scaleY) && scaleY > 0) Settings.set('live_map_scale_y', String(scaleY));
-  if (Number.isFinite(offsetX)) Settings.set('live_map_offset_x', String(offsetX));
-  if (Number.isFinite(offsetY)) Settings.set('live_map_offset_y', String(offsetY));
-
-  return res.json({
-    ok: true,
-    map_game_bounds: { x1, y1, x2, y2 },
-    map_use_custom_bounds: true,
-    map_scale_x: Number.isFinite(scaleX) ? scaleX : undefined,
-    map_scale_y: Number.isFinite(scaleY) ? scaleY : undefined,
-    map_offset_x: Number.isFinite(offsetX) ? offsetX : undefined,
-    map_offset_y: Number.isFinite(offsetY) ? offsetY : undefined,
-  });
 });
 
 // List dispatch-visible non-dispatch departments for in-game /000 UI department selection.
@@ -2568,16 +2499,7 @@ router.get('/unit-active-call', requireBridgeAuth, (req, res) => {
   const gameId = String(req.query.game_id || '').trim();
   if (!gameId) return res.status(400).json({ error: 'game_id is required' });
 
-  // Resolve the CAD user from game_id via live map store.
-  const allPlayers = liveMapStore.listPlayers();
-  let cadUserId = 0;
-  for (const player of allPlayers) {
-    const pg = String(player?.gameId || player?.source || '').trim();
-    if (pg === gameId) {
-      cadUserId = Number(player?.cadUserId || 0);
-      break;
-    }
-  }
+  const cadUserId = resolveCadUserIdByGameId(gameId);
   if (!cadUserId) return res.json(null);
 
   const unit = Units.findByUserId(cadUserId);
@@ -2644,16 +2566,7 @@ router.post('/unit-detach-call', requireBridgeAuth, (req, res) => {
   const callId = Number(req.body?.call_id || 0);
   if (!gameId || !callId) return res.status(400).json({ error: 'game_id and call_id are required' });
 
-  // Resolve the CAD user from game_id via live map store.
-  const allPlayers = liveMapStore.listPlayers();
-  let cadUserId = 0;
-  for (const player of allPlayers) {
-    const pg = String(player?.gameId || player?.source || '').trim();
-    if (pg === gameId) {
-      cadUserId = Number(player?.cadUserId || 0);
-      break;
-    }
-  }
+  const cadUserId = resolveCadUserIdByGameId(gameId);
   if (!cadUserId) return res.status(404).json({ error: 'Player not found' });
 
   const unit = Units.findByUserId(cadUserId);

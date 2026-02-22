@@ -2,7 +2,7 @@ server {
   listen 80;
   server_name {{DOMAIN}};
 
-  # Match CAD upload limits (map tile uploads can be large).
+  # Match CAD upload limits.
   client_max_body_size 40m;
 
   # HTTP-01 challenge path for win-acme filesystem validation.

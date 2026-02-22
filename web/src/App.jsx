@@ -12,7 +12,6 @@ import Settings from './pages/Settings';
 import Dispatch from './pages/police/Dispatch';
 import Units from './pages/police/Units';
 import DepartmentHome from './pages/police/DepartmentHome';
-import LiveMap from './pages/police/LiveMap';
 import Search from './pages/police/Search';
 import BOLOs from './pages/police/BOLOs';
 import Warrants from './pages/police/Warrants';
@@ -35,16 +34,6 @@ export default function App() {
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route
-            path="/map/popout"
-            element={
-              <ProtectedRoute>
-                <RequireDepartment>
-                  <LiveMap isPopout />
-                </RequireDepartment>
-              </ProtectedRoute>
-            }
-          />
 
           <Route
             element={
@@ -61,7 +50,6 @@ export default function App() {
             <Route path="/department" element={<RequireDepartment><DepartmentHome /></RequireDepartment>} />
             <Route path="/dispatch" element={<RequireDepartment><Dispatch /></RequireDepartment>} />
             <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
-            <Route path="/map" element={<RequireDepartment><LiveMap /></RequireDepartment>} />
             <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
             <Route path="/warrants" element={<RequireDepartment><Warrants /></RequireDepartment>} />

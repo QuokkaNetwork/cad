@@ -8,7 +8,6 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const passport = require('passport');
 const path = require('path');
-const WebSocket = require('ws');
 const config = require('./config');
 const { verifyToken } = require('./auth/jwt');
 const { initDb, DriverLicenses, VehicleRegistrations } = require('./db/sqlite');
@@ -18,7 +17,6 @@ const { startAutoUpdater } = require('./services/autoUpdater');
 const { startFiveMResourceAutoSync } = require('./services/fivemResourceManager');
 const { startFineProcessor } = require('./services/fivemFineProcessor');
 const { startCallAutoCloseProcessor } = require('./services/callAutoCloseProcessor');
-const { ensureLiveMapTilesDir, getFallbackLiveMapTilesDir } = require('./services/liveMapTiles');
 
 function runCadExpirySweep() {
   try {
@@ -164,151 +162,9 @@ app.get('/api/announcements', requireAuth, (req, res) => {
 // Serve uploaded assets
 const uploadsPath = path.join(__dirname, '../data/uploads');
 app.use('/uploads', express.static(uploadsPath));
-const liveMapTilesPath = ensureLiveMapTilesDir();
-fs.mkdirSync(liveMapTilesPath, { recursive: true });
-app.use('/tiles', express.static(liveMapTilesPath));
-const fallbackLiveMapTilesPath = getFallbackLiveMapTilesDir();
-if (fallbackLiveMapTilesPath) {
-  console.log(`[LiveMap] Using fallback tile directory: ${fallbackLiveMapTilesPath}`);
-  app.use('/tiles', express.static(fallbackLiveMapTilesPath));
-}
 
 // Serve static frontend in production
 const distPath = path.join(__dirname, '../../web/dist');
-const liveMapInterfaceConfigPath = path.join(distPath, 'live-map-interface', 'config.json');
-const liveMapFallbackConfig = {
-  debug: false,
-  tileDirectory: 'images/tiles',
-  iconDirectory: 'images/icons',
-  showIdentifiers: false,
-  groupPlayers: true,
-  defaults: {
-    ip: config.liveMap.upstreamHost,
-    socketPort: String(config.liveMap.upstreamPort),
-  },
-  servers: {},
-  maps: [
-    {
-      name: 'Normal',
-      url: '{tileDirectory}/normal/minimap_sea_{y}_{x}.png',
-      minZoom: -2,
-    },
-    {
-      name: 'Postal',
-      url: '{tileDirectory}/postal/minimap_sea_{y}_{x}.png',
-      minZoom: -3,
-    },
-  ],
-};
-
-function readJsonFileWithFallback(filePath, fallbackValue) {
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return fallbackValue;
-  }
-}
-
-function getRequestProtocols(req) {
-  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
-  const isSecure = req.secure || forwardedProto === 'https';
-  return {
-    http: isSecure ? 'https' : 'http',
-    ws: isSecure ? 'wss' : 'ws',
-  };
-}
-
-function getLiveMapUpstreamHttpUrl() {
-  return `http://${config.liveMap.upstreamHost}:${config.liveMap.upstreamPort}${config.liveMap.upstreamBlipsPath}`;
-}
-
-function getLiveMapUpstreamWsUrl() {
-  return `ws://${config.liveMap.upstreamHost}:${config.liveMap.upstreamPort}${config.liveMap.upstreamSocketPath}`;
-}
-
-function buildRuntimeLiveMapConfig(req) {
-  const baseConfig = readJsonFileWithFallback(liveMapInterfaceConfigPath, liveMapFallbackConfig);
-  const { http, ws } = getRequestProtocols(req);
-  const host = String(req.get('host') || '').trim();
-
-  const defaultServer = {
-    ip: config.liveMap.upstreamHost,
-    socketPort: String(config.liveMap.upstreamPort),
-  };
-
-  if (config.liveMap.useProxy && host) {
-    defaultServer.reverseProxy = {
-      blips: `${http}://${host}/live-map-interface/proxy/blips.json`,
-      socket: `${ws}://${host}/live-map-interface/proxy/ws`,
-    };
-  }
-
-  const mergedServers = {
-    [config.liveMap.serverName]: {
-      ...defaultServer,
-    },
-  };
-
-  if (baseConfig.servers && typeof baseConfig.servers === 'object') {
-    for (const [serverName, serverConfig] of Object.entries(baseConfig.servers)) {
-      if (!serverName || serverName === config.liveMap.serverName) continue;
-      mergedServers[serverName] = serverConfig;
-    }
-  }
-
-  return {
-    ...liveMapFallbackConfig,
-    ...baseConfig,
-    defaults: {
-      ...(baseConfig.defaults || {}),
-      ...defaultServer,
-    },
-    servers: mergedServers,
-  };
-}
-
-app.get('/live-map-interface/config.json', (req, res, next) => {
-  if (!config.liveMap.enabled) return next();
-  res.setHeader('Cache-Control', 'no-store');
-  res.json(buildRuntimeLiveMapConfig(req));
-});
-
-app.get('/live-map-interface/proxy/blips.json', async (req, res, next) => {
-  if (!config.liveMap.enabled || !config.liveMap.useProxy) return next();
-  if (!hasValidRequestAuthToken(req)) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  const upstreamUrl = getLiveMapUpstreamHttpUrl();
-
-  try {
-    const upstreamResponse = await fetch(upstreamUrl, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-      signal: controller.signal,
-    });
-    const payload = await upstreamResponse.text();
-    const contentType = upstreamResponse.headers.get('content-type');
-
-    if (contentType) {
-      res.setHeader('Content-Type', contentType);
-    }
-
-    return res.status(upstreamResponse.status).send(payload);
-  } catch (error) {
-    const detail = error?.name === 'AbortError' ? 'Timed out reaching live_map upstream' : (error?.message || 'Unknown proxy error');
-    return res.status(502).json({
-      error: 'Unable to reach live_map upstream',
-      detail,
-      upstream: upstreamUrl,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-});
 
 app.use(express.static(distPath));
 app.get('*', (req, res, next) => {
@@ -328,23 +184,17 @@ app.use((err, req, res, next) => {
   }
   if (err?.name === 'MulterError') {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      const field = String(err.field || '').trim();
-      const maxMb = field === 'map' || field === 'tiles' ? 40 : 2;
-      return res.status(400).json({ error: `Image too large (max ${maxMb}MB)` });
+      return res.status(400).json({ error: 'Image too large (max 2MB)' });
     }
     return res.status(400).json({ error: err.message || 'Upload error' });
   }
-  if (
-    err?.message === 'Only image files are allowed'
-    || err?.message === 'Only image tile files are allowed'
-    || err?.message === 'Only PNG, JPG, WEBP, GIF, or DDS tile files are allowed'
-  ) {
+  if (err?.message === 'Only image files are allowed') {
     return res.status(400).json({ error: err.message });
   }
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Create HTTP or HTTPS server for Express + WebSocket.
+// Create HTTP or HTTPS server for Express.
 // If TLS_CERT and TLS_KEY are set in .env, serve over HTTPS.
 // If the cert files don't exist yet, auto-generates a self-signed cert using
 // TLS_PUBLIC_IP.
@@ -429,88 +279,10 @@ function createServer(expressApp) {
   return { server: http.createServer(expressApp), protocol: 'http' };
 }
 
-const liveMapWsProxy = new WebSocket.Server({ noServer: true });
-
-function closeWebSocketSafe(socket, code, reason) {
-  if (!socket) return;
-  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-    try {
-      socket.close(code, reason);
-    } catch {
-      // Ignore close races
-    }
-  }
-}
-
-liveMapWsProxy.on('connection', (clientSocket) => {
-  const upstreamSocket = new WebSocket(getLiveMapUpstreamWsUrl());
-
-  upstreamSocket.on('message', (data, isBinary) => {
-    if (clientSocket.readyState === WebSocket.OPEN) {
-      clientSocket.send(data, { binary: isBinary });
-    }
-  });
-
-  clientSocket.on('message', (data, isBinary) => {
-    if (upstreamSocket.readyState === WebSocket.OPEN) {
-      upstreamSocket.send(data, { binary: isBinary });
-    }
-  });
-
-  upstreamSocket.on('close', (code, reasonBuffer) => {
-    const reason = Buffer.isBuffer(reasonBuffer) ? reasonBuffer.toString('utf8') : '';
-    closeWebSocketSafe(clientSocket, code || 1000, reason || 'Upstream closed');
-  });
-
-  clientSocket.on('close', (code, reasonBuffer) => {
-    const reason = Buffer.isBuffer(reasonBuffer) ? reasonBuffer.toString('utf8') : '';
-    closeWebSocketSafe(upstreamSocket, code || 1000, reason || 'Client closed');
-  });
-
-  upstreamSocket.on('error', (error) => {
-    console.warn(`[LiveMapProxy] Upstream websocket error: ${error?.message || error}`);
-    closeWebSocketSafe(clientSocket, 1011, 'Upstream websocket error');
-    closeWebSocketSafe(upstreamSocket, 1011, 'Upstream websocket error');
-  });
-
-  clientSocket.on('error', () => {
-    closeWebSocketSafe(upstreamSocket, 1011, 'Client websocket error');
-  });
-});
-
-function rejectUpgradeUnauthorized(socket) {
-  try {
-    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
-  } catch {
-    // Ignore write failures
-  }
-  socket.destroy();
-}
-
-function handleLiveMapUpgrade(req, socket, head) {
-  if (!config.liveMap.enabled || !config.liveMap.useProxy) return false;
-  const url = String(req.url || '');
-  if (!url.startsWith('/live-map-interface/proxy/ws')) return false;
-  if (!hasValidRequestAuthToken(req)) {
-    rejectUpgradeUnauthorized(socket);
-    return true;
-  }
-
-  liveMapWsProxy.handleUpgrade(req, socket, head, (clientSocket) => {
-    liveMapWsProxy.emit('connection', clientSocket, req);
-  });
-
-  return true;
-}
-
 const { server: httpServer, protocol: serverProtocol } = createServer(app);
 if (serverProtocol === 'http') {
   console.warn('[TLS] Running over plain HTTP. Set TLS_CERT and TLS_KEY in .env for HTTPS (required for microphone).');
 }
-
-httpServer.on('upgrade', (req, socket, head) => {
-  handleLiveMapUpgrade(req, socket, head);
-});
 
 // Secondary plain-HTTP server on BRIDGE_HTTP_PORT (default 3031).
 // Serves two purposes:
@@ -525,9 +297,6 @@ httpServer.on('upgrade', (req, socket, head) => {
 // Binds to 0.0.0.0 so both FiveM (localhost) and browsers (public IP) can reach it.
 const bridgeHttpPort = parseInt(process.env.BRIDGE_HTTP_PORT || '3031', 10) || 3031;
 const bridgeHttpServer = http.createServer(app);
-bridgeHttpServer.on('upgrade', (req, socket, head) => {
-  handleLiveMapUpgrade(req, socket, head);
-});
 bridgeHttpServer.listen(bridgeHttpPort, '0.0.0.0', () => {
   console.log(`[BridgeHTTP] HTTP listener on 0.0.0.0:${bridgeHttpPort} (FiveM bridge + Steam callbacks)`);
 });

@@ -1,16 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import AdminPageHeader from '../../components/AdminPageHeader';
-
-const LIVE_MAP_TILE_NAMES = [
-  'minimap_sea_0_0',
-  'minimap_sea_0_1',
-  'minimap_sea_1_0',
-  'minimap_sea_1_1',
-  'minimap_sea_2_0',
-  'minimap_sea_2_1',
-];
 
 function formatErr(err) {
   if (!err) return 'Unknown error';
@@ -28,18 +19,11 @@ function formatErr(err) {
 
 export default function AdminSystemSettings() {
   const { key: locationKey } = useLocation();
-  const tileInputRef = useRef(null);
   const [settings, setSettings] = useState({});
   const [saving, setSaving] = useState(false);
   const [installingBridge, setInstallingBridge] = useState(false);
   const [loadingBridgeStatus, setLoadingBridgeStatus] = useState(false);
   const [bridgeStatus, setBridgeStatus] = useState(null);
-  const [mapTileFiles, setMapTileFiles] = useState(null);
-  const [uploadingMapTiles, setUploadingMapTiles] = useState(false);
-  const [importingLocalMapTiles, setImportingLocalMapTiles] = useState(false);
-  const [removingMapTiles, setRemovingMapTiles] = useState(false);
-  const [localTileDirectory, setLocalTileDirectory] = useState('');
-  const [mapTileUploadResult, setMapTileUploadResult] = useState(null);
   const [purgingLicenses, setPurgingLicenses] = useState(false);
   const [purgingRegistrations, setPurgingRegistrations] = useState(false);
   const [purgeResult, setPurgeResult] = useState(null);
@@ -72,131 +56,6 @@ export default function AdminSystemSettings() {
 
   function updateSetting(key, value) {
     setSettings(prev => ({ ...prev, [key]: value }));
-  }
-
-  function parseTileBaseName(fileName) {
-    const text = String(fileName || '').trim();
-    if (!text) return '';
-    const dot = text.lastIndexOf('.');
-    if (dot <= 0) return text.toLowerCase();
-    return text.slice(0, dot).toLowerCase();
-  }
-
-  async function uploadLiveMapTiles() {
-    const files = Array.isArray(mapTileFiles) ? mapTileFiles : Array.from(mapTileFiles || []);
-    if (files.length === 0) {
-      setMapTileUploadResult({ success: false, message: 'Select all 6 tile files before uploading.' });
-      return;
-    }
-
-    const expectedSet = new Set(LIVE_MAP_TILE_NAMES);
-    const byName = new Map();
-    const invalid = [];
-    const duplicate = [];
-
-    for (const file of files) {
-      const baseName = parseTileBaseName(file?.name);
-      if (!expectedSet.has(baseName)) {
-        invalid.push(String(file?.name || '').trim());
-        continue;
-      }
-      if (byName.has(baseName)) {
-        duplicate.push(baseName);
-        continue;
-      }
-      byName.set(baseName, file);
-    }
-
-    const missing = LIVE_MAP_TILE_NAMES.filter((name) => !byName.has(name));
-    if (invalid.length > 0 || duplicate.length > 0 || missing.length > 0) {
-      const messages = [];
-      if (missing.length > 0) messages.push(`Missing: ${missing.join(', ')}`);
-      if (invalid.length > 0) messages.push(`Invalid names: ${invalid.join(', ')}`);
-      if (duplicate.length > 0) messages.push(`Duplicates: ${duplicate.join(', ')}`);
-      setMapTileUploadResult({
-        success: false,
-        message: messages.join('\n'),
-      });
-      return;
-    }
-
-    const formData = new FormData();
-    for (const tileName of LIVE_MAP_TILE_NAMES) {
-      const tileFile = byName.get(tileName);
-      if (!tileFile) continue;
-      formData.append('tiles', tileFile, tileName);
-    }
-
-    setUploadingMapTiles(true);
-    setMapTileUploadResult(null);
-    try {
-      const result = await api.post('/api/admin/live-map/tiles', formData);
-      setMapTileUploadResult({
-        success: true,
-        message: `Uploaded ${Number(result?.uploaded || LIVE_MAP_TILE_NAMES.length)} live map tiles.`,
-      });
-      setMapTileFiles(null);
-      if (tileInputRef.current) tileInputRef.current.value = '';
-    } catch (err) {
-      setMapTileUploadResult({
-        success: false,
-        message: formatErr(err),
-      });
-    } finally {
-      setUploadingMapTiles(false);
-    }
-  }
-
-  async function removeLiveMapTiles() {
-    const confirmed = window.confirm(
-      'This will remove all uploaded custom Live Map tiles from CAD. Continue?'
-    );
-    if (!confirmed) return;
-
-    setRemovingMapTiles(true);
-    setMapTileUploadResult(null);
-    try {
-      const result = await api.delete('/api/admin/live-map/tiles');
-      setMapTileUploadResult({
-        success: true,
-        message: `Removed ${Number(result?.removed || 0)} custom live map tile(s).`,
-      });
-      setMapTileFiles(null);
-      if (tileInputRef.current) tileInputRef.current.value = '';
-      fetchSettings();
-    } catch (err) {
-      setMapTileUploadResult({
-        success: false,
-        message: formatErr(err),
-      });
-    } finally {
-      setRemovingMapTiles(false);
-    }
-  }
-
-  async function importLiveMapTilesFromLocalDirectory() {
-    setImportingLocalMapTiles(true);
-    setMapTileUploadResult(null);
-    try {
-      const payload = {};
-      const directory = String(localTileDirectory || '').trim();
-      if (directory) payload.directory = directory;
-      const result = await api.post('/api/admin/live-map/tiles/import-local', payload);
-      const sourceDir = String(result?.source_directory || '').trim();
-      setMapTileUploadResult({
-        success: true,
-        message: `Imported ${Number(result?.imported || LIVE_MAP_TILE_NAMES.length)} live map tiles${sourceDir ? ` from ${sourceDir}` : ''}.`,
-      });
-      setMapTileFiles(null);
-      if (tileInputRef.current) tileInputRef.current.value = '';
-    } catch (err) {
-      setMapTileUploadResult({
-        success: false,
-        message: formatErr(err),
-      });
-    } finally {
-      setImportingLocalMapTiles(false);
-    }
   }
 
   async function saveSettings() {
@@ -312,90 +171,6 @@ export default function AdminSystemSettings() {
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
               placeholder="Set a long random token"
             />
-          </div>
-          <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">LiveMap Resource Socket URL</label>
-            <input
-              type="text"
-              value={settings.live_map_socket_url || ''}
-              onChange={e => updateSetting('live_map_socket_url', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="ws://127.0.0.1:30121 or wss://your-proxy.example"
-            />
-            <p className="text-xs text-cad-muted mt-1">
-              Used by CAD Live Map websocket mode. For the standard <span className="font-mono">live_map</span> resource, use <span className="font-mono">ws://127.0.0.1:30121</span> (or your server IP/hostname).
-            </p>
-          </div>
-          <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">LiveMap Resource Base URL (Optional)</label>
-            <input
-              type="text"
-              value={settings.live_map_url || ''}
-              onChange={e => updateSetting('live_map_url', e.target.value)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder="http://127.0.0.1:30121"
-            />
-            <p className="text-xs text-cad-muted mt-1">
-              Optional metadata field for integrations. The CAD live map primarily uses the websocket socket URL above.
-            </p>
-          </div>
-          <div className="col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Live Map Tiles (Snaily Format)</label>
-            <input
-              ref={tileInputRef}
-              type="file"
-              multiple
-              accept=".dds,image/png,image/jpeg,image/webp,image/gif"
-              onChange={e => setMapTileFiles(e.target.files)}
-              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-xs text-cad-muted file:mr-3 file:rounded file:border file:border-cad-border file:bg-cad-card file:px-2 file:py-1 file:text-xs file:text-cad-ink"
-            />
-            <p className="text-xs text-cad-muted mt-1">
-              Required file names: <span className="font-mono">{LIVE_MAP_TILE_NAMES.join(', ')}</span>
-            </p>
-            <p className="text-xs text-cad-muted mt-1">
-              Supported formats: <span className="font-mono">.dds (DXT1/DXT3/DXT5), .png, .jpg, .webp, .gif</span>
-            </p>
-            <div className="mt-2">
-              <label className="block text-xs text-cad-muted mb-1">Or import from server directory (optional)</label>
-              <input
-                type="text"
-                value={localTileDirectory}
-                onChange={e => setLocalTileDirectory(e.target.value)}
-                placeholder="Defaults to server user's Downloads folder if left blank"
-                className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-xs font-mono focus:outline-none focus:border-cad-accent"
-              />
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={uploadLiveMapTiles}
-                disabled={uploadingMapTiles || importingLocalMapTiles || removingMapTiles}
-                className="px-3 py-1.5 text-xs bg-cad-accent hover:bg-cad-accent-light text-white rounded border border-cad-accent/40 transition-colors disabled:opacity-50"
-              >
-                {uploadingMapTiles ? 'Uploading Tiles...' : 'Upload Map Tiles'}
-              </button>
-              <button
-                type="button"
-                onClick={importLiveMapTilesFromLocalDirectory}
-                disabled={uploadingMapTiles || importingLocalMapTiles || removingMapTiles}
-                className="px-3 py-1.5 text-xs bg-cad-surface hover:bg-cad-card text-cad-ink rounded border border-cad-border transition-colors disabled:opacity-50"
-              >
-                {importingLocalMapTiles ? 'Importing Local Tiles...' : 'Import Local Tiles'}
-              </button>
-              <button
-                type="button"
-                onClick={removeLiveMapTiles}
-                disabled={uploadingMapTiles || importingLocalMapTiles || removingMapTiles}
-                className="px-3 py-1.5 text-xs bg-red-700 hover:bg-red-600 text-white rounded border border-red-500/40 transition-colors disabled:opacity-50"
-              >
-                {removingMapTiles ? 'Removing Tiles...' : 'Remove Custom Tiles'}
-              </button>
-              {mapTileUploadResult && (
-                <span className={`text-xs whitespace-pre-wrap ${mapTileUploadResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {mapTileUploadResult.message}
-                </span>
-              )}
-            </div>
           </div>
           <div>
             <label className="block text-xs text-cad-muted mb-1">Enable Bridge</label>

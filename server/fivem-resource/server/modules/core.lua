@@ -409,11 +409,4 @@ local function registerEmergencySuggestion(target)
   if showIdCommand ~= '' then
     TriggerClientEvent('chat:addSuggestion', target, '/' .. showIdCommand, 'Show your driver licence to nearby players')
   end
-
-  if Config.LiveMapCalibrationEnabled == true then
-    local calibrationCommand = trim(Config.LiveMapCalibrationCommand or 'calibrate')
-    if calibrationCommand ~= '' then
-      TriggerClientEvent('chat:addSuggestion', target, '/' .. calibrationCommand, 'Calibrate live map (manual or auto teleport flow)')
-    end
-  end
 end
