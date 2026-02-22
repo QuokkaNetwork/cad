@@ -2,7 +2,7 @@ const { Calls } = require('../db/sqlite');
 const bus = require('../utils/eventBus');
 
 const DEFAULT_INTERVAL_MS = 60_000;
-const DEFAULT_STALE_MINUTES = 30;
+const DEFAULT_STALE_MINUTES = 10;
 const DEFAULT_BATCH_SIZE = 100;
 
 let timer = null;

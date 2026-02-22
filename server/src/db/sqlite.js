@@ -697,10 +697,10 @@ const Calls = {
     `).get(unitId);
     return hydrateRequestedDepartments(call);
   },
-  autoCloseStaleUnassigned({ staleMinutes = 30, limit = 100 } = {}) {
+  autoCloseStaleUnassigned({ staleMinutes = 10, limit = 100 } = {}) {
     const minutes = Number.isFinite(Number(staleMinutes))
       ? Math.max(1, Math.trunc(Number(staleMinutes)))
-      : 30;
+      : 10;
     const maxRows = Number.isFinite(Number(limit))
       ? Math.max(1, Math.trunc(Number(limit)))
       : 100;
