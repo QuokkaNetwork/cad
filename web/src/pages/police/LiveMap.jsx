@@ -275,19 +275,35 @@ function getPlayerIcon(player, markerTypes) {
   return PLAYER_ICON;
 }
 
+function parseJsonSafely(rawText) {
+  if (!rawText || !String(rawText).trim()) return {};
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    return null;
+  }
+}
+
 async function fetchJsonOrThrow(url) {
   const response = await fetch(url, {
     method: 'GET',
     credentials: 'include',
     headers: { Accept: 'application/json' },
   });
-  const text = await response.text();
-  let parsed = {};
 
-  try {
-    parsed = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`Live map blips endpoint returned invalid JSON (${url})`);
+  const text = await response.text();
+  const parsed = parseJsonSafely(text);
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  const looksLikeJsonContent = contentType.includes('application/json')
+    || contentType.includes('+json')
+    || contentType.includes('text/json');
+
+  // Some fallback endpoints can return HTML/text (e.g. 404 pages). Skip those.
+  if (parsed === null) {
+    if (response.ok || looksLikeJsonContent) {
+      throw new Error(`Live map blips endpoint returned invalid JSON (${url})`);
+    }
+    throw new Error(`Blips source not available (${url}, status ${response.status})`);
   }
 
   if (!response.ok) {
@@ -302,17 +318,21 @@ async function fetchJsonOrThrow(url) {
 
 async function fetchBlipsFromProxy() {
   const sources = [BLIPS_URL, ...BLIPS_FALLBACK_URLS];
+  let primaryError = null;
   let lastError = null;
 
   for (const source of sources) {
     try {
       return await fetchJsonOrThrow(source);
     } catch (error) {
+      if (source === BLIPS_URL && !primaryError) {
+        primaryError = error;
+      }
       lastError = error;
     }
   }
 
-  throw lastError || new Error('Failed to load blips from all configured sources');
+  throw primaryError || lastError || new Error('Failed to load blips from all configured sources');
 }
 
 export default function LiveMap() {
