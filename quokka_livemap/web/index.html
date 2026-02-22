@@ -312,6 +312,7 @@
             tileExt: "png",
             gridCols: 3,    // columns (0 to gridCols-1)
             gridRows: 3,    // rows (0 to gridRows-1)
+            tileBasePaths: ["tiles/", "/tiles/", "web/tiles/", "/web/tiles/"],
 
             // GTA V game coordinate bounds that the tile grid covers
             // Adjust these if player markers don't line up with the map
@@ -345,6 +346,35 @@
         var tileGameWidth = (CONFIG.mapMaxX - CONFIG.mapMinX) / CONFIG.gridCols;
         var tileGameHeight = (CONFIG.mapMaxY - CONFIG.mapMinY) / CONFIG.gridRows;
 
+        function buildTileUrl(basePath, row, col) {
+            return basePath + CONFIG.tilePrefix + "_" + row + "_" + col + "." + CONFIG.tileExt;
+        }
+
+        function resolveTileUrl(row, col, callback) {
+            var idx = 0;
+
+            function tryNext() {
+                if (idx >= CONFIG.tileBasePaths.length) {
+                    callback(null);
+                    return;
+                }
+
+                var candidate = buildTileUrl(CONFIG.tileBasePaths[idx], row, col);
+                idx += 1;
+
+                var probe = new Image();
+                probe.onload = function () {
+                    callback(candidate);
+                };
+                probe.onerror = function () {
+                    tryNext();
+                };
+                probe.src = candidate;
+            }
+
+            tryNext();
+        }
+
         // Load each tile as an image overlay at its exact game coordinate bounds
         for (var row = 0; row < CONFIG.gridRows; row++) {
             for (var col = 0; col < CONFIG.gridCols; col++) {
@@ -354,9 +384,16 @@
                 var south = north - tileGameHeight;
 
                 var tileBounds = [[south, west], [north, east]];
-                var tileUrl = "/tiles/" + CONFIG.tilePrefix + "_" + row + "_" + col + "." + CONFIG.tileExt;
 
-                L.imageOverlay(tileUrl, tileBounds).addTo(map);
+                (function (r, c, bounds) {
+                    resolveTileUrl(r, c, function (tileUrl) {
+                        if (tileUrl) {
+                            L.imageOverlay(tileUrl, bounds).addTo(map);
+                        } else {
+                            console.warn("Missing tile", r, c);
+                        }
+                    });
+                })(row, col, tileBounds);
             }
         }
 

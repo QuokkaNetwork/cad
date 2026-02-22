@@ -4,9 +4,21 @@ const crypto = require('crypto');
 const { Settings } = require('../db/sqlite');
 
 const RESOURCE_NAME = 'cad_bridge';
+const RESOURCE_TEMPLATES = [
+  {
+    resourceName: 'cad_bridge',
+    templateDir: path.resolve(__dirname, '../../fivem-resource'),
+    versionFileName: '.cad_bridge_version',
+    needsRuntimeConfig: true,
+  },
+  {
+    resourceName: 'quokka_livemap',
+    templateDir: path.resolve(__dirname, '../../../quokka_livemap'),
+    versionFileName: '.quokka_livemap_version',
+    needsRuntimeConfig: false,
+  },
+];
 
-const TEMPLATE_DIR = path.resolve(__dirname, '../../fivem-resource');
-const VERSION_FILE_NAME = '.cad_bridge_version';
 let syncInterval = null;
 
 function getSetting(key, fallback = '') {
@@ -28,12 +40,12 @@ function getConfig() {
   };
 }
 
-function ensureTemplateExists() {
-  if (!fs.existsSync(TEMPLATE_DIR)) {
-    throw new Error(`FiveM resource template not found at ${TEMPLATE_DIR}`);
+function ensureTemplateExists(templateDir, resourceName) {
+  if (!fs.existsSync(templateDir)) {
+    throw new Error(`FiveM resource template not found for ${resourceName} at ${templateDir}`);
   }
-  if (!fs.existsSync(path.join(TEMPLATE_DIR, 'fxmanifest.lua'))) {
-    throw new Error('Invalid FiveM resource template (missing fxmanifest.lua)');
+  if (!fs.existsSync(path.join(templateDir, 'fxmanifest.lua'))) {
+    throw new Error(`Invalid FiveM resource template for ${resourceName} (missing fxmanifest.lua)`);
   }
 }
 
@@ -45,6 +57,7 @@ function resourceHasManifest(resourceDir) {
 
 function listFilesRecursively(rootDir) {
   const files = [];
+
   function walk(current, prefix = '') {
     const entries = fs.readdirSync(current, { withFileTypes: true });
     for (const entry of entries) {
@@ -57,11 +70,12 @@ function listFilesRecursively(rootDir) {
       }
     }
   }
+
   walk(rootDir);
   return files.sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
-function buildTemplateHash(rootDir = TEMPLATE_DIR) {
+function buildTemplateHash(rootDir) {
   const hash = crypto.createHash('sha256');
   for (const file of listFilesRecursively(rootDir)) {
     hash.update(file.rel);
@@ -70,10 +84,10 @@ function buildTemplateHash(rootDir = TEMPLATE_DIR) {
   return hash.digest('hex');
 }
 
-function resolveTargetDir() {
+function resolveTargetDir(resourceName) {
   const { installPath } = getConfig();
   if (!installPath) throw new Error('fivem_bridge_install_path is not configured');
-  return path.join(path.resolve(installPath), RESOURCE_NAME);
+  return path.join(path.resolve(installPath), resourceName);
 }
 
 function escapeDoubleQuoted(value) {
@@ -96,11 +110,11 @@ function upsertConfigEntry(content, key, value) {
   return `${normalized}\n${line}\n`;
 }
 
-function applyRuntimeConfig(targetDir) {
+function applyCadBridgeRuntimeConfig(targetDir) {
   const configPath = path.join(targetDir, 'config.cfg');
 
-  const _bridgeHttpPort = parseInt(process.env.BRIDGE_HTTP_PORT || '3031', 10) || 3031;
-  const baseUrl = getSetting('fivem_bridge_base_url', `http://127.0.0.1:${_bridgeHttpPort}`);
+  const bridgeHttpPort = parseInt(process.env.BRIDGE_HTTP_PORT || '3031', 10) || 3031;
+  const baseUrl = getSetting('fivem_bridge_base_url', `http://127.0.0.1:${bridgeHttpPort}`);
   const token = getSetting('fivem_bridge_shared_token', '');
 
   let content = '';
@@ -112,16 +126,15 @@ function applyRuntimeConfig(targetDir) {
 
   content = upsertConfigEntry(content, 'cad_bridge_base_url', baseUrl);
   content = upsertConfigEntry(content, 'cad_bridge_token', token);
-
   fs.writeFileSync(configPath, content, 'utf8');
 }
 
-function writeVersionFile(targetDir, version, fileName = VERSION_FILE_NAME) {
+function writeVersionFile(targetDir, version, fileName) {
   const content = JSON.stringify({ version, updated_at: new Date().toISOString() }, null, 2);
   fs.writeFileSync(path.join(targetDir, fileName), content, 'utf8');
 }
 
-function readInstalledVersion(targetDir, fileName = VERSION_FILE_NAME) {
+function readInstalledVersion(targetDir, fileName) {
   const versionFile = path.join(targetDir, fileName);
   if (!fs.existsSync(versionFile)) return '';
   try {
@@ -133,69 +146,98 @@ function readInstalledVersion(targetDir, fileName = VERSION_FILE_NAME) {
 }
 
 function installOrUpdateResource() {
-  ensureTemplateExists();
-  const targetDir = resolveTargetDir();
-  const version = buildTemplateHash();
+  const resources = [];
 
-  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
-  fs.mkdirSync(targetDir, { recursive: true });
+  for (const resource of RESOURCE_TEMPLATES) {
+    ensureTemplateExists(resource.templateDir, resource.resourceName);
+    const targetDir = resolveTargetDir(resource.resourceName);
+    const version = buildTemplateHash(resource.templateDir);
 
-  fs.cpSync(TEMPLATE_DIR, targetDir, { recursive: true, force: true });
-  applyRuntimeConfig(targetDir);
-  writeVersionFile(targetDir, version);
+    fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.cpSync(resource.templateDir, targetDir, { recursive: true, force: true });
 
-  const resources = [{
-    resourceName: RESOURCE_NAME,
-    targetDir,
-    version,
-    installed: true,
-    upToDate: true,
-  }];
+    if (resource.needsRuntimeConfig) {
+      applyCadBridgeRuntimeConfig(targetDir);
+    }
 
+    writeVersionFile(targetDir, version, resource.versionFileName);
+
+    resources.push({
+      resourceName: resource.resourceName,
+      targetDir,
+      version,
+      installed: true,
+      upToDate: true,
+      installedVersion: version,
+      templateVersion: version,
+      error: '',
+    });
+  }
+
+  const primary = resources.find(item => item.resourceName === RESOURCE_NAME) || resources[0];
   return {
     resourceName: RESOURCE_NAME,
-    targetDir,
-    version,
+    targetDir: primary?.targetDir || '',
+    version: primary?.version || '',
     resources,
   };
 }
 
 function getStatus() {
   const cfg = getConfig();
-  let installed = false;
-  let upToDate = false;
-  let installedVersion = '';
-  let templateVersion = '';
-  let targetDir = '';
-  let error = '';
+  const resources = [];
+  let combinedError = '';
 
-  try {
-    ensureTemplateExists();
-    templateVersion = buildTemplateHash();
-    if (cfg.installPath) {
-      targetDir = resolveTargetDir();
-      installed = resourceHasManifest(targetDir);
-      if (installed) {
-        installedVersion = readInstalledVersion(targetDir);
-        upToDate = installedVersion && installedVersion === templateVersion;
+  for (const resource of RESOURCE_TEMPLATES) {
+    let installed = false;
+    let upToDate = false;
+    let installedVersion = '';
+    let templateVersion = '';
+    let targetDir = '';
+    let error = '';
+
+    try {
+      ensureTemplateExists(resource.templateDir, resource.resourceName);
+      templateVersion = buildTemplateHash(resource.templateDir);
+      if (cfg.installPath) {
+        targetDir = resolveTargetDir(resource.resourceName);
+        installed = resourceHasManifest(targetDir);
+        if (installed) {
+          installedVersion = readInstalledVersion(targetDir, resource.versionFileName);
+          upToDate = installedVersion && installedVersion === templateVersion;
+        }
       }
+    } catch (err) {
+      error = err.message;
+      if (!combinedError) combinedError = error;
     }
-  } catch (err) {
-    error = err.message;
+
+    resources.push({
+      resourceName: resource.resourceName,
+      targetDir,
+      installed,
+      upToDate,
+      installedVersion,
+      templateVersion,
+      error,
+    });
   }
 
+  const primary = resources.find(item => item.resourceName === RESOURCE_NAME) || resources[0] || {};
   return {
     enabled: cfg.enabled,
     autoUpdate: cfg.autoUpdate,
     installPath: cfg.installPath,
     syncIntervalMinutes: cfg.syncIntervalMinutes,
     resourceName: RESOURCE_NAME,
-    targetDir,
-    installed,
-    upToDate,
-    installedVersion,
-    templateVersion,
-    error,
+    targetDir: primary.targetDir || '',
+    installed: !!primary.installed,
+    upToDate: !!primary.upToDate,
+    installedVersion: primary.installedVersion || '',
+    templateVersion: primary.templateVersion || '',
+    resources,
+    error: combinedError,
   };
 }
 
@@ -215,12 +257,19 @@ function startFiveMResourceAutoSync() {
   const runSync = () => {
     try {
       const status = getStatus();
-      if (!status.installed || !status.upToDate) {
+      const resources = Array.isArray(status.resources) ? status.resources : [];
+      const outOfDate = resources.some(item => !item.installed || !item.upToDate);
+
+      if (outOfDate || resources.length === 0) {
         const result = installOrUpdateResource();
-        console.log(`[FiveMBridge] Resource synced to ${result.targetDir}`);
-      } else if (status.targetDir) {
-        // Keep runtime token/base URL defaults in sync with CAD settings.
-        applyRuntimeConfig(status.targetDir);
+        const targets = (result.resources || []).map(item => item.targetDir).filter(Boolean);
+        console.log(`[FiveMBridge] Resource sync complete: ${targets.join(', ') || result.targetDir}`);
+      } else {
+        const bridgeResource = resources.find(item => item.resourceName === RESOURCE_NAME);
+        if (bridgeResource?.targetDir) {
+          // Keep runtime token/base URL defaults in sync with CAD settings.
+          applyCadBridgeRuntimeConfig(bridgeResource.targetDir);
+        }
       }
     } catch (err) {
       console.error('[FiveMBridge] Auto-sync failed:', err.message);

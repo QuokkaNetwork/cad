@@ -10,5 +10,7 @@ server_scripts { "server/server.js" }
 
 files {
     "web/**/*",
-    "tiles/**/*"
+    "tiles/**/*",
+    "tiles/*.png",
+    "web/tiles/*.png"
 }

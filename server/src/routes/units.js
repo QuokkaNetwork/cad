@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls } = require('../db/sqlite');
+const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -13,6 +13,43 @@ function parseSqliteUtc(value) {
   const base = text.replace(' ', 'T');
   const normalized = base.endsWith('Z') ? base : `${base}Z`;
   return Date.parse(normalized);
+}
+
+function sanitizeHttpUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  try {
+    const parsed = new URL(text);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function resolveLiveMapUrl() {
+  const explicit = sanitizeHttpUrl(Settings.get('live_map_embed_url') || '');
+  if (explicit) return explicit;
+
+  const bridgeBase = sanitizeHttpUrl(Settings.get('fivem_bridge_base_url') || '');
+  if (bridgeBase) {
+    try {
+      const parsed = new URL(bridgeBase);
+      const socketPortRaw = Number(process.env.QUOKKA_LIVEMAP_PORT || process.env.SOCKET_PORT || 30121);
+      const socketPort = Number.isFinite(socketPortRaw) && socketPortRaw > 0
+        ? Math.trunc(socketPortRaw)
+        : 30121;
+      parsed.port = String(socketPort);
+      parsed.pathname = '/';
+      parsed.search = '';
+      parsed.hash = '';
+      return parsed.toString().replace(/\/+$/, '');
+    } catch {
+      return '';
+    }
+  }
+
+  return '';
 }
 
 function findDispatchDepartments() {
@@ -216,6 +253,14 @@ router.get('/map', requireAuth, (req, res) => {
   });
 
   res.json(payload);
+});
+
+router.get('/live-map-config', requireAuth, (_req, res) => {
+  const url = resolveLiveMapUrl();
+  res.json({
+    url,
+    available: !!url,
+  });
 });
 
 // List sub-departments available to current user for a department

@@ -163,6 +163,19 @@ export default function AdminSystemSettings() {
             </p>
           </div>
           <div className="col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Live Map Embed URL</label>
+            <input
+              type="text"
+              value={settings.live_map_embed_url || ''}
+              onChange={e => updateSetting('live_map_embed_url', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="http://127.0.0.1:30121"
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              URL used by the CAD <span className="font-mono">Live Map</span> tab iframe. Leave blank to auto-derive from bridge base URL.
+            </p>
+          </div>
+          <div className="col-span-2">
             <label className="block text-xs text-cad-muted mb-1">Shared Bridge Token</label>
             <input
               type="text"
@@ -278,6 +291,21 @@ export default function AdminSystemSettings() {
                 </div>
                 {bridgeStatus.targetDir && (
                   <div className="text-cad-muted whitespace-pre-wrap">Target: {bridgeStatus.targetDir}</div>
+                )}
+                {Array.isArray(bridgeStatus.resources) && bridgeStatus.resources.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-cad-muted font-semibold">Synced Resources</p>
+                    {bridgeStatus.resources.map((resource) => (
+                      <div key={resource.resourceName} className="text-cad-muted">
+                        <span className="font-mono">{resource.resourceName}</span>
+                        {' | '}
+                        installed: <span className={resource.installed ? 'text-emerald-400' : 'text-red-400'}>{String(!!resource.installed)}</span>
+                        {' | '}
+                        upToDate: <span className={resource.upToDate ? 'text-emerald-400' : 'text-amber-300'}>{String(!!resource.upToDate)}</span>
+                        {resource.targetDir ? ` | target: ${resource.targetDir}` : ''}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </>
             )}
