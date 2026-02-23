@@ -8,6 +8,7 @@ const {
   Users,
   Units,
   Calls,
+  TrafficStops,
   Departments,
   FiveMPlayerLinks,
   FiveMFineJobs,
@@ -94,6 +95,7 @@ const BRIDGE_LICENSE_LOG_FILE = String(
 let bridgeLicenseLogStream = null;
 let bridgeLicenseLogInitFailed = false;
 const DEPARTMENT_LAYOUT_TYPES = new Set(['law_enforcement', 'paramedics', 'fire']);
+const LAW_ENFORCEMENT_LAYOUT_TYPE = 'law_enforcement';
 const activePursuitFollowerUnitIdsByCall = new Map();
 
 function getBridgeToken() {
@@ -971,6 +973,42 @@ function chooseCallDepartmentId(cadUser, requestedDepartmentId, options = {}) {
   }
 
   return null;
+}
+
+function isLawEnforcementDepartment(department) {
+  return !!(
+    department
+    && !department.is_dispatch
+    && department.is_active
+    && normalizeDepartmentLayoutType(department.layout_type) === LAW_ENFORCEMENT_LAYOUT_TYPE
+  );
+}
+
+function chooseTrafficStopDepartmentId(cadUser, requestedDepartmentId, callId) {
+  const parsedCallId = Number(callId);
+  if (Number.isInteger(parsedCallId) && parsedCallId > 0) {
+    const linkedCall = Calls.findById(parsedCallId);
+    const linkedCallDept = linkedCall ? Departments.findById(Number(linkedCall.department_id || 0)) : null;
+    if (isLawEnforcementDepartment(linkedCallDept)) {
+      return Number(linkedCallDept.id);
+    }
+  }
+
+  const preferred = chooseCallDepartmentId(cadUser, requestedDepartmentId, {
+    preferred_layout_type: LAW_ENFORCEMENT_LAYOUT_TYPE,
+  });
+  const preferredDept = preferred ? Departments.findById(Number(preferred)) : null;
+  if (isLawEnforcementDepartment(preferredDept)) {
+    return Number(preferredDept.id);
+  }
+
+  const dispatchVisiblePolice = Departments.listDispatchVisible().find((dept) => isLawEnforcementDepartment(dept));
+  if (dispatchVisiblePolice?.id) return Number(dispatchVisiblePolice.id);
+
+  const activePolice = Departments.listActive().find((dept) => isLawEnforcementDepartment(dept));
+  if (activePolice?.id) return Number(activePolice.id);
+
+  return 0;
 }
 
 function chooseActiveLinkForUser(user) {
@@ -2343,6 +2381,85 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     ok: true,
     call: responseCall,
     source_type: sourceType,
+  });
+});
+
+// Create a traffic stop log from an in-game bridge command (/trafficstop or /ts).
+router.post('/traffic-stops', requireBridgeAuth, (req, res) => {
+  const payload = req.body || {};
+  const ids = resolveLinkIdentifiers(payload.identifiers || []);
+  const characterName = String(payload.character_name || payload.characterName || '').trim();
+  const playerName = characterName || String(payload.player_name || payload.name || '').trim() || 'Unknown Officer';
+  const platformName = String(payload.platform_name || payload.platformName || '').trim();
+
+  let cadUser = resolveCadUserFromIdentifiers(ids);
+  if (!cadUser && ids.linkKey) {
+    const cachedUserId = liveLinkUserCache.get(ids.linkKey);
+    if (cachedUserId) cadUser = Users.findById(cachedUserId) || null;
+  }
+  if (!cadUser) {
+    const onDutyNameIndex = buildOnDutyNameIndex(Units.list());
+    const byName = resolveCadUserByName(playerName, onDutyNameIndex)
+      || resolveCadUserByName(platformName, onDutyNameIndex);
+    if (byName) cadUser = byName;
+  }
+  if (cadUser) {
+    if (ids.steamId) liveLinkUserCache.set(ids.steamId, cadUser.id);
+    if (ids.discordId) liveLinkUserCache.set(`discord:${ids.discordId}`, cadUser.id);
+    if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
+  }
+
+  const reason = String(payload.reason || '').trim();
+  if (!reason) {
+    return res.status(400).json({ error: 'reason is required' });
+  }
+
+  const linkedCallIdRaw = Number(payload.call_id || payload.callId || 0);
+  const linkedCallId = Number.isInteger(linkedCallIdRaw) && linkedCallIdRaw > 0 ? linkedCallIdRaw : null;
+  const departmentId = chooseTrafficStopDepartmentId(cadUser, payload.department_id || payload.departmentId, linkedCallId);
+  if (!departmentId) {
+    return res.status(400).json({ error: 'No active law enforcement department available to create traffic stop' });
+  }
+
+  const activeUnit = cadUser ? Units.findByUserId(cadUser.id) : null;
+  const useUnitId = activeUnit && Number(activeUnit.department_id) === Number(departmentId) ? Number(activeUnit.id) : null;
+  const location = formatCallLocation(payload);
+  const postal = String(payload?.postal || extractPostalFromLocation(location) || '').trim();
+  const position = parseHeartbeatPosition(payload);
+  const plate = String(
+    payload.plate || payload.license_plate || payload.licensePlate || ''
+  ).trim();
+
+  const stop = TrafficStops.create({
+    department_id: departmentId,
+    call_id: linkedCallId,
+    unit_id: useUnitId,
+    created_by_user_id: cadUser?.id || null,
+    location,
+    postal,
+    plate,
+    reason,
+    outcome: payload.outcome,
+    notes: payload.notes,
+    position_x: Number.isFinite(Number(position.x)) ? Number(position.x) : null,
+    position_y: Number.isFinite(Number(position.y)) ? Number(position.y) : null,
+    position_z: Number.isFinite(Number(position.z)) ? Number(position.z) : null,
+  });
+
+  audit(cadUser?.id || null, 'fivem_traffic_stop_created', {
+    traffic_stop_id: stop.id,
+    department_id: departmentId,
+    plate: stop.plate || '',
+    reason: stop.reason || '',
+    outcome: stop.outcome || '',
+    call_id: stop.call_id || null,
+    source: 'fivem_command',
+  });
+  bus.emit('trafficstop:create', { departmentId, stop });
+
+  res.status(201).json({
+    ok: true,
+    stop,
   });
 });
 

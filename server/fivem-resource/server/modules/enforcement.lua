@@ -8,6 +8,141 @@ if Config.EnableDocumentCommands == true then
   end, false)
 end
 
+local TRAFFIC_STOP_BRIDGE_BACKOFF_SCOPE = 'traffic_stops'
+
+local function parseTrafficStopCommandFields(src, args)
+  local s = tonumber(src) or 0
+  local raw = trim(table.concat(args or {}, ' '))
+  if raw == '' then
+    return nil, 'usage'
+  end
+
+  local pos = PlayerPositions[s]
+  local currentPlate = trim(pos and pos.license_plate or '')
+  local plate = ''
+  local reason = ''
+  local outcome = ''
+  local notes = ''
+
+  if raw:find('|', 1, true) then
+    local parts = splitByPipe(raw)
+    plate = trim(parts[1] or '')
+    reason = trim(parts[2] or '')
+    outcome = trim(parts[3] or '')
+    notes = trim(parts[4] or '')
+  else
+    local count = type(args) == 'table' and #args or 0
+    if count >= 2 then
+      plate = trim(args[1] or '')
+      reason = trim(table.concat(args, ' ', 2))
+    elseif count == 1 and currentPlate ~= '' then
+      plate = currentPlate
+      reason = raw
+    end
+  end
+
+  if plate == '' and currentPlate ~= '' then
+    plate = currentPlate
+  end
+
+  if reason == '' then
+    return nil, 'usage'
+  end
+
+  return {
+    plate = plate,
+    reason = reason,
+    outcome = outcome,
+    notes = notes,
+  }, nil
+end
+
+local function submitTrafficStopCommand(src, args, commandLabel)
+  local s = tonumber(src) or 0
+  if s <= 0 then return end
+
+  local fields, parseErr = parseTrafficStopCommandFields(s, args or {})
+  if not fields then
+    if parseErr == 'usage' then
+      notifyPlayer(s, ('Usage: /%s <plate> | <reason> | <outcome(optional)> | <notes(optional)>'):format(trim(commandLabel or 'trafficstop')))
+      notifyPlayer(s, ('Tip: while in a vehicle, /%s <reason> will use your current plate.'):format(trim(commandLabel or 'trafficstop')))
+    else
+      notifyPlayer(s, 'Failed to parse traffic stop command.')
+    end
+    return
+  end
+
+  if isBridgeBackoffActive(TRAFFIC_STOP_BRIDGE_BACKOFF_SCOPE) then
+    notifyPlayer(s, 'CAD bridge is temporarily rate-limited for traffic stops. Try again in a few seconds.')
+    return
+  end
+
+  local characterName = trim(getCharacterDisplayName(s) or '')
+  local platformName = trim(GetPlayerName(s) or '')
+  local pos = PlayerPositions[s]
+  local payload = {
+    source = s,
+    identifiers = GetPlayerIdentifiers(s),
+    player_name = characterName ~= '' and characterName or platformName,
+    platform_name = platformName,
+    character_name = characterName,
+    source_type = 'trafficstop_command',
+    plate = fields.plate,
+    reason = fields.reason,
+    outcome = fields.outcome,
+    notes = fields.notes,
+  }
+
+  if type(pos) == 'table' then
+    payload.position = {
+      x = tonumber(pos.x) or 0.0,
+      y = tonumber(pos.y) or 0.0,
+      z = tonumber(pos.z) or 0.0,
+    }
+    payload.heading = tonumber(pos.heading) or 0.0
+    payload.speed = tonumber(pos.speed) or 0.0
+    payload.street = tostring(pos.street or '')
+    payload.crossing = tostring(pos.crossing or '')
+    payload.postal = tostring(pos.postal or '')
+    payload.location = tostring(pos.location or '')
+    if trim(payload.plate) == '' then
+      payload.plate = trim(pos.license_plate or '')
+    end
+  end
+
+  request('POST', '/api/integration/fivem/traffic-stops', payload, function(status, body, responseHeaders)
+    if status >= 200 and status < 300 then
+      local stopId = '?'
+      local okDecode, parsed = pcall(json.decode, body or '{}')
+      if okDecode and type(parsed) == 'table' and type(parsed.stop) == 'table' and parsed.stop.id then
+        stopId = tostring(parsed.stop.id)
+      end
+      local plateSuffix = trim(payload.plate) ~= '' and (' | Plate ' .. trim(payload.plate)) or ''
+      notifyPlayer(s, ('Traffic stop logged in CAD (#%s)%s'):format(stopId, plateSuffix))
+      return
+    end
+
+    if status == 429 then
+      setBridgeBackoff(TRAFFIC_STOP_BRIDGE_BACKOFF_SCOPE, responseHeaders, 15000, 'traffic stop command')
+    end
+
+    local errMessage = ('Failed to log traffic stop (HTTP %s)'):format(tostring(status))
+    local okDecode, parsed = pcall(json.decode, body or '{}')
+    if okDecode and type(parsed) == 'table' and parsed.error then
+      errMessage = errMessage .. ': ' .. tostring(parsed.error)
+    end
+    notifyPlayer(s, errMessage)
+  end)
+end
+
+RegisterCommand('trafficstop', function(src, args)
+  submitTrafficStopCommand(src, args, 'trafficstop')
+end, false)
+
+RegisterCommand('ts', function(src, args)
+  submitTrafficStopCommand(src, args, 'ts')
+end, false)
+
 local heartbeatInFlight = false
 local heartbeatInFlightSinceMs = 0
 local pollFineJobs = nil
