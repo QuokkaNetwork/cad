@@ -527,7 +527,9 @@ async function sendDiscordWebhookWithImage(webhookUrl, payload, pngBuffer) {
 
   const form = new FormData();
   form.append('payload_json', JSON.stringify(payload));
-  form.append('files[0]', new Blob([pngBuffer], { type: 'image/png' }), 'wanted-poster.png');
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const attachmentFileName = `wanted-poster-${uniqueSuffix}.png`;
+  form.append('files[0]', new Blob([pngBuffer], { type: 'image/png' }), attachmentFileName);
 
   const res = await fetch(executeUrl, {
     method: 'POST',
