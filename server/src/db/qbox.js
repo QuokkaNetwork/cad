@@ -560,8 +560,24 @@ function parseJobContainer(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const parsed = parseMaybeJson(trimmed);
-  if (parsed && typeof parsed === 'object') return parsed;
+  // Support both QBox-style JSON blobs (players.job) and plain string job columns
+  // used by multi-job tables (e.g. g_multijob.job = "fire").
+  const looksJson = (
+    (trimmed.startsWith('{') && trimmed.endsWith('}'))
+    || (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    || (trimmed.startsWith('"') && trimmed.endsWith('"'))
+  );
+  if (looksJson) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') return parsed;
+      if (typeof parsed === 'string' && parsed.trim()) {
+        return { name: parsed.trim() };
+      }
+    } catch {
+      // Fall through to plain-string parsing below.
+    }
+  }
   return { name: trimmed };
 }
 
