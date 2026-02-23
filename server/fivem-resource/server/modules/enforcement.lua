@@ -925,6 +925,11 @@ local function applyRouteJob(job)
     call_title = tostring(job.call_title or ''),
     location = tostring(job.location or ''),
     postal = tostring(job.postal or ''),
+    route_type = tostring(job.route_type or ''),
+    route_label = tostring(job.route_label or ''),
+    suppress_notify = job.suppress_notify == true or tonumber(job.suppress_notify or 0) == 1,
+    primary_unit_id = tonumber(job.primary_unit_id) or 0,
+    primary_callsign = tostring(job.primary_callsign or ''),
   }
 
   if not clearWaypoint then

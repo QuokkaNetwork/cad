@@ -16,6 +16,12 @@ import Search from './pages/police/Search';
 import BOLOs from './pages/police/BOLOs';
 import Warrants from './pages/police/Warrants';
 import CallDetails from './pages/police/CallDetails';
+import Records from './pages/police/Records';
+import EvidenceManagement from './pages/police/EvidenceManagement';
+import EmsTreatmentLog from './pages/police/EmsTreatmentLog';
+import EmsTransportTracker from './pages/police/EmsTransportTracker';
+import FireApparatus from './pages/police/FireApparatus';
+import FirePrePlans from './pages/police/FirePrePlans';
 import AdminUsers from './pages/admin/Users';
 import AdminDepartments from './pages/admin/Departments';
 import AdminRoleMappings from './pages/admin/RoleMappings';
@@ -51,8 +57,14 @@ export default function App() {
             <Route path="/dispatch" element={<RequireDepartment><Dispatch /></RequireDepartment>} />
             <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
             <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
+            <Route path="/records" element={<RequireDepartment><Records /></RequireDepartment>} />
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
             <Route path="/warrants" element={<RequireDepartment><Warrants /></RequireDepartment>} />
+            <Route path="/evidence" element={<RequireDepartment><EvidenceManagement /></RequireDepartment>} />
+            <Route path="/ems-treatment" element={<RequireDepartment><EmsTreatmentLog /></RequireDepartment>} />
+            <Route path="/ems-transport" element={<RequireDepartment><EmsTransportTracker /></RequireDepartment>} />
+            <Route path="/fire-apparatus" element={<RequireDepartment><FireApparatus /></RequireDepartment>} />
+            <Route path="/fire-preplans" element={<RequireDepartment><FirePrePlans /></RequireDepartment>} />
             <Route path="/call-details" element={<RequireDepartment><CallDetails /></RequireDepartment>} />
 
             {/* Admin */}

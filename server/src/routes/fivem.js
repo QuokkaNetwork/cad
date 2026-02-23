@@ -62,6 +62,10 @@ const CLOSEST_CALL_PROMPT_RESEND_INTERVAL_MS = Math.max(
   5_000,
   Number.parseInt(process.env.FIVEM_CLOSEST_CALL_PROMPT_RESEND_INTERVAL_MS || '20000', 10) || 20_000
 );
+const PURSUIT_ROUTE_REFRESH_INTERVAL_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.FIVEM_PURSUIT_ROUTE_REFRESH_INTERVAL_MS || '5000', 10) || 5_000
+);
 let lastClosestCallPromptRefreshAtMs = 0;
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
 const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
@@ -90,6 +94,7 @@ const BRIDGE_LICENSE_LOG_FILE = String(
 let bridgeLicenseLogStream = null;
 let bridgeLicenseLogInitFailed = false;
 const DEPARTMENT_LAYOUT_TYPES = new Set(['law_enforcement', 'paramedics', 'fire']);
+const activePursuitFollowerUnitIdsByCall = new Map();
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
@@ -1125,6 +1130,7 @@ function resolveRouteTargetForUnit(unit) {
     player_name: String(activeLink?.player_name || '').trim(),
     target_position_x: Number(activeLink?.position_x),
     target_position_y: Number(activeLink?.position_y),
+    target_position_z: Number(activeLink?.position_z),
   };
 }
 
@@ -1150,6 +1156,7 @@ function enrichRouteJobWithTarget(baseJob, target) {
     player_name: String(resolved.player_name || '').trim(),
     target_position_x: Number(resolved.target_position_x),
     target_position_y: Number(resolved.target_position_y),
+    target_position_z: Number(resolved.target_position_z),
   };
 }
 
@@ -1212,6 +1219,132 @@ function queueRouteClearJob(call, unit, fallbackUnitId = 0) {
     created_at: Date.now(),
     updated_at: Date.now(),
   }, routeTarget));
+}
+
+function getPursuitRouteJobId(unitId, callId, action = 'pursuit') {
+  return `${Number(unitId || 0)}:${Number(callId || 0)}:${String(action || 'pursuit').toLowerCase()}`;
+}
+
+function queuePursuitFollowRouteJob(call, followerUnit, primaryUnit, primaryTarget) {
+  const callId = Number(call?.id || 0);
+  const followerUnitId = Number(followerUnit?.id || 0);
+  const primaryUnitId = Number(primaryUnit?.id || 0);
+  if (!callId || !followerUnitId || !primaryUnitId) return;
+  if (followerUnitId === primaryUnitId) return;
+
+  const routeTarget = resolveRouteTargetForUnit(followerUnit);
+  if (!hasRouteTarget(routeTarget)) return;
+
+  const x = Number(primaryTarget?.target_position_x);
+  const y = Number(primaryTarget?.target_position_y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+  clearRouteJobsForAssignment(callId, followerUnitId);
+  const routeJobId = getPursuitRouteJobId(followerUnitId, callId, 'pursuit');
+  pendingRouteJobs.set(routeJobId, enrichRouteJobWithTarget({
+    id: routeJobId,
+    unit_id: followerUnitId,
+    call_id: callId,
+    action: 'pursuit',
+    clear_waypoint: 0,
+    call_title: String(call?.title || 'Pursuit'),
+    location: `Follow primary unit ${String(primaryUnit?.callsign || '').trim() || `#${primaryUnitId}`}`,
+    postal: '',
+    position_x: x,
+    position_y: y,
+    position_z: Number.isFinite(Number(primaryTarget?.target_position_z))
+      ? Number(primaryTarget.target_position_z)
+      : null,
+    route_type: 'pursuit_follow',
+    route_label: `Pursuit lead ${String(primaryUnit?.callsign || '').trim() || `#${primaryUnitId}`}`,
+    suppress_notify: 1,
+    primary_unit_id: primaryUnitId,
+    primary_callsign: String(primaryUnit?.callsign || '').trim(),
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  }, routeTarget));
+}
+
+function queuePursuitRouteClearJob(call, followerUnit) {
+  const callId = Number(call?.id || 0);
+  const followerUnitId = Number(followerUnit?.id || 0);
+  if (!callId || !followerUnitId) return;
+
+  const routeTarget = resolveRouteTargetForUnit(followerUnit);
+  if (!hasRouteTarget(routeTarget)) return;
+
+  clearRouteJobsForAssignment(callId, followerUnitId);
+  const routeJobId = getPursuitRouteJobId(followerUnitId, callId, 'pursuit_clear');
+  pendingRouteJobs.set(routeJobId, enrichRouteJobWithTarget({
+    id: routeJobId,
+    unit_id: followerUnitId,
+    call_id: callId,
+    action: 'clear',
+    clear_waypoint: 1,
+    call_title: String(call?.title || 'Pursuit'),
+    location: '',
+    postal: '',
+    position_x: null,
+    position_y: null,
+    position_z: null,
+    route_type: 'pursuit_follow',
+    route_label: 'Pursuit route',
+    suppress_notify: 1,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  }, routeTarget));
+}
+
+function refreshPursuitFollowerRoutes() {
+  const activeDepartments = Departments.listActive().filter((dept) => !dept.is_dispatch);
+  const departmentIds = activeDepartments
+    .map((dept) => Number(dept.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const activeCalls = departmentIds.length > 0 ? Calls.listByDepartmentIds(departmentIds, false) : [];
+  const nextFollowerUnitIdsByCall = new Map();
+
+  for (const call of activeCalls) {
+    if (normalizeCallStatus(call?.status) === 'closed') continue;
+    const pursuitEnabled = Number(call?.pursuit_mode_enabled || 0) === 1;
+    if (!pursuitEnabled) continue;
+
+    const primaryUnitId = Number(call?.pursuit_primary_unit_id || 0);
+    if (!primaryUnitId) continue;
+
+    const assignedUnits = Array.isArray(call?.assigned_units) ? call.assigned_units : [];
+    const primaryUnit = assignedUnits.find((unit) => Number(unit?.id || 0) === primaryUnitId) || null;
+    if (!primaryUnit) continue;
+
+    const followerUnits = assignedUnits.filter((unit) => {
+      const unitId = Number(unit?.id || 0);
+      return unitId > 0 && unitId !== primaryUnitId;
+    });
+    nextFollowerUnitIdsByCall.set(Number(call.id), new Set(followerUnits.map((unit) => Number(unit.id))));
+
+    const primaryTarget = resolveRouteTargetForUnit(primaryUnit);
+    const hasPrimaryCoords = Number.isFinite(Number(primaryTarget?.target_position_x))
+      && Number.isFinite(Number(primaryTarget?.target_position_y));
+    if (!hasPrimaryCoords) continue;
+
+    for (const followerUnit of followerUnits) {
+      queuePursuitFollowRouteJob(call, followerUnit, primaryUnit, primaryTarget);
+    }
+  }
+
+  for (const [callId, previousFollowerIds] of activePursuitFollowerUnitIdsByCall.entries()) {
+    const nextFollowerIds = nextFollowerUnitIdsByCall.get(callId) || new Set();
+    for (const previousFollowerId of previousFollowerIds.values()) {
+      if (nextFollowerIds.has(previousFollowerId)) continue;
+      const unit = Units.findById(previousFollowerId);
+      if (!unit) continue;
+      queuePursuitRouteClearJob({ id: callId, title: 'Pursuit' }, unit);
+    }
+  }
+
+  activePursuitFollowerUnitIdsByCall.clear();
+  for (const [callId, followerIds] of nextFollowerUnitIdsByCall.entries()) {
+    activePursuitFollowerUnitIdsByCall.set(callId, followerIds);
+  }
 }
 
 function clearRouteJobsForUnit(unitId) {
@@ -1907,6 +2040,22 @@ bus.on('unit:status_available', ({ unit, call }) => {
 
   refreshClosestPromptForCall(resolvedCall, { force: true });
 });
+
+bus.on('pursuit:update', () => {
+  try {
+    refreshPursuitFollowerRoutes();
+  } catch (err) {
+    console.warn('[FiveMBridge] Could not refresh pursuit follower routes after pursuit update:', err?.message || err);
+  }
+});
+
+setInterval(() => {
+  try {
+    refreshPursuitFollowerRoutes();
+  } catch (err) {
+    console.warn('[FiveMBridge] Pursuit route refresh failed:', err?.message || err);
+  }
+}, PURSUIT_ROUTE_REFRESH_INTERVAL_MS);
 
 // Heartbeat from FiveM resource with online players + position.
 router.post('/heartbeat', requireBridgeAuth, (req, res) => {

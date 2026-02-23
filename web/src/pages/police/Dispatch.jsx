@@ -8,6 +8,8 @@ import UnitCard from '../../components/UnitCard';
 import Modal from '../../components/Modal';
 import StatusBadge from '../../components/StatusBadge';
 import { getHighContrastBadgeStyle } from '../../utils/color';
+import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
+import { formatDateTimeAU } from '../../utils/dateTime';
 
 const UNIT_STATUSES = ['available', 'busy', 'enroute', 'on-scene', 'unavailable'];
 const DISPATCH_MACROS = [
@@ -16,6 +18,15 @@ const DISPATCH_MACROS = [
   'Domestic disturbance in progress.',
   'Suspicious person / vehicle reported.',
   'Caller disconnected, callback pending.',
+];
+const PURSUIT_OUTCOME_OPTIONS = [
+  { value: 'arrest', label: 'Arrest / Custody' },
+  { value: 'vehicle_stopped', label: 'Vehicle Stopped' },
+  { value: 'suspect_fled', label: 'Suspect Fled On Foot' },
+  { value: 'lost_visual', label: 'Lost Visual / Terminated' },
+  { value: 'cancelled_supervisor', label: 'Cancelled By Supervisor' },
+  { value: 'cancelled_safety', label: 'Cancelled For Safety' },
+  { value: 'other', label: 'Other' },
 ];
 
 function isEmergency000Call(call) {
@@ -38,6 +49,14 @@ function parseSqliteUtc(value) {
 
 function normalizeUnitStatus(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function normalizePursuitEnabled(value) {
+  if (value === true) return true;
+  const num = Number(value);
+  if (Number.isFinite(num)) return num !== 0;
+  const text = String(value || '').trim().toLowerCase();
+  return ['true', 'yes', 'on'].includes(text);
 }
 
 function formatUnitStatusLabel(value) {
@@ -137,6 +156,34 @@ function formatElapsedSinceSqlite(value, nowMs) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatPursuitOutcomeLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const option = PURSUIT_OUTCOME_OPTIONS.find((entry) => entry.value === normalized);
+  if (option) return option.label;
+  return normalized
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || 'Outcome';
+}
+
+function buildPursuitOutcomeForm(call) {
+  const assignedUnits = Array.isArray(call?.assigned_units) ? call.assigned_units : [];
+  const involvedUnitIds = assignedUnits
+    .map((unit) => Number(unit?.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const primaryUnitId = Number(call?.pursuit_primary_unit_id || 0);
+
+  return {
+    outcome_code: 'arrest',
+    termination_location: String(call?.location || '').trim(),
+    summary: '',
+    primary_unit_id: Number.isInteger(primaryUnitId) && primaryUnitId > 0 ? primaryUnitId : (involvedUnitIds[0] || ''),
+    involved_unit_ids: involvedUnitIds,
+    disable_pursuit_mode: String(call?.status || '').trim().toLowerCase() !== 'closed',
+  };
+}
+
 export default function Dispatch() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -159,9 +206,9 @@ export default function Dispatch() {
     job_code: '',
     department_id: '',
     requested_department_ids: [],
+    pursuit_mode_enabled: false,
   });
   const [trafficStopForm, setTrafficStopForm] = useState({
-    department_id: '',
     call_id: '',
     location: '',
     plate: '',
@@ -170,10 +217,19 @@ export default function Dispatch() {
     notes: '',
     link_selected_call: true,
   });
+  const [pursuitOutcomes, setPursuitOutcomes] = useState([]);
+  const [pursuitOutcomesLoading, setPursuitOutcomesLoading] = useState(false);
+  const [showPursuitOutcomeForm, setShowPursuitOutcomeForm] = useState(false);
+  const [pursuitOutcomeSaving, setPursuitOutcomeSaving] = useState(false);
+  const [pursuitOutcomeForm, setPursuitOutcomeForm] = useState(() => buildPursuitOutcomeForm(null));
   const lastToneRef = useRef(0);
+  const selectedCallIdRef = useRef(0);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
+  const layoutType = getDepartmentLayoutType(activeDepartment);
+  const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
+  const canUseTrafficStopLogger = isDispatch || isLaw;
 
   const fetchData = useCallback(async () => {
     if (!deptId) return;
@@ -267,6 +323,15 @@ export default function Dispatch() {
     'unit:offline': () => fetchData(),
     'unit:update': () => fetchData(),
     'trafficstop:create': () => fetchData(),
+    'pursuit:update': () => fetchData(),
+    'pursuit:outcome_create': (payload) => {
+      fetchData();
+      const selectedCallId = Number(selectedCall?.id || 0);
+      const payloadCallId = Number(payload?.callId || payload?.call_id || payload?.call?.id || 0);
+      if (selectedCallId > 0 && payloadCallId === selectedCallId) {
+        fetchPursuitOutcomesForCall(selectedCallId, { silent: true });
+      }
+    },
   });
 
   // Group units by department for dispatch view
@@ -304,6 +369,7 @@ export default function Dispatch() {
         name: String(dept?.name || ''),
         short_name: String(dept?.short_name || ''),
         color: String(dept?.color || '#64748b'),
+        layout_type: String(dept?.layout_type || ''),
       });
     }
 
@@ -315,6 +381,7 @@ export default function Dispatch() {
         name: String(unit?.department_name || ''),
         short_name: String(unit?.department_short_name || ''),
         color: String(unit?.department_color || '#64748b'),
+        layout_type: String(unit?.department_layout_type || ''),
       });
     }
 
@@ -324,10 +391,17 @@ export default function Dispatch() {
   async function createCall(e) {
     e.preventDefault();
     try {
-      const targetDeptId = isDispatch && form.department_id
-        ? parseInt(form.department_id, 10)
-        : deptId;
       const requestedDeptIds = normalizeDepartmentIds(form.requested_department_ids);
+      let targetDeptId;
+      if (isDispatch) {
+        if (requestedDeptIds.length === 0) {
+          alert('Select at least one department in Departments Required.');
+          return;
+        }
+        targetDeptId = requestedDeptIds[0];
+      } else {
+        targetDeptId = deptId;
+      }
       const payloadRequestedIds = requestedDeptIds.length > 0
         ? requestedDeptIds
         : (Number.isInteger(Number(targetDeptId)) ? [Number(targetDeptId)] : []);
@@ -336,6 +410,7 @@ export default function Dispatch() {
         ...form,
         department_id: targetDeptId,
         requested_department_ids: payloadRequestedIds,
+        pursuit_mode_enabled: !!form.pursuit_mode_enabled,
       });
       setShowNewCall(false);
       setForm({
@@ -346,6 +421,7 @@ export default function Dispatch() {
         job_code: '',
         department_id: '',
         requested_department_ids: [],
+        pursuit_mode_enabled: false,
       });
       fetchData();
     } catch (err) {
@@ -364,9 +440,7 @@ export default function Dispatch() {
   }
 
   function openTrafficStopModal() {
-    const selectedTargetDeptId = Number(selectedCall?.department_id);
     setTrafficStopForm({
-      department_id: isDispatch && Number.isInteger(selectedTargetDeptId) ? String(selectedTargetDeptId) : '',
       call_id: selectedCall?.id ? String(selectedCall.id) : '',
       location: String(selectedCall?.location || '').trim(),
       plate: '',
@@ -382,15 +456,11 @@ export default function Dispatch() {
     e.preventDefault();
     try {
       setCreatingTrafficStop(true);
-      const targetDeptId = isDispatch
-        ? Number(trafficStopForm.department_id || selectedCall?.department_id || '')
-        : Number(deptId);
       const linkSelected = !!trafficStopForm.link_selected_call && !!selectedCall?.id;
       const callId = linkSelected
         ? Number(selectedCall?.id)
         : Number(trafficStopForm.call_id || '');
       await api.post('/api/traffic-stops', {
-        department_id: targetDeptId,
         call_id: Number.isInteger(callId) && callId > 0 ? callId : null,
         location: trafficStopForm.location,
         plate: trafficStopForm.plate,
@@ -424,6 +494,96 @@ export default function Dispatch() {
     await updateCall(selectedCall.id, {
       requested_department_ids: normalizeDepartmentIds(nextRequestedDepartmentIds),
     });
+  }
+
+  async function updateSelectedCallPursuit(updates = {}) {
+    if (!selectedCall?.id) return;
+    try {
+      const updated = await api.patch(`/api/calls/${selectedCall.id}/pursuit`, updates);
+      setSelectedCall(updated);
+      fetchData();
+    } catch (err) {
+      alert('Failed to update pursuit mode: ' + err.message);
+    }
+  }
+
+  async function fetchPursuitOutcomesForCall(callId, { silent = false } = {}) {
+    const parsedCallId = Number(callId || 0);
+    if (!Number.isInteger(parsedCallId) || parsedCallId <= 0) {
+      setPursuitOutcomes([]);
+      return;
+    }
+
+    if (!silent) setPursuitOutcomesLoading(true);
+    try {
+      const data = await api.get(`/api/calls/${parsedCallId}/pursuit-outcomes?limit=20`);
+      if (Number(selectedCallIdRef.current || 0) !== parsedCallId) return;
+      setPursuitOutcomes(Array.isArray(data) ? data : []);
+    } catch (err) {
+      if (Number(selectedCallIdRef.current || 0) !== parsedCallId) return;
+      console.error('Failed to load pursuit outcomes:', err);
+      setPursuitOutcomes([]);
+    } finally {
+      if (!silent && Number(selectedCallIdRef.current || 0) === parsedCallId) {
+        setPursuitOutcomesLoading(false);
+      }
+    }
+  }
+
+  function openPursuitOutcomeLogForm() {
+    setPursuitOutcomeForm(buildPursuitOutcomeForm(selectedCall));
+    setShowPursuitOutcomeForm(true);
+  }
+
+  function togglePursuitOutcomeInvolvedUnit(unitId) {
+    const parsedUnitId = Number(unitId);
+    if (!Number.isInteger(parsedUnitId) || parsedUnitId <= 0) return;
+    setPursuitOutcomeForm((current) => {
+      const currentIds = Array.isArray(current.involved_unit_ids) ? current.involved_unit_ids : [];
+      const nextIds = currentIds.includes(parsedUnitId)
+        ? currentIds.filter((id) => Number(id) !== parsedUnitId)
+        : [...currentIds, parsedUnitId];
+      const primaryUnitId = Number(current.primary_unit_id || 0);
+      return {
+        ...current,
+        involved_unit_ids: nextIds,
+        primary_unit_id: nextIds.includes(primaryUnitId) ? primaryUnitId : '',
+      };
+    });
+  }
+
+  async function createPursuitOutcome(e) {
+    e.preventDefault();
+    if (!selectedCall?.id) return;
+    try {
+      setPursuitOutcomeSaving(true);
+      const payload = {
+        outcome_code: pursuitOutcomeForm.outcome_code,
+        termination_location: pursuitOutcomeForm.termination_location,
+        summary: pursuitOutcomeForm.summary,
+        primary_unit_id: Number(pursuitOutcomeForm.primary_unit_id || 0) || null,
+        involved_unit_ids: Array.isArray(pursuitOutcomeForm.involved_unit_ids)
+          ? pursuitOutcomeForm.involved_unit_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+          : [],
+        disable_pursuit_mode: !!pursuitOutcomeForm.disable_pursuit_mode,
+      };
+      const result = await api.post(`/api/calls/${selectedCall.id}/pursuit-outcomes`, payload);
+
+      if (result?.call && Number(result.call.id || 0) === Number(selectedCall.id)) {
+        setSelectedCall(result.call);
+      }
+      if (result?.outcome) {
+        setPursuitOutcomes((current) => [result.outcome, ...(Array.isArray(current) ? current : [])]);
+      } else {
+        await fetchPursuitOutcomesForCall(selectedCall.id, { silent: true });
+      }
+      setShowPursuitOutcomeForm(false);
+      fetchData();
+    } catch (err) {
+      alert('Failed to log pursuit outcome: ' + err.message);
+    } finally {
+      setPursuitOutcomeSaving(false);
+    }
   }
 
   async function assignUnit(callId, unitId) {
@@ -476,7 +636,11 @@ export default function Dispatch() {
   );
 
   const displayedCalls = useMemo(
-    () => (pursuitModeOnly ? activeCalls.filter((call) => isPursuitCall(call)) : activeCalls),
+    () => (
+      pursuitModeOnly
+        ? activeCalls.filter((call) => isPursuitCall(call) || normalizePursuitEnabled(call?.pursuit_mode_enabled))
+        : activeCalls
+    ),
     [activeCalls, pursuitModeOnly]
   );
 
@@ -492,6 +656,22 @@ export default function Dispatch() {
     }
   }, [calls, selectedCall?.id]);
 
+  useEffect(() => {
+    const callId = Number(selectedCall?.id || 0);
+    selectedCallIdRef.current = callId;
+    setShowPursuitOutcomeForm(false);
+    setPursuitOutcomeForm(buildPursuitOutcomeForm(selectedCall));
+
+    if (!callId) {
+      setPursuitOutcomes([]);
+      setPursuitOutcomesLoading(false);
+      return;
+    }
+
+    fetchPursuitOutcomesForCall(callId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCall?.id]);
+
   const callPositionForSelectedCall = useMemo(() => getCallPosition(selectedCall), [selectedCall]);
 
   const requestedDepartmentIdsForSelectedCall = useMemo(() => {
@@ -506,6 +686,28 @@ export default function Dispatch() {
     () => parseEmergencyCallDescription(selectedCall?.description),
     [selectedCall?.description]
   );
+
+  const pursuitEnabledForSelectedCall = useMemo(
+    () => normalizePursuitEnabled(selectedCall?.pursuit_mode_enabled),
+    [selectedCall?.pursuit_mode_enabled]
+  );
+  const pursuitPrimaryUnitIdForSelectedCall = useMemo(
+    () => {
+      const parsed = Number(selectedCall?.pursuit_primary_unit_id || 0);
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+    },
+    [selectedCall?.pursuit_primary_unit_id]
+  );
+  const hasPursuitOutcomeHistoryForSelectedCall = useMemo(
+    () => Array.isArray(pursuitOutcomes) && pursuitOutcomes.length > 0,
+    [pursuitOutcomes]
+  );
+  const selectedCallIsPolice = useMemo(() => {
+    if (!selectedCall) return false;
+    if (!isDispatch) return isLaw;
+    const deptMeta = departmentsById.get(Number(selectedCall.department_id));
+    return String(deptMeta?.layout_type || '').trim().toLowerCase() === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
+  }, [selectedCall, isDispatch, isLaw, departmentsById]);
 
   const attachableUnitsForSelectedCall = useMemo(() => {
     if (!selectedCall) return [];
@@ -607,12 +809,14 @@ export default function Dispatch() {
           >
             {pursuitModeOnly ? 'Exit Pursuit Mode' : 'Pursuit Mode'}
           </button>
-          <button
-            onClick={openTrafficStopModal}
-            className="px-3 py-2 bg-blue-500/15 hover:bg-blue-500/20 text-blue-300 border border-blue-500/35 rounded-lg text-sm font-medium transition-colors"
-          >
-            + Traffic Stop
-          </button>
+          {canUseTrafficStopLogger && (
+            <button
+              onClick={openTrafficStopModal}
+              className="px-3 py-2 bg-blue-500/15 hover:bg-blue-500/20 text-blue-300 border border-blue-500/35 rounded-lg text-sm font-medium transition-colors"
+            >
+              + Traffic Stop
+            </button>
+          )}
           <button
             onClick={() => setShowNewCall(true)}
             className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
@@ -705,6 +909,7 @@ export default function Dispatch() {
                   <p className="text-sm text-cad-muted py-4 text-center">No units on duty</p>
                 )}
               </div>
+              {canUseTrafficStopLogger && (
               <div className="mt-5">
                 <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-3">
                   Recent Traffic Stops ({trafficStops.length})
@@ -726,6 +931,7 @@ export default function Dispatch() {
                   )}
                 </div>
               </div>
+              )}
             </>
           )}
         </div>
@@ -734,36 +940,9 @@ export default function Dispatch() {
       {/* New Call Modal */}
       <Modal open={showNewCall} onClose={() => setShowNewCall(false)} title="New Dispatch Call">
         <form onSubmit={createCall} className="space-y-3">
-          {isDispatch && visibleDepartments.length > 0 && (
-            <div>
-              <label className="block text-sm text-cad-muted mb-1">Target Department *</label>
-              <select
-                required
-                value={form.department_id}
-                onChange={e => setForm((current) => {
-                  const nextDeptId = String(e.target.value || '');
-                  const normalizedRequested = normalizeDepartmentIds(current.requested_department_ids);
-                  const nextRequested = normalizedRequested.length > 0
-                    ? normalizedRequested
-                    : (nextDeptId ? [Number(nextDeptId)] : []);
-                  return {
-                    ...current,
-                    department_id: nextDeptId,
-                    requested_department_ids: nextRequested,
-                  };
-                })}
-                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-              >
-                <option value="">Select department...</option>
-                {selectableDepartments.map(d => (
-                  <option key={d.id} value={d.id}>{d.name} ({d.short_name})</option>
-                ))}
-              </select>
-            </div>
-          )}
           {isDispatch && selectableDepartments.length > 0 && (
             <div>
-              <label className="block text-sm text-cad-muted mb-2">Departments Required</label>
+              <label className="block text-sm text-cad-muted mb-2">Departments Required *</label>
               <div className="flex flex-wrap gap-2">
                 {selectableDepartments.map((department) => {
                   const selected = normalizeDepartmentIds(form.requested_department_ids).includes(Number(department.id));
@@ -790,7 +969,9 @@ export default function Dispatch() {
                   );
                 })}
               </div>
-              <p className="text-[11px] text-cad-muted mt-2">Select one or more operational departments. Dispatch is excluded.</p>
+              <p className="text-[11px] text-cad-muted mt-2">
+                Select one or more operational departments. The first selected department becomes the call owner.
+              </p>
             </div>
           )}
           <div>
@@ -864,6 +1045,19 @@ export default function Dispatch() {
               </div>
             </div>
           </div>
+          <div className="rounded border border-cad-border bg-cad-surface px-3 py-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={!!form.pursuit_mode_enabled}
+                onChange={e => setForm(f => ({ ...f, pursuit_mode_enabled: e.target.checked }))}
+              />
+              Create as pursuit call
+            </label>
+            <p className="text-[11px] text-cad-muted mt-1">
+              Marks the call as a pursuit immediately. Set the primary unit after assignment.
+            </p>
+          </div>
           <div className="flex gap-2 pt-2">
             <button
               type="submit"
@@ -884,25 +1078,6 @@ export default function Dispatch() {
 
       <Modal open={showTrafficStop} onClose={() => setShowTrafficStop(false)} title="Traffic Stop Logger">
         <form onSubmit={createTrafficStop} className="space-y-3">
-          {isDispatch && selectableDepartments.length > 0 && (
-            <div>
-              <label className="block text-sm text-cad-muted mb-1">Department *</label>
-              <select
-                required
-                value={trafficStopForm.department_id}
-                onChange={(e) => setTrafficStopForm((current) => ({ ...current, department_id: e.target.value }))}
-                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
-              >
-                <option value="">Select department...</option>
-                {selectableDepartments.map((department) => (
-                  <option key={`traffic-stop-dept-${department.id}`} value={department.id}>
-                    {department.name} ({department.short_name})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
           {selectedCall?.id ? (
             <div className="rounded border border-cad-border bg-cad-surface p-3">
               <label className="flex items-center gap-2 text-sm">
@@ -997,7 +1172,15 @@ export default function Dispatch() {
       </Modal>
 
       {/* Call Detail Modal */}
-      <Modal open={!!selectedCall} onClose={() => setSelectedCall(null)} title={`Call #${selectedCall?.id}`} wide>
+      <Modal
+        open={!!selectedCall}
+        onClose={() => {
+          setSelectedCall(null);
+          setShowPursuitOutcomeForm(false);
+        }}
+        title={`Call #${selectedCall?.id}`}
+        wide
+      >
         {selectedCall && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1141,14 +1324,16 @@ export default function Dispatch() {
             {/* Status actions */}
             {selectedCall.status !== 'closed' && (
               <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    openTrafficStopModal();
-                  }}
-                  className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded hover:bg-blue-500/20 transition-colors"
-                >
-                  Log Traffic Stop
-                </button>
+                {canUseTrafficStopLogger && selectedCallIsPolice && (
+                  <button
+                    onClick={() => {
+                      openTrafficStopModal();
+                    }}
+                    className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded hover:bg-blue-500/20 transition-colors"
+                  >
+                    Log Traffic Stop
+                  </button>
+                )}
                 <button
                   onClick={() => updateCall(selectedCall.id, { status: 'closed' })}
                   className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
@@ -1159,19 +1344,97 @@ export default function Dispatch() {
             )}
 
             {/* Assigned units */}
-            {isPursuitCall(selectedCall) && (
+            {(isPursuitCall(selectedCall) || pursuitEnabledForSelectedCall || hasPursuitOutcomeHistoryForSelectedCall || showPursuitOutcomeForm) && (
               <div>
-                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Pursuit Tracking</h4>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Pursuit Tracking</h4>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (showPursuitOutcomeForm) {
+                          setShowPursuitOutcomeForm(false);
+                          return;
+                        }
+                        openPursuitOutcomeLogForm();
+                      }}
+                      className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                        showPursuitOutcomeForm
+                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/15'
+                          : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
+                      }`}
+                    >
+                      {showPursuitOutcomeForm ? 'Cancel Outcome Log' : 'Log Outcome'}
+                    </button>
+                    {selectedCall.status !== 'closed' && (
+                      <button
+                        type="button"
+                        onClick={() => updateSelectedCallPursuit({
+                          pursuit_mode_enabled: pursuitEnabledForSelectedCall ? 0 : 1,
+                          pursuit_primary_unit_id: pursuitEnabledForSelectedCall
+                            ? null
+                            : (pursuitPrimaryUnitIdForSelectedCall || Number(selectedCall?.assigned_units?.[0]?.id || 0) || null),
+                        })}
+                        className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                          pursuitEnabledForSelectedCall
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35 hover:bg-emerald-500/20'
+                            : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
+                        }`}
+                        disabled={!selectedCall.assigned_units?.length}
+                      >
+                        {pursuitEnabledForSelectedCall ? 'Disable GPS Follow' : 'Enable GPS Follow'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="bg-cad-surface border border-cad-border rounded px-3 py-2 mb-2">
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-end">
+                    <div>
+                      <label className="block text-[11px] text-cad-muted uppercase tracking-wider mb-1">Primary Unit</label>
+                      <select
+                        value={pursuitPrimaryUnitIdForSelectedCall || ''}
+                        onChange={(e) => updateSelectedCallPursuit({
+                          pursuit_mode_enabled: 1,
+                          pursuit_primary_unit_id: Number(e.target.value || 0) || null,
+                        })}
+                        disabled={selectedCall.status === 'closed' || !selectedCall.assigned_units?.length}
+                        className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                      >
+                        <option value="">Select primary unit...</option>
+                        {(selectedCall.assigned_units || []).map((unit) => (
+                          <option key={`pursuit-primary-${unit.id}`} value={unit.id}>
+                            {unit.callsign} {unit.user_name ? `- ${unit.user_name}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="text-xs text-cad-muted">
+                      Followers receive a GPS route to the primary unit every 5 seconds.
+                    </div>
+                  </div>
+                </div>
                 {selectedCall.assigned_units?.length > 0 ? (
                   <div className="space-y-1">
                     {selectedCall.assigned_units.map((unit) => {
                       const position = unitPositionsById[unit.id] || null;
+                      const isPrimary = Number(unit.id) === pursuitPrimaryUnitIdForSelectedCall;
+                      const receivesPursuitRoute = pursuitEnabledForSelectedCall && !isPrimary;
                       return (
                         <div key={`pursuit-track-${unit.id}`} className="bg-cad-surface border border-emerald-500/20 rounded px-3 py-2">
                           <div className="flex items-center justify-between gap-2">
                             <div className="text-sm">
                               <span className="font-mono" style={{ color: getUnitCallsignColor(unit) }}>{unit.callsign}</span>
                               <span className="text-cad-muted"> {unit.user_name || ''}</span>
+                              {isPrimary && (
+                                <span className="ml-2 text-[10px] px-2 py-0.5 rounded border border-emerald-500/35 bg-emerald-500/15 text-emerald-300 font-semibold">
+                                  PRIMARY
+                                </span>
+                              )}
+                              {receivesPursuitRoute && (
+                                <span className="ml-2 text-[10px] px-2 py-0.5 rounded border border-blue-500/35 bg-blue-500/10 text-blue-300">
+                                  GPS Follows Primary
+                                </span>
+                              )}
                             </div>
                             <StatusBadge status={unit.status} />
                           </div>
@@ -1180,6 +1443,11 @@ export default function Dispatch() {
                               ? `Live position: X ${position.x.toFixed(1)} | Y ${position.y.toFixed(1)}`
                               : 'Live position unavailable'}
                           </p>
+                          {pursuitEnabledForSelectedCall && receivesPursuitRoute ? (
+                            <p className="text-[11px] text-blue-300/90 mt-1">
+                              Route target updates every 5s while the primary remains online.
+                            </p>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -1187,6 +1455,197 @@ export default function Dispatch() {
                 ) : (
                   <p className="text-sm text-cad-muted">No units assigned to this pursuit yet.</p>
                 )}
+
+                {showPursuitOutcomeForm && (
+                  <form onSubmit={createPursuitOutcome} className="mt-3 bg-cad-surface border border-amber-500/20 rounded px-3 py-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h5 className="text-xs font-semibold text-cad-muted uppercase tracking-wider">Pursuit Outcome Log</h5>
+                      <span className="text-[11px] text-cad-muted">
+                        Captures a call-linked unit snapshot at time of logging
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] text-cad-muted uppercase tracking-wider mb-1">Outcome</label>
+                        <select
+                          value={pursuitOutcomeForm.outcome_code}
+                          onChange={(e) => setPursuitOutcomeForm((current) => ({ ...current, outcome_code: e.target.value }))}
+                          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                        >
+                          {PURSUIT_OUTCOME_OPTIONS.map((option) => (
+                            <option key={`${selectedCall.id}-po-${option.value}`} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-cad-muted uppercase tracking-wider mb-1">Termination Location</label>
+                        <input
+                          type="text"
+                          value={pursuitOutcomeForm.termination_location}
+                          onChange={(e) => setPursuitOutcomeForm((current) => ({ ...current, termination_location: e.target.value }))}
+                          placeholder="Where the pursuit ended / was terminated"
+                          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-cad-muted uppercase tracking-wider mb-1">Summary</label>
+                      <textarea
+                        value={pursuitOutcomeForm.summary}
+                        onChange={(e) => setPursuitOutcomeForm((current) => ({ ...current, summary: e.target.value }))}
+                        rows={3}
+                        placeholder="Short pursuit summary, disposition, vehicle stop details, custody status, etc."
+                        className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm resize-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+                      <div>
+                        <label className="block text-[11px] text-cad-muted uppercase tracking-wider mb-1">Primary Unit (log record)</label>
+                        <select
+                          value={pursuitOutcomeForm.primary_unit_id || ''}
+                          onChange={(e) => setPursuitOutcomeForm((current) => ({ ...current, primary_unit_id: Number(e.target.value || 0) || '' }))}
+                          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                        >
+                          <option value="">No primary unit recorded</option>
+                          {(selectedCall.assigned_units || []).map((unit) => (
+                            <option key={`${selectedCall.id}-po-primary-${unit.id}`} value={unit.id}>
+                              {unit.callsign} {unit.user_name ? `- ${unit.user_name}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <label className="flex items-center gap-2 text-sm text-cad-muted self-end mb-1">
+                        <input
+                          type="checkbox"
+                          checked={!!pursuitOutcomeForm.disable_pursuit_mode}
+                          onChange={(e) => setPursuitOutcomeForm((current) => ({ ...current, disable_pursuit_mode: e.target.checked }))}
+                        />
+                        Disable pursuit GPS follow after save
+                      </label>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-cad-muted uppercase tracking-wider mb-1">Units Involved</label>
+                      {selectedCall.assigned_units?.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {selectedCall.assigned_units.map((unit) => {
+                            const checked = Array.isArray(pursuitOutcomeForm.involved_unit_ids)
+                              && pursuitOutcomeForm.involved_unit_ids.includes(Number(unit.id));
+                            return (
+                              <label
+                                key={`${selectedCall.id}-po-unit-${unit.id}`}
+                                className={`flex items-center justify-between gap-2 px-3 py-2 rounded border cursor-pointer ${
+                                  checked
+                                    ? 'border-amber-500/35 bg-amber-500/10'
+                                    : 'border-cad-border bg-cad-card'
+                                }`}
+                              >
+                                <span className="min-w-0">
+                                  <span className="font-mono text-sm" style={{ color: getUnitCallsignColor(unit) }}>{unit.callsign}</span>
+                                  <span className="text-xs text-cad-muted ml-2 truncate">{unit.user_name || ''}</span>
+                                </span>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => togglePursuitOutcomeInvolvedUnit(unit.id)}
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-cad-muted">No assigned units currently attached. You can still save an outcome with no unit snapshot.</p>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowPursuitOutcomeForm(false)}
+                        className="px-3 py-2 border border-cad-border rounded text-sm text-cad-muted hover:text-cad-ink"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={pursuitOutcomeSaving}
+                        className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-medium disabled:opacity-50"
+                      >
+                        {pursuitOutcomeSaving ? 'Saving...' : 'Save Pursuit Outcome'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                <div className="mt-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <h5 className="text-xs font-semibold text-cad-muted uppercase tracking-wider">Pursuit Outcome History</h5>
+                    <button
+                      type="button"
+                      onClick={() => fetchPursuitOutcomesForCall(selectedCall.id)}
+                      className="px-2 py-1 text-[11px] rounded border border-cad-border text-cad-muted hover:text-cad-ink"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                  {pursuitOutcomesLoading ? (
+                    <p className="text-sm text-cad-muted">Loading pursuit outcomes...</p>
+                  ) : pursuitOutcomes.length === 0 ? (
+                    <p className="text-sm text-cad-muted">No pursuit outcomes logged for this call yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {pursuitOutcomes.map((outcome) => (
+                        <div key={`pursuit-outcome-${outcome.id}`} className="bg-cad-surface border border-amber-500/20 rounded px-3 py-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 font-medium">
+                                  {formatPursuitOutcomeLabel(outcome.outcome_code)}
+                                </span>
+                                {outcome.primary_unit_id ? (
+                                  <span className="text-[11px] text-cad-muted">
+                                    Primary: <span className="text-cad-ink">#{outcome.primary_unit_id}</span>
+                                  </span>
+                                ) : null}
+                                <span className="text-[11px] text-cad-muted">Log #{outcome.id}</span>
+                              </div>
+                              {outcome.termination_location ? (
+                                <p className="text-sm text-cad-muted mt-1 break-words">
+                                  End location: <span className="text-cad-ink">{outcome.termination_location}</span>
+                                </p>
+                              ) : null}
+                              {outcome.summary ? (
+                                <p className="text-sm mt-2 whitespace-pre-wrap break-words">{outcome.summary}</p>
+                              ) : null}
+                              {Array.isArray(outcome.involved_units) && outcome.involved_units.length > 0 ? (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  {outcome.involved_units.map((unit) => (
+                                    <span
+                                      key={`po-${outcome.id}-unit-${unit.id}`}
+                                      className="px-2 py-0.5 rounded border border-cad-border text-[11px] text-cad-muted bg-cad-card"
+                                      title={unit.user_name || ''}
+                                    >
+                                      {unit.department_short_name ? `${unit.department_short_name} ` : ''}{unit.callsign || `Unit #${unit.id}`}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-cad-muted mt-2">No unit snapshot recorded.</p>
+                              )}
+                            </div>
+                            <div className="text-right text-[11px] text-cad-muted whitespace-nowrap">
+                              <p>{formatDateTimeAU(outcome.created_at ? `${outcome.created_at}Z` : '', '-')}</p>
+                              {outcome.creator_name ? <p className="mt-1">{outcome.creator_name}</p> : null}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 

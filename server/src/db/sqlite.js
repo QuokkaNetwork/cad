@@ -618,6 +618,9 @@ const Calls = {
     position_y,
     position_z,
     requested_department_ids,
+    pursuit_mode_enabled,
+    pursuit_primary_unit_id,
+    pursuit_updated_at,
   }) {
     const normalizedRequestedDepartmentIds = normalizeRequestedDepartmentIdsWithFallback(
       requested_department_ids,
@@ -625,8 +628,8 @@ const Calls = {
     );
     const info = db.prepare(
       `INSERT INTO calls (
-        department_id, title, priority, location, description, job_code, status, created_by, postal, position_x, position_y, position_z, requested_department_ids_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        department_id, title, priority, location, description, job_code, status, created_by, postal, position_x, position_y, position_z, requested_department_ids_json, pursuit_mode_enabled, pursuit_primary_unit_id, pursuit_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       department_id,
       title,
@@ -640,12 +643,31 @@ const Calls = {
       Number.isFinite(Number(position_x)) ? Number(position_x) : null,
       Number.isFinite(Number(position_y)) ? Number(position_y) : null,
       Number.isFinite(Number(position_z)) ? Number(position_z) : null,
-      JSON.stringify(normalizedRequestedDepartmentIds)
+      JSON.stringify(normalizedRequestedDepartmentIds),
+      pursuit_mode_enabled ? 1 : 0,
+      Number.isFinite(Number(pursuit_primary_unit_id)) ? Math.trunc(Number(pursuit_primary_unit_id)) : null,
+      String(pursuit_updated_at || '').trim() || null
     );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['title', 'priority', 'location', 'description', 'job_code', 'status', 'postal', 'position_x', 'position_y', 'position_z', 'was_ever_assigned', 'requested_department_ids_json'];
+    const allowed = [
+      'title',
+      'priority',
+      'location',
+      'description',
+      'job_code',
+      'status',
+      'postal',
+      'position_x',
+      'position_y',
+      'position_z',
+      'was_ever_assigned',
+      'requested_department_ids_json',
+      'pursuit_mode_enabled',
+      'pursuit_primary_unit_id',
+      'pursuit_updated_at',
+    ];
     const existing = this.findById(id) || null;
     const normalizedFields = { ...(fields || {}) };
     if (normalizedFields.requested_department_ids !== undefined && normalizedFields.requested_department_ids_json === undefined) {
@@ -663,6 +685,12 @@ const Calls = {
           values.push(Number.isFinite(Number(normalizedFields[key])) ? Number(normalizedFields[key]) : null);
         } else if (key === 'was_ever_assigned') {
           values.push(normalizedFields[key] ? 1 : 0);
+        } else if (key === 'pursuit_mode_enabled') {
+          values.push(normalizedFields[key] ? 1 : 0);
+        } else if (key === 'pursuit_primary_unit_id') {
+          values.push(Number.isFinite(Number(normalizedFields[key])) ? Math.trunc(Number(normalizedFields[key])) : null);
+        } else if (key === 'pursuit_updated_at') {
+          values.push(String(normalizedFields[key] || '').trim() || null);
         } else if (key === 'requested_department_ids_json') {
           const normalizedRequestedDepartmentIds = normalizeRequestedDepartmentIdsWithFallback(
             normalizedFields[key],
@@ -748,6 +776,114 @@ const Calls = {
       if (call) closedCalls.push(call);
     }
     return closedCalls;
+  },
+};
+
+const PURSUIT_OUTCOME_CODES = new Set([
+  'arrest',
+  'vehicle_stopped',
+  'suspect_fled',
+  'lost_visual',
+  'cancelled_supervisor',
+  'cancelled_safety',
+  'other',
+]);
+
+function normalizePursuitOutcomeCode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (PURSUIT_OUTCOME_CODES.has(normalized)) return normalized;
+  return 'other';
+}
+
+function normalizePursuitInvolvedUnits(value) {
+  const source = Array.isArray(value) ? value : parseJsonArrayValue(value);
+  const out = [];
+  const seen = new Set();
+
+  for (const entry of source) {
+    if (!entry || typeof entry !== 'object') continue;
+    const id = Number(entry.id);
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      callsign: String(entry.callsign || '').trim().slice(0, 32),
+      user_name: String(entry.user_name || '').trim().slice(0, 120),
+      department_id: Number.isFinite(Number(entry.department_id)) ? Math.trunc(Number(entry.department_id)) : null,
+      department_short_name: String(entry.department_short_name || '').trim().slice(0, 20),
+      status: String(entry.status || '').trim().toLowerCase().slice(0, 24),
+    });
+  }
+
+  return out;
+}
+
+function hydratePursuitOutcomeRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    outcome_code: normalizePursuitOutcomeCode(row.outcome_code),
+    involved_units: normalizePursuitInvolvedUnits(row.involved_units_json),
+  };
+}
+
+// --- Pursuit Outcomes ---
+const PursuitOutcomes = {
+  findById(id) {
+    const row = db.prepare(`
+      SELECT po.*,
+             us.steam_name AS creator_name
+      FROM pursuit_outcomes po
+      LEFT JOIN users us ON us.id = po.created_by_user_id
+      WHERE po.id = ?
+    `).get(id);
+    return hydratePursuitOutcomeRow(row);
+  },
+  listByCallId(callId, limit = 25) {
+    const parsedCallId = Number(callId);
+    if (!Number.isInteger(parsedCallId) || parsedCallId <= 0) return [];
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 25));
+    return db.prepare(`
+      SELECT po.*,
+             us.steam_name AS creator_name
+      FROM pursuit_outcomes po
+      LEFT JOIN users us ON us.id = po.created_by_user_id
+      WHERE po.call_id = ?
+      ORDER BY po.created_at DESC, po.id DESC
+      LIMIT ?
+    `).all(parsedCallId, safeLimit).map(hydratePursuitOutcomeRow);
+  },
+  create(fields = {}) {
+    const callId = Number(fields.call_id);
+    const departmentId = Number(fields.department_id);
+    if (!Number.isInteger(callId) || callId <= 0) throw new Error('call_id is required');
+    if (!Number.isInteger(departmentId) || departmentId <= 0) throw new Error('department_id is required');
+
+    const info = db.prepare(`
+      INSERT INTO pursuit_outcomes (
+        call_id,
+        department_id,
+        primary_unit_id,
+        outcome_code,
+        termination_location,
+        summary,
+        involved_units_json,
+        created_by_user_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      callId,
+      departmentId,
+      Number.isFinite(Number(fields.primary_unit_id)) ? Math.trunc(Number(fields.primary_unit_id)) : null,
+      normalizePursuitOutcomeCode(fields.outcome_code),
+      String(fields.termination_location || '').trim().slice(0, 200),
+      String(fields.summary || '').trim().slice(0, 2000),
+      JSON.stringify(normalizePursuitInvolvedUnits(fields.involved_units)),
+      Number.isFinite(Number(fields.created_by_user_id)) ? Math.trunc(Number(fields.created_by_user_id)) : null
+    );
+
+    return this.findById(info.lastInsertRowid);
   },
 };
 
@@ -909,6 +1045,64 @@ const EvidenceItems = {
       WHERE ei.entity_type = ? AND ei.entity_id = ?
       ORDER BY ei.created_at DESC, ei.id DESC
     `).all(normalizedType, parsedId).map(hydrateEvidenceItemRow);
+  },
+  listByDepartment(departmentId, { entityType = '', query = '', limit = 100 } = {}) {
+    const parsedDeptId = Number(departmentId);
+    if (!Number.isInteger(parsedDeptId) || parsedDeptId <= 0) return [];
+
+    const normalizedType = normalizeEvidenceEntityType(entityType);
+    const hasEntityTypeFilter = String(entityType || '').trim().length > 0 && !!normalizedType;
+    const search = String(query || '').trim().toLowerCase();
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 100));
+
+    const clauses = ['ei.department_id = ?'];
+    const params = [parsedDeptId];
+
+    if (hasEntityTypeFilter) {
+      clauses.push('ei.entity_type = ?');
+      params.push(normalizedType);
+    }
+
+    if (search) {
+      const q = `%${search}%`;
+      clauses.push(`(
+        lower(ei.title) LIKE ?
+        OR lower(ei.case_number) LIKE ?
+        OR lower(ei.description) LIKE ?
+        OR lower(ei.chain_status) LIKE ?
+        OR lower(COALESCE(cr.title, w.title, '')) LIKE ?
+        OR lower(COALESCE(cr.citizen_id, w.citizen_id, '')) LIKE ?
+        OR lower(COALESCE(w.subject_name, '')) LIKE ?
+      )`);
+      params.push(q, q, q, q, q, q, q);
+    }
+
+    params.push(safeLimit);
+
+    return db.prepare(`
+      SELECT ei.*,
+             us.steam_name AS creator_name,
+             cr.title AS criminal_record_title,
+             cr.citizen_id AS criminal_record_citizen_id,
+             w.title AS warrant_title,
+             w.subject_name AS warrant_subject_name,
+             w.citizen_id AS warrant_citizen_id
+      FROM evidence_items ei
+      LEFT JOIN users us ON us.id = ei.created_by_user_id
+      LEFT JOIN criminal_records cr ON ei.entity_type = 'criminal_record' AND cr.id = ei.entity_id
+      LEFT JOIN warrants w ON ei.entity_type = 'warrant' AND w.id = ei.entity_id
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY ei.updated_at DESC, ei.id DESC
+      LIMIT ?
+    `).all(...params).map((row) => {
+      const item = hydrateEvidenceItemRow(row);
+      return {
+        ...item,
+        parent_title: item.criminal_record_title || item.warrant_title || '',
+        parent_subject_name: item.warrant_subject_name || '',
+        parent_citizen_id: item.criminal_record_citizen_id || item.warrant_citizen_id || '',
+      };
+    });
   },
   create(fields = {}) {
     const entityType = normalizeEvidenceEntityType(fields.entity_type);
@@ -2694,6 +2888,7 @@ module.exports = {
   DiscordRoleMappings,
   Units,
   Calls,
+  PursuitOutcomes,
   TrafficStops,
   EvidenceItems,
   ShiftNotes,

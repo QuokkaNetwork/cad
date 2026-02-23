@@ -36,6 +36,26 @@ function resolveEntity(entityType, entityId) {
 }
 
 router.get('/', requireAuth, (req, res) => {
+  const rawEntityId = req.query?.entity_id;
+  const hasEntityId = rawEntityId !== undefined && rawEntityId !== null && String(rawEntityId).trim() !== '';
+  const departmentId = Number(req.query?.department_id);
+
+  if (!hasEntityId && Number.isInteger(departmentId) && departmentId > 0) {
+    if (!canAccessDepartment(req.user, departmentId)) {
+      return res.status(403).json({ error: 'Department access denied' });
+    }
+    const rawEntityTypeFilter = String(req.query?.entity_type || '').trim();
+    const entityTypeFilter = rawEntityTypeFilter ? normalizeEntityType(rawEntityTypeFilter) : '';
+    if (rawEntityTypeFilter && !entityTypeFilter) {
+      return res.status(400).json({ error: 'entity_type filter must be criminal_record or warrant' });
+    }
+    return res.json(EvidenceItems.listByDepartment(departmentId, {
+      entityType: entityTypeFilter,
+      query: req.query?.q,
+      limit: req.query?.limit,
+    }));
+  }
+
   const entityType = normalizeEntityType(req.query?.entity_type);
   const entityId = Number(req.query?.entity_id);
   if (!entityType) return res.status(400).json({ error: 'entity_type must be criminal_record or warrant' });

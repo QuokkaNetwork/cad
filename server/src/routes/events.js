@@ -76,6 +76,8 @@ router.get('/', (req, res) => {
     'trafficstop:create',
     'evidence:create',
     'shiftnote:create',
+    'pursuit:update',
+    'pursuit:outcome_create',
     'announcement:new', 'sync:department',
   ];
 

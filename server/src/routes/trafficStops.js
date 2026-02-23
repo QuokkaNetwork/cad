@@ -1,10 +1,11 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { TrafficStops, Departments, Units } = require('../db/sqlite');
+const { TrafficStops, Departments, Units, Calls } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
 const router = express.Router();
+const LAW_LAYOUT_TYPE = 'law_enforcement';
 
 function isUserInDispatchDepartment(user) {
   const dispatchDepts = Departments.list().filter((d) => d.is_dispatch);
@@ -22,6 +23,54 @@ function canAccessDepartment(user, departmentId) {
     return Departments.listDispatchVisible().some((d) => Number(d.id) === deptId);
   }
   return false;
+}
+
+function hasLawEnforcementDepartmentAccess(user) {
+  if (user?.is_admin) return true;
+  return Array.isArray(user?.departments)
+    && user.departments.some((d) => String(d?.layout_type || '').trim().toLowerCase() === LAW_LAYOUT_TYPE);
+}
+
+function resolvePoliceDepartmentIdForTrafficStop(user, requestedDepartmentId, callId) {
+  const requestedId = Number(requestedDepartmentId);
+  if (Number.isInteger(requestedId) && requestedId > 0) {
+    const requestedDept = Departments.findById(requestedId);
+    if (requestedDept && !requestedDept.is_dispatch && String(requestedDept.layout_type || '').trim().toLowerCase() === LAW_LAYOUT_TYPE) {
+      return requestedDept.id;
+    }
+  }
+
+  // Prefer the user's own law-enforcement department when they are police.
+  if (Array.isArray(user?.departments)) {
+    const firstUserLawDept = user.departments.find((d) => (
+      !d?.is_dispatch && String(d?.layout_type || '').trim().toLowerCase() === LAW_LAYOUT_TYPE
+    ));
+    if (firstUserLawDept?.id) return Number(firstUserLawDept.id);
+  }
+
+  // If the stop is linked to a call and that call belongs to a police department, use it.
+  const parsedCallId = Number(callId);
+  if (Number.isInteger(parsedCallId) && parsedCallId > 0) {
+    const call = Calls.findById(parsedCallId);
+    const callDept = call ? Departments.findById(Number(call.department_id || 0)) : null;
+    if (callDept && !callDept.is_dispatch && String(callDept.layout_type || '').trim().toLowerCase() === LAW_LAYOUT_TYPE) {
+      return Number(callDept.id);
+    }
+  }
+
+  // Dispatch fallback: first active visible police department.
+  const visiblePoliceDept = Departments.listDispatchVisible().find((d) => (
+    !d?.is_dispatch && String(d?.layout_type || '').trim().toLowerCase() === LAW_LAYOUT_TYPE
+  ));
+  if (visiblePoliceDept?.id) return Number(visiblePoliceDept.id);
+
+  // Final fallback: any active police department.
+  const activePoliceDept = Departments.listActive().find((d) => (
+    !d?.is_dispatch && String(d?.layout_type || '').trim().toLowerCase() === LAW_LAYOUT_TYPE
+  ));
+  if (activePoliceDept?.id) return Number(activePoliceDept.id);
+
+  return 0;
 }
 
 router.get('/', requireAuth, (req, res) => {
@@ -44,11 +93,15 @@ router.get('/', requireAuth, (req, res) => {
 });
 
 router.post('/', requireAuth, (req, res) => {
-  const departmentId = Number(req.body?.department_id);
-  if (!Number.isInteger(departmentId) || departmentId <= 0) {
-    return res.status(400).json({ error: 'department_id is required' });
+  if (!hasLawEnforcementDepartmentAccess(req.user) && !isUserInDispatchDepartment(req.user)) {
+    return res.status(403).json({ error: 'Traffic stops are limited to law enforcement / dispatch' });
   }
-  if (!canAccessDepartment(req.user, departmentId)) {
+
+  const departmentId = resolvePoliceDepartmentIdForTrafficStop(req.user, req.body?.department_id, req.body?.call_id);
+  if (!departmentId) {
+    return res.status(400).json({ error: 'No active law enforcement department is configured for traffic stops' });
+  }
+  if (!canAccessDepartment(req.user, departmentId) && !isUserInDispatchDepartment(req.user)) {
     return res.status(403).json({ error: 'Department access denied' });
   }
 

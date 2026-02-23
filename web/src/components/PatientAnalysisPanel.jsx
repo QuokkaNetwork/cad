@@ -227,8 +227,11 @@ function BodyDiagram({
   );
 }
 
-export default function PatientAnalysisPanel({ person, activeDepartmentId }) {
+export default function PatientAnalysisPanel({ person, activeDepartmentId, mode = 'full' }) {
   const citizenId = String(person?.citizenid || '').trim();
+  const normalizedMode = String(mode || 'full').trim().toLowerCase();
+  const showTreatmentLogSection = normalizedMode !== 'transport';
+  const showTransportTrackerSection = normalizedMode !== 'treatment';
   const [history, setHistory] = useState([]);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState(null);
   const [draft, setDraft] = useState(() => buildDefaultDraft(person));
@@ -575,156 +578,160 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId }) {
             </div>
           </div>
 
-          <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Treatment Log</h4>
-              <button
-                type="button"
-                onClick={addTreatmentLogItem}
-                className="px-2 py-1 text-xs rounded border border-cad-border text-cad-muted hover:text-cad-ink"
-              >
-                + Add Entry
-              </button>
-            </div>
-            {Array.isArray(draft.treatment_log) && draft.treatment_log.length > 0 ? (
-              <div className="space-y-2">
-                {draft.treatment_log.map((entry) => (
-                  <div key={entry.id} className="bg-cad-card border border-cad-border rounded p-2 space-y-2">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <select
-                        value={entry.category || 'treatment'}
-                        onChange={(e) => updateTreatmentLogItem(entry.id, 'category', e.target.value)}
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
-                      >
-                        <option value="treatment">Treatment</option>
-                        <option value="medication">Medication</option>
-                        <option value="procedure">Procedure</option>
-                        <option value="transport">Transport</option>
-                      </select>
-                      <input
-                        type="datetime-local"
-                        value={String(entry.timestamp || '').slice(0, 16)}
-                        onChange={(e) => updateTreatmentLogItem(entry.id, 'timestamp', e.target.value)}
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <input
-                        value={entry.name || ''}
-                        onChange={(e) => updateTreatmentLogItem(entry.id, 'name', e.target.value)}
-                        placeholder="Medication / procedure name"
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
-                      />
-                      <input
-                        value={entry.dose || ''}
-                        onChange={(e) => updateTreatmentLogItem(entry.id, 'dose', e.target.value)}
-                        placeholder="Dose / quantity"
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
-                      <input
-                        value={entry.route || ''}
-                        onChange={(e) => updateTreatmentLogItem(entry.id, 'route', e.target.value)}
-                        placeholder="Route (PO/IV/IM/etc)"
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
-                      />
-                      <input
-                        value={entry.status || ''}
-                        onChange={(e) => updateTreatmentLogItem(entry.id, 'status', e.target.value)}
-                        placeholder="Status"
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeTreatmentLogItem(entry.id)}
-                        className="px-3 py-2 text-xs border border-red-500/30 text-red-300 rounded hover:bg-red-500/10"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    <textarea
-                      value={entry.notes || ''}
-                      onChange={(e) => updateTreatmentLogItem(entry.id, 'notes', e.target.value)}
-                      placeholder="Notes"
-                      rows={2}
-                      className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm resize-none"
-                    />
-                  </div>
-                ))}
+          {showTreatmentLogSection && (
+            <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Treatment Log</h4>
+                <button
+                  type="button"
+                  onClick={addTreatmentLogItem}
+                  className="px-2 py-1 text-xs rounded border border-cad-border text-cad-muted hover:text-cad-ink"
+                >
+                  + Add Entry
+                </button>
               </div>
-            ) : (
-              <p className="text-xs text-cad-muted">No treatments logged yet.</p>
-            )}
-          </div>
+              {Array.isArray(draft.treatment_log) && draft.treatment_log.length > 0 ? (
+                <div className="space-y-2">
+                  {draft.treatment_log.map((entry) => (
+                    <div key={entry.id} className="bg-cad-card border border-cad-border rounded p-2 space-y-2">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <select
+                          value={entry.category || 'treatment'}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'category', e.target.value)}
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        >
+                          <option value="treatment">Treatment</option>
+                          <option value="medication">Medication</option>
+                          <option value="procedure">Procedure</option>
+                          <option value="transport">Transport</option>
+                        </select>
+                        <input
+                          type="datetime-local"
+                          value={String(entry.timestamp || '').slice(0, 16)}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'timestamp', e.target.value)}
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          value={entry.name || ''}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'name', e.target.value)}
+                          placeholder="Medication / procedure name"
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        />
+                        <input
+                          value={entry.dose || ''}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'dose', e.target.value)}
+                          placeholder="Dose / quantity"
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
+                        <input
+                          value={entry.route || ''}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'route', e.target.value)}
+                          placeholder="Route (PO/IV/IM/etc)"
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        />
+                        <input
+                          value={entry.status || ''}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'status', e.target.value)}
+                          placeholder="Status"
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeTreatmentLogItem(entry.id)}
+                          className="px-3 py-2 text-xs border border-red-500/30 text-red-300 rounded hover:bg-red-500/10"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <textarea
+                        value={entry.notes || ''}
+                        onChange={(e) => updateTreatmentLogItem(entry.id, 'notes', e.target.value)}
+                        placeholder="Notes"
+                        rows={2}
+                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm resize-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-cad-muted">No treatments logged yet.</p>
+              )}
+            </div>
+          )}
 
-          <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
-            <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Transport Tracker</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <input
-                value={draft.transport?.destination || ''}
+          {showTransportTrackerSection && (
+            <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
+              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Transport Tracker</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <input
+                  value={draft.transport?.destination || ''}
+                  onChange={(e) => setDraft((current) => ({
+                    ...current,
+                    transport: { ...(current.transport || {}), destination: e.target.value },
+                  }))}
+                  placeholder="Destination hospital"
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                />
+                <select
+                  value={draft.transport?.status || ''}
+                  onChange={(e) => setDraft((current) => ({
+                    ...current,
+                    transport: { ...(current.transport || {}), status: e.target.value },
+                  }))}
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                >
+                  {TRANSPORT_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min="0"
+                  value={draft.transport?.eta_minutes ?? ''}
+                  onChange={(e) => setDraft((current) => ({
+                    ...current,
+                    transport: { ...(current.transport || {}), eta_minutes: e.target.value },
+                  }))}
+                  placeholder="ETA (minutes)"
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  value={draft.transport?.bed_availability ?? ''}
+                  onChange={(e) => setDraft((current) => ({
+                    ...current,
+                    transport: { ...(current.transport || {}), bed_availability: e.target.value },
+                  }))}
+                  placeholder="Beds available (if known)"
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                />
+                <input
+                  value={draft.transport?.unit_callsign || ''}
+                  onChange={(e) => setDraft((current) => ({
+                    ...current,
+                    transport: { ...(current.transport || {}), unit_callsign: e.target.value },
+                  }))}
+                  placeholder="Transport unit callsign"
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm md:col-span-2"
+                />
+              </div>
+              <textarea
+                value={draft.transport?.notes || ''}
                 onChange={(e) => setDraft((current) => ({
                   ...current,
-                  transport: { ...(current.transport || {}), destination: e.target.value },
+                  transport: { ...(current.transport || {}), notes: e.target.value },
                 }))}
-                placeholder="Destination hospital"
-                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
-              />
-              <select
-                value={draft.transport?.status || ''}
-                onChange={(e) => setDraft((current) => ({
-                  ...current,
-                  transport: { ...(current.transport || {}), status: e.target.value },
-                }))}
-                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
-              >
-                {TRANSPORT_STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min="0"
-                value={draft.transport?.eta_minutes ?? ''}
-                onChange={(e) => setDraft((current) => ({
-                  ...current,
-                  transport: { ...(current.transport || {}), eta_minutes: e.target.value },
-                }))}
-                placeholder="ETA (minutes)"
-                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
-              />
-              <input
-                type="number"
-                min="0"
-                value={draft.transport?.bed_availability ?? ''}
-                onChange={(e) => setDraft((current) => ({
-                  ...current,
-                  transport: { ...(current.transport || {}), bed_availability: e.target.value },
-                }))}
-                placeholder="Beds available (if known)"
-                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
-              />
-              <input
-                value={draft.transport?.unit_callsign || ''}
-                onChange={(e) => setDraft((current) => ({
-                  ...current,
-                  transport: { ...(current.transport || {}), unit_callsign: e.target.value },
-                }))}
-                placeholder="Transport unit callsign"
-                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm md:col-span-2"
+                rows={2}
+                placeholder="Transport notes / destination updates"
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm resize-none"
               />
             </div>
-            <textarea
-              value={draft.transport?.notes || ''}
-              onChange={(e) => setDraft((current) => ({
-                ...current,
-                transport: { ...(current.transport || {}), notes: e.target.value },
-              }))}
-              rows={2}
-              placeholder="Transport notes / destination updates"
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm resize-none"
-            />
-          </div>
+          )}
 
           <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
             <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">MCI / START Triage</h4>

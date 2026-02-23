@@ -44,6 +44,7 @@ export default function CallCard({ call, onClick, onAssign, onClose, units = [],
   const priorityStyle = PRIORITY_COLORS[call.priority] || PRIORITY_COLORS['3'];
   const priorityCardStyle = PRIORITY_CARD_COLORS[call.priority] || PRIORITY_CARD_COLORS['3'];
   const isEmergency000 = String(call?.job_code || '').trim() === '000';
+  const pursuitEnabled = call?.pursuit_mode_enabled === true || Number(call?.pursuit_mode_enabled || 0) === 1;
   const createdTs = parseSqliteUtc(call?.created_at);
   const updatedTs = parseSqliteUtc(call?.updated_at || call?.created_at);
   const createdElapsed = formatElapsed(nowMs - createdTs);
@@ -80,6 +81,11 @@ export default function CallCard({ call, onClick, onAssign, onClose, units = [],
             ) : call.job_code ? (
               <span className="text-xs text-cad-muted font-mono">{call.job_code}</span>
             ) : null}
+            {pursuitEnabled && (
+              <span className="text-[11px] px-1.5 py-0.5 rounded border border-emerald-500/35 bg-emerald-500/12 text-emerald-300 font-semibold">
+                Pursuit GPS
+              </span>
+            )}
             <StatusBadge status={call.status} />
           </div>
           <span className="text-xs text-cad-muted">

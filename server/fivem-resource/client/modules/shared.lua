@@ -427,7 +427,10 @@ end
 
 function notify.route(route, hadWaypoint)
   local callId = tostring(route.call_id or '?')
-  local targetLabel = normalizePostal(route.postal)
+  local targetLabel = util.trim(route.route_label or '')
+  if targetLabel == '' then
+    targetLabel = normalizePostal(route.postal)
+  end
   if targetLabel == '' then targetLabel = tostring(route.location or '') end
 
   local message = hadWaypoint
@@ -494,23 +497,30 @@ RegisterNetEvent('cad_bridge:setCallRoute', function(payload)
   local route = type(payload) == 'table' and payload or {}
   local action = util.trim(route.action or ''):lower()
   local clearWaypoint = route.clear_waypoint == true or tonumber(route.clear_waypoint or 0) == 1 or action == 'clear'
+  local suppressNotify = route.suppress_notify == true or tonumber(route.suppress_notify or 0) == 1
 
   if clearWaypoint then
     clearPlayerWaypoint()
-    notify.routeCleared(route)
+    if not suppressNotify then
+      notify.routeCleared(route)
+    end
     return
   end
 
   local coords = resolveRouteCoords(route)
   if not coords then
-    notify.route(route, false)
+    if not suppressNotify then
+      notify.route(route, false)
+    end
     return
   end
 
   pcall(function()
     SetNewWaypoint(coords.x, coords.y)
   end)
-  notify.route(route, true)
+  if not suppressNotify then
+    notify.route(route, true)
+  end
 end)
 
 function notify.fine(payload)
