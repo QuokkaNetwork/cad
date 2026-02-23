@@ -10,7 +10,7 @@ const POSTER_HEIGHT = 1350;
 
 const PHOTO_FRAME = Object.freeze({
   x: 58,
-  y: 276,
+  y: 300,
   width: 468,
   height: 622,
   radius: 14,
