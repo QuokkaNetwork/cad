@@ -16,7 +16,7 @@ const {
   VehicleRegistrations,
   Bolos,
 } = require('../db/sqlite');
-const { getVehicleByPlate, getCharacterById } = require('../db/qbox');
+const { getVehicleByPlate, getCharacterById, getLicenseByCitizenId } = require('../db/qbox');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
 
@@ -2713,7 +2713,7 @@ router.post('/fine-jobs/:id/failed', requireBridgeAuth, (req, res) => {
   return res.json({ ok: true });
 });
 
-router.get('/jail-jobs', requireBridgeAuth, (req, res) => {
+router.get('/jail-jobs', requireBridgeAuth, async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
   const jobs = FiveMJailJobs.listPending(limit).map((job) => {
     const activeLink = resolveActiveLinkForBridgeJob(job);
@@ -2725,6 +2725,17 @@ router.get('/jail-jobs', requireBridgeAuth, (req, res) => {
       player_name: String(job.player_name || activeLink?.player_name || ''),
     };
   });
+
+  // Enrich each job with the player's license from the QBX database so
+  // the FiveM bridge can resolve the target player even when the CAD has
+  // no citizenID binding in its player links.
+  for (const job of jobs) {
+    const citizenId = String(job.citizen_id || '').trim();
+    if (citizenId) {
+      const license = await getLicenseByCitizenId(citizenId);
+      if (license) job.license = license;
+    }
+  }
 
   return res.json(jobs);
 });

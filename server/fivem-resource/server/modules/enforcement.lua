@@ -693,6 +693,16 @@ local function resolveFineSource(job, citizenId)
     if bySteam then return bySteam end
   end
 
+  -- Fallback: use the license identifier from the QBX database (populated
+  -- by the CAD server when it looks up the player's citizenid in QBX).
+  local licenseKey = trim(job.license or ''):lower()
+  if licenseKey ~= '' then
+    -- Strip the 'license:' prefix if present.
+    local rawLicense = licenseKey:match('^license:(.+)') or licenseKey
+    local byLicense = findPlayerByIdentifier('license', rawLicense)
+    if byLicense then return byLicense end
+  end
+
   return nil
 end
 

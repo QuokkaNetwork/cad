@@ -1096,6 +1096,27 @@ async function applyFineByCitizenId({ citizenId, amount, account = 'bank' }) {
   }
 }
 
+async function getLicenseByCitizenId(citizenId) {
+  const cid = String(citizenId || '').trim();
+  if (!cid) return null;
+
+  try {
+    const p = await getPool();
+    const { playersTable, citizenIdCol } = getQboxTableConfig();
+    const tbl = escapeIdentifier(playersTable, 'playersTable');
+    const col = escapeIdentifier(citizenIdCol, 'citizenIdCol');
+    const [rows] = await p.query(
+      `SELECT license FROM ${tbl} WHERE ${col} = ? LIMIT 1`,
+      [cid]
+    );
+    if (rows.length === 0) return null;
+    const license = String(rows[0].license || '').trim();
+    return license || null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   initPool,
   testConnection,
@@ -1108,4 +1129,5 @@ module.exports = {
   getVehicleByPlate,
   getVehiclesByOwner,
   applyFineByCitizenId,
+  getLicenseByCitizenId,
 };
