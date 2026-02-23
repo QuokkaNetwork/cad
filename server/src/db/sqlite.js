@@ -2461,6 +2461,10 @@ const VehicleRegistrations = {
     const info = db.prepare('DELETE FROM vehicle_registrations').run();
     return Number(info?.changes || 0);
   },
+  delete(id) {
+    const info = db.prepare('DELETE FROM vehicle_registrations WHERE id = ?').run(id);
+    return Number(info?.changes || 0);
+  },
 };
 
 // --- FiveM player links ---

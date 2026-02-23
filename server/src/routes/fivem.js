@@ -27,6 +27,7 @@ const QUIET_BRIDGE_GET_PATHS = new Set([
   '/fine-jobs',
   '/jail-jobs',
   '/call-prompts',
+  '/alarm-zones',
 ]);
 
 // Log every incoming request to the fivem integration router.
@@ -98,6 +99,7 @@ let bridgeLicenseLogInitFailed = false;
 const DEPARTMENT_LAYOUT_TYPES = new Set(['law_enforcement', 'paramedics', 'fire']);
 const LAW_ENFORCEMENT_LAYOUT_TYPE = 'law_enforcement';
 const activePursuitFollowerUnitIdsByCall = new Map();
+const FIVEM_AUTO_ALARM_ZONES_SETTINGS_KEY = 'fivem_bridge_auto_alarm_zones_json';
 
 function getBridgeToken() {
   return String(Settings.get('fivem_bridge_shared_token') || process.env.FIVEM_BRIDGE_SHARED_TOKEN || '').trim();
@@ -111,6 +113,132 @@ function getFineDeliveryMode() {
 
 function getFineAccountKey() {
   return String(Settings.get('qbox_fine_account_key') || 'bank').trim() || 'bank';
+}
+
+function normalizeAlarmZoneShape(value) {
+  return String(value || '').trim().toLowerCase() === 'polygon' ? 'polygon' : 'circle';
+}
+
+function parseAlarmZonePoints(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((point) => {
+      if (!point || typeof point !== 'object') return null;
+      const x = Number(point.x ?? point[0]);
+      const y = Number(point.y ?? point[1]);
+      const zRaw = point.z ?? point[2];
+      const z = zRaw === undefined || zRaw === null || zRaw === '' ? null : Number(zRaw);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return {
+        x: Number(x.toFixed(3)),
+        y: Number(y.toFixed(3)),
+        ...(Number.isFinite(z) ? { z: Number(z.toFixed(3)) } : {}),
+      };
+    })
+    .filter(Boolean);
+}
+
+function sanitizeAlarmZoneRow(row, fallbackIndex = 1) {
+  const input = row && typeof row === 'object' ? row : {};
+  const label = String(input.label || input.name || '').trim();
+  const baseId = String(input.id || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const derivedId = baseId || `alarm_zone_${fallbackIndex}`;
+  const shape = normalizeAlarmZoneShape(input.shape || input.type);
+  const points = parseAlarmZonePoints(input.points);
+
+  const zone = {
+    id: derivedId,
+    shape,
+    label: label || derivedId,
+    location: String(input.location || '').trim() || label || derivedId,
+    description: String(input.description || '').trim(),
+    title: String(input.title || '').trim(),
+    message: String(input.message || '').trim(),
+    postal: String(input.postal || '').trim(),
+    priority: String(input.priority || '').trim(),
+    job_code: String(input.job_code || input.jobCode || '').trim(),
+    requested_department_layout_type: String(
+      input.requested_department_layout_type || input.layout_type || ''
+    ).trim(),
+    department_id: null,
+    backup_department_id: null,
+    cooldown_ms: null,
+    per_player_cooldown_ms: null,
+    min_z: null,
+    max_z: null,
+    points: [],
+    radius: 0,
+    x: 0,
+    y: 0,
+    z: 0,
+  };
+
+  zone.department_id = normalizeAlarmZoneDepartmentRef(
+    input.department_id ?? input.primary_department_id ?? input.primaryDepartmentId
+  );
+  zone.backup_department_id = normalizeAlarmZoneDepartmentRef(
+    input.backup_department_id ?? input.fallback_department_id ?? input.backupDepartmentId
+  );
+  if (zone.department_id && zone.backup_department_id && zone.department_id === zone.backup_department_id) {
+    zone.backup_department_id = null;
+  }
+
+  for (const key of ['cooldown_ms', 'per_player_cooldown_ms', 'min_z', 'max_z']) {
+    const value = input[key];
+    if (value === undefined || value === null || value === '') continue;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) continue;
+    zone[key] = key.endsWith('_ms') ? Math.max(0, Math.trunc(numeric)) : Number(numeric.toFixed(3));
+  }
+
+  if (shape === 'polygon' || points.length >= 3) {
+    if (points.length < 3) return null;
+    zone.shape = 'polygon';
+    zone.points = points;
+    zone.x = Number(points[0].x);
+    zone.y = Number(points[0].y);
+    zone.z = Number.isFinite(Number(points[0].z)) ? Number(points[0].z) : 0;
+    zone.radius = 0;
+    return zone;
+  }
+
+  const x = Number(input.x);
+  const y = Number(input.y);
+  const z = Number(input.z ?? 0);
+  const radius = Number(input.radius ?? input.r ?? input.distance);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius <= 0) return null;
+  zone.shape = 'circle';
+  zone.x = Number(x.toFixed(3));
+  zone.y = Number(y.toFixed(3));
+  zone.z = Number.isFinite(z) ? Number(z.toFixed(3)) : 0;
+  zone.radius = Number(radius.toFixed(2));
+  zone.points = [];
+  return zone;
+}
+
+function readAdminAlarmZonesOverride() {
+  const raw = Settings.get(FIVEM_AUTO_ALARM_ZONES_SETTINGS_KEY);
+  if (raw === null || raw === undefined || String(raw).trim() === '') {
+    return { has_override: false, zones: [] };
+  }
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (!Array.isArray(parsed)) {
+      return { has_override: true, zones: [] };
+    }
+    const zones = [];
+    const seenIds = new Set();
+    parsed.forEach((row, index) => {
+      const zone = sanitizeAlarmZoneRow(row, index + 1);
+      if (!zone) return;
+      if (seenIds.has(zone.id)) return;
+      seenIds.add(zone.id);
+      zones.push(zone);
+    });
+    return { has_override: true, zones };
+  } catch {
+    return { has_override: true, zones: [] };
+  }
 }
 
 function parseSqliteUtc(value) {
@@ -984,6 +1112,15 @@ function normalizeDepartmentLayoutType(value) {
   return '';
 }
 
+function normalizeAlarmZoneDepartmentRef(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  const department = Departments.findById(parsed);
+  if (!department || !department.is_active || department.is_dispatch) return null;
+  return Number(department.id);
+}
+
 function normalizeRequestedDepartmentIds(value) {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(
@@ -1053,6 +1190,55 @@ function chooseCallDepartmentId(cadUser, requestedDepartmentId, options = {}) {
   }
 
   return null;
+}
+
+function countOnDutyUnitsForDepartment(departmentId) {
+  const deptId = Number(departmentId);
+  if (!Number.isInteger(deptId) || deptId <= 0) return 0;
+  try {
+    return Units.listByDepartment(deptId).length;
+  } catch {
+    return 0;
+  }
+}
+
+function chooseAlarmPrimaryOrBackupDepartment(primaryDepartmentId, backupDepartmentId) {
+  const primaryId = normalizeAlarmZoneDepartmentRef(primaryDepartmentId);
+  const backupId = normalizeAlarmZoneDepartmentRef(backupDepartmentId);
+
+  if (primaryId) {
+    const primaryOnlineCount = countOnDutyUnitsForDepartment(primaryId);
+    if (primaryOnlineCount > 0 || !backupId) {
+      return {
+        department_id: primaryId,
+        backup_used: false,
+        primary_online_count: primaryOnlineCount,
+        backup_online_count: backupId ? countOnDutyUnitsForDepartment(backupId) : 0,
+      };
+    }
+    return {
+      department_id: backupId,
+      backup_used: true,
+      primary_online_count: primaryOnlineCount,
+      backup_online_count: countOnDutyUnitsForDepartment(backupId),
+    };
+  }
+
+  if (backupId) {
+    return {
+      department_id: backupId,
+      backup_used: true,
+      primary_online_count: 0,
+      backup_online_count: countOnDutyUnitsForDepartment(backupId),
+    };
+  }
+
+  return {
+    department_id: 0,
+    backup_used: false,
+    primary_online_count: 0,
+    backup_online_count: 0,
+  };
 }
 
 function isLawEnforcementDepartment(department) {
@@ -2454,6 +2640,17 @@ router.get('/departments', requireBridgeAuth, (_req, res) => {
 });
 
 // Create CAD calls from in-game bridge events (e.g. /000 command).
+router.get('/alarm-zones', requireBridgeAuth, (_req, res) => {
+  const result = readAdminAlarmZonesOverride();
+  res.json({
+    ok: true,
+    ...result,
+    settings_key: FIVEM_AUTO_ALARM_ZONES_SETTINGS_KEY,
+    updated_at: new Date().toISOString(),
+  });
+});
+
+// Create CAD calls from in-game bridge events (e.g. /000 command).
 router.post('/calls', requireBridgeAuth, (req, res) => {
   const payload = req.body || {};
   const ids = resolveLinkIdentifiers(payload.identifiers || []);
@@ -2486,21 +2683,33 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
   }
 
-  const departmentId = chooseCallDepartmentId(cadUser, payload.department_id, {
+  const isAutoAlarmZoneCall = sourceType === 'auto_alarm_zone';
+  const alarmDepartmentSelection = isAutoAlarmZoneCall
+    ? chooseAlarmPrimaryOrBackupDepartment(
+      payload.primary_department_id ?? payload.alarm_primary_department_id ?? payload.department_id,
+      payload.backup_department_id ?? payload.alarm_backup_department_id ?? payload.fallback_department_id
+    )
+    : null;
+
+  const departmentId = Number(alarmDepartmentSelection?.department_id || 0) || chooseCallDepartmentId(cadUser, payload.department_id, {
     preferred_layout_type: preferredLayoutType,
   });
   if (!departmentId) {
     return res.status(400).json({ error: 'No active department available to create call' });
   }
-  const requestedDepartmentIds = resolveRequestedDepartmentIds(payload.requested_department_ids, departmentId, {
-    preferred_layout_type: preferredLayoutType,
-  });
+  const requestedDepartmentIds = Number(alarmDepartmentSelection?.department_id || 0) > 0
+    ? [Number(alarmDepartmentSelection.department_id)]
+    : resolveRequestedDepartmentIds(payload.requested_department_ids, departmentId, {
+      preferred_layout_type: preferredLayoutType,
+    });
 
   const location = formatCallLocation(payload);
   const postal = String(payload?.postal || extractPostalFromLocation(location) || '').trim();
   const positionX = Number(payload?.position?.x);
   const positionY = Number(payload?.position?.y);
   const positionZ = Number(payload?.position?.z);
+  const requestedJobCode = String(payload?.job_code || payload?.jobCode || '').trim().slice(0, 24);
+  const jobCode = requestedJobCode || '000';
   const title = String(payload.title || '').trim() || (details ? details.slice(0, 120) : `000 Call from ${playerName}`);
   const reasonForCall = details || title;
   const descriptionLines = [];
@@ -2514,7 +2723,7 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     priority: normalizePriority(payload.priority || '1'),
     location,
     description,
-    job_code: '000',
+    job_code: jobCode,
     status: CALL_STATUS_PENDING_DISPATCH,
     requested_department_ids: requestedDepartmentIds,
     created_by: cadUser?.id || null,
@@ -2536,7 +2745,12 @@ router.post('/calls', requireBridgeAuth, (req, res) => {
     playerName,
     sourceId,
     sourceType,
+    job_code: jobCode,
     preferred_layout_type: preferredLayoutType || '',
+    alarm_zone_department_id: Number(alarmDepartmentSelection?.department_id || 0) || null,
+    alarm_zone_backup_used: alarmDepartmentSelection ? !!alarmDepartmentSelection.backup_used : null,
+    alarm_zone_primary_online_count: alarmDepartmentSelection ? Number(alarmDepartmentSelection.primary_online_count || 0) : null,
+    alarm_zone_backup_online_count: alarmDepartmentSelection ? Number(alarmDepartmentSelection.backup_online_count || 0) : null,
     matchedUserId: cadUser?.id || null,
     initial_status: call?.status || CALL_STATUS_PENDING_DISPATCH,
     closest_prompt_count: Number(promptResult?.queued_prompt_count || 0),

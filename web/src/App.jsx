@@ -31,6 +31,7 @@ import AdminHome from './pages/admin/Home';
 import AdminOffenceCatalog from './pages/admin/OffenceCatalog';
 import AdminQboxSettings from './pages/admin/QboxSettings';
 import AdminJobBindings from './pages/admin/JobBindings';
+import AdminAlarmZones from './pages/admin/AlarmZones';
 
 export default function App() {
   return (
@@ -80,6 +81,7 @@ export default function App() {
             <Route path="/admin/audit-log" element={<ProtectedRoute requireAdmin><AdminAuditLog /></ProtectedRoute>} />
             <Route path="/admin/settings" element={<ProtectedRoute requireAdmin><AdminSystemSettings /></ProtectedRoute>} />
             <Route path="/admin/qbox-settings" element={<ProtectedRoute requireAdmin><AdminQboxSettings /></ProtectedRoute>} />
+            <Route path="/admin/alarm-zones" element={<ProtectedRoute requireAdmin><AdminAlarmZones /></ProtectedRoute>} />
           </Route>
 
           {/* Default redirect */}

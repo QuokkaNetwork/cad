@@ -71,10 +71,17 @@ const SEVERITY_OPTIONS = [
 ];
 
 function mapRecordToEditForm(record) {
+  const offenceItems = parseRecordOffenceItems(record);
+  const offenceJailTotal = offenceItems.reduce(
+    (sum, item) => sum + (Number(item.line_jail_minutes || (Number(item.jail_minutes || 0) * Number(item.quantity || 1))) || 0),
+    0
+  );
+  const totalJailMinutes = Math.max(0, Number(record?.jail_minutes || 0));
   return {
     title: record?.title || '',
     description: record?.description || '',
-    jail_minutes: Math.max(0, Number(record?.jail_minutes || 0)),
+    // When offences are attached, the edit form stores only "extra" jail time added on top.
+    jail_minutes: Math.max(0, totalJailMinutes - Math.max(0, offenceJailTotal)),
   };
 }
 
@@ -715,10 +722,8 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         payload = {
           title: newForm.title,
           description: newForm.description,
-          jail_minutes: Math.max(
-            Math.max(0, Math.trunc(Number(newForm.jail_minutes) || 0)),
-            Math.max(0, Math.trunc(Number(newJailTotal) || 0))
-          ),
+          // Backend adds this value on top of offence-derived jail time.
+          jail_minutes: Math.max(0, Math.trunc(Number(newForm.jail_minutes) || 0)),
           offence_items: newOffenceItems,
         };
       } else if (isParamedics) {
@@ -810,10 +815,8 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         const lawPayload = {
           title: editForm.title,
           description: editForm.description,
-          jail_minutes: Math.max(
-            Math.max(0, Math.trunc(Number(editForm.jail_minutes) || 0)),
-            Math.max(0, Math.trunc(Number(editJailTotal) || 0))
-          ),
+          // Backend adds this value on top of offence-derived jail time.
+          jail_minutes: Math.max(0, Math.trunc(Number(editForm.jail_minutes) || 0)),
         };
         if (editOffenceItems.length > 0) {
           lawPayload.offence_items = editOffenceItems;
@@ -1148,7 +1151,9 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 />
               </div>
               <div>
-                <label className="block text-sm text-cad-muted mb-1">Jail Minutes</label>
+                <label className="block text-sm text-cad-muted mb-1">
+                  {newJailTotal > 0 ? 'Extra Jail Minutes' : 'Jail Minutes'}
+                </label>
                 <input
                   type="number"
                   min="0"
@@ -1159,7 +1164,8 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 />
                 {newJailTotal > 0 && (
                   <p className="mt-1 text-xs text-rose-300">
-                    Selected offences include {Number(newJailTotal || 0).toLocaleString()} minute(s) minimum.
+                    Selected offences add {Number(newJailTotal || 0).toLocaleString()} minute(s) automatically.
+                    Extra time entered here is added on top. Total sentence: {Number((newJailTotal || 0) + (Number(newForm.jail_minutes || 0) || 0)).toLocaleString()} minute(s).
                   </p>
                 )}
               </div>
@@ -1222,7 +1228,9 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 />
               </div>
               <div>
-                <label className="block text-sm text-cad-muted mb-1">Jail Minutes</label>
+                <label className="block text-sm text-cad-muted mb-1">
+                  {editJailTotal > 0 ? 'Extra Jail Minutes' : 'Jail Minutes'}
+                </label>
                 <input
                   type="number"
                   min="0"
@@ -1233,7 +1241,8 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 />
                 {editJailTotal > 0 && (
                   <p className="mt-1 text-xs text-rose-300">
-                    Selected offences include {Number(editJailTotal || 0).toLocaleString()} minute(s) minimum.
+                    Selected offences add {Number(editJailTotal || 0).toLocaleString()} minute(s) automatically.
+                    Extra time entered here is added on top. Total sentence: {Number((editJailTotal || 0) + (Number(editForm.jail_minutes || 0) || 0)).toLocaleString()} minute(s).
                   </p>
                 )}
               </div>

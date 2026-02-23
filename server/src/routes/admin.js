@@ -24,6 +24,7 @@ const router = express.Router();
 router.use(requireAuth, requireAdmin);
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 const OFFENCE_CATEGORIES = new Set(['infringement', 'summary', 'indictment']);
+const FIVEM_AUTO_ALARM_ZONES_SETTINGS_KEY = 'fivem_bridge_auto_alarm_zones_json';
 
 function parseSqliteUtc(value) {
   const text = String(value || '').trim();
@@ -99,6 +100,195 @@ function jobMappingMatchesPreview(mapping, job) {
   const mappingGrade = normalizeJobGrade(mapping?.job_grade, { wildcard: true });
   if (mappingGrade < 0) return true;
   return mappingGrade === normalizeJobGrade(job?.job_grade);
+}
+
+function slugifyAlarmZoneId(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64);
+}
+
+function parseAlarmZonePoints(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((point) => {
+      if (!point || typeof point !== 'object') return null;
+      const x = Number(point.x ?? point[0]);
+      const y = Number(point.y ?? point[1]);
+      const zRaw = point.z ?? point[2];
+      const z = zRaw === undefined || zRaw === null || zRaw === '' ? null : Number(zRaw);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return {
+        x: Number(x.toFixed(3)),
+        y: Number(y.toFixed(3)),
+        ...(Number.isFinite(z) ? { z: Number(z.toFixed(3)) } : {}),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeAlarmZoneShape(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'polygon' ? 'polygon' : 'circle';
+}
+
+function normalizeAlarmZoneDepartmentId(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error('department_id must be a valid department id');
+  }
+  const department = Departments.findById(parsed);
+  if (!department || !department.is_active || department.is_dispatch) {
+    throw new Error(`Department ${parsed} is not an active non-dispatch department`);
+  }
+  return Number(department.id);
+}
+
+function normalizeAlarmZoneInput(input, { existingIds = new Set(), requireId = false } = {}) {
+  const data = input && typeof input === 'object' ? input : {};
+  const shape = normalizeAlarmZoneShape(data.shape || data.type);
+  const label = String(data.label || data.name || '').trim();
+  const location = String(data.location || '').trim();
+  let id = String(data.id || '').trim();
+  if (!id && label) {
+    id = slugifyAlarmZoneId(label);
+  }
+  if (!id && !requireId) {
+    let attempt = `alarm_zone_${Date.now()}`;
+    let suffix = 1;
+    while (existingIds.has(attempt)) {
+      suffix += 1;
+      attempt = `alarm_zone_${Date.now()}_${suffix}`;
+    }
+    id = attempt;
+  } else {
+    id = slugifyAlarmZoneId(id);
+  }
+
+  const zone = {
+    id,
+    shape,
+    label: label || id,
+    location: location || label || id,
+    description: String(data.description || '').trim(),
+    title: String(data.title || '').trim(),
+    message: String(data.message || '').trim(),
+    postal: String(data.postal || '').trim(),
+    priority: String(data.priority || '').trim(),
+    job_code: String(data.job_code || data.jobCode || '').trim(),
+    requested_department_layout_type: String(
+      data.requested_department_layout_type || data.layout_type || data.requestedLayoutType || ''
+    ).trim(),
+    department_id: null,
+    backup_department_id: null,
+    min_z: data.min_z === '' || data.min_z === undefined || data.min_z === null ? null : Number(data.min_z),
+    max_z: data.max_z === '' || data.max_z === undefined || data.max_z === null ? null : Number(data.max_z),
+    cooldown_ms: data.cooldown_ms === '' || data.cooldown_ms === undefined || data.cooldown_ms === null ? null : Number(data.cooldown_ms),
+    per_player_cooldown_ms:
+      data.per_player_cooldown_ms === '' || data.per_player_cooldown_ms === undefined || data.per_player_cooldown_ms === null
+        ? null
+        : Number(data.per_player_cooldown_ms),
+  };
+
+  if (!zone.id) {
+    throw new Error('Zone id or name is required');
+  }
+  if (!zone.label) {
+    throw new Error('Zone name is required');
+  }
+
+  zone.department_id = normalizeAlarmZoneDepartmentId(
+    data.department_id ?? data.primary_department_id ?? data.primaryDepartmentId
+  );
+  zone.backup_department_id = normalizeAlarmZoneDepartmentId(
+    data.backup_department_id ?? data.fallback_department_id ?? data.backupDepartmentId
+  );
+  if (zone.backup_department_id && zone.department_id && zone.backup_department_id === zone.department_id) {
+    zone.backup_department_id = null;
+  }
+
+  if (shape === 'polygon') {
+    const points = parseAlarmZonePoints(data.points);
+    if (points.length < 3) {
+      throw new Error('Polygon zones require at least 3 points');
+    }
+    zone.points = points;
+    zone.x = Number(points[0].x);
+    zone.y = Number(points[0].y);
+    zone.z = Number.isFinite(Number(points[0].z)) ? Number(points[0].z) : 0;
+    zone.radius = 0;
+  } else {
+    const x = Number(data.x);
+    const y = Number(data.y);
+    const z = data.z === '' || data.z === undefined || data.z === null ? 0 : Number(data.z);
+    const radius = Number(data.radius ?? data.r ?? data.distance);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('Circle zones require numeric x and y');
+    }
+    if (!Number.isFinite(radius) || radius <= 0) {
+      throw new Error('Circle zones require a radius greater than 0');
+    }
+    zone.x = Number(x.toFixed(3));
+    zone.y = Number(y.toFixed(3));
+    zone.z = Number.isFinite(z) ? Number(z.toFixed(3)) : 0;
+    zone.radius = Number(radius.toFixed(2));
+    zone.points = [];
+  }
+
+  for (const numericKey of ['min_z', 'max_z']) {
+    if (zone[numericKey] !== null && !Number.isFinite(zone[numericKey])) {
+      throw new Error(`${numericKey} must be a number`);
+    }
+    if (Number.isFinite(zone[numericKey])) {
+      zone[numericKey] = Number(zone[numericKey].toFixed(3));
+    }
+  }
+  for (const numericKey of ['cooldown_ms', 'per_player_cooldown_ms']) {
+    if (zone[numericKey] !== null && (!Number.isFinite(zone[numericKey]) || zone[numericKey] < 0)) {
+      throw new Error(`${numericKey} must be a non-negative number`);
+    }
+    if (Number.isFinite(zone[numericKey])) {
+      zone[numericKey] = Math.max(0, Math.trunc(zone[numericKey]));
+    }
+  }
+
+  return zone;
+}
+
+function parseStoredAlarmZones() {
+  const raw = Settings.get(FIVEM_AUTO_ALARM_ZONES_SETTINGS_KEY);
+  if (raw === null || raw === undefined || String(raw).trim() === '') {
+    return { hasOverride: false, zones: [] };
+  }
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (!Array.isArray(parsed)) return { hasOverride: true, zones: [] };
+    const zones = [];
+    const ids = new Set();
+    for (const row of parsed) {
+      try {
+        const zone = normalizeAlarmZoneInput(row, { existingIds: ids, requireId: false });
+        if (ids.has(zone.id)) continue;
+        ids.add(zone.id);
+        zones.push(zone);
+      } catch {
+        // Skip malformed rows rather than fail the whole settings payload.
+      }
+    }
+    return { hasOverride: true, zones };
+  } catch {
+    return { hasOverride: true, zones: [] };
+  }
+}
+
+function saveAlarmZones(zones) {
+  const normalized = Array.isArray(zones) ? zones : [];
+  Settings.set(FIVEM_AUTO_ALARM_ZONES_SETTINGS_KEY, JSON.stringify(normalized));
+  return normalized;
 }
 
 const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
@@ -913,6 +1103,93 @@ router.get('/qbox/table-columns', async (req, res) => {
     res.json(columns);
   } catch (err) {
     res.status(400).json({ error: err.message || 'Failed to inspect table columns' });
+  }
+});
+
+// --- FiveM alarm zones (settings-backed, live-polled by cad_bridge) ---
+router.get('/alarm-zones', (_req, res) => {
+  const { hasOverride, zones } = parseStoredAlarmZones();
+  res.json({
+    zones,
+    has_override: hasOverride,
+    settings_key: FIVEM_AUTO_ALARM_ZONES_SETTINGS_KEY,
+  });
+});
+
+router.post('/alarm-zones', (req, res) => {
+  try {
+    const current = parseStoredAlarmZones();
+    const ids = new Set(current.zones.map((zone) => zone.id));
+    const zone = normalizeAlarmZoneInput(req.body || {}, { existingIds: ids, requireId: false });
+    if (ids.has(zone.id)) {
+      return res.status(400).json({ error: `Alarm zone id already exists: ${zone.id}` });
+    }
+    const nextZones = [...current.zones, zone];
+    saveAlarmZones(nextZones);
+    audit(req.user.id, 'admin_alarm_zone_created', { zone_id: zone.id, label: zone.label, shape: zone.shape });
+    res.status(201).json(zone);
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Invalid alarm zone' });
+  }
+});
+
+router.patch('/alarm-zones/:id', (req, res) => {
+  const targetId = slugifyAlarmZoneId(req.params.id);
+  if (!targetId) return res.status(400).json({ error: 'Invalid alarm zone id' });
+
+  const current = parseStoredAlarmZones();
+  const index = current.zones.findIndex((zone) => String(zone.id) === targetId);
+  if (index < 0) return res.status(404).json({ error: 'Alarm zone not found' });
+
+  try {
+    const ids = new Set(current.zones.map((zone) => zone.id));
+    ids.delete(targetId);
+    const merged = { ...current.zones[index], ...(req.body || {}), id: req.body?.id ?? targetId };
+    const normalized = normalizeAlarmZoneInput(merged, { existingIds: ids, requireId: true });
+    if (ids.has(normalized.id)) {
+      return res.status(400).json({ error: `Alarm zone id already exists: ${normalized.id}` });
+    }
+    const nextZones = current.zones.slice();
+    nextZones[index] = normalized;
+    saveAlarmZones(nextZones);
+    audit(req.user.id, 'admin_alarm_zone_updated', { zone_id: targetId, next_zone_id: normalized.id, label: normalized.label });
+    res.json(normalized);
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Invalid alarm zone update' });
+  }
+});
+
+router.delete('/alarm-zones/:id', (req, res) => {
+  const targetId = slugifyAlarmZoneId(req.params.id);
+  if (!targetId) return res.status(400).json({ error: 'Invalid alarm zone id' });
+  const current = parseStoredAlarmZones();
+  const existing = current.zones.find((zone) => String(zone.id) === targetId);
+  if (!existing) return res.status(404).json({ error: 'Alarm zone not found' });
+  const nextZones = current.zones.filter((zone) => String(zone.id) !== targetId);
+  saveAlarmZones(nextZones);
+  audit(req.user.id, 'admin_alarm_zone_deleted', { zone_id: targetId, label: existing.label });
+  res.json({ success: true, deleted_id: targetId, remaining: nextZones.length });
+});
+
+router.put('/alarm-zones', (req, res) => {
+  const rows = Array.isArray(req.body?.zones) ? req.body.zones : null;
+  if (!rows) return res.status(400).json({ error: 'zones array is required' });
+  try {
+    const nextZones = [];
+    const ids = new Set();
+    for (const row of rows) {
+      const zone = normalizeAlarmZoneInput(row, { existingIds: ids, requireId: false });
+      if (ids.has(zone.id)) {
+        throw new Error(`Duplicate alarm zone id: ${zone.id}`);
+      }
+      ids.add(zone.id);
+      nextZones.push(zone);
+    }
+    saveAlarmZones(nextZones);
+    audit(req.user.id, 'admin_alarm_zones_replaced', { count: nextZones.length });
+    res.json({ success: true, zones: nextZones });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Invalid alarm zones payload' });
   }
 });
 

@@ -32,6 +32,12 @@ const ADMIN_ITEMS = [
     color: 'bg-rose-500',
   },
   {
+    to: '/admin/alarm-zones',
+    title: 'Alarm Zones',
+    description: 'Create named circle/polygon alarm zones for live police CAD alarm calls.',
+    color: 'bg-orange-500',
+  },
+  {
     to: '/admin/audit-log',
     title: 'Audit Log',
     description: 'Review administrative and system actions.',

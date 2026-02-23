@@ -263,6 +263,107 @@ local function normalizeVec4List(value, fallback)
   return fallbackOut
 end
 
+local function normalizeAlarmZoneList(value, fallback)
+  local function normalizePoints(rawPoints)
+    local points = {}
+    if type(rawPoints) ~= 'table' then return points end
+    for _, rawPoint in ipairs(rawPoints) do
+      if type(rawPoint) == 'table' then
+        local px = tonumber(rawPoint.x or rawPoint[1] or (type(rawPoint.coords) == 'table' and (rawPoint.coords.x or rawPoint.coords[1])))
+        local py = tonumber(rawPoint.y or rawPoint[2] or (type(rawPoint.coords) == 'table' and (rawPoint.coords.y or rawPoint.coords[2])))
+        local pz = tonumber(rawPoint.z or rawPoint[3] or (type(rawPoint.coords) == 'table' and (rawPoint.coords.z or rawPoint.coords[3])))
+        if px and py then
+          points[#points + 1] = {
+            x = px + 0.0,
+            y = py + 0.0,
+            z = pz and (pz + 0.0) or nil,
+          }
+        end
+      end
+    end
+    return points
+  end
+
+  local out = {}
+  local function pushZone(entry, index, target)
+    if type(entry) ~= 'table' then return end
+    local normalizedShape = trim(entry.shape or entry.type or '')
+    if normalizedShape == '' then normalizedShape = 'circle' end
+    normalizedShape = normalizedShape:lower()
+
+    local points = normalizePoints(entry.points or entry.vertices or entry.polygon or entry.poly)
+    local x = tonumber(entry.x or entry[1] or (type(entry.coords) == 'table' and (entry.coords.x or entry.coords[1])))
+    local y = tonumber(entry.y or entry[2] or (type(entry.coords) == 'table' and (entry.coords.y or entry.coords[2])))
+    local z = tonumber(entry.z or entry[3] or (type(entry.coords) == 'table' and (entry.coords.z or entry.coords[3])))
+    local radius = tonumber(entry.radius or entry.r or entry.distance) or 0.0
+    local isPolygon = normalizedShape == 'polygon' or (#points >= 3)
+    if isPolygon then
+      if #points < 3 then return end
+      if not x or not y then
+        x = tonumber(points[1] and points[1].x) or 0.0
+        y = tonumber(points[1] and points[1].y) or 0.0
+      end
+      if z == nil then
+        z = tonumber(points[1] and points[1].z) or 0.0
+      end
+    else
+      if not x or not y or radius <= 0 then return end
+    end
+
+    local id = trim(entry.id or entry.key or entry.name or ('alarm_zone_' .. tostring(index or (#out + 1))))
+    if id == '' then id = 'alarm_zone_' .. tostring(index or (#out + 1)) end
+    local zone = {
+      id = id,
+      label = trim(entry.label or entry.name or id),
+      location = trim(entry.location or entry.location_label or entry.address or ''),
+      description = trim(entry.description or ''),
+      title = trim(entry.title or ''),
+      message = trim(entry.message or ''),
+      shape = isPolygon and 'polygon' or 'circle',
+      x = x + 0.0,
+      y = y + 0.0,
+      z = (z and (z + 0.0)) or 0.0,
+      radius = isPolygon and 0.0 or math.max(1.0, radius + 0.0),
+      points = points,
+      min_z = tonumber(entry.min_z or entry.minZ) or nil,
+      max_z = tonumber(entry.max_z or entry.maxZ) or nil,
+      postal = trim(entry.postal or ''),
+      priority = trim(entry.priority or ''),
+      job_code = trim(entry.job_code or entry.jobCode or ''),
+      cooldown_ms = tonumber(entry.cooldown_ms or entry.cooldownMs) or nil,
+      per_player_cooldown_ms = tonumber(entry.per_player_cooldown_ms or entry.perPlayerCooldownMs) or nil,
+      requested_department_layout_type = trim(entry.requested_department_layout_type or entry.layout_type or ''),
+      department_id = tonumber(entry.department_id or entry.primary_department_id or entry.primaryDepartmentId) or nil,
+      backup_department_id = tonumber(entry.backup_department_id or entry.fallback_department_id or entry.backupDepartmentId) or nil,
+    }
+    if zone.department_id then zone.department_id = math.floor(zone.department_id) end
+    if zone.backup_department_id then zone.backup_department_id = math.floor(zone.backup_department_id) end
+    if zone.department_id and zone.backup_department_id and zone.department_id == zone.backup_department_id then
+      zone.backup_department_id = nil
+    end
+    if type(target) == 'table' then
+      target[#target + 1] = zone
+    else
+      out[#out + 1] = zone
+    end
+  end
+
+  if type(value) == 'table' then
+    for i, entry in ipairs(value) do
+      pushZone(entry, i)
+    end
+  end
+  if #out > 0 then return out end
+
+  local fallbackOut = {}
+  if type(fallback) == 'table' then
+    for i, entry in ipairs(fallback) do
+      pushZone(entry, i, fallbackOut)
+    end
+  end
+  return fallbackOut
+end
+
 local function parseVec3String(rawValue, fallback)
   if type(fallback) ~= 'table' then
     fallback = { x = 0.0, y = 0.0, z = 0.0 }
@@ -407,6 +508,7 @@ local DEFAULT_CAD_JAIL_RELEASE_POINTS = {
     w = 270.25,
   },
 }
+local DEFAULT_AUTO_ALARM_ZONES = {}
 local DEFAULT_CAD_JAIL_PRISON_OUTFITS = {
   male = {
     accessories = { item = 0, texture = 0 },
@@ -441,7 +543,7 @@ Config.JobSyncPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_j
 Config.RoutePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_route_poll_ms', 4000)))
 Config.ClosestCallPromptPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_call_prompt_poll_ms', 2500)))
 Config.ClosestCallPromptTimeoutMs = math.max(6000, math.floor(getNumber('cad_bridge_call_prompt_timeout_ms', 15000)))
-Config.JailPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_jail_poll_ms', 7000)))
+Config.JailPollIntervalMs = math.max(250, math.floor(getNumber('cad_bridge_jail_poll_ms', 500)))
 Config.AutoAmbulanceCallEnabled = getBoolean('cad_bridge_auto_ambulance_call_enabled', true)
 Config.AutoAmbulanceCallPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_auto_ambulance_call_poll_ms', 2500)))
 Config.AutoAmbulanceCallCooldownMs = math.max(10000, math.floor(getNumber('cad_bridge_auto_ambulance_call_cooldown_ms', 180000)))
@@ -605,6 +707,20 @@ Config.CadBridgeJailResetClothing = function()
     TriggerServerEvent('qb-clothes:loadPlayerSkin')
   end
 end
+
+-- Automatic alarm zone -> CAD police call integration.
+Config.AutoAlarmCallEnabled = getBoolean('cad_bridge_auto_alarm_enabled', false)
+Config.AutoAlarmCallPollIntervalMs = math.max(500, math.floor(getNumber('cad_bridge_auto_alarm_poll_interval_ms', 1500)))
+Config.AutoAlarmConfigPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_auto_alarm_config_poll_interval_ms', 5000)))
+Config.AutoAlarmZoneCooldownMs = math.max(5000, math.floor(getNumber('cad_bridge_auto_alarm_zone_cooldown_ms', 180000)))
+Config.AutoAlarmPerPlayerCooldownMs = math.max(1000, math.floor(getNumber('cad_bridge_auto_alarm_per_player_cooldown_ms', 60000)))
+Config.AutoAlarmCallPriority = trim(getString('cad_bridge_auto_alarm_priority', '2'))
+if Config.AutoAlarmCallPriority == '' then Config.AutoAlarmCallPriority = '2' end
+Config.AutoAlarmCallJobCode = trim(getString('cad_bridge_auto_alarm_job_code', 'ALARM'))
+if Config.AutoAlarmCallJobCode == '' then Config.AutoAlarmCallJobCode = 'ALARM' end
+Config.AutoAlarmRequestedDepartmentLayoutType = trim(getString('cad_bridge_auto_alarm_department_layout_type', 'law_enforcement'))
+if Config.AutoAlarmRequestedDepartmentLayoutType == '' then Config.AutoAlarmRequestedDepartmentLayoutType = 'law_enforcement' end
+Config.AutoAlarmZones = normalizeAlarmZoneList(getJsonTable('cad_bridge_auto_alarm_zones_json'), DEFAULT_AUTO_ALARM_ZONES)
 
 -- Wraith integration.
 Config.WraithCadLookupEnabled = getBoolean('cad_bridge_wraith_lookup_enabled', true)

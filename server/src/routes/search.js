@@ -651,4 +651,24 @@ router.patch('/vehicles/:plate/registration', requireAuth, (req, res) => {
   res.json(updated);
 });
 
+// Delete a CAD vehicle registration record by plate.
+router.delete('/vehicles/:plate/registration', requireAuth, (req, res) => {
+  const plate = String(req.params.plate || '').trim();
+  if (!plate) return res.status(400).json({ error: 'plate is required' });
+
+  const existing = VehicleRegistrations.findByPlate(plate);
+  if (!existing) return res.status(404).json({ error: 'Vehicle registration not found' });
+
+  VehicleRegistrations.delete(existing.id);
+
+  audit(req.user.id, 'vehicle_registration_deleted', {
+    plate: existing.plate,
+    registration_id: existing.id,
+    citizen_id: existing.citizen_id || '',
+    owner_name: existing.owner_name || '',
+  });
+
+  res.json({ success: true, deleted: existing });
+});
+
 module.exports = router;

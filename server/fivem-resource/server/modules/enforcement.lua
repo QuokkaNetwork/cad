@@ -704,6 +704,580 @@ local function submitAutoAmbulanceCall(sourceId, onResult)
   return true
 end
 
+local autoAlarmZonePlayerStateBySource = {}
+local autoAlarmZoneLastTriggerAtByZoneId = {}
+local autoAlarmZoneInFlightByZoneId = {}
+local lastAutoAlarmLogAtMs = 0
+local alarmZoneBuilderBySource = {}
+local alarmZoneConfigPollInFlight = false
+local runtimeAutoAlarmZonesHasOverride = false
+local runtimeAutoAlarmZonesLoaded = false
+local runtimeAutoAlarmZones = nil
+
+local function getActiveAutoAlarmZones()
+  if runtimeAutoAlarmZonesLoaded == true and runtimeAutoAlarmZonesHasOverride == true then
+    return type(runtimeAutoAlarmZones) == 'table' and runtimeAutoAlarmZones or {}
+  end
+  return type(Config.AutoAlarmZones) == 'table' and Config.AutoAlarmZones or {}
+end
+
+local function pollAutoAlarmZonesConfig()
+  if not hasBridgeConfig() then
+    return
+  end
+  if alarmZoneConfigPollInFlight or isBridgeBackoffActive('alarm_zone_config') then
+    return
+  end
+
+  alarmZoneConfigPollInFlight = true
+  request('GET', '/api/integration/fivem/alarm-zones', nil, function(status, body, responseHeaders)
+    alarmZoneConfigPollInFlight = false
+    if status == 429 then
+      setBridgeBackoff('alarm_zone_config', responseHeaders, 10000, 'alarm zone config poll')
+      return
+    end
+    if status == 0 then
+      setBridgeBackoff('alarm_zone_config', responseHeaders, 3000, 'alarm zone config transport')
+      return
+    end
+    if status ~= 200 then
+      if status >= 500 then
+        setBridgeBackoff('alarm_zone_config', responseHeaders, 5000, 'alarm zone config error')
+      end
+      return
+    end
+
+    local ok, parsed = pcall(json.decode, body or '{}')
+    if not ok or type(parsed) ~= 'table' then
+      return
+    end
+    runtimeAutoAlarmZonesLoaded = true
+    runtimeAutoAlarmZonesHasOverride = parsed.has_override == true
+    runtimeAutoAlarmZones = type(parsed.zones) == 'table' and parsed.zones or {}
+  end)
+end
+
+local function pointInPolygon2d(px, py, points)
+  if not px or not py or type(points) ~= 'table' or #points < 3 then
+    return false
+  end
+  local inside = false
+  local j = #points
+  for i = 1, #points do
+    local pi = points[i]
+    local pj = points[j]
+    local xi = tonumber(pi and pi.x)
+    local yi = tonumber(pi and pi.y)
+    local xj = tonumber(pj and pj.x)
+    local yj = tonumber(pj and pj.y)
+    if xi and yi and xj and yj then
+      local intersectsBand = ((yi > py) ~= (yj > py))
+      local dy = (yj - yi)
+      if intersectsBand and math.abs(dy) > 0.000001 then
+        local xAtY = ((xj - xi) * (py - yi) / dy) + xi
+        if px < xAtY then
+          inside = not inside
+        end
+      end
+    end
+    j = i
+  end
+  return inside
+end
+
+local function alarmZonePassesZFilter(pos, zone)
+  local pz = tonumber(pos and pos.z)
+  local minZ = tonumber(zone and zone.min_z)
+  local maxZ = tonumber(zone and zone.max_z)
+  if (not minZ and not maxZ) or not pz then
+    return true
+  end
+  if minZ and pz < minZ then return false end
+  if maxZ and pz > maxZ then return false end
+  return true
+end
+
+local function getAlarmBuilderPosition(sourceId)
+  local s = tonumber(sourceId) or 0
+  if s <= 0 then return nil end
+  local pos = PlayerPositions[s]
+  if type(pos) ~= 'table' then
+    pos = getServerPedPositionSnapshot(s)
+  end
+  if type(pos) ~= 'table' then return nil end
+  local x = tonumber(pos.x)
+  local y = tonumber(pos.y)
+  local z = tonumber(pos.z)
+  if not x or not y then return nil end
+  return {
+    x = x + 0.0,
+    y = y + 0.0,
+    z = (z and (z + 0.0)) or 0.0,
+    location = trim(pos.location or ''),
+    postal = trim(pos.postal or ''),
+    street = trim(pos.street or ''),
+    crossing = trim(pos.crossing or ''),
+  }
+end
+
+local function alarmZoneBuilderNotify(sourceId, message)
+  local s = tonumber(sourceId) or 0
+  local text = tostring(message or '')
+  if s > 0 and notifyPlayer then
+    pcall(function()
+      notifyPlayer(s, text)
+    end)
+  end
+  if s > 0 then
+    print(('[cad_bridge] alarm zone builder (src %s): %s'):format(tostring(s), text))
+  else
+    print(('[cad_bridge] alarm zone builder: %s'):format(text))
+  end
+end
+
+RegisterCommand('cadalarmzone', function(src, args)
+  local s = tonumber(src) or 0
+  if s <= 0 then
+    print('[cad_bridge] /cadalarmzone must be run in-game.')
+    return
+  end
+
+  local cmd = trim(args and args[1] or ''):lower()
+  if cmd == '' or cmd == 'help' then
+    alarmZoneBuilderNotify(s, 'Usage: /cadalarmzone pos | start | add | undo | clear | exportpoly <id> [label] | exportcircle <id> <radius> [label]')
+    return
+  end
+
+  if cmd == 'pos' then
+    local pos = getAlarmBuilderPosition(s)
+    if not pos then
+      alarmZoneBuilderNotify(s, 'No position available yet. Move a little and try again.')
+      return
+    end
+    local pointJson = json.encode({
+      x = tonumber(string.format('%.3f', pos.x)),
+      y = tonumber(string.format('%.3f', pos.y)),
+      z = tonumber(string.format('%.3f', pos.z)),
+    })
+    alarmZoneBuilderNotify(s, ('Current point JSON: %s'):format(tostring(pointJson)))
+    return
+  end
+
+  if cmd == 'start' then
+    alarmZoneBuilderBySource[s] = {
+      points = {},
+      started_at_ms = nowMs(),
+    }
+    alarmZoneBuilderNotify(s, 'Alarm polygon builder started. Use /cadalarmzone add to record points.')
+    return
+  end
+
+  if cmd == 'clear' then
+    alarmZoneBuilderBySource[s] = nil
+    alarmZoneBuilderNotify(s, 'Alarm polygon builder cleared.')
+    return
+  end
+
+  if cmd == 'add' then
+    local pos = getAlarmBuilderPosition(s)
+    if not pos then
+      alarmZoneBuilderNotify(s, 'No position available yet. Move a little and try again.')
+      return
+    end
+    local state = alarmZoneBuilderBySource[s]
+    if type(state) ~= 'table' then
+      state = { points = {}, started_at_ms = nowMs() }
+      alarmZoneBuilderBySource[s] = state
+    end
+    state.points = type(state.points) == 'table' and state.points or {}
+    state.points[#state.points + 1] = {
+      x = tonumber(string.format('%.3f', pos.x)),
+      y = tonumber(string.format('%.3f', pos.y)),
+      z = tonumber(string.format('%.3f', pos.z)),
+    }
+    alarmZoneBuilderNotify(s, ('Added point %s (%.2f, %.2f, %.2f)'):format(#state.points, pos.x, pos.y, pos.z))
+    return
+  end
+
+  if cmd == 'undo' then
+    local state = alarmZoneBuilderBySource[s]
+    local points = type(state) == 'table' and state.points or nil
+    if type(points) ~= 'table' or #points == 0 then
+      alarmZoneBuilderNotify(s, 'No points to remove.')
+      return
+    end
+    table.remove(points, #points)
+    alarmZoneBuilderNotify(s, ('Removed last point. %s point(s) remain.'):format(#points))
+    return
+  end
+
+  if cmd == 'exportpoly' then
+    local state = alarmZoneBuilderBySource[s]
+    local points = type(state) == 'table' and state.points or nil
+    if type(points) ~= 'table' or #points < 3 then
+      alarmZoneBuilderNotify(s, 'Need at least 3 points. Use /cadalarmzone start then /cadalarmzone add.')
+      return
+    end
+    local zoneId = trim(args and args[2] or '')
+    if zoneId == '' then
+      alarmZoneBuilderNotify(s, 'Usage: /cadalarmzone exportpoly <id> [label]')
+      return
+    end
+    local label = trim(table.concat(args or {}, ' ', 3))
+    local currentPos = getAlarmBuilderPosition(s)
+    local zone = {
+      id = zoneId,
+      shape = 'polygon',
+      label = label ~= '' and label or zoneId,
+      location = label ~= '' and label or zoneId,
+      priority = tostring(Config.AutoAlarmCallPriority or '2'),
+      job_code = tostring(Config.AutoAlarmCallJobCode or 'ALARM'),
+      min_z = currentPos and tonumber(string.format('%.3f', currentPos.z - 3.0)) or nil,
+      max_z = currentPos and tonumber(string.format('%.3f', currentPos.z + 6.0)) or nil,
+      points = points,
+    }
+    local out = json.encode(zone)
+    alarmZoneBuilderNotify(s, ('Polygon zone JSON: %s'):format(tostring(out)))
+    return
+  end
+
+  if cmd == 'exportcircle' then
+    local zoneId = trim(args and args[2] or '')
+    local radius = tonumber(args and args[3] or 0) or 0
+    if zoneId == '' or radius <= 0 then
+      alarmZoneBuilderNotify(s, 'Usage: /cadalarmzone exportcircle <id> <radius> [label]')
+      return
+    end
+    local pos = getAlarmBuilderPosition(s)
+    if not pos then
+      alarmZoneBuilderNotify(s, 'No position available yet. Move a little and try again.')
+      return
+    end
+    local label = trim(table.concat(args or {}, ' ', 4))
+    local zone = {
+      id = zoneId,
+      shape = 'circle',
+      label = label ~= '' and label or zoneId,
+      location = label ~= '' and label or pos.location or zoneId,
+      x = tonumber(string.format('%.3f', pos.x)),
+      y = tonumber(string.format('%.3f', pos.y)),
+      z = tonumber(string.format('%.3f', pos.z)),
+      radius = tonumber(string.format('%.2f', radius)),
+      postal = trim(pos.postal or ''),
+      priority = tostring(Config.AutoAlarmCallPriority or '2'),
+      job_code = tostring(Config.AutoAlarmCallJobCode or 'ALARM'),
+    }
+    local out = json.encode(zone)
+    alarmZoneBuilderNotify(s, ('Circle zone JSON: %s'):format(tostring(out)))
+    return
+  end
+
+  alarmZoneBuilderNotify(s, 'Unknown subcommand. Use /cadalarmzone help')
+end, false)
+
+local function isInsideAlarmZone(pos, zone)
+  if type(pos) ~= 'table' or type(zone) ~= 'table' then return false end
+  local px = tonumber(pos.x)
+  local py = tonumber(pos.y)
+  if not px or not py then return false end
+  if not alarmZonePassesZFilter(pos, zone) then return false end
+
+  local shape = trim(zone.shape or ''):lower()
+  if shape == 'polygon' or (type(zone.points) == 'table' and #zone.points >= 3) then
+    return pointInPolygon2d(px, py, zone.points)
+  end
+
+  local zx = tonumber(zone.x)
+  local zy = tonumber(zone.y)
+  local radius = tonumber(zone.radius) or 0.0
+  if not zx or not zy or radius <= 0.0 then return false end
+  local dx = px - zx
+  local dy = py - zy
+  return (dx * dx + dy * dy) <= (radius * radius)
+end
+
+local function formatAlarmZoneFallbackLocation(zone, pos)
+  local label = trim(zone and (zone.location or zone.label or zone.id) or '')
+  if label ~= '' then
+    local postal = trim(zone and zone.postal or '')
+    if postal ~= '' and not label:find('%(' .. postal .. '%)', 1, true) then
+      return ('%s (%s)'):format(label, postal)
+    end
+    return label
+  end
+  if type(pos) ~= 'table' then return 'Unknown Location' end
+  local x = tonumber(pos.x) or 0.0
+  local y = tonumber(pos.y) or 0.0
+  local z = tonumber(pos.z) or 0.0
+  local postal = trim(pos.postal or '')
+  local base = ('X:%.1f Y:%.1f Z:%.1f'):format(x, y, z)
+  if postal ~= '' then
+    return ('%s (%s)'):format(base, postal)
+  end
+  return base
+end
+
+local function submitAutoAlarmZoneCall(sourceId, zone, onResult)
+  local function finish(ok, status, body)
+    if type(onResult) ~= 'function' then return end
+    local cbOk, cbErr = pcall(onResult, ok == true, tonumber(status) or 0, body)
+    if not cbOk then
+      print(('[cad_bridge] Auto alarm callback error for source %s: %s')
+        :format(tostring(sourceId), tostring(cbErr)))
+    end
+  end
+
+  local s = tonumber(sourceId) or 0
+  if s <= 0 then
+    finish(false, 0, 'invalid_source')
+    return false
+  end
+  if not GetPlayerName(s) then
+    finish(false, 0, 'player_not_found')
+    return false
+  end
+  if not hasBridgeConfig() then
+    finish(false, 0, 'bridge_not_configured')
+    return false
+  end
+  if isBridgeBackoffActive('calls') then
+    finish(false, 429, 'calls_backoff_active')
+    return false
+  end
+
+  local pos = PlayerPositions[s]
+  if type(pos) ~= 'table' then
+    pos = getServerPedPositionSnapshot(s) or {}
+  end
+
+  local characterName = trim(getCharacterDisplayName(s) or '')
+  local platformName = trim(GetPlayerName(s) or '')
+  local callerName = characterName ~= '' and characterName or platformName
+  if callerName == '' then
+    callerName = ('Player #%s'):format(tostring(s))
+  end
+
+  local zoneLabel = trim(zone and (zone.label or zone.location or zone.id) or '')
+  if zoneLabel == '' then zoneLabel = 'Unknown Alarm Location' end
+  local location = trim(zone and zone.location or '')
+  if location == '' then location = trim(pos and pos.location or '') end
+  if location == '' then location = formatAlarmZoneFallbackLocation(zone, pos) end
+  local zonePostal = trim(zone and zone.postal or '')
+  if zonePostal ~= '' and location ~= '' and not location:find('%(' .. zonePostal .. '%)', 1, true) then
+    location = ('%s (%s)'):format(location, zonePostal)
+  end
+  local title = trim(zone and zone.title or '')
+  if title == '' then
+    title = ('Automatic alarm triggered at %s'):format(zoneLabel)
+  end
+  local message = trim(zone and zone.message or '')
+  if message == '' then
+    message = ('Automatic alarm triggered at %s. Police attendance requested to investigate.'):format(zoneLabel)
+  end
+
+  local payload = {
+    source = s,
+    identifiers = GetPlayerIdentifiers(s),
+    player_name = callerName,
+    platform_name = platformName,
+    character_name = characterName,
+    title = title,
+    message = message,
+    priority = trim((zone and zone.priority) or Config.AutoAlarmCallPriority or '2'),
+    job_code = trim((zone and zone.job_code) or Config.AutoAlarmCallJobCode or 'ALARM'),
+    source_type = 'auto_alarm_zone',
+    requested_department_layout_type = trim((zone and zone.requested_department_layout_type) or Config.AutoAlarmRequestedDepartmentLayoutType or 'law_enforcement'),
+    location = location,
+    street = trim(pos and pos.street or ''),
+    crossing = trim(pos and pos.crossing or ''),
+    postal = trim((zone and zone.postal) or (pos and pos.postal) or ''),
+    alarm_zone_id = trim(zone and zone.id or ''),
+    alarm_zone_label = zoneLabel,
+  }
+  local primaryDeptId = tonumber(zone and zone.department_id) or 0
+  local backupDeptId = tonumber(zone and zone.backup_department_id) or 0
+  if primaryDeptId > 0 then
+    payload.primary_department_id = math.floor(primaryDeptId)
+    payload.department_id = math.floor(primaryDeptId)
+  end
+  if backupDeptId > 0 then
+    payload.backup_department_id = math.floor(backupDeptId)
+  end
+  if payload.priority == '' then payload.priority = '2' end
+  if payload.job_code == '' then payload.job_code = 'ALARM' end
+  if payload.requested_department_layout_type == '' then
+    payload.requested_department_layout_type = 'law_enforcement'
+  end
+
+  if type(pos) == 'table' then
+    payload.position = {
+      x = tonumber(pos.x) or tonumber(zone and zone.x) or 0.0,
+      y = tonumber(pos.y) or tonumber(zone and zone.y) or 0.0,
+      z = tonumber(pos.z) or tonumber(zone and zone.z) or 0.0,
+    }
+    payload.heading = tonumber(pos.heading) or 0.0
+    payload.speed = tonumber(pos.speed) or 0.0
+  else
+    payload.position = {
+      x = tonumber(zone and zone.x) or 0.0,
+      y = tonumber(zone and zone.y) or 0.0,
+      z = tonumber(zone and zone.z) or 0.0,
+    }
+  end
+
+  request('POST', '/api/integration/fivem/calls', payload, function(status, body, responseHeaders)
+    if status >= 200 and status < 300 then
+      local callId = '?'
+      local okDecode, parsed = pcall(json.decode, body or '{}')
+      if okDecode and type(parsed) == 'table' and type(parsed.call) == 'table' and parsed.call.id then
+        callId = tostring(parsed.call.id)
+      end
+      print(('[cad_bridge] Auto alarm call created for zone %s (source #%s) as CAD call #%s')
+        :format(zoneLabel, tostring(s), callId))
+      finish(true, status, body)
+      return
+    end
+
+    if status == 429 then
+      setBridgeBackoff('calls', responseHeaders, 15000, 'auto alarm call')
+    end
+
+    local err = ('Auto alarm call failed (HTTP %s)'):format(tostring(status))
+    local okDecode, parsed = pcall(json.decode, body or '{}')
+    if okDecode and type(parsed) == 'table' and parsed.error then
+      err = err .. ': ' .. tostring(parsed.error)
+    end
+    print('[cad_bridge] ' .. err)
+    finish(false, status, body)
+  end)
+
+  return true
+end
+
+CreateThread(function()
+  while true do
+    Wait(math.max(500, tonumber(Config.AutoAlarmCallPollIntervalMs) or 1500))
+
+    if Config.AutoAlarmCallEnabled ~= true then
+      autoAlarmZonePlayerStateBySource = {}
+      autoAlarmZoneInFlightByZoneId = {}
+      goto continue
+    end
+    if not hasBridgeConfig() then
+      goto continue
+    end
+
+    local zones = getActiveAutoAlarmZones()
+    if #zones == 0 then
+      goto continue
+    end
+
+    local now = nowMs()
+    local onlineBySource = {}
+
+    for _, src in ipairs(GetPlayers()) do
+      local s = tonumber(src) or 0
+      if s > 0 and GetPlayerName(s) then
+        onlineBySource[s] = true
+        local pos = PlayerPositions[s]
+        if type(pos) ~= 'table' then
+          pos = getServerPedPositionSnapshot(s)
+        end
+
+        local sourceState = autoAlarmZonePlayerStateBySource[s]
+        if type(sourceState) ~= 'table' then
+          sourceState = {}
+          autoAlarmZonePlayerStateBySource[s] = sourceState
+        end
+
+        for i, zone in ipairs(zones) do
+          if type(zone) == 'table' then
+            local zoneKey = trim(zone.id or ('alarm_zone_' .. tostring(i)))
+            if zoneKey == '' then zoneKey = 'alarm_zone_' .. tostring(i) end
+            local zoneState = sourceState[zoneKey]
+            if type(zoneState) ~= 'table' then
+              zoneState = {
+                inside = false,
+                last_trigger_ms = 0,
+              }
+              sourceState[zoneKey] = zoneState
+            end
+
+            local inside = isInsideAlarmZone(pos, zone)
+            if inside and zoneState.inside ~= true then
+              zoneState.inside = true
+
+              local perPlayerCooldownMs = math.max(
+                1000,
+                math.floor(tonumber(zone.per_player_cooldown_ms) or tonumber(Config.AutoAlarmPerPlayerCooldownMs) or 60000)
+              )
+              local zoneCooldownMs = math.max(
+                1000,
+                math.floor(tonumber(zone.cooldown_ms) or tonumber(Config.AutoAlarmZoneCooldownMs) or 180000)
+              )
+              local lastPlayerTriggerAt = tonumber(zoneState.last_trigger_ms or 0) or 0
+              local lastZoneTriggerAt = tonumber(autoAlarmZoneLastTriggerAtByZoneId[zoneKey] or 0) or 0
+
+              if (now - lastPlayerTriggerAt) >= perPlayerCooldownMs
+                and (now - lastZoneTriggerAt) >= zoneCooldownMs
+                and autoAlarmZoneInFlightByZoneId[zoneKey] ~= true
+              then
+                local zoneKeyForCallback = zoneKey
+                local zoneCooldownMsForCallback = zoneCooldownMs
+                autoAlarmZoneInFlightByZoneId[zoneKey] = true
+                autoAlarmZoneLastTriggerAtByZoneId[zoneKey] = now
+                zoneState.last_trigger_ms = now
+
+                local dispatched = submitAutoAlarmZoneCall(s, zone, function(success, status)
+                  autoAlarmZoneInFlightByZoneId[zoneKeyForCallback] = nil
+                  if success ~= true then
+                    -- Allow quicker retry after transient failure instead of waiting full zone cooldown.
+                    local retryDelayMs = 5000
+                    if tonumber(status) == 429 then
+                      retryDelayMs = 15000
+                    end
+                    autoAlarmZoneLastTriggerAtByZoneId[zoneKeyForCallback] =
+                      nowMs() - math.max(0, (zoneCooldownMsForCallback - retryDelayMs))
+                  end
+                end)
+
+                if not dispatched then
+                  autoAlarmZoneInFlightByZoneId[zoneKey] = nil
+                  autoAlarmZoneLastTriggerAtByZoneId[zoneKey] = 0
+                end
+              end
+            elseif not inside then
+              zoneState.inside = false
+            end
+          end
+        end
+      end
+    end
+
+    for sourceId, _ in pairs(autoAlarmZonePlayerStateBySource) do
+      if not onlineBySource[sourceId] then
+        autoAlarmZonePlayerStateBySource[sourceId] = nil
+      end
+    end
+
+    if (now - lastAutoAlarmLogAtMs) >= 300000 and #zones > 0 then
+      lastAutoAlarmLogAtMs = now
+      -- Low-frequency heartbeat for admin visibility that alarms are enabled.
+      print(('[cad_bridge] Auto alarm zone monitoring active (%s zone%s)')
+        :format(tostring(#zones), #zones == 1 and '' or 's'))
+    end
+
+    ::continue::
+  end
+end)
+
+CreateThread(function()
+  while true do
+    Wait(math.max(1000, tonumber(Config.AutoAlarmConfigPollIntervalMs) or 5000))
+    pollAutoAlarmZonesConfig()
+  end
+end)
+
 CreateThread(function()
   while true do
     Wait(math.max(1000, tonumber(Config.AutoAmbulanceCallPollIntervalMs) or 2500))

@@ -185,6 +185,7 @@ export default function Search() {
   const [registrationStatusDraft, setRegistrationStatusDraft] = useState('valid');
   const [licenseStatusSaving, setLicenseStatusSaving] = useState(false);
   const [registrationStatusSaving, setRegistrationStatusSaving] = useState(false);
+  const [registrationDeleteSaving, setRegistrationDeleteSaving] = useState(false);
 
   const personQuery = [
     String(personFirstName || '').trim(),
@@ -321,6 +322,38 @@ export default function Search() {
       alert('Failed to update registration status:\n' + formatErr(err));
     } finally {
       setRegistrationStatusSaving(false);
+    }
+  }
+
+  async function deleteVehicleRegistration() {
+    const plate = String(selectedVehicle?.plate || '').trim();
+    if (!plate || !selectedVehicle?.cad_registration) return;
+    if (!window.confirm(`Delete CAD registration for ${plate}? This cannot be undone.`)) return;
+
+    setRegistrationDeleteSaving(true);
+    try {
+      await api.delete(`/api/search/vehicles/${encodeURIComponent(plate)}/registration`);
+
+      setSelectedVehicle((current) => {
+        if (!current || String(current.plate || '').trim() !== plate) return current;
+        return { ...current, cad_registration: null };
+      });
+
+      setResults((current) => (
+        Array.isArray(current)
+          ? current.map((item) => {
+            if (String(item?.plate || '').trim().toUpperCase() !== plate.toUpperCase()) return item;
+            const next = { ...item };
+            delete next.cad_registration;
+            next.status = 'unregistered';
+            return next;
+          })
+          : current
+      ));
+    } catch (err) {
+      alert('Failed to delete registration:\n' + formatErr(err));
+    } finally {
+      setRegistrationDeleteSaving(false);
     }
   }
 
@@ -663,10 +696,18 @@ export default function Search() {
                       <button
                         type="button"
                         onClick={saveVehicleRegistrationStatus}
-                        disabled={registrationStatusSaving}
+                        disabled={registrationStatusSaving || registrationDeleteSaving}
                         className="px-3 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
                       >
                         {registrationStatusSaving ? 'Saving...' : 'Update Registration Status'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={deleteVehicleRegistration}
+                        disabled={registrationStatusSaving || registrationDeleteSaving}
+                        className="px-3 py-2 bg-red-700/90 hover:bg-red-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                      >
+                        {registrationDeleteSaving ? 'Deleting...' : 'Delete Registration'}
                       </button>
                     </div>
                   ) : (
