@@ -295,6 +295,39 @@ function getCustomTemplatePath() {
   return resolved;
 }
 
+function getCustomTemplateUrl() {
+  const fromSettings = String(Settings.get('discord_warrant_community_poster_template_url') || '').trim();
+  return isHttpUrl(fromSettings) ? fromSettings : '';
+}
+
+async function loadCustomTemplateBuffer() {
+  const customTemplatePath = getCustomTemplatePath();
+  if (customTemplatePath) {
+    if (fs.existsSync(customTemplatePath)) {
+      try {
+        const buffer = await fsp.readFile(customTemplatePath);
+        return { buffer, source: customTemplatePath, kind: 'path' };
+      } catch (err) {
+        console.warn(`[WarrantPoster] Failed to read template image: ${err?.message || err}`);
+      }
+    } else {
+      console.warn(`[WarrantPoster] Template path not found: ${customTemplatePath}`);
+    }
+  }
+
+  const customTemplateUrl = getCustomTemplateUrl();
+  if (customTemplateUrl) {
+    try {
+      const buffer = await fetchImageBufferFromUrl(customTemplateUrl);
+      return { buffer, source: customTemplateUrl, kind: 'url' };
+    } catch (err) {
+      console.warn(`[WarrantPoster] Failed to fetch template image: ${err?.message || err}`);
+    }
+  }
+
+  return { buffer: null, source: '', kind: 'none' };
+}
+
 async function renderWantedPoster({
   name,
   location = 'Los Santos',
@@ -302,13 +335,13 @@ async function renderWantedPoster({
   wantedFor,
   mugshotBuffer = null,
 }) {
-  const customTemplatePath = getCustomTemplatePath();
-  const hasCustomTemplate = !!customTemplatePath && fs.existsSync(customTemplatePath);
+  const template = await loadCustomTemplateBuffer();
+  const hasCustomTemplate = !!template.buffer;
   const hasMugshot = !!mugshotBuffer;
 
   let baseBuffer;
   if (hasCustomTemplate) {
-    baseBuffer = await sharp(customTemplatePath)
+    baseBuffer = await sharp(template.buffer)
       .resize(POSTER_WIDTH, POSTER_HEIGHT, { fit: 'fill' })
       .png()
       .toBuffer();
@@ -345,15 +378,17 @@ async function renderWantedPoster({
       top: PHOTO_FRAME.y + 6,
     });
 
-    composites.push({
-      input: Buffer.from(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${PHOTO_FRAME.width}" height="${PHOTO_FRAME.height}">
-          <rect x="3" y="3" width="${PHOTO_FRAME.width - 6}" height="${PHOTO_FRAME.height - 6}" rx="${PHOTO_FRAME.radius}" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2"/>
-        </svg>`
-      ),
-      left: PHOTO_FRAME.x,
-      top: PHOTO_FRAME.y,
-    });
+    if (!hasCustomTemplate) {
+      composites.push({
+        input: Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${PHOTO_FRAME.width}" height="${PHOTO_FRAME.height}">
+            <rect x="3" y="3" width="${PHOTO_FRAME.width - 6}" height="${PHOTO_FRAME.height - 6}" rx="${PHOTO_FRAME.radius}" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2"/>
+          </svg>`
+        ),
+        left: PHOTO_FRAME.x,
+        top: PHOTO_FRAME.y,
+      });
+    }
   }
 
   if (hasCustomTemplate) {
@@ -373,36 +408,11 @@ async function renderWantedPoster({
     .toBuffer();
 }
 
-function buildWebhookPayload({
-  warrant,
-  warrantCount,
-  location,
-  hasMugshot,
-}) {
-  const subjectName = String(warrant?.subject_name || 'Unknown').trim() || 'Unknown';
-  const wantedFor = String(warrant?.title || warrant?.description || 'Active warrant').trim();
-
+function buildWebhookPayload() {
   return {
     username: String(Settings.get('discord_warrant_community_webhook_username') || 'Community Wanted Alerts').trim() || 'Community Wanted Alerts',
     avatar_url: String(Settings.get('discord_warrant_community_webhook_avatar_url') || '').trim() || undefined,
-    content: `Community notification: **${subjectName}** is now wanted.`,
     allowed_mentions: { parse: [] },
-    embeds: [
-      {
-        title: 'Wanted Notice',
-        color: 0xff9f2a,
-        description: `Have you seen **${subjectName}**?`,
-        fields: [
-          { name: 'Name', value: subjectName, inline: true },
-          { name: 'Location', value: location, inline: true },
-          { name: 'No. of Warrants', value: String(Math.max(1, Number(warrantCount || 1))), inline: true },
-          { name: 'Wanted For', value: truncateText(wantedFor, 400), inline: false },
-        ],
-        footer: { text: hasMugshot ? 'CAD community alert (licence photo included)' : 'CAD community alert (no licence photo available)' },
-        image: { url: 'attachment://wanted-poster.png' },
-        timestamp: new Date().toISOString(),
-      },
-    ],
   };
 }
 
@@ -461,12 +471,7 @@ async function notifyWarrantCommunityPoster(warrant) {
     mugshotBuffer: mugshot.buffer,
   });
 
-  const payload = buildWebhookPayload({
-    warrant,
-    warrantCount,
-    location,
-    hasMugshot: !!mugshot.hasPhoto,
-  });
+  const payload = buildWebhookPayload();
 
   await sendDiscordWebhookWithImage(webhookUrl, payload, posterBuffer);
 
@@ -501,17 +506,7 @@ async function sendTestWarrantCommunityPoster() {
     mugshotBuffer: null,
   });
 
-  const payload = buildWebhookPayload({
-    warrant: testWarrant,
-    warrantCount: 1,
-    location,
-    hasMugshot: false,
-  });
-  payload.content = 'Test notification: this is a CAD warrant community poster webhook test.';
-  if (Array.isArray(payload.embeds) && payload.embeds[0]) {
-    payload.embeds[0].title = 'Wanted Notice (Test)';
-    payload.embeds[0].description = 'Webhook connectivity test from CAD Admin Settings.';
-  }
+  const payload = buildWebhookPayload();
 
   await sendDiscordWebhookWithImage(webhookUrl, payload, posterBuffer);
 

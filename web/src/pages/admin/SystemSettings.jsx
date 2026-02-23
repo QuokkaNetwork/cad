@@ -413,7 +413,20 @@ export default function AdminSystemSettings() {
               placeholder="C:\\path\\to\\wanted-template.png"
             />
             <p className="text-xs text-cad-muted mt-1">
-              Optional local image path to use as the poster template background.
+              Optional local image path to use as the exact poster background. CAD overlays the character photo and text onto this image.
+            </p>
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Poster Template URL (optional)</label>
+            <input
+              type="text"
+              value={settings.discord_warrant_community_poster_template_url || ''}
+              onChange={e => updateSetting('discord_warrant_community_poster_template_url', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="https://.../wanted-template.png"
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              Optional fallback if no local template path is set. Local path takes priority.
             </p>
           </div>
         </div>
@@ -428,7 +441,7 @@ export default function AdminSystemSettings() {
             {testingWarrantWebhook ? 'Sending Test...' : 'Save + Send Test Wanted Poster'}
           </button>
           <p className="text-xs text-cad-muted">
-            Sends a sample wanted poster to the currently entered webhook URL after saving settings.
+            Sends a sample wanted poster image (image-only message, no embed) to the currently entered webhook URL after saving settings.
           </p>
         </div>
 
