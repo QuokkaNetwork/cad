@@ -6,7 +6,7 @@ const sharp = require('sharp');
 const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
-  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, FiveMJobSyncJobs, FiveMFineJobs, SubDepartments, OffenceCatalog,
+  Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, UserCitizenLinks, FiveMJobSyncJobs, FiveMFineJobs, SubDepartments, OffenceCatalog,
   DriverLicenses, VehicleRegistrations,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
@@ -486,6 +486,10 @@ router.get('/discord/job-sync-preview', async (req, res) => {
       list.push(cid);
     };
     add(preferredCitizenId);
+    if (UserCitizenLinks && typeof UserCitizenLinks.listByUserId === 'function') {
+      const rows = UserCitizenLinks.listByUserId(Number(user.id || 0), 200);
+      for (const row of rows || []) add(row?.citizen_id);
+    }
     if (String(user.steam_id || '').trim()) {
       add(FiveMPlayerLinks.findBySteamId(String(user.steam_id || '').trim())?.citizen_id);
     }

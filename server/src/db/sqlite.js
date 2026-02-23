@@ -103,6 +103,64 @@ const Users = {
   },
 };
 
+// --- User citizen ID links (multi-character mapping per CAD user) ---
+const UserCitizenLinks = {
+  upsert({ user_id, citizen_id, source = 'unknown', seen_at = null }) {
+    const parsedUserId = Number(user_id);
+    const normalizedCitizenId = String(citizen_id || '').trim();
+    if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) return null;
+    if (!normalizedCitizenId) return null;
+    const normalizedSource = String(source || '').trim() || 'unknown';
+    const seenAt = String(seen_at || '').trim() || null;
+    db.prepare(`
+      INSERT INTO user_citizen_links (
+        user_id, citizen_id, source, first_seen_at, last_seen_at, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), datetime('now'), datetime('now')
+      )
+      ON CONFLICT(user_id, citizen_id) DO UPDATE SET
+        source = CASE
+          WHEN excluded.source IS NOT NULL AND TRIM(excluded.source) <> '' THEN excluded.source
+          ELSE user_citizen_links.source
+        END,
+        last_seen_at = COALESCE(excluded.last_seen_at, user_citizen_links.last_seen_at, datetime('now')),
+        updated_at = datetime('now')
+    `).run(parsedUserId, normalizedCitizenId, normalizedSource, seenAt, seenAt);
+    return this.findByUserIdAndCitizenId(parsedUserId, normalizedCitizenId);
+  },
+  findByUserIdAndCitizenId(userId, citizenId) {
+    const parsedUserId = Number(userId);
+    const normalizedCitizenId = String(citizenId || '').trim();
+    if (!Number.isInteger(parsedUserId) || parsedUserId <= 0 || !normalizedCitizenId) return null;
+    return db.prepare(`
+      SELECT * FROM user_citizen_links
+      WHERE user_id = ? AND lower(citizen_id) = lower(?)
+      LIMIT 1
+    `).get(parsedUserId, normalizedCitizenId);
+  },
+  listByUserId(userId, limit = 100) {
+    const parsedUserId = Number(userId);
+    const parsedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.trunc(Number(limit))) : 100;
+    if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) return [];
+    return db.prepare(`
+      SELECT * FROM user_citizen_links
+      WHERE user_id = ?
+      ORDER BY last_seen_at DESC, id DESC
+      LIMIT ?
+    `).all(parsedUserId, parsedLimit);
+  },
+  findLatestByCitizenId(citizenId) {
+    const normalizedCitizenId = String(citizenId || '').trim();
+    if (!normalizedCitizenId) return null;
+    return db.prepare(`
+      SELECT * FROM user_citizen_links
+      WHERE lower(citizen_id) = lower(?)
+      ORDER BY last_seen_at DESC, id DESC
+      LIMIT 1
+    `).get(normalizedCitizenId);
+  },
+};
+
 // --- Departments ---
 const Departments = {
   list() {
@@ -2940,6 +2998,7 @@ module.exports = {
   initDb,
   getDb: () => db,
   Users,
+  UserCitizenLinks,
   Departments,
   UserDepartments,
   SubDepartments,

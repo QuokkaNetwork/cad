@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, Events } = require('discord.js');
 const config = require('../config');
 const {
   Users,
+  UserCitizenLinks,
   UserDepartments,
   UserSubDepartments,
   DiscordRoleMappings,
@@ -88,6 +89,13 @@ function getUserCitizenIdCandidates(user) {
   };
 
   addCandidate(user?.preferred_citizen_id, 'preferred');
+
+  if (UserCitizenLinks && typeof UserCitizenLinks.listByUserId === 'function') {
+    const persistedLinks = UserCitizenLinks.listByUserId(Number(user?.id || 0), 200);
+    for (const row of persistedLinks || []) {
+      addCandidate(row?.citizen_id, row?.source || 'user_citizen_link');
+    }
+  }
 
   const steamId = String(user?.steam_id || '').trim();
   if (steamId && FiveMPlayerLinks && typeof FiveMPlayerLinks.findBySteamId === 'function') {

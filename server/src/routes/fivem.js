@@ -11,6 +11,7 @@ const {
   TrafficStops,
   Departments,
   FiveMPlayerLinks,
+  UserCitizenLinks,
   FiveMFineJobs,
   FiveMJailJobs,
   DriverLicenses,
@@ -124,6 +125,23 @@ function isActiveFiveMLink(link) {
   const ts = parseSqliteUtc(link?.updated_at);
   if (Number.isNaN(ts)) return false;
   return (Date.now() - ts) <= ACTIVE_LINK_MAX_AGE_MS;
+}
+
+function rememberCadUserCitizenLink(cadUser, citizenId, source = 'fivem_bridge') {
+  const userId = Number(cadUser?.id || 0);
+  const normalizedCitizenId = String(citizenId || '').trim();
+  if (!Number.isInteger(userId) || userId <= 0 || !normalizedCitizenId) return null;
+  try {
+    return UserCitizenLinks.upsert({
+      user_id: userId,
+      citizen_id: normalizedCitizenId,
+      source,
+      seen_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('[FiveMBridge] Failed to persist user citizen link:', err?.message || err);
+    return null;
+  }
 }
 
 function requireBridgeAuth(req, res, next) {
@@ -282,6 +300,11 @@ function resolveCadUserFromFiveMPlayerLink(link) {
   if (linkedCitizenId) {
     const byPreferredCitizen = Users.findByPreferredCitizenId(linkedCitizenId);
     if (byPreferredCitizen) return byPreferredCitizen;
+    const persistedLink = UserCitizenLinks.findLatestByCitizenId(linkedCitizenId);
+    if (persistedLink) {
+      const byPersisted = Users.findById(Number(persistedLink.user_id || 0));
+      if (byPersisted) return byPersisted;
+    }
   }
 
   return null;
@@ -305,6 +328,10 @@ function resolveCadUserFromBridgeIdentity({ ids = {}, citizenId = '' } = {}) {
   }
   if (!cadUser && citizenId) {
     cadUser = Users.findByPreferredCitizenId(citizenId) || null;
+  }
+  if (!cadUser && citizenId) {
+    const persistedLink = UserCitizenLinks.findLatestByCitizenId(citizenId);
+    if (persistedLink) cadUser = Users.findById(Number(persistedLink.user_id || 0)) || null;
   }
   return cadUser || null;
 }
@@ -2246,6 +2273,9 @@ router.post('/heartbeat', requireBridgeAuth, (req, res) => {
         Users.update(cadUser.id, { preferred_citizen_id: citizenId });
       }
     }
+    if (cadUser && citizenId) {
+      rememberCadUserCitizenLink(cadUser, citizenId, 'heartbeat');
+    }
 
     const mappedUnit = cadUser ? Units.findByUserId(cadUser.id) : null;
 
@@ -2347,6 +2377,9 @@ router.post('/discord/job-role-sync', requireBridgeAuth, async (req, res) => {
     if (ids.discordId) liveLinkUserCache.set(`discord:${ids.discordId}`, cadUser.id);
     if (ids.licenseId) liveLinkUserCache.set(`license:${ids.licenseId}`, cadUser.id);
     if (ids.linkKey) liveLinkUserCache.set(ids.linkKey, cadUser.id);
+  }
+  if (cadUser && citizenId) {
+    rememberCadUserCitizenLink(cadUser, citizenId, 'job_role_sync_trigger');
   }
 
   if (!cadUser) {
