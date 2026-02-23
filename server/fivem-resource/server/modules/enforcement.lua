@@ -2638,6 +2638,178 @@ local function buildPrintedDocumentMetadata(job)
   return metadata
 end
 
+local function getPrintedDocumentItemNames()
+  local out = {}
+  local seen = {}
+
+  local function push(raw)
+    local value = trim(raw or '')
+    if value == '' then return end
+    local key = value:lower()
+    if seen[key] then return end
+    seen[key] = true
+    out[#out + 1] = value
+  end
+
+  push(Config and Config.CadBridgePrintedTicketItemName or '')
+  push(Config and Config.CadBridgePrintedWarningItemName or '')
+  if #out == 0 then
+    push('paper')
+  end
+
+  return out
+end
+
+local function extractPrintedDocumentMetadataFromItem(item)
+  if type(item) ~= 'table' then return nil, '', '' end
+
+  local itemName = trim(item.name or item.item or item.slotName or '')
+  local itemLabel = trim(item.label or item.displayName or '')
+  local metadata = nil
+
+  if type(item.metadata) == 'table' then metadata = item.metadata end
+  if type(item.info) == 'table' and type(metadata) ~= 'table' then metadata = item.info end
+
+  if type(item.item) == 'table' then
+    local nested = item.item
+    if itemName == '' then itemName = trim(nested.name or nested.item or '') end
+    if itemLabel == '' then itemLabel = trim(nested.label or '') end
+    if type(nested.metadata) == 'table' and type(metadata) ~= 'table' then metadata = nested.metadata end
+    if type(nested.info) == 'table' and type(metadata) ~= 'table' then metadata = nested.info end
+  end
+
+  if type(item.slot) == 'table' then
+    local slotData = item.slot
+    if itemName == '' then itemName = trim(slotData.name or slotData.item or '') end
+    if itemLabel == '' then itemLabel = trim(slotData.label or '') end
+    if type(slotData.metadata) == 'table' and type(metadata) ~= 'table' then metadata = slotData.metadata end
+    if type(slotData.info) == 'table' and type(metadata) ~= 'table' then metadata = slotData.info end
+  end
+
+  if type(metadata) ~= 'table' then return nil, itemName, itemLabel end
+  return metadata, itemName, itemLabel
+end
+
+local function openPrintedDocumentForSource(sourceId, itemPayload, fallbackItemName, sourceLabel)
+  local src = tonumber(sourceId) or 0
+  if src <= 0 then return false end
+
+  local metadata, itemName, itemLabel = extractPrintedDocumentMetadataFromItem(itemPayload)
+  if type(metadata) ~= 'table' then
+    return false
+  end
+
+  local docType = trim(metadata.document_type or '')
+  local docSubtype = trim(metadata.document_subtype or '')
+  local hasDocMarker = docType ~= '' or docSubtype ~= '' or tonumber(metadata.cad_print_job_id or 0)
+  if not hasDocMarker then
+    local title = trim(metadata.title or '')
+    local description = trim(metadata.description or metadata.info or '')
+    if title == '' and description == '' then
+      return false
+    end
+  end
+
+  local payload = {
+    item_name = trim(itemName) ~= '' and trim(itemName) or trim(fallbackItemName or ''),
+    item_label = itemLabel,
+    source = trim(sourceLabel or 'server_useable_item'),
+    metadata = cloneInventoryValue(metadata),
+  }
+
+  TriggerClientEvent('cad_bridge:showPrintedDocument', src, payload)
+  return true
+end
+
+local function registerQbxPrintedDocumentUsable(itemName)
+  if GetResourceState('qbx_core') ~= 'started' then
+    return false, 'qbx_core_not_started'
+  end
+
+  local callback = function(sourceId, item)
+    local opened = openPrintedDocumentForSource(sourceId, item, itemName, 'qbx_useable_item')
+    if not opened then
+      notifyAlert(tonumber(sourceId) or 0, 'CAD Document', 'This item is not a readable CAD printed document.', 'warning')
+    end
+  end
+
+  local attempts = { 'CreateUseableItem', 'CreateUsableItem' }
+  for _, fnName in ipairs(attempts) do
+    local ok, result = pcall(function()
+      local fn = exports.qbx_core and exports.qbx_core[fnName]
+      if type(fn) ~= 'function' then return nil end
+      return fn(itemName, callback)
+    end)
+    if ok and result ~= false then
+      return true, ''
+    end
+  end
+
+  return false, 'qbx_useable_registration_unavailable'
+end
+
+local function registerQbPrintedDocumentUsable(itemName)
+  if GetResourceState('qb-core') ~= 'started' then
+    return false, 'qb_core_not_started'
+  end
+
+  local okCore, core = pcall(function()
+    return exports['qb-core']:GetCoreObject()
+  end)
+  if not okCore or not core or type(core.Functions) ~= 'table' then
+    return false, 'qb_core_unavailable'
+  end
+
+  local createFn = core.Functions.CreateUseableItem or core.Functions.CreateUsableItem
+  if type(createFn) ~= 'function' then
+    return false, 'qb_core_create_useable_missing'
+  end
+
+  local okRegister, registerErr = pcall(function()
+    createFn(itemName, function(sourceId, item)
+      local opened = openPrintedDocumentForSource(sourceId, item, itemName, 'qb_useable_item')
+      if not opened then
+        notifyAlert(tonumber(sourceId) or 0, 'CAD Document', 'This item is not a readable CAD printed document.', 'warning')
+      end
+    end)
+  end)
+  if okRegister then
+    return true, ''
+  end
+  return false, tostring(registerErr or 'qb_useable_registration_failed')
+end
+
+local function registerPrintedDocumentUsableItems()
+  local itemNames = getPrintedDocumentItemNames()
+  for _, itemName in ipairs(itemNames) do
+    local qbxOk = false
+    if GetResourceState('qbx_core') == 'started' then
+      qbxOk = registerQbxPrintedDocumentUsable(itemName)
+    end
+    if not qbxOk and GetResourceState('qb-core') == 'started' then
+      registerQbPrintedDocumentUsable(itemName)
+    end
+  end
+end
+
+AddEventHandler('onResourceStart', function(resourceName)
+  if resourceName ~= GetCurrentResourceName()
+    and resourceName ~= 'qbx_core'
+    and resourceName ~= 'qb-core' then
+    return
+  end
+
+  CreateThread(function()
+    Wait(1000)
+    registerPrintedDocumentUsableItems()
+  end)
+end)
+
+CreateThread(function()
+  Wait(1500)
+  registerPrintedDocumentUsableItems()
+end)
+
 local function markPrintJobFailedRemote(jobId, err)
   request('POST', ('/api/integration/fivem/print-jobs/%s/failed'):format(tostring(jobId)), {
     error = err or 'Print job failed',

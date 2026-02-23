@@ -104,6 +104,18 @@
   filter: grayscale(1) brightness(1.7) contrast(1.05);
 }
 
+.cad-page-watermark-mask {
+  mask-image: radial-gradient(circle at center, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.65) 42%, transparent 78%);
+  -webkit-mask-image: radial-gradient(circle at center, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.65) 42%, transparent 78%);
+}
+
+.cad-page-watermark-image {
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.045;
+  filter: grayscale(1) brightness(1.9) contrast(1.08);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cad-orb-float-a,
   .cad-orb-float-b,

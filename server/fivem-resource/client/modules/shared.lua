@@ -24,6 +24,7 @@ if state.jailReleaseUiOpenedAtMs == nil then state.jailReleaseUiOpenedAtMs = 0 e
 if state.driverLicenseUiOpen == nil then state.driverLicenseUiOpen = false end
 if state.vehicleRegistrationUiOpen == nil then state.vehicleRegistrationUiOpen = false end
 if state.idCardUiOpen == nil then state.idCardUiOpen = false end
+if state.printedDocumentUiOpen == nil then state.printedDocumentUiOpen = false end
 if state.headshotCapturePending == nil then state.headshotCapturePending = nil end
 if state.lastDocumentInteractAt == nil then state.lastDocumentInteractAt = 0 end
 
@@ -591,6 +592,7 @@ function ui.hasAnyCadBridgeModalOpen()
     or state.jailReleaseUiOpen
     or state.driverLicenseUiOpen
     or state.vehicleRegistrationUiOpen
+    or state.printedDocumentUiOpen
 end
 
 function ui.refreshCadBridgeNuiFocus()
@@ -616,6 +618,9 @@ end
 if type(ui.closeVehicleRegistrationPopup) ~= 'function' then
   function ui.closeVehicleRegistrationPopup() end
 end
+if type(ui.closePrintedDocumentPopup) ~= 'function' then
+  function ui.closePrintedDocumentPopup() end
+end
 
 function ui.closeAllModals()
   ui.closeEmergencyPopup()
@@ -623,4 +628,5 @@ function ui.closeAllModals()
   ui.closeJailReleasePopup()
   ui.closeDriverLicensePopup()
   ui.closeVehicleRegistrationPopup()
+  ui.closePrintedDocumentPopup()
 end

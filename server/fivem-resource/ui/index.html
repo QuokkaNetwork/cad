@@ -205,6 +205,75 @@
       </section>
     </div>
 
+    <div id="printedDocOverlay" class="overlay hidden" aria-hidden="true">
+      <section class="panel panel-printed-doc" role="dialog" aria-modal="true" aria-labelledby="printedDoc-title">
+        <header class="panel-header">
+          <div class="eyebrow">CAD Printed Document</div>
+          <button id="printedDocCloseBtn" class="icon-btn" type="button" aria-label="Close">x</button>
+        </header>
+
+        <div class="printed-doc-title-row">
+          <div>
+            <h1 id="printedDoc-title">Printed Document</h1>
+            <p id="printedDocSubtitle" class="subtitle">Issued via CAD</p>
+          </div>
+          <div id="printedDocType" class="printed-doc-type">Document</div>
+        </div>
+
+        <section class="printed-doc-paper">
+          <div class="printed-doc-meta-grid">
+            <div class="printed-doc-meta-row">
+              <span class="printed-doc-meta-label">Subject</span>
+              <span id="printedDocSubject" class="printed-doc-meta-value">Not set</span>
+            </div>
+            <div class="printed-doc-meta-row">
+              <span class="printed-doc-meta-label">Officer</span>
+              <span id="printedDocOfficer" class="printed-doc-meta-value">Unknown</span>
+            </div>
+            <div class="printed-doc-meta-row">
+              <span class="printed-doc-meta-label">Issued</span>
+              <span id="printedDocIssued" class="printed-doc-meta-value">Unknown</span>
+            </div>
+            <div class="printed-doc-meta-row">
+              <span class="printed-doc-meta-label">Status</span>
+              <span id="printedDocStatus" class="printed-doc-meta-value">N/A</span>
+            </div>
+            <div class="printed-doc-meta-row">
+              <span class="printed-doc-meta-label">Fine</span>
+              <span id="printedDocFine" class="printed-doc-meta-value">N/A</span>
+            </div>
+            <div class="printed-doc-meta-row">
+              <span class="printed-doc-meta-label">Jail</span>
+              <span id="printedDocJail" class="printed-doc-meta-value">N/A</span>
+            </div>
+            <div class="printed-doc-meta-row printed-doc-meta-row-full">
+              <span class="printed-doc-meta-label">Reference</span>
+              <span id="printedDocReference" class="printed-doc-meta-value">N/A</span>
+            </div>
+          </div>
+
+          <div class="printed-doc-section">
+            <div class="printed-doc-section-label">Summary</div>
+            <div id="printedDocSummary" class="printed-doc-body-text">No summary available.</div>
+          </div>
+
+          <div id="printedDocNotesSection" class="printed-doc-section hidden">
+            <div class="printed-doc-section-label">Notes</div>
+            <div id="printedDocNotes" class="printed-doc-body-text"></div>
+          </div>
+
+          <div id="printedDocExtraSection" class="printed-doc-section hidden">
+            <div class="printed-doc-section-label">Additional Details</div>
+            <div id="printedDocExtra" class="printed-doc-extra-grid"></div>
+          </div>
+        </section>
+
+        <footer class="actions">
+          <button id="printedDocCancelBtn" class="btn btn-ghost" type="button">Close</button>
+        </footer>
+      </section>
+    </div>
+
     <div id="licenseOverlay" class="overlay hidden" aria-hidden="true">
       <section class="panel panel-license" role="dialog" aria-modal="true" aria-labelledby="license-title">
         <header class="panel-header">

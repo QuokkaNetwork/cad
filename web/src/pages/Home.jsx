@@ -25,10 +25,19 @@ function colorWithAlpha(color, alpha, fallback = `rgba(0,82,194,${alpha})`) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function getDepartmentKindLabel(dept) {
+  if (dept?.is_dispatch) return 'Dispatch';
+  const layout = String(dept?.layout_type || dept?.department_layout_type || '').toLowerCase();
+  if (layout.includes('fire')) return 'Fire';
+  if (layout.includes('ems') || layout.includes('paramedic') || layout.includes('medical')) return 'EMS';
+  if (layout.includes('law') || layout.includes('police')) return 'Police';
+  return 'Department';
+}
+
 function DepartmentCard({ dept, onSelect, index = 0 }) {
   const logo = String(dept?.icon || '').trim();
   const accent = dept?.color || '#0052C2';
-  const subtitle = String(dept?.slogan || dept?.short_name || 'Department workspace').trim();
+  const subtitle = String(dept?.slogan || '').trim() || `${getDepartmentKindLabel(dept)} workspace`;
 
   return (
     <button
@@ -89,17 +98,18 @@ function DepartmentCard({ dept, onSelect, index = 0 }) {
           {subtitle || 'Open department workspace'}
         </p>
 
-        <div className="mt-5 flex items-center justify-between">
-          <div className="text-xs uppercase tracking-[0.16em] text-cad-muted">Open Workspace</div>
+        <div className="mt-5 flex items-center justify-between gap-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-cad-muted">{getDepartmentKindLabel(dept)}</div>
           <div
-            className="px-2.5 py-1 rounded-lg border text-xs font-medium"
+            className="px-2.5 py-1 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5"
             style={{
               borderColor: colorWithAlpha(accent, 0.32),
               backgroundColor: colorWithAlpha(accent, 0.08),
               color: '#dce8ff',
             }}
           >
-            Enter
+            Launch
+            <span aria-hidden="true">→</span>
           </div>
         </div>
       </div>
@@ -109,77 +119,74 @@ function DepartmentCard({ dept, onSelect, index = 0 }) {
 
 function LandingHero({ user, departments, isAdmin }) {
   const linked = !!user?.discord_id;
-  const palette = departments
-    .map((d) => String(d?.color || '').trim())
-    .filter(Boolean)
-    .slice(0, 6);
   const cards = departments.slice(0, 4);
+  const primaryLogo = cards.find((d) => String(d?.icon || '').trim())?.icon || '';
 
   return (
     <section className="relative overflow-hidden rounded-3xl border border-cad-border bg-cad-card/90 p-5 sm:p-7 mb-6">
-      <div className="absolute inset-0 cad-ambient-grid opacity-60" />
-      <div className="cad-ambient-orb cad-orb-float-a -top-10 -left-10 w-48 h-48 bg-cad-accent/40" />
-      <div className="cad-ambient-orb cad-orb-float-b top-8 right-4 w-56 h-56 bg-cad-gold/20" />
-      {palette[0] && (
-        <div
-          className="cad-ambient-orb cad-orb-float-a bottom-0 left-1/3 w-56 h-56"
-          style={{ backgroundColor: colorWithAlpha(palette[0], 0.3) }}
-        />
-      )}
+      <div className="absolute inset-0 cad-ambient-grid opacity-50" />
+      <div className="cad-ambient-orb cad-orb-float-a -top-10 -left-10 w-48 h-48 bg-cad-accent/30" />
+      <div className="cad-ambient-orb cad-orb-float-b top-8 right-4 w-56 h-56 bg-cad-gold/12" />
 
-      <div className="relative grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-5">
+      <div className="relative grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-5">
         <div className="space-y-5">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cad-border bg-cad-surface/70 text-xs text-cad-muted">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            CAD Workspace Selector
+            Secure CAD Access
           </div>
 
           <div>
             <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-cad-ink">
-              Welcome back{user?.name ? `, ${user.name}` : ''}.
+              {user?.name ? `${user.name}, select a workspace` : 'Select a department workspace'}
             </h1>
             <p className="text-cad-muted mt-2 max-w-2xl">
-              Select a department to open your workspace. Branding, logos, and color accents update from each department configuration so the CAD can match your server identity.
+              Open the department you are rostered to and continue into dispatch, records, search, and incident workflows.
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <HeroStat label="Departments" value={departments.length} tone="cad" />
-            <HeroStat label="Discord Link" value={linked ? 'Linked' : 'Pending'} tone={linked ? 'ok' : 'warn'} />
-            <HeroStat label="Admin Access" value={isAdmin ? 'Enabled' : 'Standard'} tone={isAdmin ? 'gold' : 'cad'} />
+            <HeroStat label="Workspaces" value={departments.length} tone="cad" />
+            <HeroStat label="Discord Access" value={linked ? 'Verified' : 'Pending'} tone={linked ? 'ok' : 'warn'} />
+            <HeroStat label="Profile" value={isAdmin ? 'Administrator' : 'Operator'} tone={isAdmin ? 'gold' : 'cad'} />
           </div>
 
-          {palette.length > 0 && (
-            <div className="bg-cad-surface/70 border border-cad-border rounded-2xl p-4">
-              <p className="text-xs uppercase tracking-[0.16em] text-cad-muted mb-3">Brand Palette Preview</p>
-              <div className="flex flex-wrap gap-2">
-                {palette.map((color, idx) => (
-                  <div key={`${color}-${idx}`} className="flex items-center gap-2 px-2 py-1 rounded-lg border border-cad-border bg-cad-card/80">
-                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
-                    <span className="text-xs text-cad-muted">{color}</span>
-                  </div>
-                ))}
+          <div className="rounded-2xl border border-cad-border bg-cad-surface/55 p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-cad-muted">Operational Guidance</p>
+                <p className="text-sm text-cad-ink mt-1">Choose the correct department before going on duty to ensure permissions, unit status, and reports are routed correctly.</p>
+              </div>
+              <div className="text-xs text-cad-muted sm:text-right">
+                {isAdmin ? 'Admin tools remain available after department selection.' : 'Department access is controlled by your linked Discord roles.'}
               </div>
             </div>
-          )}
+          </div>
         </div>
 
         <div className="relative">
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/5 to-transparent border border-white/5" />
-          <div className="relative rounded-2xl border border-cad-border bg-cad-surface/60 p-4 sm:p-5 cad-sheen overflow-hidden">
+          {primaryLogo ? (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="w-56 h-56 cad-page-watermark-mask opacity-80">
+                <img src={primaryLogo} alt="" className="w-full h-full object-contain cad-page-watermark-image" />
+              </div>
+            </div>
+          ) : null}
+          <div className="relative rounded-2xl border border-cad-border bg-cad-surface/65 p-4 sm:p-5 overflow-hidden">
             <div className="flex items-center justify-between gap-3 mb-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.16em] text-cad-muted">Quick Start</p>
-                <h3 className="font-semibold mt-1">Department Workspaces</h3>
+                <p className="text-xs uppercase tracking-[0.16em] text-cad-muted">Available Workspaces</p>
+                <h3 className="font-semibold mt-1">Department Access</h3>
               </div>
-              <div className="text-xs text-cad-muted">{departments.length} available</div>
+              <div className="text-xs px-2.5 py-1 rounded-full border border-cad-border bg-cad-card/70 text-cad-muted">
+                {departments.length} total
+              </div>
             </div>
 
             <div className="space-y-2.5">
               {cards.map((dept) => (
                 <div
                   key={`hero-${dept.id}`}
-                  className="flex items-center gap-3 rounded-xl border border-cad-border bg-cad-card/80 px-3 py-2"
+                  className="flex items-center gap-3 rounded-xl border border-cad-border bg-cad-card/85 px-3 py-2.5"
                 >
                   {dept.icon ? (
                     <img src={dept.icon} alt="" className="w-8 h-8 object-contain rounded-lg bg-cad-surface border border-cad-border p-0.5" />
@@ -190,26 +197,35 @@ function LandingHero({ user, departments, isAdmin }) {
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium truncate">{dept.name}</p>
-                    <p className="text-xs text-cad-muted truncate">{dept.short_name || 'Department'}</p>
+                    <p className="text-xs text-cad-muted truncate">{dept.short_name || getDepartmentKindLabel(dept)}</p>
                   </div>
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: dept.color || '#0052C2' }} />
+                  <span
+                    className="px-2 py-0.5 rounded border text-[10px] uppercase tracking-wider"
+                    style={{
+                      borderColor: colorWithAlpha(dept.color || '#0052C2', 0.25),
+                      backgroundColor: colorWithAlpha(dept.color || '#0052C2', 0.08),
+                      color: '#dce8ff',
+                    }}
+                  >
+                    {getDepartmentKindLabel(dept)}
+                  </span>
                 </div>
               ))}
               {departments.length > cards.length && (
                 <div className="text-xs text-cad-muted pt-1">
-                  +{departments.length - cards.length} more department{departments.length - cards.length === 1 ? '' : 's'}
+                  +{departments.length - cards.length} more department{departments.length - cards.length === 1 ? '' : 's'} available below
                 </div>
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-2 mt-4">
+            <div className="mt-4 pt-4 border-t border-cad-border/70 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
-                <p className="text-xs text-cad-muted uppercase tracking-wider">Tip</p>
-                <p className="text-xs mt-1 text-cad-ink">Click any card below to jump straight into the department dashboard.</p>
+                <p className="text-xs uppercase tracking-wider text-cad-muted">Session</p>
+                <p className="text-xs mt-1 text-cad-ink">{linked ? 'Discord-linked session active' : 'Link Discord to unlock department access'}</p>
               </div>
               <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
-                <p className="text-xs text-cad-muted uppercase tracking-wider">Theme</p>
-                <p className="text-xs mt-1 text-cad-ink">Department pages now inherit logo watermarking and accent colors automatically.</p>
+                <p className="text-xs uppercase tracking-wider text-cad-muted">Next Step</p>
+                <p className="text-xs mt-1 text-cad-ink">Select a department card below to enter the operational dashboard.</p>
               </div>
             </div>
           </div>
@@ -379,11 +395,11 @@ export default function Home() {
         <section className="bg-cad-card/80 border border-cad-border rounded-2xl p-4 sm:p-5">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4">
             <div>
-              <h2 className="text-xl font-bold">Departments</h2>
-              <p className="text-sm text-cad-muted">Choose a workspace to continue. Department logos and colors are shown as configured in CAD.</p>
-            </div>
-            <div className="text-xs text-cad-muted uppercase tracking-[0.16em]">
-              {departmentList.length} available
+          <h2 className="text-xl font-bold">Department Workspaces</h2>
+          <p className="text-sm text-cad-muted">Choose a department to open its operational dashboard and tools.</p>
+        </div>
+        <div className="text-xs text-cad-muted uppercase tracking-[0.16em]">
+          {departmentList.length} available
             </div>
           </div>
 

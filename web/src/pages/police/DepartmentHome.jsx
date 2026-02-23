@@ -65,11 +65,6 @@ function WatermarkPanel({ logo, accent, className = '', children }) {
         className="absolute inset-0 opacity-70"
         style={{ background: `linear-gradient(135deg, ${colorWithAlpha(accent, 0.08)}, transparent 55%)` }}
       />
-      {logo ? (
-        <div className="absolute -right-4 -bottom-5 w-32 h-32 cad-watermark-fade">
-          <img src={logo} alt="" className="w-full h-full object-contain cad-watermark-image" />
-        </div>
-      ) : null}
       <div className="relative">{children}</div>
     </div>
   );
@@ -386,159 +381,171 @@ export default function DepartmentHome() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
-        {statCards.map((card) => (
-          <WatermarkPanel key={card.label} logo={deptLogo} accent={deptColor} className="p-4">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">{card.label}</p>
-            <p className={`text-2xl font-semibold mt-2 ${card.tone}`}>{loading ? '...' : card.value}</p>
-          </WatermarkPanel>
-        ))}
-      </section>
-
-      {!isFireDepartment && !isPoliceDepartment && (
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">Quick Actions</p>
-            <h3 className="text-lg font-semibold mt-2">Open your response workflow</h3>
-            <p className="text-sm text-cad-muted mt-2">
-              Use the department tabs to manage live calls, search people or vehicles, and document outcomes as incidents progress.
-            </p>
-            <div className="flex flex-wrap gap-2 mt-4">
-              <button
-                type="button"
-                onClick={() => navigate('/units')}
-                className="px-3 py-1.5 rounded text-white text-sm font-medium transition-colors"
-                style={{ backgroundColor: deptColor }}
-              >
-                Response Board
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/search')}
-                className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border text-cad-ink text-sm hover:border-cad-accent/50 transition-colors"
-              >
-                Lookup
-              </button>
+      <div className="relative isolate">
+        {deptLogo ? (
+          <div className="pointer-events-none absolute inset-x-0 top-4 bottom-0 hidden sm:flex items-center justify-center">
+            <div className="w-[520px] h-[520px] cad-page-watermark-mask">
+              <img src={deptLogo} alt="" className="w-full h-full object-contain cad-page-watermark-image" />
             </div>
-          </WatermarkPanel>
+          </div>
+        ) : null}
 
-          <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">Shift Snapshot</p>
-            <p className="text-sm text-cad-muted mt-2">
-              {isDispatch
-                ? 'Dispatch can use this page for a live overview, then move into the dispatch board for call triage, macros, and pursuit tracking.'
-                : 'Keep this page as a quick visual snapshot of staffing, urgent work, and current activity before moving into deeper task tabs.'}
-            </p>
-          </WatermarkPanel>
-        </section>
-      )}
+        <div className="relative space-y-5">
+          <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+            {statCards.map((card) => (
+              <WatermarkPanel key={card.label} logo={deptLogo} accent={deptColor} className="p-4 backdrop-blur-[1px]">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">{card.label}</p>
+                <p className={`text-2xl font-semibold mt-2 ${card.tone}`}>{loading ? '...' : card.value}</p>
+              </WatermarkPanel>
+            ))}
+          </section>
 
-      {isPoliceDepartment && (
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">Active Warrants</p>
-            <p className="text-3xl font-semibold text-amber-300 mt-2">{loading ? '...' : stats.active_warrants}</p>
-            <p className="text-sm text-cad-muted mt-2">
-              Track outstanding warrants and create new entries from this department.
-            </p>
-            <div className="flex items-center gap-2 mt-4">
-              <button
-                onClick={() => navigate('/warrants?new=1')}
-                className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium transition-colors"
-              >
-                + New Warrant
-              </button>
-              <button
-                onClick={() => navigate('/warrants')}
-                className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-amber-500/50 text-cad-ink text-xs transition-colors"
-              >
-                View Warrants
-              </button>
-            </div>
-          </WatermarkPanel>
+          {!isFireDepartment && !isPoliceDepartment && (
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4 backdrop-blur-[1px]">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">Quick Actions</p>
+                <h3 className="text-lg font-semibold mt-2">Open your response workflow</h3>
+                <p className="text-sm text-cad-muted mt-2">
+                  Use the department tabs to manage live calls, search people or vehicles, and document outcomes as incidents progress.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/units')}
+                    className="px-3 py-1.5 rounded text-white text-sm font-medium transition-colors"
+                    style={{ backgroundColor: deptColor }}
+                  >
+                    Response Board
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/search')}
+                    className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border text-cad-ink text-sm hover:border-cad-accent/50 transition-colors"
+                  >
+                    Lookup
+                  </button>
+                </div>
+              </WatermarkPanel>
 
-          <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">Active POIs</p>
-            <p className="text-3xl font-semibold text-cad-accent-light mt-2">{loading ? '...' : stats.active_bolos}</p>
-            <p className="text-sm text-cad-muted mt-2">
-              Create and manage person or vehicle interest notices linked to ongoing investigations.
-            </p>
-            <div className="flex items-center gap-2 mt-4">
-              <button
-                onClick={() => navigate('/bolos?new=1')}
-                className="px-3 py-1.5 rounded bg-cad-accent hover:bg-cad-accent-light text-white text-xs font-medium transition-colors"
-              >
-                + New POI
-              </button>
-              <button
-                onClick={() => navigate('/bolos')}
-                className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-xs transition-colors"
-              >
-                View POIs
-              </button>
-            </div>
-          </WatermarkPanel>
-        </section>
-      )}
+              <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4 backdrop-blur-[1px]">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">Shift Snapshot</p>
+                <p className="text-sm text-cad-muted mt-2">
+                  {isDispatch
+                    ? 'Dispatch can use this page for a live overview, then move into the dispatch board for call triage, macros, and pursuit tracking.'
+                    : 'Keep this page as a quick visual snapshot of staffing, urgent work, and current activity before moving into deeper task tabs.'}
+                </p>
+              </WatermarkPanel>
+            </section>
+          )}
 
-      {isFireDepartment && (
-        <section className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-3">
-          <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">Fire Workflow</p>
-            <h3 className="text-lg font-semibold mt-2">Respond, report, then pre-plan.</h3>
-            <p className="text-sm text-cad-muted mt-2">
-              Use the Response Board for live incidents, Incident Reports for post-incident documentation, and Lookup for people/vehicle context tied to incidents.
-            </p>
-            <div className="flex flex-wrap gap-2 mt-4">
-              <button
-                type="button"
-                onClick={() => navigate('/units')}
-                className="px-3 py-1.5 rounded text-white text-sm font-medium transition-colors"
-                style={{ backgroundColor: deptColor }}
-              >
-                Open Response Board
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/records')}
-                className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-sm transition-colors"
-              >
-                Incident Reports
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/search')}
-                className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-sm transition-colors"
-              >
-                Lookup
-              </button>
-            </div>
-          </WatermarkPanel>
+          {isPoliceDepartment && (
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4 backdrop-blur-[1px]">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">Active Warrants</p>
+                <p className="text-3xl font-semibold text-amber-300 mt-2">{loading ? '...' : stats.active_warrants}</p>
+                <p className="text-sm text-cad-muted mt-2">
+                  Track outstanding warrants and create new entries from this department.
+                </p>
+                <div className="flex items-center gap-2 mt-4">
+                  <button
+                    onClick={() => navigate('/warrants?new=1')}
+                    className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium transition-colors"
+                  >
+                    + New Warrant
+                  </button>
+                  <button
+                    onClick={() => navigate('/warrants')}
+                    className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-amber-500/50 text-cad-ink text-xs transition-colors"
+                  >
+                    View Warrants
+                  </button>
+                </div>
+              </WatermarkPanel>
 
-          <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">Planning Tabs</p>
-            <p className="text-sm text-cad-muted mt-2">
-              Apparatus and Pre-Plans are available as dedicated fire tabs and currently act as guided workflow hubs while the full backend modules are being built.
-            </p>
-            <div className="flex flex-wrap gap-2 mt-4">
-              <button
-                type="button"
-                onClick={() => navigate('/fire-apparatus')}
-                className="px-3 py-1.5 rounded border border-cad-border text-sm hover:bg-cad-surface"
-              >
-                Apparatus
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/fire-preplans')}
-                className="px-3 py-1.5 rounded border border-cad-border text-sm hover:bg-cad-surface"
-              >
-                Pre-Plans
-              </button>
-            </div>
-          </WatermarkPanel>
-        </section>
-      )}
+              <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4 backdrop-blur-[1px]">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">Active POIs</p>
+                <p className="text-3xl font-semibold text-cad-accent-light mt-2">{loading ? '...' : stats.active_bolos}</p>
+                <p className="text-sm text-cad-muted mt-2">
+                  Create and manage person or vehicle interest notices linked to ongoing investigations.
+                </p>
+                <div className="flex items-center gap-2 mt-4">
+                  <button
+                    onClick={() => navigate('/bolos?new=1')}
+                    className="px-3 py-1.5 rounded bg-cad-accent hover:bg-cad-accent-light text-white text-xs font-medium transition-colors"
+                  >
+                    + New POI
+                  </button>
+                  <button
+                    onClick={() => navigate('/bolos')}
+                    className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-xs transition-colors"
+                  >
+                    View POIs
+                  </button>
+                </div>
+              </WatermarkPanel>
+            </section>
+          )}
+
+          {isFireDepartment && (
+            <section className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-3">
+              <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4 backdrop-blur-[1px]">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">Fire Workflow</p>
+                <h3 className="text-lg font-semibold mt-2">Respond, report, then pre-plan.</h3>
+                <p className="text-sm text-cad-muted mt-2">
+                  Use the Response Board for live incidents, Incident Reports for post-incident documentation, and Lookup for people/vehicle context tied to incidents.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/units')}
+                    className="px-3 py-1.5 rounded text-white text-sm font-medium transition-colors"
+                    style={{ backgroundColor: deptColor }}
+                  >
+                    Open Response Board
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/records')}
+                    className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-sm transition-colors"
+                  >
+                    Incident Reports
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/search')}
+                    className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-sm transition-colors"
+                  >
+                    Lookup
+                  </button>
+                </div>
+              </WatermarkPanel>
+
+              <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4 backdrop-blur-[1px]">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">Planning Tabs</p>
+                <p className="text-sm text-cad-muted mt-2">
+                  Apparatus and Pre-Plans are available as dedicated fire tabs and currently act as guided workflow hubs while the full backend modules are being built.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/fire-apparatus')}
+                    className="px-3 py-1.5 rounded border border-cad-border text-sm hover:bg-cad-surface"
+                  >
+                    Apparatus
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/fire-preplans')}
+                    className="px-3 py-1.5 rounded border border-cad-border text-sm hover:bg-cad-surface"
+                  >
+                    Pre-Plans
+                  </button>
+                </div>
+              </WatermarkPanel>
+            </section>
+          )}
+        </div>
+      </div>
 
       {error && (
         <p className="text-xs text-red-400 whitespace-pre-wrap">{error}</p>

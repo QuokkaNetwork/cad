@@ -241,6 +241,210 @@ RegisterNetEvent('cad_bridge:startPrintedDocumentJob', function(payload)
   end)
 end)
 
+local function setPrintedDocumentUiVisible(isVisible, payload)
+  local visible = isVisible == true
+  state.printedDocumentUiOpen = visible
+
+  if visible then
+    SetNuiFocus(true, true)
+    Wait(10)
+    SetNuiFocus(true, true)
+    SendNUIMessage({
+      action = 'cadBridgePrintedDoc:open',
+      payload = payload or {},
+    })
+    Wait(10)
+    SendNUIMessage({
+      action = 'cadBridgePrintedDoc:open',
+      payload = payload or {},
+    })
+  else
+    if type(ui.refreshCadBridgeNuiFocus) == 'function' then
+      ui.refreshCadBridgeNuiFocus()
+    else
+      SetNuiFocus(false, false)
+    end
+    SendNUIMessage({
+      action = 'cadBridgePrintedDoc:close',
+      payload = {},
+    })
+  end
+end
+
+local function closePrintedDocumentPopup()
+  if not state.printedDocumentUiOpen then return end
+  setPrintedDocumentUiVisible(false, {})
+end
+ui.closePrintedDocumentPopup = closePrintedDocumentPopup
+
+local function cloneTable(value)
+  if type(value) ~= 'table' then return value end
+  local out = {}
+  for k, v in pairs(value) do
+    out[k] = cloneTable(v)
+  end
+  return out
+end
+
+local function normalizePrintedDocumentPayload(rawPayload)
+  local payload = type(rawPayload) == 'table' and rawPayload or {}
+  local metadata = {}
+  if type(payload.metadata) == 'table' then
+    metadata = cloneTable(payload.metadata)
+  elseif type(payload.info) == 'table' then
+    metadata = cloneTable(payload.info)
+  end
+
+  local function copyIfMissing(key, value)
+    if metadata[key] == nil and value ~= nil then
+      metadata[key] = value
+    end
+  end
+
+  copyIfMissing('item_name', payload.item_name)
+  copyIfMissing('item_label', payload.item_label)
+  copyIfMissing('document_type', payload.document_type)
+  copyIfMissing('document_subtype', payload.document_subtype or payload.subtype)
+  copyIfMissing('title', payload.title)
+  copyIfMissing('description', payload.description)
+
+  return {
+    metadata = metadata,
+    item_name = trim(payload.item_name or metadata.item_name or ''),
+    item_label = trim(payload.item_label or metadata.item_label or metadata.label or ''),
+    source = trim(payload.source or 'inventory_use'),
+  }
+end
+
+local function openPrintedDocumentViewer(rawPayload)
+  local normalized = normalizePrintedDocumentPayload(rawPayload)
+  local metadata = normalized.metadata or {}
+  local title = trim(metadata.title or metadata.label or '')
+  local subtype = trim(metadata.document_subtype or '')
+  local description = trim(metadata.description or metadata.info or '')
+  if title == '' and subtype == '' and description == '' then
+    triggerNotify({
+      title = 'CAD Document',
+      description = 'This item does not contain readable printed document metadata.',
+      type = 'warning',
+    })
+    return
+  end
+
+  if type(ui.closeAllModals) == 'function' then
+    ui.closeAllModals()
+  else
+    if state.emergencyUiOpen and type(ui.closeEmergencyPopup) == 'function' then ui.closeEmergencyPopup() end
+    if state.trafficStopUiOpen and type(ui.closeTrafficStopPopup) == 'function' then ui.closeTrafficStopPopup() end
+    if state.jailReleaseUiOpen and type(ui.closeJailReleasePopup) == 'function' then ui.closeJailReleasePopup() end
+    if state.driverLicenseUiOpen and type(ui.closeDriverLicensePopup) == 'function' then ui.closeDriverLicensePopup() end
+    if state.vehicleRegistrationUiOpen and type(ui.closeVehicleRegistrationPopup) == 'function' then ui.closeVehicleRegistrationPopup() end
+  end
+
+  if state.idCardUiOpen then
+    state.idCardUiOpen = false
+    SendNUIMessage({
+      action = 'cadBridgeIdCard:hide',
+      payload = {},
+    })
+  end
+
+  setPrintedDocumentUiVisible(true, normalized)
+end
+
+RegisterNetEvent('cad_bridge:showPrintedDocument', function(payload)
+  openPrintedDocumentViewer(type(payload) == 'table' and payload or {})
+end)
+
+local function extractOxPrintedDocumentMetadata(eventName, item, inventory, slot, data)
+  local meta = nil
+  local itemName = ''
+  local itemLabel = ''
+
+  if type(item) == 'table' then
+    itemName = trim(item.name or item.item or itemName)
+    itemLabel = trim(item.label or itemLabel)
+    if type(item.metadata) == 'table' then meta = item.metadata end
+    if type(item.info) == 'table' and type(meta) ~= 'table' then meta = item.info end
+  elseif type(item) == 'string' then
+    itemName = trim(item)
+  end
+
+  if type(slot) == 'table' then
+    itemName = itemName ~= '' and itemName or trim(slot.name or slot.item or '')
+    itemLabel = itemLabel ~= '' and itemLabel or trim(slot.label or '')
+    if type(slot.metadata) == 'table' and type(meta) ~= 'table' then meta = slot.metadata end
+    if type(slot.info) == 'table' and type(meta) ~= 'table' then meta = slot.info end
+  end
+
+  if type(data) == 'table' then
+    if type(data.metadata) == 'table' and type(meta) ~= 'table' then meta = data.metadata end
+    if type(meta) ~= 'table' then
+      local hasLikelyDocFields = data.document_type ~= nil or data.document_subtype ~= nil or data.title ~= nil or data.description ~= nil
+      if hasLikelyDocFields then
+        meta = data
+      end
+    end
+  end
+
+  if type(meta) ~= 'table' then return nil end
+  return {
+    item_name = itemName,
+    item_label = itemLabel,
+    metadata = meta,
+    source = 'ox_inventory:' .. trim(eventName or 'use'),
+  }
+end
+
+local lastPrintedDocumentUseKey = ''
+local lastPrintedDocumentUseAtMs = 0
+
+local function buildPrintedDocUseDebounceKey(payload)
+  local metadata = type(payload) == 'table' and type(payload.metadata) == 'table' and payload.metadata or {}
+  local keyParts = {
+    trim(payload and payload.item_name or ''),
+    tostring(tonumber(metadata.cad_print_job_id) or 0),
+    trim(metadata.document_subtype or ''),
+    trim(metadata.title or metadata.label or ''),
+  }
+  return table.concat(keyParts, '|')
+end
+
+local function shouldSuppressPrintedDocOpen(payload)
+  local now = tonumber(GetGameTimer() or 0) or 0
+  local key = buildPrintedDocUseDebounceKey(payload)
+  if key ~= '' and key == lastPrintedDocumentUseKey and (now - tonumber(lastPrintedDocumentUseAtMs or 0)) <= 600 then
+    return true
+  end
+  lastPrintedDocumentUseKey = key
+  lastPrintedDocumentUseAtMs = now
+  return false
+end
+
+local function handleOxPrintedDocumentUseExport(eventName, item, inventory, slot, data)
+  local normalizedEvent = trim(eventName or ''):lower()
+  if normalizedEvent == 'buying' then
+    return true
+  end
+
+  local payload = extractOxPrintedDocumentMetadata(eventName, item, inventory, slot, data)
+  if not payload then
+    return true
+  end
+
+  if normalizedEvent == 'usingitem' or normalizedEvent == 'useditem' or normalizedEvent == 'useitem' or normalizedEvent == '' then
+    if not shouldSuppressPrintedDocOpen(payload) then
+      openPrintedDocumentViewer(payload)
+    end
+  end
+
+  return true
+end
+
+exports('usePrintedCadDocument', handleOxPrintedDocumentUseExport)
+exports('usePrintedTicketDocument', handleOxPrintedDocumentUseExport)
+exports('usePrintedWarningDocument', handleOxPrintedDocumentUseExport)
+
 local function openTrafficStopPrompt(payload)
   if not state.trafficStopUiReady then
     local attempts = 0
@@ -458,6 +662,11 @@ RegisterNUICallback('cadBridgeIdCardClose', function(_data, cb)
   if cb then cb({ ok = true }) end
 end)
 
+RegisterNUICallback('cadBridgePrintedDocClose', function(_data, cb)
+  closePrintedDocumentPopup()
+  if cb then cb({ ok = true }) end
+end)
+
 RegisterNetEvent('cad_bridge:prompt000', function(departments)
   openEmergencyPopup(departments)
 end)
@@ -472,6 +681,10 @@ end)
 
 RegisterNetEvent('cad_bridge:hideIdCard', function()
   closeShownIdCard()
+end)
+
+RegisterNetEvent('cad_bridge:hidePrintedDocument', function()
+  closePrintedDocumentPopup()
 end)
 
 local SHOW_ID_COMMAND = trim(Config.ShowIdCommand or 'showid')
@@ -609,6 +822,7 @@ CreateThread(function()
         else
           closeEmergencyPopup()
           if type(ui.closeTrafficStopPopup) == 'function' then ui.closeTrafficStopPopup() end
+          if type(ui.closePrintedDocumentPopup) == 'function' then ui.closePrintedDocumentPopup() end
           if type(ui.closeDriverLicensePopup) == 'function' then ui.closeDriverLicensePopup() end
           if type(ui.closeVehicleRegistrationPopup) == 'function' then ui.closeVehicleRegistrationPopup() end
         end

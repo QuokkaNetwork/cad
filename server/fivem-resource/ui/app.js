@@ -41,6 +41,25 @@ var jailReleaseSelectError = document.getElementById("jailReleaseSelectError");
 var jailReleaseReasonField = document.getElementById("jailReleaseReasonField");
 var jailReleaseReasonText = document.getElementById("jailReleaseReasonText");
 
+var printedDocOverlay = document.getElementById("printedDocOverlay");
+var printedDocCloseBtn = document.getElementById("printedDocCloseBtn");
+var printedDocCancelBtn = document.getElementById("printedDocCancelBtn");
+var printedDocType = document.getElementById("printedDocType");
+var printedDocTitle = document.getElementById("printedDoc-title");
+var printedDocSubtitle = document.getElementById("printedDocSubtitle");
+var printedDocSubject = document.getElementById("printedDocSubject");
+var printedDocOfficer = document.getElementById("printedDocOfficer");
+var printedDocIssued = document.getElementById("printedDocIssued");
+var printedDocStatus = document.getElementById("printedDocStatus");
+var printedDocFine = document.getElementById("printedDocFine");
+var printedDocJail = document.getElementById("printedDocJail");
+var printedDocReference = document.getElementById("printedDocReference");
+var printedDocSummary = document.getElementById("printedDocSummary");
+var printedDocNotesSection = document.getElementById("printedDocNotesSection");
+var printedDocNotes = document.getElementById("printedDocNotes");
+var printedDocExtraSection = document.getElementById("printedDocExtraSection");
+var printedDocExtra = document.getElementById("printedDocExtra");
+
 var licenseOverlay = document.getElementById("licenseOverlay");
 var licenseForm = document.getElementById("licenseForm");
 var licenseCloseBtn = document.getElementById("licenseCloseBtn");
@@ -90,6 +109,7 @@ var queuedIdCardPayload = null;
 var emergencyOpen = false;
 var trafficStopOpen = false;
 var jailReleaseOpen = false;
+var printedDocOpen = false;
 var licenseOpen = false;
 var registrationOpen = false;
 var idCardOpen = false;
@@ -116,6 +136,7 @@ var selectedRegistrationDurationDays = 35;
 var registrationSubmitPending = false;
 var trafficStopHiddenFields = { street: "", crossing: "", postal: "" };
 var jailReleaseOptions = [];
+var activePrintedDocPayload = null;
 
 function bindIdCardNodes() {
   idCardOverlay = document.getElementById("idCardOverlay");
@@ -297,13 +318,14 @@ function setVisible(node, visible) {
 }
 
 function anyModalOpen() {
-  return emergencyOpen || trafficStopOpen || jailReleaseOpen || licenseOpen || registrationOpen || idCardOpen;
+  return emergencyOpen || trafficStopOpen || jailReleaseOpen || printedDocOpen || licenseOpen || registrationOpen || idCardOpen;
 }
 
 function closeAll() {
   cancelEmergencyForm();
   cancelTrafficStopForm();
   cancelJailReleaseForm();
+  cancelPrintedDocForm();
   cancelLicenseForm();
   cancelRegistrationForm();
   if (idCardOpen) requestCloseIdCard();
@@ -780,6 +802,285 @@ function cancelJailReleaseForm() {
   if (!jailReleaseOpen) return;
   postNui("cadBridgeJailReleaseCancel", {}).catch(function ignoreJailReleaseCancelError() {});
   closeJailReleaseForm();
+}
+
+function printedDocToTitleCase(value) {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b([a-z])/gi, function onChar(match) {
+      return match.toUpperCase();
+    });
+}
+
+function formatPrintedDocDate(value) {
+  var raw = String(value || "").trim();
+  if (!raw) return "Unknown";
+  var parsed = new Date(raw);
+  if (isNaN(parsed.getTime())) return raw;
+  try {
+    return parsed.toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch (_err) {
+    return parsed.toISOString();
+  }
+}
+
+function formatPrintedDocMoney(value) {
+  var amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return "N/A";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "AUD",
+      maximumFractionDigits: 0,
+    }).format(amount);
+  } catch (_err) {
+    return "$" + String(Math.round(amount));
+  }
+}
+
+function formatPrintedDocJail(value) {
+  var minutes = Number(value);
+  if (!Number.isFinite(minutes) || minutes <= 0) return "N/A";
+  return String(Math.floor(minutes)) + " min";
+}
+
+function printedDocString(value) {
+  return String(value == null ? "" : value).trim();
+}
+
+function printedDocFirstNonEmpty(values, fallback) {
+  for (var i = 0; i < values.length; i += 1) {
+    var value = printedDocString(values[i]);
+    if (value) return value;
+  }
+  return fallback || "";
+}
+
+function sanitizePrintedDocPayload(payload) {
+  var data = payload && typeof payload === "object" ? payload : {};
+  var metadata = safeGet(data, "metadata", {});
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) metadata = {};
+  var copiedMetadata = {};
+  Object.keys(metadata).forEach(function copyMetadataKey(key) {
+    copiedMetadata[key] = metadata[key];
+  });
+  return {
+    source: printedDocString(safeGet(data, "source", "")),
+    itemName: printedDocString(safeGet(data, "item_name", "")),
+    itemLabel: printedDocString(safeGet(data, "item_label", "")),
+    metadata: copiedMetadata,
+  };
+}
+
+function setPrintedDocField(node, value, fallback) {
+  if (!node) return;
+  var text = printedDocString(value);
+  node.textContent = text || String(fallback || "N/A");
+}
+
+function formatPrintedDocReference(metadata) {
+  var parts = [];
+  var recordId = Number(safeGet(metadata, "record_id", 0));
+  var warningId = Number(safeGet(metadata, "warning_id", 0));
+  var printJobId = Number(safeGet(metadata, "cad_print_job_id", 0));
+  var citizenId = printedDocString(safeGet(metadata, "citizen_id", ""));
+  var subjectKey = printedDocString(safeGet(metadata, "subject_key", ""));
+  if (Number.isInteger(recordId) && recordId > 0) parts.push("Record #" + String(recordId));
+  if (Number.isInteger(warningId) && warningId > 0) parts.push("Warning #" + String(warningId));
+  if (Number.isInteger(printJobId) && printJobId > 0) parts.push("Print Job #" + String(printJobId));
+  if (citizenId) parts.push("CID " + citizenId);
+  if (subjectKey) parts.push("Ref " + subjectKey);
+  return parts.join(" | ");
+}
+
+function formatPrintedDocExtraValue(value) {
+  if (value == null) return "";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) {
+    var out = [];
+    for (var i = 0; i < value.length; i += 1) {
+      if (value[i] == null) continue;
+      out.push(String(value[i]));
+    }
+    return out.join(", ");
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (_err) {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function renderPrintedDocExtra(metadata) {
+  if (!printedDocExtra || !printedDocExtraSection) return;
+  printedDocExtra.innerHTML = "";
+
+  var skipKeys = {
+    document_type: true,
+    document_subtype: true,
+    cad_print_job_id: true,
+    title: true,
+    label: true,
+    description: true,
+    info: true,
+    notes: true,
+    source: true,
+    record_id: true,
+    record_type: true,
+    warning_id: true,
+    citizen_id: true,
+    subject_name: true,
+    subject_display: true,
+    subject_key: true,
+    subject_type: true,
+    officer_name: true,
+    officer_callsign: true,
+    fine_amount: true,
+    jail_minutes: true,
+    issued_at: true,
+    printed_at: true,
+    status: true,
+    item_name: true,
+    item_label: true,
+  };
+
+  var keys = Object.keys(metadata || {});
+  keys.sort();
+  var count = 0;
+  for (var i = 0; i < keys.length; i += 1) {
+    var key = keys[i];
+    if (skipKeys[key]) continue;
+    var rawValue = metadata[key];
+    var formattedValue = printedDocString(formatPrintedDocExtraValue(rawValue));
+    if (!formattedValue) continue;
+    count += 1;
+
+    var row = document.createElement("div");
+    row.className = "printed-doc-extra-row";
+
+    var keyNode = document.createElement("div");
+    keyNode.className = "printed-doc-extra-key";
+    keyNode.textContent = printedDocToTitleCase(key);
+
+    var valueNode = document.createElement("div");
+    valueNode.className = "printed-doc-extra-value";
+    valueNode.textContent = formattedValue;
+
+    row.appendChild(keyNode);
+    row.appendChild(valueNode);
+    printedDocExtra.appendChild(row);
+
+    if (count >= 10) break;
+  }
+
+  if (count > 0) printedDocExtraSection.classList.remove("hidden");
+  else printedDocExtraSection.classList.add("hidden");
+}
+
+function resetPrintedDocForm(payload) {
+  var normalized = sanitizePrintedDocPayload(payload || {});
+  activePrintedDocPayload = normalized;
+  var metadata = normalized.metadata || {};
+
+  var subtype = printedDocString(safeGet(metadata, "document_subtype", ""));
+  var typeText = subtype ? printedDocToTitleCase(subtype) : "Document";
+  var titleText = printedDocFirstNonEmpty([
+    safeGet(metadata, "label", ""),
+    safeGet(metadata, "title", ""),
+    normalized.itemLabel,
+    normalized.itemName
+  ], "Printed Document");
+  var subtitleParts = [];
+  var sourceText = printedDocString(safeGet(metadata, "source", "")) || normalized.source;
+  if (sourceText) subtitleParts.push(printedDocToTitleCase(sourceText));
+  if (normalized.itemLabel) subtitleParts.push("Item: " + normalized.itemLabel);
+  else if (normalized.itemName) subtitleParts.push("Item: " + normalized.itemName);
+
+  if (printedDocType) printedDocType.textContent = typeText;
+  if (printedDocTitle) printedDocTitle.textContent = titleText;
+  if (printedDocSubtitle) printedDocSubtitle.textContent = subtitleParts.join(" | ") || "Issued via CAD";
+
+  var subjectText = printedDocFirstNonEmpty([
+    safeGet(metadata, "subject_name", ""),
+    safeGet(metadata, "subject_display", ""),
+    safeGet(metadata, "citizen_id", ""),
+    safeGet(metadata, "subject_key", "")
+  ], "Not set");
+  var officerText = printedDocFirstNonEmpty([
+    [printedDocString(safeGet(metadata, "officer_callsign", "")), printedDocString(safeGet(metadata, "officer_name", ""))].filter(Boolean).join(" - "),
+    safeGet(metadata, "officer_name", ""),
+    safeGet(metadata, "officer_callsign", "")
+  ], "Unknown");
+
+  setPrintedDocField(printedDocSubject, subjectText, "Not set");
+  setPrintedDocField(printedDocOfficer, officerText, "Unknown");
+  setPrintedDocField(
+    printedDocIssued,
+    formatPrintedDocDate(printedDocFirstNonEmpty([safeGet(metadata, "issued_at", ""), safeGet(metadata, "printed_at", "")], "")),
+    "Unknown"
+  );
+  setPrintedDocField(printedDocStatus, printedDocToTitleCase(safeGet(metadata, "status", "")), "N/A");
+  setPrintedDocField(printedDocFine, formatPrintedDocMoney(safeGet(metadata, "fine_amount", 0)), "N/A");
+  setPrintedDocField(printedDocJail, formatPrintedDocJail(safeGet(metadata, "jail_minutes", 0)), "N/A");
+  setPrintedDocField(printedDocReference, formatPrintedDocReference(metadata), "N/A");
+
+  var summaryText = printedDocFirstNonEmpty([
+    safeGet(metadata, "description", ""),
+    safeGet(metadata, "info", ""),
+    safeGet(metadata, "title", "")
+  ], "No summary available.");
+  if (printedDocSummary) printedDocSummary.textContent = summaryText;
+
+  var notesText = printedDocFirstNonEmpty([
+    safeGet(metadata, "notes", "")
+  ], "");
+  if (printedDocNotes) printedDocNotes.textContent = notesText;
+  if (printedDocNotesSection) {
+    if (notesText && notesText !== summaryText) printedDocNotesSection.classList.remove("hidden");
+    else printedDocNotesSection.classList.add("hidden");
+  }
+
+  renderPrintedDocExtra(metadata);
+}
+
+function openPrintedDocForm(payload) {
+  if (emergencyOpen) closeEmergencyForm();
+  if (trafficStopOpen) closeTrafficStopForm();
+  if (jailReleaseOpen) closeJailReleaseForm();
+  if (licenseOpen) closeLicenseForm();
+  if (registrationOpen) closeRegistrationForm();
+  if (idCardOpen) requestCloseIdCard();
+
+  resetPrintedDocForm(payload || {});
+  printedDocOpen = true;
+  setVisible(printedDocOverlay, true);
+  setTimeout(function focusPrintedDocClose() {
+    if (printedDocCloseBtn) printedDocCloseBtn.focus();
+    else if (printedDocCancelBtn) printedDocCancelBtn.focus();
+  }, 40);
+}
+
+function closePrintedDocForm() {
+  printedDocOpen = false;
+  activePrintedDocPayload = null;
+  setVisible(printedDocOverlay, false);
+}
+
+function cancelPrintedDocForm() {
+  if (!printedDocOpen) return;
+  postNui("cadBridgePrintedDocClose", {}).catch(function ignorePrintedDocCloseError() {});
+  closePrintedDocForm();
 }
 
 var LICENSE_QUIZ_QUESTION_POOL = [
@@ -1506,6 +1807,14 @@ window.addEventListener("message", function onMessage(event) {
     closeJailReleaseForm();
     return;
   }
+  if (message.action === "cadBridgePrintedDoc:open") {
+    openPrintedDocForm(message.payload || {});
+    return;
+  }
+  if (message.action === "cadBridgePrintedDoc:close") {
+    closePrintedDocForm();
+    return;
+  }
   if (message.action === "cadBridgeLicense:open") {
     openLicenseForm(message.payload || {});
     return;
@@ -1911,6 +2220,7 @@ function initialize() {
   setVisible(overlay, false);
   setVisible(trafficStopOverlay, false);
   setVisible(jailReleaseOverlay, false);
+  setVisible(printedDocOverlay, false);
   setVisible(licenseOverlay, false);
   setVisible(registrationOverlay, false);
   setVisible(idCardOverlay, false);
@@ -1992,6 +2302,9 @@ function initialize() {
       if (String(jailReleaseSelect.value || "").trim()) showErrorNode(jailReleaseSelectError, "");
     });
   }
+
+  if (printedDocCloseBtn) printedDocCloseBtn.addEventListener("click", cancelPrintedDocForm);
+  if (printedDocCancelBtn) printedDocCancelBtn.addEventListener("click", cancelPrintedDocForm);
 
   if (licenseForm) {
     licenseForm.addEventListener("submit", function onLicenseSubmit(event) {
