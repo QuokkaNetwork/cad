@@ -37,6 +37,12 @@ function resolveEntity(entityType, entityId) {
   return null;
 }
 
+function normalizeReviewStatus(value, fallback = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['', 'needs_review', 'supervisor_review', 'reviewed', 'hold'].includes(normalized)) return normalized;
+  return fallback;
+}
+
 router.get('/', requireAuth, (req, res) => {
   const rawEntityId = req.query?.entity_id;
   const hasEntityId = rawEntityId !== undefined && rawEntityId !== null && String(rawEntityId).trim() !== '';
@@ -118,6 +124,70 @@ router.post('/', requireAuth, (req, res) => {
   } catch (err) {
     res.status(400).json({ error: 'Failed to create evidence', message: err.message });
   }
+});
+
+router.patch('/:id', requireAuth, (req, res) => {
+  const evidenceId = Number(req.params.id);
+  if (!Number.isInteger(evidenceId) || evidenceId <= 0) return res.status(400).json({ error: 'Invalid evidence id' });
+
+  const existing = EvidenceItems.findById(evidenceId);
+  if (!existing) return res.status(404).json({ error: 'Evidence item not found' });
+  if (existing.department_id && !canAccessDepartment(req.user, existing.department_id)) {
+    return res.status(403).json({ error: 'Department access denied' });
+  }
+
+  const updates = {};
+  for (const key of ['case_number', 'title', 'description', 'photo_url', 'chain_status']) {
+    if (req.body?.[key] !== undefined) updates[key] = req.body[key];
+  }
+
+  if (req.body?.metadata !== undefined || req.body?.metadata_json !== undefined || req.body?.review_status !== undefined || req.body?.review_note !== undefined) {
+    const sourceMetadata = req.body?.metadata !== undefined
+      ? req.body.metadata
+      : (req.body?.metadata_json !== undefined ? req.body.metadata_json : existing.metadata || {});
+    const nextMetadata = (sourceMetadata && typeof sourceMetadata === 'object' && !Array.isArray(sourceMetadata))
+      ? { ...sourceMetadata }
+      : {};
+    const review = (nextMetadata.review && typeof nextMetadata.review === 'object' && !Array.isArray(nextMetadata.review))
+      ? { ...nextMetadata.review }
+      : {};
+
+    if (req.body?.review_status !== undefined) {
+      const nextStatus = normalizeReviewStatus(req.body.review_status, String(review.status || '').trim().toLowerCase());
+      review.status = nextStatus;
+      if (nextStatus === 'reviewed') {
+        review.reviewed_at = new Date().toISOString();
+        review.reviewed_by_user_id = req.user.id;
+      } else if (nextStatus) {
+        review.flagged_at = review.flagged_at || new Date().toISOString();
+        review.flagged_by_user_id = review.flagged_by_user_id || req.user.id;
+      }
+    }
+    if (req.body?.review_note !== undefined) {
+      review.note = String(req.body.review_note || '').trim().slice(0, 400);
+      if (review.note && !review.flagged_at) {
+        review.flagged_at = new Date().toISOString();
+        review.flagged_by_user_id = req.user.id;
+      }
+    }
+    if (Object.keys(review).length > 0) nextMetadata.review = review;
+    updates.metadata = nextMetadata;
+  }
+
+  const updated = EvidenceItems.update(evidenceId, updates);
+  audit(req.user.id, 'evidence_updated', {
+    evidence_id: evidenceId,
+    entity_type: existing.entity_type,
+    entity_id: existing.entity_id,
+    keys: Object.keys(updates),
+  });
+  bus.emit('evidence:update', {
+    departmentId: updated?.department_id || existing.department_id || null,
+    evidence: updated,
+    entity_type: existing.entity_type,
+    entity_id: existing.entity_id,
+  });
+  res.json(updated);
 });
 
 router.delete('/:id', requireAuth, (req, res) => {

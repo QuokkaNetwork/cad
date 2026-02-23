@@ -36,6 +36,40 @@ const TRANSPORT_STATUS_OPTIONS = [
   { value: 'arrived', label: 'Arrived at hospital' },
   { value: 'handover_complete', label: 'Handover complete' },
 ];
+const TRANSPORT_DISPOSITION_OPTIONS = [
+  { value: '', label: 'Not set' },
+  { value: 'transported', label: 'Transported' },
+  { value: 'treated_on_scene', label: 'Treated on scene' },
+  { value: 'refusal_ama', label: 'Refusal / AMA' },
+  { value: 'assist_only', label: 'Assist only / no treatment' },
+  { value: 'deceased', label: 'Deceased' },
+];
+const REFUSAL_TYPE_OPTIONS = [
+  { value: '', label: 'Not set' },
+  { value: 'ama', label: 'Against medical advice (AMA)' },
+  { value: 'refused_transport', label: 'Refused transport' },
+  { value: 'refused_treatment', label: 'Refused treatment' },
+];
+const PROTOCOL_PATHWAY_OPTIONS = [
+  { value: '', label: 'General assessment' },
+  { value: 'chest_pain', label: 'Chest Pain / ACS' },
+  { value: 'respiratory_distress', label: 'Respiratory Distress' },
+  { value: 'stroke', label: 'Stroke / FAST' },
+  { value: 'seizure', label: 'Seizure' },
+  { value: 'trauma', label: 'Trauma' },
+  { value: 'anaphylaxis', label: 'Anaphylaxis' },
+  { value: 'cardiac_arrest', label: 'Cardiac Arrest' },
+  { value: 'overdose', label: 'Overdose / Poisoning' },
+];
+const MED_ROUTE_OPTIONS = [
+  '', 'PO', 'SL', 'INH', 'NEB', 'IM', 'IV', 'IO', 'SC', 'TOPICAL', 'PR',
+];
+const HOSPITAL_BOARD_STATUS_OPTIONS = [
+  { value: 'open', label: 'Open' },
+  { value: 'capacity_pressure', label: 'Capacity Pressure' },
+  { value: 'diversion', label: 'Diversion' },
+  { value: 'closed', label: 'Closed' },
+];
 
 function resolvePersonName(person) {
   const fullName = String(person?.full_name || '').trim();
@@ -62,6 +96,15 @@ function buildDefaultDraft(person) {
       allergies: '',
       medications: '',
       treatment_given: '',
+      protocol_pathway: '',
+      protocol_notes: '',
+      protocol_checklist: {
+        ecg_done: false,
+        iv_access: false,
+        glucose_checked: false,
+        pain_relief_considered: false,
+        stroke_screen_done: false,
+      },
     },
     vitals: {
       pulse: '',
@@ -78,7 +121,18 @@ function buildDefaultDraft(person) {
       eta_minutes: '',
       bed_availability: '',
       status: '',
+      disposition: '',
       unit_callsign: '',
+      handover_clinician: '',
+      refusal_type: '',
+      refusal_reason: '',
+      refusal_capacity_confirmed: false,
+      refusal_witness: '',
+      hospital_status_snapshot: {
+        status: '',
+        available_beds: '',
+        updated_at: '',
+      },
       notes: '',
     },
     mci_incident_key: '',
@@ -99,6 +153,12 @@ function toDraft(person, analysis) {
     questionnaire: {
       ...base.questionnaire,
       ...(analysis.questionnaire && typeof analysis.questionnaire === 'object' ? analysis.questionnaire : {}),
+      protocol_checklist: {
+        ...(base.questionnaire.protocol_checklist || {}),
+        ...((analysis.questionnaire && analysis.questionnaire.protocol_checklist && typeof analysis.questionnaire.protocol_checklist === 'object')
+          ? analysis.questionnaire.protocol_checklist
+          : {}),
+      },
     },
     vitals: {
       ...base.vitals,
@@ -111,6 +171,15 @@ function toDraft(person, analysis) {
       ...(analysis.transport && typeof analysis.transport === 'object' ? analysis.transport : {}),
       eta_minutes: (analysis.transport && analysis.transport.eta_minutes != null) ? String(analysis.transport.eta_minutes) : '',
       bed_availability: (analysis.transport && analysis.transport.bed_availability != null) ? String(analysis.transport.bed_availability) : '',
+      hospital_status_snapshot: {
+        ...(base.transport.hospital_status_snapshot || {}),
+        ...((analysis.transport && analysis.transport.hospital_status_snapshot && typeof analysis.transport.hospital_status_snapshot === 'object')
+          ? analysis.transport.hospital_status_snapshot
+          : {}),
+        available_beds: (analysis.transport && analysis.transport.hospital_status_snapshot && analysis.transport.hospital_status_snapshot.available_beds != null)
+          ? String(analysis.transport.hospital_status_snapshot.available_beds)
+          : '',
+      },
     },
     mci_incident_key: String(analysis.mci_incident_key || '').trim(),
     mci_tag: String(analysis.mci_tag || '').trim().toLowerCase(),
@@ -249,6 +318,10 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
   const [activeBodyView, setActiveBodyView] = useState('front');
   const [markType, setMarkType] = useState('pain');
   const [markSeverity, setMarkSeverity] = useState('moderate');
+  const [hospitalBoard, setHospitalBoard] = useState([]);
+  const [hospitalBoardLoading, setHospitalBoardLoading] = useState(false);
+  const [hospitalBoardSavingId, setHospitalBoardSavingId] = useState('');
+  const [hospitalBoardError, setHospitalBoardError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -289,6 +362,27 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
       cancelled = true;
     };
   }, [citizenId, person]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadHospitalBoard() {
+      setHospitalBoardLoading(true);
+      setHospitalBoardError('');
+      try {
+        const result = await api.get('/api/medical/hospital-status');
+        if (cancelled) return;
+        setHospitalBoard(Array.isArray(result?.rows) ? result.rows : []);
+      } catch (err) {
+        if (cancelled) return;
+        setHospitalBoard([]);
+        setHospitalBoardError(err?.message || 'Failed to load hospital status board');
+      } finally {
+        if (!cancelled) setHospitalBoardLoading(false);
+      }
+    }
+    loadHospitalBoard();
+    return () => { cancelled = true; };
+  }, []);
 
   function updateQuestionnaire(key, value) {
     setDraft((current) => ({
@@ -405,6 +499,11 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
         ...(draft.transport || {}),
         eta_minutes: draft.transport?.eta_minutes === '' ? null : Number(draft.transport?.eta_minutes),
         bed_availability: draft.transport?.bed_availability === '' ? null : Number(draft.transport?.bed_availability),
+        refusal_capacity_confirmed: !!draft.transport?.refusal_capacity_confirmed,
+        hospital_status_snapshot: {
+          ...(draft.transport?.hospital_status_snapshot || {}),
+          available_beds: draft.transport?.hospital_status_snapshot?.available_beds === '' ? null : Number(draft.transport?.hospital_status_snapshot?.available_beds),
+        },
       },
       mci_incident_key: draft.mci_incident_key,
       mci_tag: draft.mci_tag,
@@ -442,9 +541,79 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
     : 'Not transporting';
   const saveButtonText = saving
     ? (isTransportMode ? 'Saving Transport Update...' : 'Saving Analysis...')
-    : (selectedAnalysisId
+      : (selectedAnalysisId
       ? (isTransportMode ? 'Update Transport' : 'Update Analysis')
       : (isTransportMode ? 'Save Transport Update' : 'Save Analysis'));
+
+  const selectedHospitalBoardRow = useMemo(() => {
+    const destination = String(draft.transport?.destination || '').trim().toLowerCase();
+    if (!destination) return null;
+    return hospitalBoard.find((row) => String(row?.name || '').trim().toLowerCase() === destination) || null;
+  }, [draft.transport?.destination, hospitalBoard]);
+
+  function updateTransportField(key, value) {
+    setDraft((current) => ({
+      ...current,
+      transport: {
+        ...(current.transport || {}),
+        [key]: value,
+      },
+    }));
+  }
+
+  function updateProtocolChecklist(key, checked) {
+    setDraft((current) => ({
+      ...current,
+      questionnaire: {
+        ...(current.questionnaire || {}),
+        protocol_checklist: {
+          ...((current.questionnaire && current.questionnaire.protocol_checklist) || {}),
+          [key]: !!checked,
+        },
+      },
+    }));
+  }
+
+  function applyHospitalToTransport(hospital) {
+    if (!hospital) return;
+    setDraft((current) => ({
+      ...current,
+      transport: {
+        ...(current.transport || {}),
+        destination: String(hospital.name || ''),
+        bed_availability: hospital.available_beds == null ? '' : String(hospital.available_beds),
+        hospital_status_snapshot: {
+          status: String(hospital.status || ''),
+          available_beds: hospital.available_beds == null ? '' : String(hospital.available_beds),
+          updated_at: String(hospital.updated_at || ''),
+        },
+      },
+    }));
+  }
+
+  async function updateHospitalBoardRow(rowId, patch = {}) {
+    const targetId = String(rowId || '').trim();
+    if (!targetId) return;
+    setHospitalBoardSavingId(targetId);
+    setHospitalBoardError('');
+    try {
+      const nextRows = hospitalBoard.map((row) => (
+        String(row?.id || '') === targetId
+          ? {
+            ...row,
+            ...patch,
+            updated_at: new Date().toISOString(),
+          }
+          : row
+      ));
+      const result = await api.put('/api/medical/hospital-status', { rows: nextRows });
+      setHospitalBoard(Array.isArray(result?.rows) ? result.rows : nextRows);
+    } catch (err) {
+      setHospitalBoardError(err?.message || 'Failed to update hospital board');
+    } finally {
+      setHospitalBoardSavingId('');
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -589,6 +758,50 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
             </div>
           )}
 
+          {showPrimaryAssessmentSection && (
+            <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
+              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Protocol Pathway (PCR Guidance)</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <select
+                  value={draft.questionnaire?.protocol_pathway || ''}
+                  onChange={(e) => updateQuestionnaire('protocol_pathway', e.target.value)}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                >
+                  {PROTOCOL_PATHWAY_OPTIONS.map((option) => (
+                    <option key={option.value || 'general'} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <input
+                  value={draft.questionnaire?.protocol_notes || ''}
+                  onChange={(e) => updateQuestionnaire('protocol_notes', e.target.value)}
+                  placeholder="Protocol notes / variance"
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                {[
+                  ['ecg_done', 'ECG completed'],
+                  ['iv_access', 'IV / IO access obtained'],
+                  ['glucose_checked', 'Glucose checked'],
+                  ['pain_relief_considered', 'Pain relief considered'],
+                  ['stroke_screen_done', 'Stroke screen completed'],
+                ].map(([key, label]) => (
+                  <label key={key} className="inline-flex items-center gap-2 rounded border border-cad-border bg-cad-card px-2 py-2">
+                    <input
+                      type="checkbox"
+                      checked={!!draft.questionnaire?.protocol_checklist?.[key]}
+                      onChange={(e) => updateProtocolChecklist(key, e.target.checked)}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-cad-muted">
+                Protocol guidance supports a structured patient care report workflow while allowing clinical discretion and free-text notes.
+              </p>
+            </div>
+          )}
+
           {showVitalsSection && (
             <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Vitals</h4>
@@ -678,11 +891,19 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
                           className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
                         />
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
-                        <input
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-2">
+                        <select
                           value={entry.route || ''}
                           onChange={(e) => updateTreatmentLogItem(entry.id, 'route', e.target.value)}
-                          placeholder="Route (PO/IV/IM/etc)"
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        >
+                          <option value="">Route (select)</option>
+                          {MED_ROUTE_OPTIONS.map((route) => route ? <option key={route} value={route}>{route}</option> : null)}
+                        </select>
+                        <input
+                          value={entry.response || ''}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'response', e.target.value)}
+                          placeholder="Response / effect"
                           className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
                         />
                         <input
@@ -698,6 +919,20 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
                         >
                           Remove
                         </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          value={entry.indication || ''}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'indication', e.target.value)}
+                          placeholder="Indication / protocol reason"
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        />
+                        <input
+                          value={entry.administered_by || ''}
+                          onChange={(e) => updateTreatmentLogItem(entry.id, 'administered_by', e.target.value)}
+                          placeholder="Administered by"
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        />
                       </div>
                       <textarea
                         value={entry.notes || ''}
@@ -721,19 +956,13 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <input
                   value={draft.transport?.destination || ''}
-                  onChange={(e) => setDraft((current) => ({
-                    ...current,
-                    transport: { ...(current.transport || {}), destination: e.target.value },
-                  }))}
+                  onChange={(e) => updateTransportField('destination', e.target.value)}
                   placeholder="Destination hospital"
                   className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
                 />
                 <select
                   value={draft.transport?.status || ''}
-                  onChange={(e) => setDraft((current) => ({
-                    ...current,
-                    transport: { ...(current.transport || {}), status: e.target.value },
-                  }))}
+                  onChange={(e) => updateTransportField('status', e.target.value)}
                   className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
                 >
                   {TRANSPORT_STATUS_OPTIONS.map((option) => (
@@ -744,10 +973,7 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
                   type="number"
                   min="0"
                   value={draft.transport?.eta_minutes ?? ''}
-                  onChange={(e) => setDraft((current) => ({
-                    ...current,
-                    transport: { ...(current.transport || {}), eta_minutes: e.target.value },
-                  }))}
+                  onChange={(e) => updateTransportField('eta_minutes', e.target.value)}
                   placeholder="ETA (minutes)"
                   className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
                 />
@@ -755,29 +981,144 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId, mode 
                   type="number"
                   min="0"
                   value={draft.transport?.bed_availability ?? ''}
-                  onChange={(e) => setDraft((current) => ({
-                    ...current,
-                    transport: { ...(current.transport || {}), bed_availability: e.target.value },
-                  }))}
+                  onChange={(e) => updateTransportField('bed_availability', e.target.value)}
                   placeholder="Beds available (if known)"
                   className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
                 />
                 <input
                   value={draft.transport?.unit_callsign || ''}
-                  onChange={(e) => setDraft((current) => ({
-                    ...current,
-                    transport: { ...(current.transport || {}), unit_callsign: e.target.value },
-                  }))}
+                  onChange={(e) => updateTransportField('unit_callsign', e.target.value)}
                   placeholder="Transport unit callsign"
-                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm md:col-span-2"
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
                 />
+                <input
+                  value={draft.transport?.handover_clinician || ''}
+                  onChange={(e) => updateTransportField('handover_clinician', e.target.value)}
+                  placeholder="Receiving clinician / nurse"
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <select
+                  value={draft.transport?.disposition || ''}
+                  onChange={(e) => updateTransportField('disposition', e.target.value)}
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                >
+                  {TRANSPORT_DISPOSITION_OPTIONS.map((option) => (
+                    <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <select
+                  value={draft.transport?.refusal_type || ''}
+                  onChange={(e) => updateTransportField('refusal_type', e.target.value)}
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                >
+                  {REFUSAL_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <input
+                  value={draft.transport?.refusal_witness || ''}
+                  onChange={(e) => updateTransportField('refusal_witness', e.target.value)}
+                  placeholder="Refusal witness / crew member"
+                  className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                />
+                <label className="inline-flex items-center gap-2 rounded border border-cad-border bg-cad-card px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!draft.transport?.refusal_capacity_confirmed}
+                    onChange={(e) => updateTransportField('refusal_capacity_confirmed', e.target.checked)}
+                  />
+                  Capacity assessed and confirmed
+                </label>
+              </div>
+              <textarea
+                value={draft.transport?.refusal_reason || ''}
+                onChange={(e) => updateTransportField('refusal_reason', e.target.value)}
+                rows={2}
+                placeholder="Refusal / AMA reason and advice provided"
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm resize-none"
+              />
+              <div className="bg-cad-card border border-cad-border rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h5 className="text-xs font-semibold text-cad-muted uppercase tracking-wider">Hospital Status Board</h5>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setHospitalBoardLoading(true);
+                      setHospitalBoardError('');
+                      try {
+                        const result = await api.get('/api/medical/hospital-status');
+                        setHospitalBoard(Array.isArray(result?.rows) ? result.rows : []);
+                      } catch (err) {
+                        setHospitalBoardError(err?.message || 'Failed to load hospital status board');
+                      } finally {
+                        setHospitalBoardLoading(false);
+                      }
+                    }}
+                    className="px-2 py-1 text-[11px] rounded border border-cad-border text-cad-muted hover:text-cad-ink"
+                  >
+                    Refresh Board
+                  </button>
+                </div>
+                {hospitalBoardError ? <p className="text-xs text-rose-300">{hospitalBoardError}</p> : null}
+                {hospitalBoardLoading ? <p className="text-xs text-cad-muted">Loading hospital status...</p> : null}
+                {!hospitalBoardLoading && hospitalBoard.length === 0 ? <p className="text-xs text-cad-muted">No hospital statuses configured.</p> : null}
+                <div className="space-y-2 max-h-56 overflow-y-auto">
+                  {hospitalBoard.map((hospital) => (
+                    <div key={hospital.id} className={`rounded border px-2 py-2 ${selectedHospitalBoardRow?.id === hospital.id ? 'border-cad-accent bg-cad-accent/10' : 'border-cad-border bg-cad-surface'}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-cad-ink">{hospital.name}</div>
+                          <div className="text-[11px] text-cad-muted">
+                            {hospital.suburb || '-'} | {formatStatusLabel(hospital.status)}
+                            {hospital.available_beds != null ? ` | Beds ${hospital.available_beds}` : ''}
+                            {hospital.trauma ? ' | Trauma' : ''}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => applyHospitalToTransport(hospital)}
+                          className="px-2 py-1 text-[11px] rounded border border-cad-border text-cad-muted hover:text-cad-ink"
+                        >
+                          Use
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-[1fr_auto_auto] gap-2 mt-2">
+                        <select
+                          value={hospital.status || 'open'}
+                          onChange={(e) => updateHospitalBoardRow(hospital.id, { status: e.target.value })}
+                          disabled={hospitalBoardSavingId === hospital.id}
+                          className="bg-cad-card border border-cad-border rounded px-2 py-1 text-xs"
+                        >
+                          {HOSPITAL_BOARD_STATUS_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min="0"
+                          value={hospital.available_beds ?? ''}
+                          onChange={(e) => updateHospitalBoardRow(hospital.id, { available_beds: e.target.value === '' ? null : Number(e.target.value) })}
+                          disabled={hospitalBoardSavingId === hospital.id}
+                          className="w-20 bg-cad-card border border-cad-border rounded px-2 py-1 text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateHospitalBoardRow(hospital.id, { trauma: !hospital.trauma })}
+                          disabled={hospitalBoardSavingId === hospital.id}
+                          className={`px-2 py-1 text-[11px] rounded border ${hospital.trauma ? 'border-rose-500/30 text-rose-300' : 'border-cad-border text-cad-muted'}`}
+                        >
+                          Trauma
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
               <textarea
                 value={draft.transport?.notes || ''}
-                onChange={(e) => setDraft((current) => ({
-                  ...current,
-                  transport: { ...(current.transport || {}), notes: e.target.value },
-                }))}
+                onChange={(e) => updateTransportField('notes', e.target.value)}
                 rows={2}
                 placeholder="Transport notes / destination updates"
                 className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm resize-none"

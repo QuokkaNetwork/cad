@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
+import { useAuth } from '../../context/AuthContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
 import Modal from '../../components/Modal';
@@ -52,10 +53,35 @@ function buildWarrantChargeTitle(charges) {
   return `Warrant - ${firstThree.join(', ')}${suffix}`;
 }
 
-function WarrantCard({ warrant, onServe, onCancel, departmentId }) {
+function normalizeApprovalStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'pending_review') return 'pending_review';
+  if (normalized === 'rejected') return 'rejected';
+  return 'approved';
+}
+
+function approvalStatusLabel(value) {
+  const normalized = normalizeApprovalStatus(value);
+  if (normalized === 'pending_review') return 'Pending Supervisor Review';
+  if (normalized === 'rejected') return 'Rejected';
+  return 'Approved';
+}
+
+function approvalStatusBadgeClass(value) {
+  const normalized = normalizeApprovalStatus(value);
+  if (normalized === 'pending_review') return 'bg-orange-500/10 text-orange-300 border-orange-500/30';
+  if (normalized === 'rejected') return 'bg-red-500/10 text-red-300 border-red-500/30';
+  return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30';
+}
+
+function WarrantCard({ warrant, onServe, onCancel, onApprove, onReject, canApprove, approvalActionBusyId, departmentId }) {
   const createdAt = formatDateTimeAU(warrant.created_at ? `${warrant.created_at}Z` : '', '');
   const subjectName = String(warrant.subject_name || '').trim() || 'Unknown Person';
   const citizenId = String(warrant.citizen_id || '').trim();
+  const approvalStatus = normalizeApprovalStatus(warrant.approval_status);
+  const isApproved = approvalStatus === 'approved';
+  const canAction = String(warrant.status || '').trim().toLowerCase() === 'active';
+  const approvalBusy = Number(approvalActionBusyId || 0) === Number(warrant.id || 0);
 
   return (
     <div className="bg-cad-card border border-amber-500/30 rounded-lg p-4">
@@ -69,9 +95,16 @@ function WarrantCard({ warrant, onServe, onCancel, departmentId }) {
             </p>
           ) : null}
         </div>
-        <span className="px-2 py-1 rounded text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30 whitespace-nowrap">
-          Active
-        </span>
+        <div className="flex flex-col items-end gap-1">
+          <span className="px-2 py-1 rounded text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30 whitespace-nowrap">
+            {String(warrant.status || '').trim().toLowerCase() === 'active'
+              ? 'Active'
+              : String(warrant.status || '').trim()}
+          </span>
+          <span className={`px-2 py-1 rounded text-[11px] font-medium border whitespace-nowrap ${approvalStatusBadgeClass(approvalStatus)}`}>
+            {approvalStatusLabel(approvalStatus)}
+          </span>
+        </div>
       </div>
 
       {warrant.description && (
@@ -81,22 +114,53 @@ function WarrantCard({ warrant, onServe, onCancel, departmentId }) {
       <div className="text-xs text-cad-muted space-y-1 mb-3">
         <p>Created by: {warrant.creator_name || 'Unknown'}</p>
         <p>Created: {createdAt}</p>
+        {warrant.approval_decided_at ? (
+          <p>Reviewed: {formatDateTimeAU(String(warrant.approval_decided_at || ''), '')}</p>
+        ) : null}
+        {warrant.approval_notes ? (
+          <p className="text-cad-muted">Review note: <span className="text-cad-ink">{warrant.approval_notes}</span></p>
+        ) : null}
       </div>
 
-      <div className="flex gap-2">
-        <button
-          onClick={() => onServe(warrant.id)}
-          className="flex-1 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded text-xs font-medium transition-colors"
-        >
-          Mark Served
-        </button>
-        <button
-          onClick={() => onCancel(warrant.id)}
-          className="flex-1 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded text-xs font-medium transition-colors"
-        >
-          Cancel
-        </button>
-      </div>
+      {canAction && (
+        <div className="space-y-2">
+          {canApprove && approvalStatus !== 'approved' ? (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => onApprove(warrant.id)}
+                disabled={approvalBusy}
+                className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded text-xs font-medium transition-colors disabled:opacity-50"
+              >
+                {approvalBusy ? 'Working...' : 'Approve'}
+              </button>
+              <button
+                onClick={() => onReject(warrant.id)}
+                disabled={approvalBusy}
+                className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded text-xs font-medium transition-colors disabled:opacity-50"
+              >
+                {approvalBusy ? 'Working...' : 'Reject'}
+              </button>
+            </div>
+          ) : null}
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => onServe(warrant.id)}
+              disabled={!isApproved}
+              className="flex-1 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={!isApproved ? 'Warrant must be approved before it can be marked served' : ''}
+            >
+              Mark Served
+            </button>
+            <button
+              onClick={() => onCancel(warrant.id)}
+              className="flex-1 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded text-xs font-medium transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="mt-3">
         <EvidencePanel
@@ -112,6 +176,7 @@ function WarrantCard({ warrant, onServe, onCancel, departmentId }) {
 }
 
 export default function Warrants() {
+  const { isAdmin } = useAuth();
   const { activeDepartment } = useDepartment();
   const location = useLocation();
   const { key: locationKey } = location;
@@ -125,6 +190,8 @@ export default function Warrants() {
   const [offenceCatalogLoading, setOffenceCatalogLoading] = useState(false);
   const [offenceQuery, setOffenceQuery] = useState('');
   const [selectedCharges, setSelectedCharges] = useState([]);
+  const [statusFilter, setStatusFilter] = useState('open');
+  const [approvalActionBusyId, setApprovalActionBusyId] = useState(0);
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -155,7 +222,7 @@ export default function Warrants() {
       return;
     }
     try {
-      const data = await api.get(`/api/warrants?department_id=${deptId}`);
+      const data = await api.get(`/api/warrants?department_id=${deptId}&status=all`);
       setWarrants(data);
     } catch (err) {
       console.error('Failed to load warrants:', err);
@@ -254,8 +321,21 @@ export default function Warrants() {
 
   useEventSource({
     'warrant:create': () => fetchData(),
+    'warrant:update': () => fetchData(),
     'warrant:serve': () => fetchData(),
     'warrant:cancel': () => fetchData(),
+  });
+
+  const filteredWarrants = warrants.filter((warrant) => {
+    const status = String(warrant?.status || '').trim().toLowerCase();
+    const approval = normalizeApprovalStatus(warrant?.approval_status);
+    if (statusFilter === 'open') return status === 'active';
+    if (statusFilter === 'pending_review') return status === 'active' && approval === 'pending_review';
+    if (statusFilter === 'approved') return status === 'active' && approval === 'approved';
+    if (statusFilter === 'rejected') return status === 'active' && approval === 'rejected';
+    if (statusFilter === 'served') return status === 'served';
+    if (statusFilter === 'cancelled') return status === 'cancelled';
+    return true;
   });
 
   function selectPersonMatch(match) {
@@ -346,32 +426,81 @@ export default function Warrants() {
     }
   }
 
+  async function approveWarrant(id) {
+    setApprovalActionBusyId(Number(id || 0));
+    try {
+      await api.patch(`/api/warrants/${id}/approve`, {});
+      fetchData();
+    } catch (err) {
+      alert('Failed to approve warrant: ' + err.message);
+    } finally {
+      setApprovalActionBusyId(0);
+    }
+  }
+
+  async function rejectWarrant(id) {
+    const approval_notes = window.prompt('Optional supervisor rejection note:', '') ?? '';
+    setApprovalActionBusyId(Number(id || 0));
+    try {
+      await api.patch(`/api/warrants/${id}/reject`, { approval_notes });
+      fetchData();
+    } catch (err) {
+      alert('Failed to reject warrant: ' + err.message);
+    } finally {
+      setApprovalActionBusyId(0);
+    }
+  }
+
   return (
     <div>
       {isLaw ? (
         <>
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold">Warrants</h2>
-            <button
-              onClick={openCreateModal}
-              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors"
-            >
-              + New Warrant
-            </button>
+            <div>
+              <h2 className="text-xl font-bold">Warrants</h2>
+              <p className="text-xs text-cad-muted mt-1">
+                Active warrants now support a supervisor approval queue and Discord approval alerts when enabled in System Settings.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              >
+                <option value="open">Open (All Active)</option>
+                <option value="pending_review">Pending Review</option>
+                <option value="approved">Approved Active</option>
+                <option value="rejected">Rejected</option>
+                <option value="served">Served</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="all">All</option>
+              </select>
+              <button
+                onClick={openCreateModal}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                + New Warrant
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {warrants.map(warrant => (
+            {filteredWarrants.map(warrant => (
               <WarrantCard
                 key={warrant.id}
                 warrant={warrant}
                 onServe={serveWarrant}
                 onCancel={cancelWarrant}
+                onApprove={approveWarrant}
+                onReject={rejectWarrant}
+                canApprove={!!isAdmin}
+                approvalActionBusyId={approvalActionBusyId}
                 departmentId={deptId}
               />
             ))}
-            {warrants.length === 0 && (
-              <p className="text-sm text-cad-muted col-span-full text-center py-8">No active warrants</p>
+            {filteredWarrants.length === 0 && (
+              <p className="text-sm text-cad-muted col-span-full text-center py-8">No warrants match the selected filter</p>
             )}
           </div>
 

@@ -1,9 +1,10 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { PatientAnalyses } = require('../db/sqlite');
+const { PatientAnalyses, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 
 const router = express.Router();
+const HOSPITAL_STATUS_SETTINGS_KEY = 'hospital_status_board_json';
 
 function hasParamedicAccess(user) {
   if (!user) return false;
@@ -19,7 +20,79 @@ function requireParamedicAccess(req, res, next) {
   next();
 }
 
+function sanitizeHospitalBoardRows(value) {
+  const source = Array.isArray(value) ? value : [];
+  const out = [];
+  const seen = new Set();
+  for (const row of source) {
+    if (!row || typeof row !== 'object') continue;
+    const id = String(row.id || row.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const name = String(row.name || '').trim();
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
+    const status = String(row.status || 'open').trim().toLowerCase();
+    out.push({
+      id,
+      name: name.slice(0, 120),
+      suburb: String(row.suburb || '').trim().slice(0, 80),
+      status: ['open', 'capacity_pressure', 'diversion', 'closed'].includes(status) ? status : 'open',
+      available_beds: Number.isFinite(Number(row.available_beds)) ? Math.max(0, Math.min(999, Math.trunc(Number(row.available_beds)))) : null,
+      trauma: !!row.trauma,
+      notes: String(row.notes || '').trim().slice(0, 200),
+      updated_at: String(row.updated_at || '').trim() || new Date().toISOString(),
+      updated_by_user_id: Number.isInteger(Number(row.updated_by_user_id)) && Number(row.updated_by_user_id) > 0 ? Number(row.updated_by_user_id) : null,
+    });
+  }
+  return out;
+}
+
+function defaultHospitalBoardRows() {
+  return sanitizeHospitalBoardRows([
+    { id: 'pillbox', name: 'Pillbox Hill Medical Centre', suburb: 'Pillbox Hill', status: 'open', available_beds: 6, trauma: true },
+    { id: 'mount-zonah', name: 'Mount Zonah Medical Centre', suburb: 'Rockford Hills', status: 'open', available_beds: 4, trauma: true },
+    { id: 'st-fiacre', name: 'St Fiacre Hospital', suburb: 'El Burro Heights', status: 'capacity_pressure', available_beds: 2, trauma: false },
+    { id: 'sandy-medical', name: 'Sandy Shores Medical Clinic', suburb: 'Sandy Shores', status: 'open', available_beds: 1, trauma: false },
+  ]);
+}
+
+function getHospitalBoard() {
+  const raw = Settings.get(HOSPITAL_STATUS_SETTINGS_KEY);
+  if (!raw) return defaultHospitalBoardRows();
+  try {
+    const parsed = JSON.parse(raw);
+    const rows = sanitizeHospitalBoardRows(parsed);
+    return rows.length > 0 ? rows : defaultHospitalBoardRows();
+  } catch {
+    return defaultHospitalBoardRows();
+  }
+}
+
+function saveHospitalBoard(rows) {
+  const normalized = sanitizeHospitalBoardRows(rows);
+  Settings.set(HOSPITAL_STATUS_SETTINGS_KEY, JSON.stringify(normalized));
+  return normalized;
+}
+
 router.use(requireAuth, requireParamedicAccess);
+
+router.get('/hospital-status', (req, res) => {
+  res.json({
+    rows: getHospitalBoard(),
+    settings_key: HOSPITAL_STATUS_SETTINGS_KEY,
+  });
+});
+
+router.put('/hospital-status', (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+  if (!rows) return res.status(400).json({ error: 'rows array is required' });
+  try {
+    const normalized = saveHospitalBoard(rows);
+    audit(req.user.id, 'hospital_status_board_updated', { count: normalized.length });
+    res.json({ ok: true, rows: normalized });
+  } catch (err) {
+    res.status(400).json({ error: 'Failed to update hospital status board', message: err.message });
+  }
+});
 
 router.get('/patients/:citizenid/analyses', (req, res) => {
   const citizenId = String(req.params.citizenid || '').trim();

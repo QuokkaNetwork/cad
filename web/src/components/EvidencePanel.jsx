@@ -50,6 +50,27 @@ function getStatusBadgeClasses(status) {
   return 'border-cad-border bg-cad-surface text-cad-muted';
 }
 
+function getReviewInfo(item) {
+  const review = (item?.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata))
+    ? item.metadata.review
+    : null;
+  if (!review || typeof review !== 'object') return { status: '', note: '', flaggedAt: '', reviewedAt: '' };
+  return {
+    status: String(review.status || '').trim().toLowerCase(),
+    note: String(review.note || '').trim(),
+    flaggedAt: String(review.flagged_at || '').trim(),
+    reviewedAt: String(review.reviewed_at || '').trim(),
+  };
+}
+
+function getReviewBadgeClasses(status) {
+  if (status === 'reviewed') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+  if (status === 'supervisor_review') return 'border-violet-500/30 bg-violet-500/10 text-violet-300';
+  if (status === 'hold') return 'border-rose-500/30 bg-rose-500/10 text-rose-300';
+  if (status === 'needs_review') return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+  return 'border-cad-border bg-cad-surface text-cad-muted';
+}
+
 export default function EvidencePanel({
   entityType,
   entityId,
@@ -113,6 +134,25 @@ export default function EvidencePanel({
       }
       loadEvidence();
     },
+    'evidence:update': (payload) => {
+      if (!canLoad) return;
+      if (String(payload?.entity_type || '').trim().toLowerCase() !== normalizedEntityType) return;
+      if (Number(payload?.entity_id) !== numericEntityId) return;
+      const updated = payload?.evidence;
+      if (updated?.id) {
+        setItems((current) => {
+          const rows = Array.isArray(current) ? current.slice() : [];
+          const index = rows.findIndex((item) => Number(item?.id) === Number(updated.id));
+          if (index >= 0) {
+            rows[index] = updated;
+            return rows;
+          }
+          return rows;
+        });
+        return;
+      }
+      loadEvidence();
+    },
   });
 
   async function createEvidence(e) {
@@ -146,6 +186,26 @@ export default function EvidencePanel({
       setItems((current) => (Array.isArray(current) ? current.filter((item) => Number(item?.id) !== Number(id)) : []));
     } catch (err) {
       alert('Failed to delete evidence: ' + (err?.message || 'Unknown error'));
+    }
+  }
+
+  async function updateEvidenceReview(item, nextStatus) {
+    if (!item?.id) return;
+    let reviewNote;
+    if (nextStatus === 'needs_review' || nextStatus === 'supervisor_review' || nextStatus === 'hold') {
+      reviewNote = window.prompt('Review flag note (optional):', String(getReviewInfo(item).note || ''));
+      if (reviewNote === null) return;
+    }
+    try {
+      const updated = await api.patch(`/api/evidence/${item.id}`, {
+        review_status: nextStatus,
+        ...(reviewNote !== undefined ? { review_note: reviewNote } : {}),
+      });
+      setItems((current) => (Array.isArray(current)
+        ? current.map((row) => (Number(row?.id) === Number(updated?.id) ? updated : row))
+        : []));
+    } catch (err) {
+      alert('Failed to update evidence review flag: ' + (err?.message || 'Unknown error'));
     }
   }
 
@@ -273,8 +333,10 @@ export default function EvidencePanel({
             ) : itemCount === 0 ? (
               <p className="text-xs text-cad-muted">No evidence items attached yet.</p>
             ) : (
-              items.map((item) => (
-                <div key={item.id} className="bg-cad-card border border-cad-border rounded p-3">
+              items.map((item) => {
+                const review = getReviewInfo(item);
+                return (
+                  <div key={item.id} className="bg-cad-card border border-cad-border rounded p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -289,24 +351,58 @@ export default function EvidencePanel({
                             Photo
                           </span>
                         ) : null}
+                        {review.status ? (
+                          <span className={`px-2 py-0.5 rounded border text-[11px] ${getReviewBadgeClasses(review.status)}`}>
+                            {formatStatusLabel(review.status)}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap gap-2 mt-1 text-[11px] text-cad-muted">
                         <span>#{item.id}</span>
                         {item.case_number ? <span>Case: <span className="text-cad-ink">{item.case_number}</span></span> : null}
                         {item.creator_name ? <span>By: <span className="text-cad-ink">{item.creator_name}</span></span> : null}
                         <span>{formatDateTimeAU(item.created_at ? `${item.created_at}Z` : '', '-')}</span>
+                        {review.flaggedAt ? <span>Flagged {formatDateTimeAU(review.flaggedAt, '-')}</span> : null}
+                        {review.reviewedAt ? <span>Reviewed {formatDateTimeAU(review.reviewedAt, '-')}</span> : null}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => deleteEvidence(item.id)}
-                      className="text-xs text-red-400 hover:text-red-300"
-                    >
-                      Delete
-                    </button>
+                    <div className="flex flex-col items-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => deleteEvidence(item.id)}
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        Delete
+                      </button>
+                      {review.status !== 'needs_review' && (
+                        <button type="button" onClick={() => updateEvidenceReview(item, 'needs_review')} className="text-xs text-amber-300 hover:text-amber-200">
+                          Flag Review
+                        </button>
+                      )}
+                      {review.status !== 'supervisor_review' && review.status !== 'reviewed' && (
+                        <button type="button" onClick={() => updateEvidenceReview(item, 'supervisor_review')} className="text-xs text-violet-300 hover:text-violet-200">
+                          Supervisor Review
+                        </button>
+                      )}
+                      {review.status && review.status !== 'reviewed' && (
+                        <button type="button" onClick={() => updateEvidenceReview(item, 'reviewed')} className="text-xs text-emerald-300 hover:text-emerald-200">
+                          Mark Reviewed
+                        </button>
+                      )}
+                      {review.status && (
+                        <button type="button" onClick={() => updateEvidenceReview(item, '')} className="text-xs text-cad-muted hover:text-cad-ink">
+                          Clear Flag
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {item.description ? (
                     <p className="text-xs text-cad-muted mt-2 whitespace-pre-wrap break-words">{item.description}</p>
+                  ) : null}
+                  {review.note ? (
+                    <div className="mt-2 text-xs rounded border border-cad-border bg-cad-surface px-2 py-1 text-cad-muted">
+                      <span className="text-cad-ink">Review Note:</span> {review.note}
+                    </div>
                   ) : null}
                   {item.photo_url ? (
                     <a
@@ -318,8 +414,9 @@ export default function EvidencePanel({
                       Open file / photo
                     </a>
                   ) : null}
-                </div>
-              ))
+                  </div>
+                );
+              })
             )}
           </div>
         </>

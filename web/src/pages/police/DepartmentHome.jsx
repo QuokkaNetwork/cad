@@ -10,8 +10,8 @@ import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departme
 import { formatDateAU, formatTimeAU } from '../../utils/dateTime';
 
 // Mirror the sidebar's visibility rules so hidden items don't appear on the home screen.
-// Route → whether it requires FiveM to be online (same list as requiresFiveMOnlineForNavItem in Sidebar.jsx)
-const FIVEM_REQUIRED_ROUTES = new Set(['/incidents', '/records', '/arrest-reports', '/warrants', '/evidence']);
+// Route -> whether it requires FiveM to be online (same list as requiresFiveMOnlineForNavItem in Sidebar.jsx)
+const FIVEM_REQUIRED_ROUTES = new Set(['/incidents', '/records', '/arrest-reports', '/warrants', '/evidence', '/infringements']);
 // Routes that only appear when the user is on duty in this department
 const DUTY_REQUIRED_ROUTES = new Set(['/units', '/dispatch']);
 
@@ -23,6 +23,12 @@ const DEFAULT_STATS = Object.freeze({
   assigned_units: 0,
   active_bolos: 0,
   active_warrants: 0,
+});
+const DEFAULT_LIVE_SNAPSHOT = Object.freeze({
+  calls: [],
+  units: [],
+  bolos: [],
+  warrants: [],
 });
 const REFRESH_DEBOUNCE_MS = 350;
 
@@ -62,6 +68,85 @@ function colorWithAlpha(color, alpha, fallback = `rgba(0,82,194,${alpha})`) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function parseSqliteUtc(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const normalized = text.replace(' ', 'T');
+  const withZone = normalized.endsWith('Z') ? normalized : `${normalized}Z`;
+  const ts = Date.parse(withZone);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function formatElapsedSinceTimestamp(ts, nowMs) {
+  if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(nowMs)) return '-';
+  const diffMs = Math.max(0, nowMs - ts);
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatElapsedSinceSqlite(value, nowMs) {
+  return formatElapsedSinceTimestamp(parseSqliteUtc(value), nowMs);
+}
+
+function titleCaseWords(value) {
+  return String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function formatStatusLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'Open';
+  if (normalized === 'on_scene' || normalized === 'on-scene') return 'On Scene';
+  if (normalized === 'enroute') return 'En Route';
+  return titleCaseWords(normalized);
+}
+
+function getCallPriorityRank(call) {
+  const raw = Number.parseInt(String(call?.priority || '').trim(), 10);
+  if (Number.isInteger(raw) && raw > 0) return raw;
+  if (String(call?.job_code || '').trim() === '000') return 1;
+  return 3;
+}
+
+function isPursuitCallLike(call) {
+  const hay = `${String(call?.title || '')} ${String(call?.description || '')} ${String(call?.job_code || '')}`.toLowerCase();
+  return /\bpursuit\b|\bvehicle pursuit\b|\bpolice pursuit\b/.test(hay) || !!call?.pursuit_mode_enabled;
+}
+
+function joinLabelsNatural(labels) {
+  const clean = Array.from(new Set((labels || []).map((x) => String(x || '').trim()).filter(Boolean)));
+  if (!clean.length) return '';
+  if (clean.length === 1) return clean[0];
+  if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
+  return `${clean.slice(0, -1).join(', ')}, and ${clean[clean.length - 1]}`;
+}
+
+function badgeClassesForTone(tone) {
+  if (tone === 'red') return 'border-red-500/25 bg-red-500/10 text-red-200';
+  if (tone === 'amber') return 'border-amber-500/25 bg-amber-500/10 text-amber-200';
+  if (tone === 'green') return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200';
+  if (tone === 'blue') return 'border-sky-500/25 bg-sky-500/10 text-sky-200';
+  return 'border-cad-border bg-cad-surface/60 text-cad-ink';
+}
+
+function getUnitStatusTone(status) {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'available') return 'green';
+  if (value === 'enroute' || value === 'on_scene' || value === 'on-scene') return 'blue';
+  if (value === 'busy' || value === 'assigned') return 'amber';
+  if (value === 'unavailable') return 'red';
+  return 'default';
+}
+
 // Live stat cell in the top strip
 function StatCell({ label, value, tone = 'default', loading, pulse }) {
   const tones = {
@@ -80,7 +165,7 @@ function StatCell({ label, value, tone = 'default', loading, pulse }) {
       )}
       <p className="text-[9px] uppercase tracking-[0.18em] text-cad-muted">{label}</p>
       <p className={`text-2xl font-bold tabular-nums mt-0.5 ${t.num}`}>
-        {loading ? <span className="text-cad-muted text-xl">–</span> : value}
+        {loading ? <span className="text-cad-muted text-xl">-</span> : value}
       </p>
     </div>
   );
@@ -185,6 +270,40 @@ function PanelCard({ panel, accent, navigate }) {
   );
 }
 
+function SectionCard({ title, subtitle, accent, actionLabel, actionRoute, navigate, children }) {
+  return (
+    <div
+      className="rounded-2xl border overflow-hidden"
+      style={{ borderColor: colorWithAlpha(accent, 0.16, 'rgba(42,58,78,1)') }}
+    >
+      <div
+        className="px-4 py-3 border-b flex items-center justify-between gap-3"
+        style={{
+          borderColor: colorWithAlpha(accent, 0.12, 'rgba(42,58,78,1)'),
+          background: colorWithAlpha(accent, 0.05),
+        }}
+      >
+        <div className="min-w-0">
+          <p className="text-[9px] uppercase tracking-[0.18em] text-cad-muted">{subtitle}</p>
+          <p className="text-sm font-semibold text-cad-ink mt-0.5 truncate">{title}</p>
+        </div>
+        {actionLabel && actionRoute && (
+          <button
+            type="button"
+            onClick={() => navigate(actionRoute)}
+            className="px-2.5 py-1 rounded-lg border border-cad-border bg-cad-surface/60 text-[11px] font-medium text-cad-ink hover:bg-cad-surface transition-colors whitespace-nowrap"
+          >
+            {actionLabel}
+          </button>
+        )}
+      </div>
+      <div className="p-4 bg-cad-card/50">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function DepartmentHome() {
   const navigate = useNavigate();
   const { isFiveMOnline } = useAuth();
@@ -199,6 +318,7 @@ export default function DepartmentHome() {
   const [offDutySummary, setOffDutySummary] = useState(null);
   const [onDutyLoading, setOnDutyLoading] = useState(false);
   const [offDutyLoading, setOffDutyLoading] = useState(false);
+  const [liveSnapshot, setLiveSnapshot] = useState(DEFAULT_LIVE_SNAPSHOT);
   const refreshTimerRef = useRef(null);
   const requestInFlightRef = useRef(false);
 
@@ -269,6 +389,12 @@ export default function DepartmentHome() {
         active_bolos: bolos.length,
         active_warrants: warrants.length,
       });
+      setLiveSnapshot({
+        calls: activeCalls,
+        units,
+        bolos,
+        warrants,
+      });
       setLastUpdated(new Date());
     } catch (err) {
       setError(err?.message || 'Failed to load department stats');
@@ -286,6 +412,7 @@ export default function DepartmentHome() {
   useEffect(() => {
     setLoading(true);
     setStats(DEFAULT_STATS);
+    setLiveSnapshot(DEFAULT_LIVE_SNAPSHOT);
     setLastUpdated(null);
     fetchStats();
     refreshMyUnit();
@@ -369,14 +496,15 @@ export default function DepartmentHome() {
     : (isFireDepartment ? 'Fire & Rescue' : (isEmsDepartment ? 'Paramedic' : 'Law Enforcement'));
   const unitLabel = isFireDepartment ? 'Crew' : 'Unit';
   const primaryBoardRoute = isDispatch ? '/dispatch' : '/units';
+  const nowMs = now.getTime();
 
   const quickActions = (() => {
     if (isDispatch) {
       return [
         { label: 'Dispatch Board', sublabel: 'Live call management', route: '/dispatch', variant: 'primary' },
+        { label: 'AVL Map', route: '/map' },
         { label: 'Lookup', route: '/search' },
         { label: 'Units', route: '/units' },
-        { label: 'Incidents', route: '/incidents' },
       ];
     }
     if (isPoliceDepartment) {
@@ -385,6 +513,7 @@ export default function DepartmentHome() {
         { label: 'Lookup', route: '/search' },
         { label: 'Records', route: '/records' },
         { label: 'Arrest Reports', route: '/arrest-reports' },
+        { label: 'Infringement Notices', route: '/infringements' },
         { label: 'Warrants', route: '/warrants' },
         { label: 'POI / VOI', route: '/bolos' },
         { label: 'Evidence', route: '/evidence' },
@@ -424,7 +553,7 @@ export default function DepartmentHome() {
           key: 'warrants',
           eyebrow: 'Warrants',
           title: 'Outstanding warrant workload',
-          value: loading ? '–' : String(stats.active_warrants),
+          value: loading ? '-' : String(stats.active_warrants),
           valueTone: 'text-amber-300',
           body: 'Create, review, and action outstanding warrants for active investigations.',
           actions: [
@@ -436,7 +565,7 @@ export default function DepartmentHome() {
           key: 'pois',
           eyebrow: 'POI / VOI',
           title: 'Persons & vehicles of interest',
-          value: loading ? '–' : String(stats.active_bolos),
+          value: loading ? '-' : String(stats.active_bolos),
           valueTone: 'text-sky-400',
           body: 'Track POI / VOI entries linked to investigations, vehicles, and current operational activity.',
           actions: [
@@ -453,6 +582,7 @@ export default function DepartmentHome() {
           actions: [
             { label: 'Records', route: '/records' },
             { label: 'Arrest Reports', route: '/arrest-reports' },
+            { label: 'Infringements', route: '/infringements' },
             { label: 'Incidents', route: '/incidents' },
           ],
         },
@@ -467,6 +597,7 @@ export default function DepartmentHome() {
           body: 'Call triage, macros, priority tones, pursuit tracking, and unit allocation.',
           actions: [
             { label: 'Open Dispatch Board', route: '/dispatch', variant: 'primary' },
+            { label: 'AVL Map', route: '/map' },
             { label: 'Lookup', route: '/search' },
           ],
         },
@@ -477,7 +608,7 @@ export default function DepartmentHome() {
           body: 'Monitor available units, active incidents, and escalation workload from the live overview.',
           actions: [
             { label: 'Units', route: '/units' },
-            { label: 'Incidents', route: '/incidents' },
+            { label: 'AVL Map', route: '/map' },
           ],
         },
       ];
@@ -574,10 +705,203 @@ export default function DepartmentHome() {
   const primaryAction = visibleQuickActions.find(a => a.variant === 'primary');
   const secondaryActions = visibleQuickActions.filter(a => a.variant !== 'primary');
 
+  const sortedActiveCalls = useMemo(() => {
+    const calls = Array.isArray(liveSnapshot.calls) ? [...liveSnapshot.calls] : [];
+    calls.sort((a, b) => {
+      const priorityDiff = getCallPriorityRank(a) - getCallPriorityRank(b);
+      if (priorityDiff !== 0) return priorityDiff;
+      const aUpdated = parseSqliteUtc(a?.updated_at || a?.created_at);
+      const bUpdated = parseSqliteUtc(b?.updated_at || b?.created_at);
+      if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+      return parseSqliteUtc(b?.created_at) - parseSqliteUtc(a?.created_at);
+    });
+    return calls;
+  }, [liveSnapshot.calls]);
+
+  const unitStatusBreakdown = useMemo(() => {
+    const counts = new Map();
+    for (const unit of (Array.isArray(liveSnapshot.units) ? liveSnapshot.units : [])) {
+      const key = String(unit?.status || 'unknown').trim().toLowerCase() || 'unknown';
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const preferredOrder = ['available', 'enroute', 'on_scene', 'on-scene', 'busy', 'unavailable', 'unknown'];
+    const entries = Array.from(counts.entries());
+    entries.sort((a, b) => {
+      const aIdx = preferredOrder.indexOf(a[0]);
+      const bIdx = preferredOrder.indexOf(b[0]);
+      if (aIdx !== -1 || bIdx !== -1) {
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        if (aIdx !== bIdx) return aIdx - bIdx;
+      }
+      return b[1] - a[1];
+    });
+    return entries.map(([status, count]) => ({
+      key: status,
+      label: formatStatusLabel(status),
+      count,
+      tone: getUnitStatusTone(status),
+    }));
+  }, [liveSnapshot.units]);
+
+  const queueHeadline = useMemo(() => {
+    const unassigned = sortedActiveCalls.filter(call => (Array.isArray(call?.assigned_units) ? call.assigned_units.length : 0) === 0).length;
+    const pursuits = sortedActiveCalls.filter(isPursuitCallLike).length;
+    const stale = sortedActiveCalls.filter((call) => {
+      const updatedTs = parseSqliteUtc(call?.updated_at || call?.created_at);
+      return updatedTs && (nowMs - updatedTs) > (10 * 60 * 1000);
+    }).length;
+    return { open: stats.active_calls, unassigned, pursuits, stale };
+  }, [sortedActiveCalls, nowMs, stats.active_calls]);
+
+  const watchTiles = useMemo(() => {
+    const latestQueueUpdateTs = sortedActiveCalls.length
+      ? Math.max(...sortedActiveCalls.map(call => parseSqliteUtc(call?.updated_at || call?.created_at)).filter(Boolean))
+      : 0;
+    if (isPoliceDepartment) {
+      return [
+        { label: 'Active Warrants', value: stats.active_warrants, tone: stats.active_warrants > 0 ? 'amber' : 'default' },
+        { label: 'POI / VOI', value: stats.active_bolos, tone: stats.active_bolos > 0 ? 'blue' : 'default' },
+        { label: 'Urgent / 000', value: stats.urgent_calls, tone: stats.urgent_calls > 0 ? 'red' : 'default' },
+        { label: 'Available Units', value: stats.available_units, tone: stats.available_units > 0 ? 'green' : 'default' },
+      ];
+    }
+    if (isDispatch) {
+      return [
+        { label: 'Unassigned Calls', value: queueHeadline.unassigned, tone: queueHeadline.unassigned > 0 ? 'amber' : 'default' },
+        { label: 'Pursuits', value: queueHeadline.pursuits, tone: queueHeadline.pursuits > 0 ? 'red' : 'default' },
+        { label: 'Urgent / 000', value: stats.urgent_calls, tone: stats.urgent_calls > 0 ? 'red' : 'default' },
+        { label: 'Available Units', value: stats.available_units, tone: stats.available_units > 0 ? 'green' : 'default' },
+      ];
+    }
+    return [
+      { label: isFireDepartment ? 'Active Incidents' : 'Active Calls', value: stats.active_calls, tone: stats.active_calls > 0 ? 'blue' : 'default' },
+      { label: 'Urgent / 000', value: stats.urgent_calls, tone: stats.urgent_calls > 0 ? 'red' : 'default' },
+      { label: isFireDepartment ? 'Crews Available' : 'Available Units', value: stats.available_units, tone: stats.available_units > 0 ? 'green' : 'default' },
+      { label: 'Latest Queue Update', value: latestQueueUpdateTs ? formatElapsedSinceTimestamp(latestQueueUpdateTs, nowMs) : '-', tone: 'default', isText: true },
+    ];
+  }, [sortedActiveCalls, isPoliceDepartment, isDispatch, isFireDepartment, stats, queueHeadline, nowMs]);
+
+  const attentionItems = useMemo(() => {
+    const items = [];
+    const unassignedCalls = sortedActiveCalls.filter(call => (Array.isArray(call?.assigned_units) ? call.assigned_units.length : 0) === 0);
+    const priorityOneCalls = sortedActiveCalls.filter(call => getCallPriorityRank(call) === 1);
+    const staleCalls = sortedActiveCalls.filter((call) => {
+      const updatedTs = parseSqliteUtc(call?.updated_at || call?.created_at);
+      if (!updatedTs) return false;
+      return (nowMs - updatedTs) > (10 * 60 * 1000);
+    });
+
+    if (priorityOneCalls.length > 0) {
+      items.push({
+        tone: 'red',
+        title: `${priorityOneCalls.length} urgent / 000 ${priorityOneCalls.length === 1 ? 'call requires attention' : 'calls require attention'}`,
+        detail: 'Review allocation and maintain active status updates on high priority jobs.',
+        route: primaryBoardRoute,
+        actionLabel: isDispatch ? 'Dispatch Board' : 'Response Board',
+      });
+    }
+    if (unassignedCalls.length > 0) {
+      items.push({
+        tone: 'amber',
+        title: `${unassignedCalls.length} ${unassignedCalls.length === 1 ? 'call is' : 'calls are'} unassigned`,
+        detail: 'Allocate an available unit or crew to reduce queue drift.',
+        route: primaryBoardRoute,
+        actionLabel: 'Allocate',
+      });
+    }
+    if (stats.active_calls > 0 && stats.available_units === 0) {
+      items.push({
+        tone: 'amber',
+        title: 'No available units while jobs are active',
+        detail: 'All on-duty members are committed or unavailable.',
+        route: '/units',
+        actionLabel: 'Unit Board',
+      });
+    }
+    if (staleCalls.length > 0) {
+      items.push({
+        tone: 'blue',
+        title: `${staleCalls.length} ${staleCalls.length === 1 ? 'call has' : 'calls have'} no update in 10+ minutes`,
+        detail: 'Review for closure, follow-up, or updated status.',
+        route: primaryBoardRoute,
+        actionLabel: 'Review Queue',
+      });
+    }
+    if (onOtherDeptDuty) {
+      items.push({
+        tone: 'amber',
+        title: 'You are already on duty in another department',
+        detail: 'Go off duty there before joining this department workflow.',
+      });
+    }
+    if (hideInGameItems && hiddenFiveMRoutes.length > 0) {
+      items.push({
+        tone: 'amber',
+        title: 'In-game connection required for protected workflows',
+        detail: `Connect to FiveM to access ${joinLabelsNatural(hiddenFiveMRoutes.map(a => a.label))}.`,
+      });
+    }
+    if (!items.length) {
+      items.push({
+        tone: 'green',
+        title: 'No immediate issues detected',
+        detail: 'Queue, unit availability, and operational updates look healthy.',
+      });
+    }
+    return items.slice(0, 5);
+  }, [sortedActiveCalls, nowMs, stats.active_calls, stats.available_units, onOtherDeptDuty, hideInGameItems, hiddenFiveMRoutes, primaryBoardRoute, isDispatch]);
+
+  const myUnitAssignments = useMemo(() => {
+    if (!myUnit) return [];
+    const myId = Number(myUnit.id);
+    const myCallsign = String(myUnit.callsign || '').trim().toLowerCase();
+    return sortedActiveCalls.filter((call) => {
+      const assigned = Array.isArray(call?.assigned_units) ? call.assigned_units : [];
+      return assigned.some((entry) => {
+        const entryId = Number(entry?.unit_id ?? entry?.id);
+        if (Number.isInteger(myId) && myId > 0 && entryId === myId) return true;
+        return myCallsign && String(entry?.callsign || '').trim().toLowerCase() === myCallsign;
+      });
+    });
+  }, [myUnit, sortedActiveCalls]);
+
+  const workflowSteps = useMemo(() => {
+    if (isDispatch) {
+      return [
+        'Monitor new calls, timers, and priority alerts on the dispatch board.',
+        'Allocate the closest available units and monitor pursuits or alarms.',
+        'Use lookup and AVL mapping to support live coordination decisions.',
+      ];
+    }
+    if (isPoliceDepartment) {
+      return [
+        'Use lookup to confirm licence and registration details before taking action.',
+        'Draft arrest reports for review, finalise records, and issue infringement notices as required.',
+        'Link records, warrants, POI / VOI entries, and evidence under a shared incident.',
+      ];
+    }
+    if (isEmsDepartment) {
+      return [
+        'Allocate crews on the response board and document care in Treatment Log.',
+        'Use Transport Tracker for destination, ETA, and hospital handover status.',
+        'Complete patient reports for clinical recordkeeping and follow-up review.',
+      ];
+    }
+    if (isFireDepartment) {
+      return [
+        'Use Response Board for appliance allocation and incident coordination.',
+        'Capture post-incident outcomes in Incident Reports and linked incidents.',
+        'Maintain apparatus readiness and pre-plan references for repeat-risk locations.',
+      ];
+    }
+    return ['Use the relevant workflow for live response, lookup, and documentation.'];
+  }, [isDispatch, isPoliceDepartment, isEmsDepartment, isFireDepartment]);
+
   return (
     <div className="flex flex-col gap-4">
 
-      {/* ── Department hero strip ──────────────────────────── */}
+      {/* â”€â”€ Department hero strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div
         className="relative overflow-hidden rounded-2xl border"
         style={{
@@ -630,7 +954,7 @@ export default function DepartmentHome() {
                   {loading ? 'Syncing...' : `${stats.on_duty_units} on duty`}
                 </span>
                 {lastUpdated && (
-                  <span className="text-[9px] text-cad-muted hidden sm:inline">· Updated {formatTimeAU(lastUpdated, '-', true)}</span>
+                  <span className="text-[9px] text-cad-muted hidden sm:inline">Updated {formatTimeAU(lastUpdated, '-', true)}</span>
                 )}
               </div>
               <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-cad-ink leading-tight">
@@ -715,8 +1039,8 @@ export default function DepartmentHome() {
         </div>
       </div>
 
-      {/* ── Live stat strip ────────────────────────────────── */}
-      {/* Only the 5 core counters — dept-specific counts (warrants, POIs) live in the panels below */}
+      {/* â”€â”€ Live stat strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* Only the 5 core counters â€” dept-specific counts (warrants, POIs) live in the panels below */}
       <div className="flex gap-3 flex-wrap sm:flex-nowrap">
         <StatCell
           label={isFireDepartment ? 'Active Incidents' : 'Active Calls'}
@@ -738,7 +1062,7 @@ export default function DepartmentHome() {
           loading={loading}
         />
         <StatCell
-          label={isFireDepartment ? 'Available' : 'Available'}
+          label="Available"
           value={stats.available_units}
           tone="default"
           loading={loading}
@@ -751,7 +1075,259 @@ export default function DepartmentHome() {
         />
       </div>
 
-      {/* ── Quick launch (full width, workflow steps inlined below) ── */}
+      {/* â”€â”€ Quick launch (full width, workflow steps inlined below) â”€â”€ */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <div className="xl:col-span-8 flex flex-col gap-4">
+          <SectionCard
+            title={isFireDepartment ? 'Active Incident Queue' : 'Active Call Queue'}
+            subtitle="Live Operations"
+            accent={deptColor}
+            actionLabel={isDispatch ? 'Dispatch Board' : 'Response Board'}
+            actionRoute={primaryBoardRoute}
+            navigate={navigate}
+          >
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-4">
+              <div className="rounded-xl border border-cad-border bg-cad-surface/50 px-3 py-2">
+                <p className="text-[9px] uppercase tracking-[0.16em] text-cad-muted">Open</p>
+                <p className="text-lg font-bold text-cad-ink tabular-nums">{queueHeadline.open}</p>
+              </div>
+              <div className="rounded-xl border border-cad-border bg-cad-surface/50 px-3 py-2">
+                <p className="text-[9px] uppercase tracking-[0.16em] text-cad-muted">Unassigned</p>
+                <p className={`text-lg font-bold tabular-nums ${queueHeadline.unassigned > 0 ? 'text-amber-300' : 'text-cad-ink'}`}>{queueHeadline.unassigned}</p>
+              </div>
+              <div className="rounded-xl border border-cad-border bg-cad-surface/50 px-3 py-2">
+                <p className="text-[9px] uppercase tracking-[0.16em] text-cad-muted">Pursuits</p>
+                <p className={`text-lg font-bold tabular-nums ${queueHeadline.pursuits > 0 ? 'text-red-300' : 'text-cad-ink'}`}>{queueHeadline.pursuits}</p>
+              </div>
+              <div className="rounded-xl border border-cad-border bg-cad-surface/50 px-3 py-2">
+                <p className="text-[9px] uppercase tracking-[0.16em] text-cad-muted">Stale 10m+</p>
+                <p className={`text-lg font-bold tabular-nums ${queueHeadline.stale > 0 ? 'text-amber-300' : 'text-cad-ink'}`}>{queueHeadline.stale}</p>
+              </div>
+            </div>
+
+            {sortedActiveCalls.length > 0 ? (
+              <div className="space-y-2">
+                {sortedActiveCalls.slice(0, 6).map((call, index) => {
+                  const assignedCount = Array.isArray(call?.assigned_units) ? call.assigned_units.length : 0;
+                  const priorityRank = getCallPriorityRank(call);
+                  const title = String(call?.title || '').trim() || String(call?.job_code || '').trim() || 'Untitled call';
+                  const location = String(call?.location || '').trim();
+                  const isPursuit = isPursuitCallLike(call);
+                  return (
+                    <div key={`call-${call?.id ?? index}`} className="rounded-xl border border-cad-border bg-cad-surface/35 px-3 py-2.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className={`mt-0.5 inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                          priorityRank === 1
+                            ? 'border-red-500/25 bg-red-500/10 text-red-200'
+                            : priorityRank === 2
+                              ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+                              : 'border-cad-border bg-cad-card/70 text-cad-muted'
+                        }`}>
+                          P{priorityRank}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p className="text-sm font-semibold text-cad-ink truncate">{title}</p>
+                            {String(call?.job_code || '').trim() === '000' && (
+                              <span className="inline-flex items-center rounded-md border border-red-500/20 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-200">000</span>
+                            )}
+                            {isPursuit && (
+                              <span className="inline-flex items-center rounded-md border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-sky-200">Pursuit</span>
+                            )}
+                            {assignedCount === 0 && (
+                              <span className="inline-flex items-center rounded-md border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">Unassigned</span>
+                            )}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-cad-muted">
+                            <span>{location || 'Location pending'}</span>
+                            <span>{formatStatusLabel(call?.status)}</span>
+                            <span>{assignedCount} assigned</span>
+                            <span>Open {formatElapsedSinceSqlite(call?.created_at, nowMs)}</span>
+                            <span>Upd {formatElapsedSinceSqlite(call?.updated_at || call?.created_at, nowMs)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {sortedActiveCalls.length > 6 && (
+                  <p className="text-xs text-cad-muted pt-1">+{sortedActiveCalls.length - 6} more {isFireDepartment ? 'incidents' : 'calls'} in queue.</p>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-cad-border bg-cad-surface/30 px-4 py-5">
+                <p className="text-sm font-semibold text-cad-ink">Queue clear</p>
+                <p className="text-xs text-cad-muted mt-1">No active {isFireDepartment ? 'incidents' : 'calls'} are currently open for this department.</p>
+              </div>
+            )}
+          </SectionCard>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <SectionCard title="Needs Attention" subtitle="Operational Signals" accent={deptColor} navigate={navigate}>
+              <div className="space-y-2">
+                {attentionItems.map((item, idx) => (
+                  <div key={`${item.title}:${idx}`} className={`rounded-xl border px-3 py-2.5 ${badgeClassesForTone(item.tone)}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold leading-snug">{item.title}</p>
+                        <p className="text-[11px] opacity-90 mt-1 leading-relaxed">{item.detail}</p>
+                      </div>
+                      {item.route && item.actionLabel && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(item.route)}
+                          className="px-2 py-1 rounded-md border border-white/10 bg-white/5 text-[10px] font-semibold whitespace-nowrap hover:bg-white/10 transition-colors"
+                        >
+                          {item.actionLabel}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Team & Unit Readiness" subtitle="Resource Availability" accent={deptColor} actionLabel="Unit Board" actionRoute="/units" navigate={navigate}>
+              <div className="space-y-3">
+                <div className="rounded-xl border border-cad-border bg-cad-surface/40 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[11px] uppercase tracking-[0.15em] text-cad-muted">Availability Coverage</p>
+                    <p className="text-xs font-semibold text-cad-ink tabular-nums">{stats.available_units}/{Math.max(stats.on_duty_units, 0)}</p>
+                  </div>
+                  <div className="mt-2 h-2 rounded-full bg-cad-surface overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${stats.on_duty_units > 0 ? Math.min(100, Math.round((stats.available_units / stats.on_duty_units) * 100)) : 0}%`,
+                        background: `linear-gradient(90deg, ${colorWithAlpha(deptColor, 0.9, 'rgba(0,82,194,0.9)')}, ${colorWithAlpha(deptColor, 0.55, 'rgba(0,82,194,0.55)')})`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {unitStatusBreakdown.length > 0 ? (
+                  <div className="space-y-2">
+                    {unitStatusBreakdown.slice(0, 6).map((row) => (
+                      <div key={row.key} className="rounded-lg border border-cad-border bg-cad-surface/25 px-3 py-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              row.tone === 'green'
+                                ? 'bg-emerald-400'
+                                : row.tone === 'blue'
+                                  ? 'bg-sky-400'
+                                  : row.tone === 'amber'
+                                    ? 'bg-amber-300'
+                                    : row.tone === 'red'
+                                      ? 'bg-red-400'
+                                      : 'bg-cad-muted'
+                            }`} />
+                            <span className="text-xs text-cad-ink truncate">{row.label}</span>
+                          </div>
+                          <span className="text-xs font-semibold tabular-nums text-cad-ink">{row.count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-cad-muted">No units currently on duty for this view.</p>
+                )}
+              </div>
+            </SectionCard>
+          </div>
+        </div>
+
+        <div className="xl:col-span-4 flex flex-col gap-4">
+          <SectionCard title="Your Operational Status" subtitle="Member Snapshot" accent={deptColor} navigate={navigate}>
+            <div className="space-y-3">
+              <div className={`rounded-xl border px-3 py-3 ${
+                onActiveDeptDuty ? 'border-emerald-500/20 bg-emerald-500/5' :
+                onOtherDeptDuty ? 'border-amber-500/20 bg-amber-500/5' :
+                'border-cad-border bg-cad-surface/40'
+              }`}>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-cad-muted">Duty State</p>
+                <p className={`text-sm font-semibold mt-1 ${
+                  onActiveDeptDuty ? 'text-emerald-300' : onOtherDeptDuty ? 'text-amber-300' : 'text-cad-ink'
+                }`}>
+                  {onActiveDeptDuty ? 'On duty in this department' : onOtherDeptDuty ? 'On duty in another department' : 'Off duty'}
+                </p>
+                {onActiveDeptDuty && (
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="rounded-lg border border-cad-border bg-cad-surface/40 px-2.5 py-2">
+                      <p className="text-cad-muted uppercase tracking-[0.14em] text-[9px]">{unitLabel}</p>
+                      <p className="text-cad-ink font-semibold mt-0.5">{myUnit?.callsign || 'On duty'}</p>
+                    </div>
+                    <div className="rounded-lg border border-cad-border bg-cad-surface/40 px-2.5 py-2">
+                      <p className="text-cad-muted uppercase tracking-[0.14em] text-[9px]">Status</p>
+                      <p className="text-cad-ink font-semibold mt-0.5">{formatStatusLabel(myUnit?.status || 'available')}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {watchTiles.map((tile) => (
+                  <div key={tile.label} className={`rounded-lg border px-3 py-2 ${badgeClassesForTone(tile.tone)}`}>
+                    <p className="text-[9px] uppercase tracking-[0.14em] opacity-80">{tile.label}</p>
+                    <p className={`mt-1 font-semibold ${tile.isText ? 'text-xs' : 'text-sm tabular-nums'}`}>{tile.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {onActiveDeptDuty && (
+                <div className="rounded-xl border border-cad-border bg-cad-surface/30 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-cad-muted">Current Assignments</p>
+                    <span className="text-xs font-semibold text-cad-ink tabular-nums">{myUnitAssignments.length}</span>
+                  </div>
+                  {myUnitAssignments.length > 0 ? (
+                    <div className="mt-2 space-y-2">
+                      {myUnitAssignments.slice(0, 3).map((call, idx) => (
+                        <div key={`my-assignment-${call?.id ?? idx}`} className="rounded-lg border border-cad-border bg-cad-card/60 px-2.5 py-2">
+                          <p className="text-xs font-semibold text-cad-ink truncate">
+                            {String(call?.title || '').trim() || String(call?.job_code || '').trim() || 'Active call'}
+                          </p>
+                          <p className="text-[11px] text-cad-muted mt-0.5 truncate">
+                            {String(call?.location || '').trim() || 'Location pending'} | {formatStatusLabel(call?.status)}
+                          </p>
+                        </div>
+                      ))}
+                      {myUnitAssignments.length > 3 && (
+                        <p className="text-[11px] text-cad-muted">+{myUnitAssignments.length - 3} more assignments active.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-cad-muted mt-2">No active assignments linked to your unit in this queue.</p>
+                  )}
+                </div>
+              )}
+
+              <div className="rounded-xl border border-cad-border bg-cad-surface/30 px-3 py-3">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-cad-muted">Connection & Access</p>
+                <div className="mt-2 space-y-2 text-xs">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-cad-muted">FiveM Link</span>
+                    <span className={`font-semibold ${isFiveMOnline ? 'text-emerald-300' : 'text-amber-200'}`}>
+                      {isDispatch ? (isFiveMOnline ? 'Connected (optional)' : 'Not required for dispatch') : (isFiveMOnline ? 'Connected' : 'Offline')}
+                    </span>
+                  </div>
+                  {hiddenDutyRoutes.length > 0 && (
+                    <div className="rounded-lg border border-cad-border bg-cad-card/50 px-2.5 py-2 text-cad-muted">
+                      Go on duty to access {joinLabelsNatural(hiddenDutyRoutes.map(a => a.label))}.
+                    </div>
+                  )}
+                  {hideInGameItems && hiddenFiveMRoutes.length > 0 && (
+                    <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 text-amber-100">
+                      Connect in-game to access {joinLabelsNatural(hiddenFiveMRoutes.map(a => a.label))}.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </SectionCard>
+        </div>
+      </div>
+
       <div
         className="rounded-2xl border overflow-hidden"
         style={{ borderColor: colorWithAlpha(deptColor, 0.16, 'rgba(42,58,78,1)') }}
@@ -796,14 +1372,14 @@ export default function DepartmentHome() {
             </div>
           )}
 
-          {/* Contextual notices for hidden items — mirrors sidebar banners */}
+          {/* Contextual notices for hidden items â€” mirrors sidebar banners */}
           {hiddenDutyRoutes.length > 0 && (
             <div className="mt-3 rounded-lg border border-cad-border bg-cad-surface/60 px-3 py-2 flex items-start gap-2">
               <svg className="w-3.5 h-3.5 text-cad-muted mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p className="text-xs text-cad-muted">
-                <span className="text-cad-ink font-medium">Go on duty</span> to access the response board and dispatch tools.
+                <span className="text-cad-ink font-medium">Go on duty</span> to access {joinLabelsNatural(hiddenDutyRoutes.map(a => a.label))}.
               </p>
             </div>
           )}
@@ -813,63 +1389,34 @@ export default function DepartmentHome() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
               <p className="text-xs text-amber-200">
-                <span className="font-medium">In-game required</span> — connect to the FiveM server to access {hiddenFiveMRoutes.map(a => a.label).join(', ')}.
+                <span className="font-medium">In-game required</span> - connect to the FiveM server to access {joinLabelsNatural(hiddenFiveMRoutes.map(a => a.label))}.
               </p>
             </div>
           )}
 
-          {/* Workflow steps — compact inline strip */}
-          {(() => {
-            const steps = isDispatch
-              ? [
-                  'Monitor new calls, timers, and priority alerts on the dispatch board.',
-                  'Allocate the closest available units and track pursuits in real time.',
-                  'Use lookup for cross-checks before escalating or linking incidents.',
-                ]
-              : isPoliceDepartment
-              ? [
-                  'Use lookup to confirm licence and registration details before actioning.',
-                  'Create arrest reports for draft and supervisor review, then finalise when ready.',
-                  'Link records, warrants, POI / VOI entries, and evidence under a shared incident.',
-                ]
-              : isEmsDepartment
-              ? [
-                  'Allocate crews on the response board, then document care in Treatment Log.',
-                  'Use Transport Tracker for destination, ETA, and handover status.',
-                  'Complete patient reports for clinical records and follow-up review.',
-                ]
-              : isFireDepartment
-              ? [
-                  'Use Response Board for live incident allocation and appliance coordination.',
-                  'Document post-incident outcomes in Incident Reports.',
-                  'Maintain pre-plans and apparatus readiness for repeat-risk locations.',
-                ]
-              : ['Use the relevant workflow for live response, lookup, and documentation.'];
-            return (
-              <div className="mt-4 pt-3 border-t flex flex-wrap gap-3" style={{ borderColor: colorWithAlpha(deptColor, 0.12, 'rgba(42,58,78,0.5)') }}>
-                <p className="text-[9px] uppercase tracking-[0.18em] text-cad-muted self-center flex-none">Workflow</p>
-                {steps.map((step, i) => (
-                  <div key={i} className="flex items-start gap-1.5 flex-1 min-w-[180px]">
-                    <span
-                      className="mt-0.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center border shrink-0"
-                      style={{
-                        borderColor: colorWithAlpha(deptColor, 0.3),
-                        backgroundColor: colorWithAlpha(deptColor, 0.1),
-                        color: '#b0c4e0',
-                      }}
-                    >
-                      {i + 1}
-                    </span>
-                    <p className="text-[11px] text-cad-muted leading-relaxed">{step}</p>
-                  </div>
-                ))}
+          {/* Workflow steps â€” compact inline strip */}
+          <div className="mt-4 pt-3 border-t flex flex-wrap gap-3" style={{ borderColor: colorWithAlpha(deptColor, 0.12, 'rgba(42,58,78,0.5)') }}>
+            <p className="text-[9px] uppercase tracking-[0.18em] text-cad-muted self-center flex-none">Workflow</p>
+            {workflowSteps.map((step, i) => (
+              <div key={i} className="flex items-start gap-1.5 flex-1 min-w-[180px]">
+                <span
+                  className="mt-0.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center border shrink-0"
+                  style={{
+                    borderColor: colorWithAlpha(deptColor, 0.3),
+                    backgroundColor: colorWithAlpha(deptColor, 0.1),
+                    color: '#b0c4e0',
+                  }}
+                >
+                  {i + 1}
+                </span>
+                <p className="text-[11px] text-cad-muted leading-relaxed">{step}</p>
               </div>
-            );
-          })()}
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* ── Department-specific panels ─────────────────────── */}
+      {/* â”€â”€ Department-specific panels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       {visibleDepartmentPanels.length > 0 && (
         <div className={`grid grid-cols-1 gap-4 ${visibleDepartmentPanels.length >= 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-2'}`}>
           {visibleDepartmentPanels.map((panel) => (
@@ -906,3 +1453,4 @@ export default function DepartmentHome() {
     </div>
   );
 }
+

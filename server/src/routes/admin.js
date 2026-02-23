@@ -19,6 +19,7 @@ const {
   startFiveMResourceAutoSync,
 } = require('../services/fivemResourceManager');
 const { sendTestWarrantCommunityPoster } = require('../utils/warrantCommunityPoster');
+const { sendTestWarrantApprovalWebhook } = require('../utils/warrantApprovalWebhook');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -1229,6 +1230,19 @@ router.post('/warrant-community-webhook/test', async (req, res) => {
       configured: true,
       location: String(result?.location || ''),
     });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to send test webhook', message: err.message });
+  }
+});
+
+router.post('/warrant-approval-webhook/test', async (req, res) => {
+  try {
+    const result = await sendTestWarrantApprovalWebhook();
+    if (result?.skipped) {
+      return res.status(400).json({ error: 'Webhook not configured in CAD settings', result });
+    }
+    audit(req.user.id, 'warrant_approval_webhook_test_sent', { configured: true });
     return res.json({ ok: true, ...result });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to send test webhook', message: err.message });

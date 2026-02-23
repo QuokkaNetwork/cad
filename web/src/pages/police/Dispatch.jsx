@@ -506,6 +506,15 @@ export default function Dispatch() {
     setLocationInputFocused(false);
   }
 
+  function derivePostalForFreeTypedLocation(nextLocation, previousLocation, currentPostal) {
+    const nextDetected = extractPostalFromLocationText(nextLocation);
+    const previousDetected = extractPostalFromLocationText(previousLocation);
+    const currentPostalText = String(currentPostal || '').trim();
+    if (!currentPostalText) return nextDetected;
+    if (currentPostalText === previousDetected) return nextDetected;
+    return currentPostalText;
+  }
+
   async function createCall(e) {
     e.preventDefault();
     try {
@@ -1196,7 +1205,11 @@ export default function Dispatch() {
                 value={form.location}
                 onChange={e => {
                   const nextLocation = e.target.value;
-                  setForm(f => ({ ...f, location: nextLocation, postal: extractPostalFromLocationText(nextLocation) }));
+                  setForm((f) => ({
+                    ...f,
+                    location: nextLocation,
+                    postal: derivePostalForFreeTypedLocation(nextLocation, f.location, f.postal),
+                  }));
                 }}
                 onFocus={() => {
                   if (locationBlurTimerRef.current) clearTimeout(locationBlurTimerRef.current);
@@ -1209,6 +1222,19 @@ export default function Dispatch() {
                 className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
                 placeholder="Start typing a GTA street/location (e.g. Vespucci Blvd, Senora Fwy, Mirror Park)"
               />
+              <div>
+                <label className="block text-[11px] text-cad-muted uppercase tracking-wider mb-1">Postal (Routing)</label>
+                <input
+                  type="text"
+                  value={form.postal || ''}
+                  onChange={e => setForm(f => ({ ...f, postal: e.target.value }))}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent font-mono"
+                  placeholder="Enter postal manually (optional)"
+                />
+                <p className="text-[11px] text-cad-muted mt-1">
+                  If set, attached units will be routed using this postal. Leave blank to rely on location coordinates/text.
+                </p>
+              </div>
               <p className="text-[11px] text-cad-muted">
                 Type to search GTA street names/highways/areas. Suggestions appear only while typing.
               </p>

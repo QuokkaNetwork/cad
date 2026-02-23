@@ -29,6 +29,8 @@ export default function AdminSystemSettings() {
   const [purgeResult, setPurgeResult] = useState(null);
   const [testingWarrantWebhook, setTestingWarrantWebhook] = useState(false);
   const [warrantWebhookTestResult, setWarrantWebhookTestResult] = useState(null);
+  const [testingWarrantApprovalWebhook, setTestingWarrantApprovalWebhook] = useState(false);
+  const [warrantApprovalWebhookTestResult, setWarrantApprovalWebhookTestResult] = useState(null);
 
   async function fetchSettings() {
     try {
@@ -91,6 +93,27 @@ export default function AdminSystemSettings() {
       });
     } finally {
       setTestingWarrantWebhook(false);
+    }
+  }
+
+  async function saveAndTestWarrantApprovalWebhook() {
+    setTestingWarrantApprovalWebhook(true);
+    setWarrantApprovalWebhookTestResult(null);
+    try {
+      await api.put('/api/admin/settings', { settings });
+      await api.post('/api/admin/warrant-approval-webhook/test', {});
+      setWarrantApprovalWebhookTestResult({
+        success: true,
+        message: 'Test warrant approval webhook sent successfully.',
+      });
+      fetchSettings();
+    } catch (err) {
+      setWarrantApprovalWebhookTestResult({
+        success: false,
+        message: formatErr(err),
+      });
+    } finally {
+      setTestingWarrantApprovalWebhook(false);
     }
   }
 
@@ -475,6 +498,79 @@ export default function AdminSystemSettings() {
         {warrantWebhookTestResult && (
           <p className={`text-xs mt-3 whitespace-pre-wrap ${warrantWebhookTestResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
             {warrantWebhookTestResult.message}
+          </p>
+        )}
+      </div>
+
+      <div className="bg-cad-card border border-cad-border rounded-xl p-6">
+        <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-5">Warrant Approval Queue Alerts</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Supervisor Approval Required</label>
+            <select
+              value={settings.warrant_supervisor_approval_required || 'false'}
+              onChange={e => updateSetting('warrant_supervisor_approval_required', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+            >
+              <option value="false">Disabled (warrants go active immediately)</option>
+              <option value="true">Enabled (pending supervisor approval)</option>
+            </select>
+            <p className="text-xs text-cad-muted mt-1">
+              When enabled, new warrants stay in a supervisor approval queue until approved by an admin user.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Discord Webhook URL</label>
+            <input
+              type="text"
+              value={settings.discord_warrant_approval_webhook_url || ''}
+              onChange={e => updateSetting('discord_warrant_approval_webhook_url', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="https://discord.com/api/webhooks/..."
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              Sends a Discord message when a new warrant is awaiting supervisor approval.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Webhook Username (optional)</label>
+            <input
+              type="text"
+              value={settings.discord_warrant_approval_webhook_username || ''}
+              onChange={e => updateSetting('discord_warrant_approval_webhook_username', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="Warrant Approval Queue"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Webhook Avatar URL (optional)</label>
+            <input
+              type="text"
+              value={settings.discord_warrant_approval_webhook_avatar_url || ''}
+              onChange={e => updateSetting('discord_warrant_approval_webhook_avatar_url', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="https://..."
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mt-4">
+          <button
+            type="button"
+            onClick={saveAndTestWarrantApprovalWebhook}
+            disabled={testingWarrantApprovalWebhook || saving}
+            className="px-3 py-1.5 text-sm bg-[#5865F2] hover:bg-[#4752C4] text-white rounded border border-[#5865F2]/40 transition-colors disabled:opacity-50"
+          >
+            {testingWarrantApprovalWebhook ? 'Sending Test...' : 'Save + Send Test Approval Alert'}
+          </button>
+          <p className="text-xs text-cad-muted">
+            Sends a sample "warrant awaiting approval" message to the configured webhook after saving.
+          </p>
+        </div>
+
+        {warrantApprovalWebhookTestResult && (
+          <p className={`text-xs mt-3 whitespace-pre-wrap ${warrantApprovalWebhookTestResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+            {warrantApprovalWebhookTestResult.message}
           </p>
         )}
       </div>

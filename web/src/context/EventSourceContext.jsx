@@ -6,8 +6,9 @@ const SSE_EVENTS = [
   'unit:online', 'unit:offline', 'unit:update',
   'call:create', 'call:update', 'call:close', 'call:assign', 'call:unassign',
   'bolo:create', 'bolo:resolve', 'bolo:cancel',
-  'warrant:create', 'warrant:serve', 'warrant:cancel',
-  'trafficstop:create', 'evidence:create', 'evidence:delete', 'shiftnote:create', 'pursuit:update', 'pursuit:outcome_create',
+  'warrant:create', 'warrant:update', 'warrant:serve', 'warrant:cancel',
+  'infringement:create', 'infringement:update',
+  'trafficstop:create', 'evidence:create', 'evidence:update', 'evidence:delete', 'shiftnote:create', 'pursuit:update', 'pursuit:outcome_create',
   'announcement:new', 'sync:department',
 ];
 

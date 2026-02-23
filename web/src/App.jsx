@@ -20,7 +20,9 @@ import Warrants from './pages/police/Warrants';
 import CallDetails from './pages/police/CallDetails';
 import Records from './pages/police/Records';
 import ArrestReports from './pages/police/ArrestReports';
+import Infringements from './pages/police/Infringements';
 import EvidenceManagement from './pages/police/EvidenceManagement';
+import DispatchMap from './pages/police/DispatchMap';
 import EmsTreatmentLog from './pages/police/EmsTreatmentLog';
 import EmsTransportTracker from './pages/police/EmsTransportTracker';
 import FireApparatus from './pages/police/FireApparatus';
@@ -60,11 +62,13 @@ export default function App() {
             {/* Police MDT */}
             <Route path="/department" element={<RequireDepartment><DepartmentHome /></RequireDepartment>} />
             <Route path="/dispatch" element={<RequireDepartment><Dispatch /></RequireDepartment>} />
+            <Route path="/map" element={<RequireDepartment><DispatchMap /></RequireDepartment>} />
             <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
             <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
             <Route path="/incidents" element={<RequireDepartment><RequireFiveMOnline featureLabel="incidents"><Incidents /></RequireFiveMOnline></RequireDepartment>} />
             <Route path="/records" element={<RequireDepartment><RequireFiveMOnline featureLabel="records"><Records /></RequireFiveMOnline></RequireDepartment>} />
             <Route path="/arrest-reports" element={<RequireDepartment><RequireFiveMOnline featureLabel="arrest reports"><ArrestReports /></RequireFiveMOnline></RequireDepartment>} />
+            <Route path="/infringements" element={<RequireDepartment><RequireFiveMOnline featureLabel="infringement notices"><Infringements /></RequireFiveMOnline></RequireDepartment>} />
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
             <Route path="/warrants" element={<RequireDepartment><RequireFiveMOnline featureLabel="warrants"><Warrants /></RequireFiveMOnline></RequireDepartment>} />
             <Route path="/evidence" element={<RequireDepartment><RequireFiveMOnline featureLabel="evidence management"><EvidenceManagement /></RequireFiveMOnline></RequireDepartment>} />

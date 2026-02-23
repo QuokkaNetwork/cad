@@ -1242,6 +1242,31 @@ const EvidenceItems = {
     );
     return this.findById(info.lastInsertRowid);
   },
+  update(id, fields = {}) {
+    const allowed = ['case_number', 'title', 'description', 'photo_url', 'chain_status', 'metadata', 'metadata_json', 'department_id'];
+    const updates = [];
+    const values = [];
+    for (const key of allowed) {
+      if (fields[key] === undefined) continue;
+      const dbKey = key === 'metadata' ? 'metadata_json' : key;
+      updates.push(`${dbKey} = ?`);
+      if (dbKey === 'department_id') {
+        const parsed = Number(fields[key]);
+        values.push(Number.isInteger(parsed) && parsed > 0 ? parsed : null);
+      } else if (dbKey === 'chain_status') {
+        values.push(String(fields[key] || 'logged').trim().toLowerCase().slice(0, 32) || 'logged');
+      } else if (dbKey === 'metadata_json') {
+        values.push(JSON.stringify(parseJsonObjectValue(fields[key])));
+      } else {
+        values.push(String(fields[key] || '').trim());
+      }
+    }
+    if (updates.length === 0) return this.findById(id);
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+    db.prepare(`UPDATE evidence_items SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    return this.findById(id);
+  },
   delete(id) {
     const info = db.prepare('DELETE FROM evidence_items WHERE id = ?').run(id);
     return Number(info?.changes || 0);
@@ -1401,16 +1426,55 @@ const Bolos = {
   },
 };
 
+function normalizeWarrantApprovalStatus(value, fallback = 'approved') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['approved', 'pending_review', 'rejected'].includes(normalized)) return normalized;
+  return fallback;
+}
+
+function buildWarrantListWhereClause(status = 'active') {
+  const normalized = String(status || 'active').trim().toLowerCase();
+  if (normalized === 'all') {
+    return { clause: '', params: [] };
+  }
+  if (normalized === 'active' || normalized === 'approved') {
+    return {
+      clause: "AND w.status = 'active' AND COALESCE(NULLIF(w.approval_status, ''), 'approved') = 'approved'",
+      params: [],
+    };
+  }
+  if (normalized === 'pending_review') {
+    return {
+      clause: "AND w.status = 'active' AND COALESCE(NULLIF(w.approval_status, ''), 'approved') = 'pending_review'",
+      params: [],
+    };
+  }
+  if (normalized === 'rejected') {
+    return {
+      clause: "AND w.status = 'active' AND COALESCE(NULLIF(w.approval_status, ''), 'approved') = 'rejected'",
+      params: [],
+    };
+  }
+  if (normalized === 'served' || normalized === 'cancelled') {
+    return { clause: 'AND w.status = ?', params: [normalized] };
+  }
+  return {
+    clause: "AND w.status = 'active' AND COALESCE(NULLIF(w.approval_status, ''), 'approved') = 'approved'",
+    params: [],
+  };
+}
+
 // --- Warrants ---
 const Warrants = {
   listByDepartment(departmentId, status = 'active') {
+    const where = buildWarrantListWhereClause(status);
     return db.prepare(`
       SELECT w.*, us.steam_name as creator_name
       FROM warrants w
       LEFT JOIN users us ON us.id = w.created_by
-      WHERE w.department_id = ? AND w.status = ?
+      WHERE w.department_id = ? ${where.clause}
       ORDER BY w.created_at DESC
-    `).all(departmentId, status);
+    `).all(departmentId, ...where.params);
   },
   listByDepartmentIds(departmentIds = [], status = 'active') {
     const ids = Array.isArray(departmentIds)
@@ -1423,13 +1487,14 @@ const Warrants = {
     if (ids.length === 0) return [];
 
     const placeholders = ids.map(() => '?').join(', ');
+    const where = buildWarrantListWhereClause(status);
     return db.prepare(`
       SELECT w.*, us.steam_name as creator_name
       FROM warrants w
       LEFT JOIN users us ON us.id = w.created_by
-      WHERE w.department_id IN (${placeholders}) AND w.status = ?
+      WHERE w.department_id IN (${placeholders}) ${where.clause}
       ORDER BY w.created_at DESC
-    `).all(...ids, status);
+    `).all(...ids, ...where.params);
   },
   findById(id) {
     return db.prepare(`
@@ -1442,24 +1507,85 @@ const Warrants = {
   findByCitizenId(citizenId, status = 'active') {
     const normalized = String(citizenId || '').trim();
     if (!normalized) return [];
+    const where = buildWarrantListWhereClause(status);
     return db.prepare(`
       SELECT w.*, us.steam_name as creator_name
       FROM warrants w
       LEFT JOIN users us ON us.id = w.created_by
-      WHERE w.citizen_id = ? AND w.status = ?
+      WHERE w.citizen_id = ? ${where.clause}
       ORDER BY w.created_at DESC
-    `).all(normalized, status);
+    `).all(normalized, ...where.params);
   },
-  create({ department_id, citizen_id, subject_name, title, description, details_json, created_by }) {
+  create({
+    department_id,
+    citizen_id,
+    subject_name,
+    title,
+    description,
+    details_json,
+    created_by,
+    approval_status = 'approved',
+    approval_requested_at = null,
+    approval_decided_at = null,
+    approval_decided_by_user_id = null,
+    approval_notes = '',
+  }) {
     const normalizedCitizenId = String(citizen_id || '').trim();
     const normalizedSubjectName = String(subject_name || '').trim();
     const info = db.prepare(
-      'INSERT INTO warrants (department_id, citizen_id, subject_name, title, description, details_json, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(department_id, normalizedCitizenId, normalizedSubjectName, title, description || '', details_json || '{}', created_by);
+      `INSERT INTO warrants (
+        department_id, citizen_id, subject_name, title, description, details_json, created_by,
+        approval_status, approval_requested_at, approval_decided_at, approval_decided_by_user_id, approval_notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      department_id,
+      normalizedCitizenId,
+      normalizedSubjectName,
+      title,
+      description || '',
+      details_json || '{}',
+      created_by,
+      normalizeWarrantApprovalStatus(approval_status),
+      approval_requested_at ? String(approval_requested_at) : null,
+      approval_decided_at ? String(approval_decided_at) : null,
+      Number.isInteger(Number(approval_decided_by_user_id)) && Number(approval_decided_by_user_id) > 0
+        ? Number(approval_decided_by_user_id)
+        : null,
+      String(approval_notes || '').trim()
+    );
     return this.findById(info.lastInsertRowid);
   },
   updateStatus(id, status) {
     db.prepare('UPDATE warrants SET status = ? WHERE id = ?').run(status, id);
+  },
+  updateApproval(id, fields = {}) {
+    const updates = [];
+    const values = [];
+    if (fields.approval_status !== undefined) {
+      updates.push('approval_status = ?');
+      values.push(normalizeWarrantApprovalStatus(fields.approval_status));
+    }
+    if (fields.approval_requested_at !== undefined) {
+      updates.push('approval_requested_at = ?');
+      values.push(fields.approval_requested_at ? String(fields.approval_requested_at) : null);
+    }
+    if (fields.approval_decided_at !== undefined) {
+      updates.push('approval_decided_at = ?');
+      values.push(fields.approval_decided_at ? String(fields.approval_decided_at) : null);
+    }
+    if (fields.approval_decided_by_user_id !== undefined) {
+      updates.push('approval_decided_by_user_id = ?');
+      const parsed = Number(fields.approval_decided_by_user_id);
+      values.push(Number.isInteger(parsed) && parsed > 0 ? parsed : null);
+    }
+    if (fields.approval_notes !== undefined) {
+      updates.push('approval_notes = ?');
+      values.push(String(fields.approval_notes || '').trim());
+    }
+    if (updates.length === 0) return this.findById(id);
+    values.push(id);
+    db.prepare(`UPDATE warrants SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    return this.findById(id);
   },
 };
 
@@ -2311,9 +2437,13 @@ function normalizePatientTreatmentLog(value) {
     const category = String(entry.category || '').trim().toLowerCase().slice(0, 32) || 'treatment';
     const name = String(entry.name || entry.medication || entry.procedure || '').trim().slice(0, 120);
     const dose = String(entry.dose || '').trim().slice(0, 80);
+    const doseUnit = String(entry.dose_unit || '').trim().slice(0, 24);
     const route = String(entry.route || '').trim().slice(0, 40);
+    const indication = String(entry.indication || '').trim().slice(0, 120);
     const status = String(entry.status || '').trim().toLowerCase().slice(0, 24) || 'completed';
     const timestamp = String(entry.timestamp || entry.time || '').trim().slice(0, 40);
+    const response = String(entry.response || '').trim().slice(0, 160);
+    const administeredBy = String(entry.administered_by || '').trim().slice(0, 80);
     const notes = String(entry.notes || entry.note || '').trim().slice(0, 200);
 
     if (!name && !notes) continue;
@@ -2322,9 +2452,13 @@ function normalizePatientTreatmentLog(value) {
       category,
       name,
       dose,
+      dose_unit: doseUnit,
       route,
+      indication,
       status,
       timestamp,
+      response,
+      administered_by: administeredBy,
       notes,
     });
   }
@@ -2344,7 +2478,20 @@ function normalizePatientTransport(value) {
     eta_minutes: Number.isFinite(etaNum) ? Math.max(0, Math.min(999, Math.trunc(etaNum))) : null,
     bed_availability: Number.isFinite(bedNum) ? Math.max(0, Math.min(999, Math.trunc(bedNum))) : null,
     status: String(source.status || '').trim().toLowerCase().slice(0, 32),
+    disposition: String(source.disposition || '').trim().toLowerCase().slice(0, 32),
     unit_callsign: String(source.unit_callsign || '').trim().slice(0, 32),
+    handover_clinician: String(source.handover_clinician || '').trim().slice(0, 80),
+    refusal_type: String(source.refusal_type || '').trim().toLowerCase().slice(0, 40),
+    refusal_reason: String(source.refusal_reason || '').trim().slice(0, 200),
+    refusal_capacity_confirmed: !!source.refusal_capacity_confirmed,
+    refusal_witness: String(source.refusal_witness || '').trim().slice(0, 120),
+    hospital_status_snapshot: {
+      status: String(source?.hospital_status_snapshot?.status || '').trim().toLowerCase().slice(0, 32),
+      available_beds: Number.isFinite(Number(source?.hospital_status_snapshot?.available_beds))
+        ? Math.max(0, Math.min(999, Math.trunc(Number(source.hospital_status_snapshot.available_beds))))
+        : null,
+      updated_at: String(source?.hospital_status_snapshot?.updated_at || '').trim().slice(0, 40),
+    },
     notes: String(source.notes || '').trim().slice(0, 200),
     updated_at: String(source.updated_at || '').trim().slice(0, 40),
   };
@@ -2915,6 +3062,303 @@ const VehicleRegistrations = {
   delete(id) {
     const info = db.prepare('DELETE FROM vehicle_registrations WHERE id = ?').run(id);
     return Number(info?.changes || 0);
+  },
+};
+
+function normalizeInfringementNoticeNumber(value) {
+  return String(value || '').trim().slice(0, 40);
+}
+
+function normalizeInfringementStatus(value, fallback = 'issued') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['issued', 'cancelled'].includes(normalized)) return normalized;
+  return fallback;
+}
+
+function normalizeInfringementPayableStatus(value, fallback = 'unpaid') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['unpaid', 'paid', 'court_listed', 'withdrawn', 'waived'].includes(normalized)) return normalized;
+  return fallback;
+}
+
+function hydrateInfringementNoticeRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    details: parseJsonObjectValue(row.details_json),
+  };
+}
+
+// --- Infringement Notices (separate from criminal records) ---
+const InfringementNotices = {
+  findById(id) {
+    const row = db.prepare(`
+      SELECT i.*,
+             cu.steam_name AS creator_name,
+             uu.steam_name AS updater_name
+      FROM infringement_notices i
+      LEFT JOIN users cu ON cu.id = i.created_by_user_id
+      LEFT JOIN users uu ON uu.id = i.updated_by_user_id
+      WHERE i.id = ?
+    `).get(id);
+    return hydrateInfringementNoticeRow(row);
+  },
+  listByDepartment(departmentId, {
+    status = 'open',
+    payable_status = '',
+    citizen_id = '',
+    query = '',
+    limit = 100,
+    offset = 0,
+    court_only = false,
+  } = {}) {
+    const deptId = Number(departmentId);
+    if (!Number.isInteger(deptId) || deptId <= 0) return [];
+    const clauses = ['i.department_id = ?'];
+    const params = [deptId];
+
+    const normalizedStatus = String(status || 'open').trim().toLowerCase();
+    if (normalizedStatus === 'open') {
+      clauses.push("i.status = 'issued'");
+    } else if (normalizedStatus === 'all') {
+      // no-op
+    } else if (['issued', 'cancelled'].includes(normalizedStatus)) {
+      clauses.push('i.status = ?');
+      params.push(normalizedStatus);
+    }
+
+    const normalizedPayableStatus = String(payable_status || '').trim().toLowerCase();
+    if (normalizedPayableStatus && normalizedPayableStatus !== 'all') {
+      clauses.push('i.payable_status = ?');
+      params.push(normalizeInfringementPayableStatus(normalizedPayableStatus));
+    }
+
+    const normalizedCitizenId = String(citizen_id || '').trim();
+    if (normalizedCitizenId) {
+      clauses.push('lower(i.citizen_id) = lower(?)');
+      params.push(normalizedCitizenId);
+    }
+
+    const search = String(query || '').trim().toLowerCase();
+    if (search) {
+      const q = `%${search}%`;
+      clauses.push(`(
+        lower(i.notice_number) LIKE ?
+        OR lower(i.subject_name) LIKE ?
+        OR lower(i.citizen_id) LIKE ?
+        OR lower(i.vehicle_plate) LIKE ?
+        OR lower(i.title) LIKE ?
+        OR lower(i.description) LIKE ?
+        OR lower(i.location) LIKE ?
+      )`);
+      params.push(q, q, q, q, q, q, q);
+    }
+
+    if (court_only) {
+      clauses.push("i.court_date IS NOT NULL AND trim(i.court_date) <> ''");
+    }
+
+    const safeLimit = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
+    const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+    params.push(safeLimit, safeOffset);
+
+    return db.prepare(`
+      SELECT i.*,
+             cu.steam_name AS creator_name,
+             uu.steam_name AS updater_name
+      FROM infringement_notices i
+      LEFT JOIN users cu ON cu.id = i.created_by_user_id
+      LEFT JOIN users uu ON uu.id = i.updated_by_user_id
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY
+        CASE
+          WHEN i.court_date IS NOT NULL AND trim(i.court_date) <> '' THEN 0
+          ELSE 1
+        END,
+        COALESCE(i.court_date, i.due_date, i.created_at) ASC,
+        i.id DESC
+      LIMIT ? OFFSET ?
+    `).all(...params).map(hydrateInfringementNoticeRow);
+  },
+  create(fields = {}) {
+    const info = db.prepare(`
+      INSERT INTO infringement_notices (
+        notice_number,
+        department_id,
+        citizen_id,
+        subject_name,
+        vehicle_plate,
+        location,
+        title,
+        description,
+        amount,
+        payable_status,
+        due_date,
+        court_date,
+        court_location,
+        status,
+        details_json,
+        officer_name,
+        officer_callsign,
+        created_by_user_id,
+        updated_by_user_id,
+        paid_at,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      normalizeInfringementNoticeNumber(fields.notice_number),
+      Number.isFinite(Number(fields.department_id)) ? Math.trunc(Number(fields.department_id)) : null,
+      String(fields.citizen_id || '').trim(),
+      String(fields.subject_name || '').trim(),
+      String(fields.vehicle_plate || '').trim().toUpperCase(),
+      String(fields.location || '').trim(),
+      String(fields.title || '').trim(),
+      String(fields.description || '').trim(),
+      Math.max(0, Number(fields.amount || 0)),
+      normalizeInfringementPayableStatus(fields.payable_status),
+      normalizeDateOnly(fields.due_date) || null,
+      normalizeDateOnly(fields.court_date) || null,
+      String(fields.court_location || '').trim(),
+      normalizeInfringementStatus(fields.status),
+      JSON.stringify(parseJsonObjectValue(fields.details || fields.details_json)),
+      String(fields.officer_name || '').trim(),
+      String(fields.officer_callsign || '').trim(),
+      Number.isFinite(Number(fields.created_by_user_id)) ? Math.trunc(Number(fields.created_by_user_id)) : null,
+      Number.isFinite(Number(fields.updated_by_user_id)) ? Math.trunc(Number(fields.updated_by_user_id)) : null,
+      fields.paid_at ? String(fields.paid_at) : null
+    );
+    const created = this.findById(info.lastInsertRowid);
+    if (created && !String(created.notice_number || '').trim()) {
+      const noticeNumber = `INFRINGEMENT-${String(created.id).padStart(6, '0')}`;
+      db.prepare('UPDATE infringement_notices SET notice_number = ? WHERE id = ?').run(noticeNumber, created.id);
+      return this.findById(created.id);
+    }
+    return created;
+  },
+  update(id, fields = {}) {
+    const allowed = [
+      'notice_number',
+      'citizen_id',
+      'subject_name',
+      'vehicle_plate',
+      'location',
+      'title',
+      'description',
+      'amount',
+      'payable_status',
+      'due_date',
+      'court_date',
+      'court_location',
+      'status',
+      'details_json',
+      'details',
+      'officer_name',
+      'officer_callsign',
+      'updated_by_user_id',
+      'paid_at',
+      'department_id',
+    ];
+    const updates = [];
+    const values = [];
+    for (const key of allowed) {
+      if (fields[key] === undefined) continue;
+      const dbKey = key === 'details' ? 'details_json' : key;
+      updates.push(`${dbKey} = ?`);
+      if (dbKey === 'notice_number') {
+        values.push(normalizeInfringementNoticeNumber(fields[key]));
+      } else if (dbKey === 'vehicle_plate') {
+        values.push(String(fields[key] || '').trim().toUpperCase());
+      } else if (dbKey === 'amount') {
+        values.push(Math.max(0, Number(fields[key] || 0)));
+      } else if (dbKey === 'payable_status') {
+        values.push(normalizeInfringementPayableStatus(fields[key]));
+      } else if (dbKey === 'status') {
+        values.push(normalizeInfringementStatus(fields[key]));
+      } else if (dbKey === 'due_date' || dbKey === 'court_date') {
+        values.push(normalizeDateOnly(fields[key]) || null);
+      } else if (dbKey === 'details_json') {
+        values.push(JSON.stringify(parseJsonObjectValue(fields[key])));
+      } else if (dbKey === 'updated_by_user_id' || dbKey === 'department_id') {
+        const parsed = Number(fields[key]);
+        values.push(Number.isInteger(parsed) && parsed > 0 ? parsed : null);
+      } else if (dbKey === 'paid_at') {
+        values.push(fields[key] ? String(fields[key]) : null);
+      } else {
+        values.push(String(fields[key] || '').trim());
+      }
+    }
+    if (updates.length === 0) return this.findById(id);
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+    db.prepare(`UPDATE infringement_notices SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    return this.findById(id);
+  },
+  delete(id) {
+    const info = db.prepare('DELETE FROM infringement_notices WHERE id = ?').run(id);
+    return Number(info?.changes || 0);
+  },
+  markPrintIssued(id, { print_job_id = null } = {}) {
+    const parsedJobId = Number(print_job_id);
+    db.prepare(`
+      UPDATE infringement_notices
+      SET print_count = COALESCE(print_count, 0) + 1,
+          last_printed_at = datetime('now'),
+          last_print_job_id = ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(Number.isInteger(parsedJobId) && parsedJobId > 0 ? parsedJobId : null, id);
+    return this.findById(id);
+  },
+};
+
+// --- Infringement print / reprint audit ---
+const InfringementNoticePrintAudit = {
+  create({
+    infringement_notice_id,
+    print_job_id = null,
+    print_action = 'print',
+    printed_by_user_id = null,
+    printed_by_callsign = '',
+  }) {
+    const info = db.prepare(`
+      INSERT INTO infringement_notice_print_audit (
+        infringement_notice_id,
+        print_job_id,
+        print_action,
+        printed_by_user_id,
+        printed_by_callsign,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+    `).run(
+      Number.isFinite(Number(infringement_notice_id)) ? Math.trunc(Number(infringement_notice_id)) : null,
+      Number.isFinite(Number(print_job_id)) ? Math.trunc(Number(print_job_id)) : null,
+      String(print_action || 'print').trim().toLowerCase() === 'reprint' ? 'reprint' : 'print',
+      Number.isFinite(Number(printed_by_user_id)) ? Math.trunc(Number(printed_by_user_id)) : null,
+      String(printed_by_callsign || '').trim()
+    );
+    return this.findById(info.lastInsertRowid);
+  },
+  findById(id) {
+    return db.prepare(`
+      SELECT a.*, u.steam_name AS printed_by_name
+      FROM infringement_notice_print_audit a
+      LEFT JOIN users u ON u.id = a.printed_by_user_id
+      WHERE a.id = ?
+    `).get(id);
+  },
+  listByNoticeId(infringementNoticeId, limit = 50) {
+    const parsedId = Number(infringementNoticeId);
+    if (!Number.isInteger(parsedId) || parsedId <= 0) return [];
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    return db.prepare(`
+      SELECT a.*, u.steam_name AS printed_by_name
+      FROM infringement_notice_print_audit a
+      LEFT JOIN users u ON u.id = a.printed_by_user_id
+      WHERE a.infringement_notice_id = ?
+      ORDER BY a.created_at DESC, a.id DESC
+      LIMIT ?
+    `).all(parsedId, safeLimit);
   },
 };
 
@@ -3579,6 +4023,8 @@ module.exports = {
   PatientAnalyses,
   DriverLicenses,
   VehicleRegistrations,
+  InfringementNotices,
+  InfringementNoticePrintAudit,
   FiveMPlayerLinks,
   FiveMFineJobs,
   FiveMJailJobs,

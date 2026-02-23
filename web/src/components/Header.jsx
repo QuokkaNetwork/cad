@@ -32,7 +32,7 @@ export default function Header() {
   const [statusLoading, setStatusLoading] = useState('');
   const menuRef = useRef(null);
 
-  const onDepartmentPage = /^\/(department|dispatch|units|map|search|bolos|warrants|records|call-details|arrest-reports|incidents|evidence|ems-|fire-)(\/|$)/.test(location.pathname);
+  const onDepartmentPage = /^\/(department|dispatch|units|map|search|bolos|warrants|records|call-details|arrest-reports|infringements|incidents|evidence|ems-|fire-)(\/|$)/.test(location.pathname);
 
   const refreshAuth = useCallback(async () => {
     if (!user) return;
