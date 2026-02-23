@@ -5,7 +5,11 @@ import AdminPageHeader from '../../components/AdminPageHeader';
 
 function renderJobTarget(mapping) {
   const jobName = String(mapping.job_name || '').trim() || 'Unspecified';
-  return `${jobName} / Rank ${Number(mapping.job_grade || 0)}`;
+  const parsedGrade = Number(mapping?.job_grade);
+  if (!Number.isFinite(parsedGrade) || parsedGrade < 0) {
+    return `${jobName} / Any Rank`;
+  }
+  return `${jobName} / Rank ${Math.max(0, Math.trunc(parsedGrade))}`;
 }
 
 export default function AdminJobBindings() {
@@ -14,7 +18,7 @@ export default function AdminJobBindings() {
   const [discordRoles, setDiscordRoles] = useState([]);
   const [selectedRole, setSelectedRole] = useState('');
   const [jobName, setJobName] = useState('');
-  const [jobGrade, setJobGrade] = useState('0');
+  const [jobGrade, setJobGrade] = useState('');
   const [syncing, setSyncing] = useState(false);
 
   async function fetchData() {
@@ -38,23 +42,28 @@ export default function AdminJobBindings() {
   const canAddMapping = useMemo(() => {
     if (!selectedRole) return false;
     const name = String(jobName || '').trim();
-    return name.length > 0 && Number(jobGrade) >= 0;
+    const gradeText = String(jobGrade ?? '').trim();
+    if (!name.length) return false;
+    if (!gradeText) return true;
+    const parsed = Number(gradeText);
+    return Number.isFinite(parsed) && parsed >= 0;
   }, [selectedRole, jobName, jobGrade]);
 
   async function addMapping() {
     if (!canAddMapping) return;
     const role = discordRoles.find(r => r.id === selectedRole);
     try {
+      const trimmedGrade = String(jobGrade ?? '').trim();
       await api.post('/api/admin/role-mappings', {
         discord_role_id: selectedRole,
         discord_role_name: role?.name || '',
         target_type: 'job',
         job_name: String(jobName || '').trim(),
-        job_grade: Math.max(0, Number(jobGrade || 0)),
+        job_grade: trimmedGrade ? Math.max(0, Number(trimmedGrade || 0)) : null,
       });
       setSelectedRole('');
       setJobName('');
-      setJobGrade('0');
+      setJobGrade('');
       fetchData();
     } catch (err) {
       alert('Failed to create job binding: ' + err.message);
@@ -87,7 +96,7 @@ export default function AdminJobBindings() {
     <div>
       <AdminPageHeader
         title="Job Bindings"
-        subtitle="Bind Discord roles directly to in-game jobs and ranks."
+        subtitle="Bind Discord roles directly to in-game jobs with optional rank matching."
       />
 
       <div className="flex items-center justify-between mb-6">
@@ -166,13 +175,14 @@ export default function AdminJobBindings() {
             />
           </div>
           <div>
-            <label className="block text-xs text-cad-muted mb-1">Job Rank</label>
+            <label className="block text-xs text-cad-muted mb-1">Job Rank (Optional)</label>
             <input
               type="number"
               min="0"
               value={jobGrade}
               onChange={e => setJobGrade(e.target.value)}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="Any"
             />
           </div>
           <div>
@@ -186,7 +196,7 @@ export default function AdminJobBindings() {
           </div>
         </div>
         <p className="text-xs text-cad-muted mt-2">
-          Example: map Discord role <span className="font-mono">Super Intendent</span> to job <span className="font-mono">police</span> rank <span className="font-mono">5</span>.
+          Leave rank blank to match <span className="font-mono">any rank</span> for that job. Example: map a role to <span className="font-mono">police</span> (any rank), or set rank <span className="font-mono">5</span> for a specific grade.
         </p>
         <p className="text-xs text-cad-muted mt-3">
           Removing a mapped role will queue the role-removal fallback job target (default: <span className="font-mono">unemployed</span> rank <span className="font-mono">0</span>).

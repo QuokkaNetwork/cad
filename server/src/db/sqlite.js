@@ -353,9 +353,12 @@ const DiscordRoleMappings = {
     const normalizedTargetId = Number.isFinite(Number(target_id)) ? Math.max(0, Math.trunc(Number(target_id))) : 0;
     const normalizedJobName = String(job_name || '').trim();
     const normalizedJobGradeRaw = Number(job_grade);
-    const normalizedJobGrade = Number.isFinite(normalizedJobGradeRaw)
-      ? Math.max(0, Math.trunc(normalizedJobGradeRaw))
-      : 0;
+    const isJobWildcardGrade = target_type === 'job' && Number.isFinite(normalizedJobGradeRaw) && normalizedJobGradeRaw < 0;
+    const normalizedJobGrade = isJobWildcardGrade
+      ? -1
+      : (Number.isFinite(normalizedJobGradeRaw)
+        ? Math.max(0, Math.trunc(normalizedJobGradeRaw))
+        : 0);
 
     const info = db.prepare(
       `INSERT INTO discord_role_links (

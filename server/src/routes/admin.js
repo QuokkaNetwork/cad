@@ -361,7 +361,7 @@ router.post('/role-mappings', (req, res) => {
 
   let resolvedTargetId = 0;
   let resolvedJobName = '';
-  let resolvedJobGrade = 0;
+  let resolvedJobGrade = -1;
 
   if (resolvedType === 'department' || resolvedType === 'sub_department') {
     resolvedTargetId = parseInt(target_id || department_id, 10);
@@ -380,11 +380,21 @@ router.post('/role-mappings', (req, res) => {
     if (!resolvedJobName) {
       return res.status(400).json({ error: 'job_name is required for job mappings' });
     }
-    const parsedGrade = Number(job_grade || 0);
-    if (!Number.isFinite(parsedGrade) || parsedGrade < 0) {
-      return res.status(400).json({ error: 'job_grade must be a non-negative number' });
+    const rawGrade = job_grade;
+    const rawGradeText = String(rawGrade ?? '').trim();
+    if (!rawGradeText) {
+      resolvedJobGrade = -1; // Any rank
+    } else {
+      const parsedGrade = Number(rawGrade);
+      if (!Number.isFinite(parsedGrade)) {
+        return res.status(400).json({ error: 'job_grade must be a number, or leave it blank for any rank' });
+      }
+      if (parsedGrade < 0) {
+        resolvedJobGrade = -1;
+      } else {
+        resolvedJobGrade = Math.max(0, Math.trunc(parsedGrade));
+      }
     }
-    resolvedJobGrade = Math.max(0, Math.trunc(parsedGrade));
   }
 
   try {

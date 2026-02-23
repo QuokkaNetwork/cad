@@ -65,6 +65,22 @@ function normalizeJobNameKey(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function normalizeJobMappingGrade(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return -1;
+  if (parsed < 0) return -1;
+  return normalizeGrade(parsed);
+}
+
+function jobMappingMatchesCandidate(mapping, job) {
+  const mappingName = normalizeJobNameKey(mapping?.job_name);
+  const jobName = normalizeJobNameKey(job?.name);
+  if (!mappingName || !jobName || mappingName !== jobName) return false;
+  const mappingGrade = normalizeJobMappingGrade(mapping?.job_grade);
+  if (mappingGrade < 0) return true; // wildcard / any rank
+  return mappingGrade === normalizeGrade(job?.grade || 0);
+}
+
 function choosePreferredTarget(candidates = []) {
   if (!candidates.length) return null;
   return [...candidates].sort((a, b) => {
@@ -262,10 +278,7 @@ async function syncJobRolesFromGame(user, member, mappings) {
 
   const desiredRoleIds = new Set(
     jobMappings
-      .filter((mapping) => dedupedGameJobs.some((job) => (
-        normalizeJobNameKey(mapping.job_name) === normalizeJobNameKey(job.name)
-        && normalizeGrade(mapping.job_grade) === normalizeGrade(job.grade)
-      )))
+      .filter((mapping) => dedupedGameJobs.some((job) => jobMappingMatchesCandidate(mapping, job)))
       .map(mapping => String(mapping.discord_role_id))
   );
   const managedRoleIds = new Set(jobMappings.map(mapping => String(mapping.discord_role_id)));
