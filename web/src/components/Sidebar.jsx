@@ -13,7 +13,7 @@ const LAW_NAV = [
   { to: '/records', label: 'Records', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/arrest-reports', label: 'Arrest Reports', icon: 'M12 8v8m-4-4h8M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/warrants', label: 'Warrants', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-  { to: '/bolos', label: 'POIs', icon: 'M3 10h18M5 6h14M7 14h10M9 18h6' },
+  { to: '/bolos', label: 'POI / VOI', icon: 'M3 10h18M5 6h14M7 14h10M9 18h6' },
   { to: '/evidence', label: 'Evidence', icon: 'M9 3h6l1 2h3a1 1 0 011 1v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6a1 1 0 011-1h3l1-2z' },
   { to: '/units', label: 'Units', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
 ];

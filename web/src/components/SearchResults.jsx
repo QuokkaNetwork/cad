@@ -68,7 +68,7 @@ export default function SearchResults({ type, results, onSelect }) {
                   ) : null}
                   {boloCount > 0 ? (
                     <span className="inline-flex items-center px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-[11px] font-medium text-amber-300">
-                      POI{boloCount > 1 ? ` x${boloCount}` : ''}
+                      POI / VOI{boloCount > 1 ? ` x${boloCount}` : ''}
                     </span>
                   ) : null}
                   {warningCount > 0 ? (
@@ -134,7 +134,7 @@ export default function SearchResults({ type, results, onSelect }) {
                 ) : null}
                 {item?.has_bolo ? (
                   <span className="inline-flex items-center px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-[11px] font-medium text-amber-300">
-                    POI{Number(item?.bolo_count || 0) > 1 ? ` x${Number(item.bolo_count)}` : ''}
+                    POI / VOI{Number(item?.bolo_count || 0) > 1 ? ` x${Number(item.bolo_count)}` : ''}
                   </span>
                 ) : null}
                 {warningCount > 0 ? (

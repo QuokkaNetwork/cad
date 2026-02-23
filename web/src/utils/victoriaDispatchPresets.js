@@ -39,7 +39,7 @@ export const VICTORIA_JOB_CODE_SUGGESTIONS = [
   { code: 'VANDAL', label: 'Vandalism / Property Damage', suggestedTitle: 'Vandalism Report', layouts: [LAW], category: 'Police', keywords: ['damage', 'graffiti'] },
   { code: 'HOSTAGE', label: 'Hostage Situation', suggestedTitle: 'Hostage Situation', layouts: [LAW], category: 'Police', keywords: ['kidnap', 'barricade'] },
   { code: 'WARRANT', label: 'Warrant Service', suggestedTitle: 'Warrant Service', layouts: [LAW], category: 'Police', keywords: ['serve warrant'] },
-  { code: 'POI', label: 'POI Follow-Up', suggestedTitle: 'POI Follow-Up', layouts: [LAW], category: 'Police', keywords: ['poi', 'bolo', 'wanted vehicle'] },
+  { code: 'POI', label: 'POI / VOI Follow-Up', suggestedTitle: 'POI / VOI Follow-Up', layouts: [LAW], category: 'Police', keywords: ['poi', 'voi', 'bolo', 'wanted vehicle'] },
   { code: 'OFFICERDOWN', label: 'Officer Down', suggestedTitle: 'Officer Down', layouts: [LAW, EMS], category: 'Police', keywords: ['10-13', 'assist officer'] },
   { code: 'SPIKES', label: 'Spike Strip Deployment', suggestedTitle: 'Spike Strip Deployment', layouts: [LAW], category: 'Police', keywords: ['spikes', 'tyre deflation'] },
   { code: 'ROADBLOCK', label: 'Roadblock / Containment', suggestedTitle: 'Roadblock / Containment', layouts: [LAW], category: 'Police', keywords: ['containment', 'block road'] },

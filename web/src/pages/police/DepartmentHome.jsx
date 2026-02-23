@@ -386,7 +386,7 @@ export default function DepartmentHome() {
         { label: 'Records', route: '/records' },
         { label: 'Arrest Reports', route: '/arrest-reports' },
         { label: 'Warrants', route: '/warrants' },
-        { label: 'POIs', route: '/bolos' },
+        { label: 'POI / VOI', route: '/bolos' },
         { label: 'Evidence', route: '/evidence' },
         { label: 'Incidents', route: '/incidents' },
       ];
@@ -434,14 +434,14 @@ export default function DepartmentHome() {
         },
         {
           key: 'pois',
-          eyebrow: 'POIs',
+          eyebrow: 'POI / VOI',
           title: 'Persons & vehicles of interest',
           value: loading ? '–' : String(stats.active_bolos),
           valueTone: 'text-sky-400',
-          body: 'Track POIs linked to investigations, vehicles, and current operational activity.',
+          body: 'Track POI / VOI entries linked to investigations, vehicles, and current operational activity.',
           actions: [
-            { label: 'New POI', route: '/bolos?new=1', variant: 'primary' },
-            { label: 'View POIs', route: '/bolos' },
+            { label: 'New POI / VOI', route: '/bolos?new=1', variant: 'primary' },
+            { label: 'View POI / VOI', route: '/bolos' },
             { label: 'Evidence', route: '/evidence' },
           ],
         },
@@ -830,7 +830,7 @@ export default function DepartmentHome() {
               ? [
                   'Use lookup to confirm licence and registration details before actioning.',
                   'Create arrest reports for draft and supervisor review, then finalise when ready.',
-                  'Link records, warrants, POIs, and evidence under a shared incident.',
+                  'Link records, warrants, POI / VOI entries, and evidence under a shared incident.',
                 ]
               : isEmsDepartment
               ? [

@@ -105,7 +105,7 @@ export default function BOLOs() {
       const data = await api.get(`/api/bolos?department_id=${deptId}`);
       setBolos(data);
     } catch (err) {
-      console.error('Failed to load POIs:', err);
+      console.error('Failed to load POI / VOI entries:', err);
     }
   }, [deptId, isLaw]);
 
@@ -241,7 +241,7 @@ export default function BOLOs() {
       resetCreateForm();
       fetchData();
     } catch (err) {
-      alert('Failed to create POI: ' + err.message);
+      alert('Failed to create POI / VOI: ' + err.message);
     }
   }
 
@@ -250,17 +250,17 @@ export default function BOLOs() {
       await api.patch(`/api/bolos/${id}/resolve`);
       fetchData();
     } catch (err) {
-      alert('Failed to resolve POI: ' + err.message);
+      alert('Failed to resolve POI / VOI: ' + err.message);
     }
   }
 
   async function cancelBolo(id) {
-    if (!confirm('Cancel this POI?')) return;
+    if (!confirm('Cancel this POI / VOI?')) return;
     try {
       await api.patch(`/api/bolos/${id}/cancel`);
       fetchData();
     } catch (err) {
-      alert('Failed to cancel POI: ' + err.message);
+      alert('Failed to cancel POI / VOI: ' + err.message);
     }
   }
 
@@ -269,12 +269,15 @@ export default function BOLOs() {
       {isLaw ? (
         <>
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold">Be On the Lookout</h2>
+            <div>
+              <h2 className="text-xl font-bold">POI / VOI Board</h2>
+              <p className="text-sm text-cad-muted mt-1">Persons and vehicles of interest for active investigations and alerts.</p>
+            </div>
             <button
               onClick={openCreateModal}
               className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
             >
-              + New POI
+              + New POI / VOI
             </button>
           </div>
 
@@ -288,12 +291,12 @@ export default function BOLOs() {
               />
             ))}
             {bolos.length === 0 && (
-              <p className="text-sm text-cad-muted col-span-full text-center py-8">No active POIs</p>
+              <p className="text-sm text-cad-muted col-span-full text-center py-8">No active POI / VOI entries</p>
             )}
           </div>
 
-          {/* New POI Modal */}
-          <Modal open={showNew} onClose={closeCreateModal} title="Create POI">
+          {/* New POI / VOI Modal */}
+          <Modal open={showNew} onClose={closeCreateModal} title="Create POI / VOI">
             <form onSubmit={createBolo} className="space-y-3">
               {/* Type toggle */}
               <div className="flex bg-cad-surface rounded border border-cad-border overflow-hidden">
@@ -511,7 +514,7 @@ export default function BOLOs() {
                   type="submit"
                   className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors"
                 >
-                  Create POI
+                  Create POI / VOI
                 </button>
                 <button
                   type="button"
@@ -526,9 +529,9 @@ export default function BOLOs() {
         </>
       ) : (
         <div className="bg-cad-card border border-cad-border rounded-lg p-5">
-          <h2 className="text-xl font-bold mb-2">POI Board</h2>
+          <h2 className="text-xl font-bold mb-2">POI / VOI Board</h2>
           <p className="text-sm text-cad-muted">
-            POI (Person of Interest) management is available for law enforcement departments only.
+            POI / VOI (person or vehicle of interest) management is available for law enforcement departments only.
           </p>
         </div>
       )}

@@ -728,7 +728,7 @@ export default function Search() {
                 ) : null}
                 {selectedPerson.has_bolo ? (
                   <div className="px-3 py-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-sm text-amber-200">
-                    Active POI{Number(selectedPerson.bolo_count || 0) > 1 ? `s (${Number(selectedPerson.bolo_count)})` : ''}
+                    Active POI / VOI{Number(selectedPerson.bolo_count || 0) > 1 ? ` (${Number(selectedPerson.bolo_count)})` : ''}
                   </div>
                 ) : null}
                 {selectedPerson.repeat_offender ? (
