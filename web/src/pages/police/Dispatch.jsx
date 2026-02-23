@@ -10,6 +10,10 @@ import StatusBadge from '../../components/StatusBadge';
 import { getHighContrastBadgeStyle } from '../../utils/color';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { formatDateTimeAU } from '../../utils/dateTime';
+import {
+  filterVictoriaJobCodeSuggestions,
+  filterVictoriaLocationSuggestions,
+} from '../../utils/victoriaDispatchPresets';
 
 const UNIT_STATUSES = ['available', 'busy', 'enroute', 'on-scene', 'unavailable'];
 const DISPATCH_MACROS = [
@@ -387,6 +391,55 @@ export default function Dispatch() {
 
     return map;
   }, [selectableDepartments, units]);
+
+  const selectedRequestedDepartmentLayoutTypes = useMemo(() => {
+    if (!isDispatch) return [];
+    const requestedIds = normalizeDepartmentIds(form.requested_department_ids);
+    return Array.from(new Set(
+      requestedIds
+        .map((id) => String(departmentsById.get(Number(id))?.layout_type || '').trim().toLowerCase())
+        .filter(Boolean)
+    ));
+  }, [isDispatch, form.requested_department_ids, departmentsById]);
+
+  const jobCodeSuggestions = useMemo(() => {
+    const layoutTypes = isDispatch
+      ? selectedRequestedDepartmentLayoutTypes
+      : [String(layoutType || '').trim().toLowerCase()].filter(Boolean);
+    return filterVictoriaJobCodeSuggestions(form.job_code, {
+      layoutTypes,
+      limit: 10,
+    });
+  }, [form.job_code, isDispatch, selectedRequestedDepartmentLayoutTypes, layoutType]);
+
+  const locationSuggestions = useMemo(() => {
+    const recentLocations = [
+      ...(Array.isArray(calls) ? calls.map((call) => call?.location) : []),
+      ...(Array.isArray(trafficStops) ? trafficStops.map((stop) => stop?.location) : []),
+    ];
+    return filterVictoriaLocationSuggestions(form.location, {
+      recentLocations,
+      limit: 10,
+    });
+  }, [form.location, calls, trafficStops]);
+
+  function applySuggestedJobCode(suggestion) {
+    const code = String(suggestion?.code || '').trim();
+    if (!code) return;
+    setForm((current) => {
+      const next = { ...current, job_code: code };
+      if (!String(current.title || '').trim() && String(suggestion?.suggestedTitle || '').trim()) {
+        next.title = String(suggestion.suggestedTitle).trim();
+      }
+      return next;
+    });
+  }
+
+  function applySuggestedLocation(locationValue) {
+    const text = String(locationValue || '').trim();
+    if (!text) return;
+    setForm((current) => ({ ...current, location: text }));
+  }
 
   async function createCall(e) {
     e.preventDefault();
@@ -1001,24 +1054,70 @@ export default function Dispatch() {
             </div>
             <div>
               <label className="block text-sm text-cad-muted mb-1">Job Code</label>
-              <input
-                type="text"
-                value={form.job_code}
-                onChange={e => setForm(f => ({ ...f, job_code: e.target.value }))}
-                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-                placeholder="e.g. 121"
-              />
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={form.job_code}
+                  onChange={e => setForm(f => ({ ...f, job_code: e.target.value }))}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                  placeholder="Search/select a suggested code (e.g. FV, MVA, 000)"
+                />
+                <p className="text-[11px] text-cad-muted">
+                  Victoria AU-style suggested dispatch codes (editable). Click one to fill the code.
+                </p>
+                {jobCodeSuggestions.length > 0 && (
+                  <div className="max-h-40 overflow-y-auto rounded border border-cad-border bg-cad-surface">
+                    {jobCodeSuggestions.map((suggestion) => (
+                      <button
+                        key={`job-code-suggest-${suggestion.code}`}
+                        type="button"
+                        onClick={() => applySuggestedJobCode(suggestion)}
+                        className="w-full text-left px-3 py-2 border-b border-cad-border/50 last:border-b-0 hover:bg-cad-card transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-sm text-cad-accent-light">{suggestion.code}</span>
+                          <span className="text-[11px] text-cad-muted uppercase tracking-wider">
+                            {Array.isArray(suggestion.layouts) && suggestion.layouts.includes('all')
+                              ? 'Common'
+                              : 'Suggested'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-cad-muted mt-1">{suggestion.label}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div>
             <label className="block text-sm text-cad-muted mb-1">Location</label>
-            <input
-              type="text"
-              value={form.location}
-              onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-              placeholder="e.g. Vinewood Boulevard"
-            />
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={form.location}
+                onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                placeholder="Type to search location suggestions (Victoria AU presets + recent CAD locations)"
+              />
+              <p className="text-[11px] text-cad-muted">
+                Start typing and click a suggestion to fill the location.
+              </p>
+              {locationSuggestions.length > 0 && (
+                <div className="max-h-44 overflow-y-auto rounded border border-cad-border bg-cad-surface">
+                  {locationSuggestions.map((locationSuggestion) => (
+                    <button
+                      key={`location-suggest-${locationSuggestion}`}
+                      type="button"
+                      onClick={() => applySuggestedLocation(locationSuggestion)}
+                      className="w-full text-left px-3 py-2 border-b border-cad-border/50 last:border-b-0 hover:bg-cad-card transition-colors text-sm"
+                    >
+                      {locationSuggestion}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div>
             <label className="block text-sm text-cad-muted mb-1">Description</label>

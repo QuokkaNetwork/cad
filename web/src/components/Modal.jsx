@@ -1,6 +1,14 @@
 import { useEffect, useRef } from 'react';
 
-export default function Modal({ open, onClose, title, children, wide }) {
+export default function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  wide,
+  closeOnBackdrop = false,
+  closeOnEscape = false,
+}) {
   const overlayRef = useRef(null);
 
   useEffect(() => {
@@ -14,11 +22,11 @@ export default function Modal({ open, onClose, title, children, wide }) {
 
   useEffect(() => {
     function onKey(e) {
-      if (e.key === 'Escape' && open) onClose();
+      if (e.key === 'Escape' && open && closeOnEscape) onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, closeOnEscape]);
 
   if (!open) return null;
 
@@ -26,7 +34,9 @@ export default function Modal({ open, onClose, title, children, wide }) {
     <div
       ref={overlayRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
+      onClick={(e) => {
+        if (closeOnBackdrop && e.target === overlayRef.current) onClose();
+      }}
     >
       <div className={`bg-cad-surface border border-cad-border rounded-lg shadow-2xl ${wide ? 'w-full max-w-2xl' : 'w-full max-w-md'} max-h-[90vh] flex flex-col`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-cad-border">
