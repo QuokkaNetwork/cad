@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDepartment } from '../../context/DepartmentContext';
+import { useAuth } from '../../context/AuthContext';
 import { api } from '../../api/client';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
@@ -502,24 +503,26 @@ function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine
   );
 }
 
-export default function Records({ embeddedPerson = null, embeddedDepartmentId = null, hideHeader = false }) {
+export default function Records({ embeddedPerson = null, embeddedDepartmentId = null, hideHeader = false, mode = 'records' }) {
+  const { user } = useAuth();
   const { activeDepartment } = useDepartment();
   const layoutType = getDepartmentLayoutType(activeDepartment);
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
   const isFire = layoutType === DEPARTMENT_LAYOUT.FIRE;
+  const isArrestReportsMode = isLaw && String(mode || '').trim().toLowerCase() === 'arrest_reports';
   const isEmbedded = !!embeddedPerson;
   const effectiveDepartmentId = embeddedDepartmentId || activeDepartment?.id;
 
   const pageCopy = isLaw
     ? {
-      title: 'Criminal Records',
-      newButton: 'New Record',
-      newModalTitle: 'New Criminal Record',
-      editModalTitle: 'Edit Record',
+      title: isArrestReportsMode ? 'Arrest Reports' : 'Criminal Records',
+      newButton: isArrestReportsMode ? 'New Arrest Report' : 'New Record',
+      newModalTitle: isArrestReportsMode ? 'New Arrest Report' : 'New Criminal Record',
+      editModalTitle: isArrestReportsMode ? 'Edit Arrest Report' : 'Edit Record',
       searchPlaceholder: 'Search person by first or last name...',
-      noRecords: 'No records found for this person',
-      countNoun: 'record(s)',
+      noRecords: isArrestReportsMode ? 'No arrest reports found for this person' : 'No records found for this person',
+      countNoun: isArrestReportsMode ? 'arrest report(s)' : 'record(s)',
     }
     : isParamedics
       ? {
@@ -543,7 +546,9 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
 
   const personAnchorLabel = isFire ? 'Reporting Contact / Occupant' : 'Person';
   const findPersonButtonLabel = isFire ? 'Find Contact / Occupant' : 'Find Person';
-  const createSubmitLabel = isLaw ? 'Create Record' : isParamedics ? 'Create Patient Report' : 'Create Incident Report';
+  const createSubmitLabel = isLaw
+    ? (isArrestReportsMode ? 'Create Arrest Report' : 'Create Record')
+    : isParamedics ? 'Create Patient Report' : 'Create Incident Report';
 
   const [personQuery, setPersonQuery] = useState('');
   const [personMatches, setPersonMatches] = useState([]);
@@ -567,6 +572,8 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
   const [editMedicalForm, setEditMedicalForm] = useState(EMPTY_MEDICAL_FORM);
   const [editFireForm, setEditFireForm] = useState(EMPTY_FIRE_FORM);
   const [deletingRecordId, setDeletingRecordId] = useState(null);
+  const [finalizingRecordId, setFinalizingRecordId] = useState(null);
+  const [currentUnit, setCurrentUnit] = useState(null);
   const [offenceCatalog, setOffenceCatalog] = useState([]);
   const [loadingOffenceCatalog, setLoadingOffenceCatalog] = useState(false);
   const [newOffenceSelection, setNewOffenceSelection] = useState({});
@@ -596,6 +603,9 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
     () => calculateSelectionJailTotal(offenceCatalog, editOffenceSelection),
     [offenceCatalog, editOffenceSelection]
   );
+  const filingOfficerName = String(user?.steam_name || user?.email || 'Unknown Officer').trim() || 'Unknown Officer';
+  const filingOfficerCallsign = String(currentUnit?.callsign || '').trim();
+  const filingOfficerLabel = filingOfficerCallsign ? `${filingOfficerCallsign} - ${filingOfficerName}` : filingOfficerName;
 
   useEffect(() => {
     if (!isLaw) return;
@@ -618,6 +628,19 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
       }
     }
     fetchOffenceCatalog();
+    return () => { cancelled = true; };
+  }, [isLaw]);
+
+  useEffect(() => {
+    if (!isLaw) return;
+    let cancelled = false;
+    api.get('/api/units/me')
+      .then((unit) => {
+        if (!cancelled) setCurrentUnit(unit && typeof unit === 'object' ? unit : null);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentUnit(null);
+      });
     return () => { cancelled = true; };
   }, [isLaw]);
 
@@ -669,7 +692,11 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
     }
     setSearching(true);
     try {
-      const data = await api.get(`/api/records?citizen_id=${encodeURIComponent(citizenId)}`);
+      const query = [
+        `citizen_id=${encodeURIComponent(citizenId)}`,
+        isLaw ? `mode=${encodeURIComponent(isArrestReportsMode ? 'arrest_reports' : 'records')}` : '',
+      ].filter(Boolean).join('&');
+      const data = await api.get(`/api/records?${query}`);
       setRecords(data);
     } catch (err) {
       alert('Failed to load records: ' + err.message);
@@ -720,6 +747,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
           return;
         }
         payload = {
+          ...(isArrestReportsMode ? { type: 'arrest_report' } : {}),
           title: newForm.title,
           description: newForm.description,
           // Backend adds this value on top of offence-derived jail time.
@@ -813,6 +841,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
       if (isLaw) {
         const previousOffenceItems = parseRecordOffenceItems(editingRecord);
         const lawPayload = {
+          ...(isArrestReportsMode ? { type: 'arrest_report' } : {}),
           title: editForm.title,
           description: editForm.description,
           // Backend adds this value on top of offence-derived jail time.
@@ -877,6 +906,24 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
       alert('Failed to delete record: ' + err.message);
     } finally {
       setDeletingRecordId(null);
+    }
+  }
+
+  async function finalizeArrestReport(record) {
+    if (!record?.id) return;
+    if (String(record.workflow_status || '').toLowerCase() === 'finalized') return;
+    const ok = confirm(`Finalize arrest report #${record.id}? This will apply fines/jail from the selected charges.`);
+    if (!ok) return;
+    setFinalizingRecordId(record.id);
+    try {
+      await api.post(`/api/records/${record.id}/finalize-arrest-report`, {});
+      if (selectedPerson?.citizenid) {
+        await refreshSelectedPersonRecords(selectedPerson.citizenid);
+      }
+    } catch (err) {
+      alert('Failed to finalize arrest report: ' + err.message);
+    } finally {
+      setFinalizingRecordId(null);
     }
   }
 
@@ -1002,6 +1049,17 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
               <div className="flex items-start justify-between mb-2 gap-3">
                 <div className="flex items-center gap-2 flex-wrap">
                   <StatusBadge status={r.type} />
+                  {isLaw && r.type === 'arrest_report' && (
+                    <span
+                      className={`text-[11px] px-2 py-0.5 rounded border ${
+                        String(r.workflow_status || '').toLowerCase() === 'finalized'
+                          ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                          : 'border-blue-500/40 bg-blue-500/15 text-blue-300'
+                      }`}
+                    >
+                      {String(r.workflow_status || '').toLowerCase() === 'finalized' ? 'Finalized' : 'Pending Finalization'}
+                    </span>
+                  )}
                   <span className="font-medium">{r.title}</span>
                   {medical && (
                     <span className="text-[11px] px-2 py-0.5 rounded border border-cyan-500/40 bg-cyan-500/15 text-cyan-300">
@@ -1020,9 +1078,20 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() !== 'finalized' && (
+                    <button
+                      type="button"
+                      onClick={() => finalizeArrestReport(r)}
+                      disabled={finalizingRecordId === r.id}
+                      className="px-2 py-1 text-xs bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {finalizingRecordId === r.id ? 'Finalizing...' : 'Finalize'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => openEdit(r)}
+                    disabled={isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() === 'finalized'}
                     className="px-2 py-1 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
                   >
                     Edit
@@ -1078,12 +1147,21 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                       </p>
                     ))}
                   </div>
-                  <p className="text-amber-400">Total Fine: ${Number(offenceTotal || 0).toLocaleString()}</p>
+                  <p className="text-amber-400">
+                    {isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() !== 'finalized' ? 'Pending Fine' : 'Total Fine'}: ${Number(offenceTotal || 0).toLocaleString()}
+                  </p>
                   {Number(offenceJailTotal || 0) > 0 && (
-                    <p className="text-rose-300">Offence Jail Total: {Number(offenceJailTotal || 0).toLocaleString()} minute(s)</p>
+                    <p className="text-rose-300">
+                      {isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() !== 'finalized' ? 'Pending Offence Jail Total' : 'Offence Jail Total'}: {Number(offenceJailTotal || 0).toLocaleString()} minute(s)
+                    </p>
                   )}
                   {Number(r.jail_minutes || 0) > 0 && (
-                    <p className="text-rose-300">Jail: {Number(r.jail_minutes || 0).toLocaleString()} minute(s)</p>
+                    <p className="text-rose-300">
+                      {isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() !== 'finalized' ? 'Pending Jail' : 'Jail'}: {Number(r.jail_minutes || 0).toLocaleString()} minute(s)
+                    </p>
+                  )}
+                  {isLaw && r.type === 'arrest_report' && Number(r.finalized_record_id || 0) > 0 && (
+                    <p className="text-emerald-300">Finalized Record: #{Number(r.finalized_record_id || 0)}</p>
                   )}
                   {r.description && (
                     <p className="text-cad-muted">Notes: <span className="text-cad-ink">{r.description}</span></p>
@@ -1131,6 +1209,15 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
           </div>
           {isLaw ? (
             <>
+              <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-2">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">Filing Officer</p>
+                <p className="text-sm text-cad-ink font-medium mt-1">{filingOfficerLabel}</p>
+                {isArrestReportsMode && (
+                  <p className="text-xs text-blue-300 mt-1">
+                    Arrest reports store charges and sentencing details without applying fines/jail until finalized.
+                  </p>
+                )}
+              </div>
               <div>
                 <label className="block text-sm text-cad-muted mb-1">Case Title (optional)</label>
                 <input
@@ -1209,6 +1296,21 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         <form onSubmit={saveEdit} className="space-y-3">
           {isLaw ? (
             <>
+              <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-2">
+                <p className="text-xs text-cad-muted uppercase tracking-wider">
+                  {String(editingRecord?.officer_name || '').trim() || String(editingRecord?.officer_callsign || '').trim()
+                    ? 'Filed By'
+                    : 'Filing Officer'}
+                </p>
+                <p className="text-sm text-cad-ink font-medium mt-1">
+                  {editingRecord?.officer_callsign ? `${editingRecord.officer_callsign} - ` : ''}{editingRecord?.officer_name || filingOfficerLabel}
+                </p>
+                {isArrestReportsMode && String(editingRecord?.workflow_status || '').toLowerCase() === 'finalized' && (
+                  <p className="text-xs text-emerald-300 mt-1">
+                    This arrest report has been finalized. Edit the finalized record for charge/fine changes.
+                  </p>
+                )}
+              </div>
               <div>
                 <label className="block text-sm text-cad-muted mb-1">Case Title (optional)</label>
                 <input

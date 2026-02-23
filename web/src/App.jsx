@@ -17,6 +17,7 @@ import BOLOs from './pages/police/BOLOs';
 import Warrants from './pages/police/Warrants';
 import CallDetails from './pages/police/CallDetails';
 import Records from './pages/police/Records';
+import ArrestReports from './pages/police/ArrestReports';
 import EvidenceManagement from './pages/police/EvidenceManagement';
 import EmsTreatmentLog from './pages/police/EmsTreatmentLog';
 import EmsTransportTracker from './pages/police/EmsTransportTracker';
@@ -60,6 +61,7 @@ export default function App() {
             <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
             <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
             <Route path="/records" element={<RequireDepartment><Records /></RequireDepartment>} />
+            <Route path="/arrest-reports" element={<RequireDepartment><ArrestReports /></RequireDepartment>} />
             <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
             <Route path="/warrants" element={<RequireDepartment><Warrants /></RequireDepartment>} />
             <Route path="/evidence" element={<RequireDepartment><EvidenceManagement /></RequireDepartment>} />

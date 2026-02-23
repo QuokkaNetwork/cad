@@ -2,11 +2,13 @@ const express = require('express');
 const { requireAuth } = require('../auth/middleware');
 const {
   CriminalRecords,
+  CadWarnings,
   Warrants,
   Bolos,
   PatientAnalyses,
   DriverLicenses,
   VehicleRegistrations,
+  Units,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const qbox = require('../db/qbox');
@@ -240,6 +242,20 @@ function buildCadPersonFromSources(req, citizenId, {
   };
 }
 
+function normalizeVehicleSubjectKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function resolveOfficerWarningIdentity(req) {
+  const unit = Units.findByUserId(req.user.id);
+  const officerName = String(req.user?.steam_name || req.user?.email || 'Unknown Officer').trim() || 'Unknown Officer';
+  return {
+    officer_name: officerName,
+    officer_callsign: String(unit?.callsign || '').trim(),
+    department_id: Number(unit?.department_id || 0) || null,
+  };
+}
+
 function decoratePersonHistoryFlags(person, {
   recordCount = 0,
   medicalCount = 0,
@@ -261,13 +277,15 @@ function decoratePersonHistoryFlags(person, {
 
 function buildCadVehicleResponse(registration) {
   const reg = registration || {};
+  const plate = String(reg.plate || '').trim();
   return {
-    plate: String(reg.plate || '').trim(),
+    plate,
     owner: String(reg.citizen_id || '').trim(),
     owner_name: String(reg.owner_name || '').trim(),
     vehicle: String(reg.vehicle_model || '').trim(),
     vehicle_model: String(reg.vehicle_model || '').trim(),
     vehicle_colour: String(reg.vehicle_colour || '').trim(),
+    warning_count: CadWarnings.countActiveBySubject('vehicle', normalizeVehicleSubjectKey(plate)),
     cad_registration: reg,
   };
 }
@@ -331,6 +349,8 @@ router.get('/persons/:citizenid', requireAuth, async (req, res) => {
       bolo_count: personBolos.length,
       warrants,
       bolos: personBolos,
+      active_warnings: CadWarnings.listBySubject('person', normalizedPerson.citizenid, 'active', 25),
+      warning_count: CadWarnings.countActiveBySubject('person', normalizedPerson.citizenid),
       cad_driver_license: normalizeLicenseForResponse(DriverLicenses.findByCitizenId(normalizedPerson.citizenid)),
       cad_vehicle_registrations: VehicleRegistrations.listByCitizenId(normalizedPerson.citizenid),
     };
@@ -387,6 +407,8 @@ router.get('/vehicles/:plate', requireAuth, async (req, res) => {
     res.json({
       ...vehicle,
       cad_registration: VehicleRegistrations.findByPlate(plate),
+      active_warnings: CadWarnings.listBySubject('vehicle', normalizeVehicleSubjectKey(plate), 'active', 25),
+      warning_count: CadWarnings.countActiveBySubject('vehicle', normalizeVehicleSubjectKey(plate)),
     });
   } catch (err) {
     res.status(500).json({ error: 'Lookup failed', message: err.message });
@@ -466,11 +488,15 @@ router.get('/cad/persons', requireAuth, async (req, res) => {
     res.json(filtered.map((person) => {
       const citizenId = String(person?.citizenid || '').trim();
       const medical = medicalCounts[citizenId] || {};
-      return decoratePersonHistoryFlags(person, {
+      const decorated = decoratePersonHistoryFlags(person, {
         recordCount: recordCounts[citizenId] || 0,
         medicalCount: Number(medical.count || 0),
         medicalLastAnalysisAt: medical.last_updated_at || null,
       });
+      return {
+        ...decorated,
+        warning_count: CadWarnings.countActiveBySubject('person', citizenId),
+      };
     }));
   } catch (err) {
     res.status(500).json({ error: 'Search failed', message: err.message });
@@ -512,6 +538,8 @@ router.get('/cad/persons/:citizenid', requireAuth, async (req, res) => {
       ...decoratedPerson,
       active_warrants: Array.isArray(decoratedPerson.warrants) ? decoratedPerson.warrants : [],
       active_bolos: Array.isArray(decoratedPerson.bolos) ? decoratedPerson.bolos : [],
+      active_warnings: CadWarnings.listBySubject('person', citizenId, 'active', 25),
+      warning_count: CadWarnings.countActiveBySubject('person', citizenId),
       cad_driver_license: license || null,
       cad_vehicle_registrations: registrations,
     });
@@ -553,10 +581,87 @@ router.get('/cad/vehicles/:plate', requireAuth, (req, res) => {
   try {
     const reg = VehicleRegistrations.findByPlate(plate);
     if (!reg) return res.status(404).json({ error: 'Vehicle not found' });
-    res.json(buildCadVehicleResponse(reg));
+    const normalizedPlate = normalizeVehicleSubjectKey(plate);
+    res.json({
+      ...buildCadVehicleResponse(reg),
+      active_warnings: CadWarnings.listBySubject('vehicle', normalizedPlate, 'active', 25),
+      warning_count: CadWarnings.countActiveBySubject('vehicle', normalizedPlate),
+    });
   } catch (err) {
     res.status(500).json({ error: 'Lookup failed', message: err.message });
   }
+});
+
+router.get('/cad/persons/:citizenid/warnings', requireAuth, (req, res) => {
+  const citizenId = String(req.params.citizenid || '').trim();
+  if (!citizenId) return res.status(400).json({ error: 'citizenid is required' });
+  res.json(CadWarnings.listBySubject('person', citizenId, 'all', 100));
+});
+
+router.post('/cad/persons/:citizenid/warnings', requireAuth, (req, res) => {
+  const citizenId = String(req.params.citizenid || '').trim();
+  if (!citizenId) return res.status(400).json({ error: 'citizenid is required' });
+  const title = String(req.body?.title || '').trim();
+  const description = String(req.body?.description || '');
+  if (!title) return res.status(400).json({ error: 'title is required' });
+  const officer = resolveOfficerWarningIdentity(req);
+  const warning = CadWarnings.create({
+    subject_type: 'person',
+    subject_key: citizenId,
+    subject_display: String(req.body?.subject_display || citizenId).trim(),
+    title,
+    description,
+    ...officer,
+    created_by_user_id: req.user.id,
+  });
+  audit(req.user.id, 'person_warning_created', { warning_id: warning.id, citizen_id: citizenId, title });
+  res.status(201).json(warning);
+});
+
+router.get('/cad/vehicles/:plate/warnings', requireAuth, (req, res) => {
+  const plate = String(req.params.plate || '').trim();
+  if (!plate) return res.status(400).json({ error: 'plate is required' });
+  const key = normalizeVehicleSubjectKey(plate);
+  res.json(CadWarnings.listBySubject('vehicle', key, 'all', 100));
+});
+
+router.post('/cad/vehicles/:plate/warnings', requireAuth, (req, res) => {
+  const plate = String(req.params.plate || '').trim();
+  if (!plate) return res.status(400).json({ error: 'plate is required' });
+  const title = String(req.body?.title || '').trim();
+  const description = String(req.body?.description || '');
+  if (!title) return res.status(400).json({ error: 'title is required' });
+  const officer = resolveOfficerWarningIdentity(req);
+  const key = normalizeVehicleSubjectKey(plate);
+  const warning = CadWarnings.create({
+    subject_type: 'vehicle',
+    subject_key: key,
+    subject_display: String(req.body?.subject_display || plate).trim(),
+    title,
+    description,
+    ...officer,
+    created_by_user_id: req.user.id,
+  });
+  audit(req.user.id, 'vehicle_warning_created', { warning_id: warning.id, plate: key, title });
+  res.status(201).json(warning);
+});
+
+router.patch('/warnings/:id', requireAuth, (req, res) => {
+  const warningId = parseInt(req.params.id, 10);
+  const warning = CadWarnings.findById(warningId);
+  if (!warning) return res.status(404).json({ error: 'Warning not found' });
+  const status = String(req.body?.status || '').trim().toLowerCase();
+  if (!['resolved', 'cancelled', 'active'].includes(status)) {
+    return res.status(400).json({ error: 'status must be active, resolved, or cancelled' });
+  }
+  const updated = CadWarnings.updateStatus(warningId, status, req.user.id);
+  audit(req.user.id, 'warning_status_updated', {
+    warning_id: warningId,
+    subject_type: warning.subject_type,
+    subject_key: warning.subject_key,
+    status,
+  });
+  res.json(updated);
 });
 
 // Update CAD driver license status/expiry.

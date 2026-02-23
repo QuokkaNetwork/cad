@@ -4,8 +4,10 @@ import SearchResults from '../../components/SearchResults';
 import Modal from '../../components/Modal';
 import PatientAnalysisPanel from '../../components/PatientAnalysisPanel';
 import Records from './Records';
+import ArrestReports from './ArrestReports';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { useDepartment } from '../../context/DepartmentContext';
+import { useAuth } from '../../context/AuthContext';
 import { formatDateAU, formatDateTimeAU } from '../../utils/dateTime';
 
 const LICENSE_STATUS_OPTIONS = ['valid', 'suspended', 'disqualified', 'expired'];
@@ -59,6 +61,18 @@ function buildRecordsPerson(person) {
     birthdate: String(person.birthdate || person?.cad_driver_license?.date_of_birth || '').trim(),
     gender: String(person.gender || person?.cad_driver_license?.gender || '').trim(),
   };
+}
+
+const EMPTY_WARNING_FORM = {
+  title: '',
+  description: '',
+};
+
+function formatOfficerDisplay(item) {
+  const callsign = String(item?.officer_callsign || '').trim();
+  const name = String(item?.officer_name || '').trim();
+  if (callsign && name) return `${callsign} - ${name}`;
+  return callsign || name || 'Unknown Officer';
 }
 
 function MugshotPreview({ url }) {
@@ -163,6 +177,7 @@ function CadVictoriaLicenseCard({ person }) {
 }
 
 export default function Search() {
+  const { user } = useAuth();
   const { activeDepartment } = useDepartment();
   const layoutType = getDepartmentLayoutType(activeDepartment);
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
@@ -180,6 +195,14 @@ export default function Search() {
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [vehicleOwner, setVehicleOwner] = useState(null);
   const [showRecordsModal, setShowRecordsModal] = useState(false);
+  const [showArrestReportsModal, setShowArrestReportsModal] = useState(false);
+  const [currentUnit, setCurrentUnit] = useState(null);
+
+  const [personWarningForm, setPersonWarningForm] = useState(EMPTY_WARNING_FORM);
+  const [vehicleWarningForm, setVehicleWarningForm] = useState(EMPTY_WARNING_FORM);
+  const [personWarningSaving, setPersonWarningSaving] = useState(false);
+  const [vehicleWarningSaving, setVehicleWarningSaving] = useState(false);
+  const [warningStatusUpdatingId, setWarningStatusUpdatingId] = useState(null);
 
   const [licenseStatusDraft, setLicenseStatusDraft] = useState('valid');
   const [registrationStatusDraft, setRegistrationStatusDraft] = useState('valid');
@@ -194,8 +217,8 @@ export default function Search() {
   const activeQuery = searchType === 'person' ? personQuery : String(vehicleQuery || '').trim();
   const canSearch = activeQuery.length >= 2;
   const pageTitle = isLaw ? 'Licence & Registration Search' : isParamedics ? 'Patient Analysis' : 'Incident Lookup';
-  const personTabLabel = isParamedics ? 'Patient' : isFire ? 'Occupant / Person' : 'Person';
-  const vehicleTabLabel = isFire ? 'Vehicle / Asset' : 'Vehicle';
+  const personTabLabel = isParamedics ? 'Patient Lookup' : isFire ? 'Individual Lookup' : 'Individual Lookup';
+  const vehicleTabLabel = isFire ? 'Vehicle Lookup' : 'Vehicle Lookup';
   const personFirstLabel = isFire ? 'Occupant / Contact First Name' : 'First Name';
   const personLastLabel = isFire ? 'Occupant / Contact Last Name' : 'Last Name';
   const personFirstPlaceholder = isParamedics ? 'Patient first name' : isFire ? 'Occupant/contact first name' : 'Person first name';
@@ -208,6 +231,20 @@ export default function Search() {
   const recordsModalTitle = isFire
     ? (selectedPerson ? `Incident Reports - ${resolvePersonName(selectedPerson)}` : 'Incident Reports')
     : (selectedPerson ? `Records - ${resolvePersonName(selectedPerson)}` : 'Records');
+  const filingOfficerLabel = `${String(currentUnit?.callsign || '').trim() ? `${String(currentUnit.callsign).trim()} - ` : ''}${String(user?.steam_name || user?.email || 'Unknown Officer').trim() || 'Unknown Officer'}`;
+
+  useEffect(() => {
+    if (!isLaw) return;
+    let cancelled = false;
+    api.get('/api/units/me')
+      .then((unit) => {
+        if (!cancelled) setCurrentUnit(unit && typeof unit === 'object' ? unit : null);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentUnit(null);
+      });
+    return () => { cancelled = true; };
+  }, [isLaw]);
 
   useEffect(() => {
     if (isParamedics && searchType !== 'person') {
@@ -241,6 +278,7 @@ export default function Search() {
   async function selectPerson(person) {
     setSelectedVehicle(null);
     setVehicleOwner(null);
+    setPersonWarningForm(EMPTY_WARNING_FORM);
 
     const citizenId = String(person?.citizenid || '').trim();
     if (!citizenId) return;
@@ -258,6 +296,7 @@ export default function Search() {
   async function selectVehicle(vehicle) {
     setSelectedPerson(null);
     setVehicleOwner(null);
+    setVehicleWarningForm(EMPTY_WARNING_FORM);
 
     const plate = String(vehicle?.plate || '').trim();
     if (!plate) return;
@@ -357,9 +396,112 @@ export default function Search() {
     }
   }
 
+  function upsertWarningList(current, updatedWarning) {
+    const list = Array.isArray(current) ? [...current] : [];
+    const idx = list.findIndex((item) => Number(item?.id || 0) === Number(updatedWarning?.id || 0));
+    if (idx >= 0) {
+      list[idx] = updatedWarning;
+    } else {
+      list.unshift(updatedWarning);
+    }
+    return list;
+  }
+
+  async function createPersonWarning() {
+    const citizenId = String(selectedPerson?.citizenid || '').trim();
+    if (!citizenId) return;
+    const title = String(personWarningForm.title || '').trim();
+    if (!title) {
+      alert('Warning title is required');
+      return;
+    }
+    setPersonWarningSaving(true);
+    try {
+      const created = await api.post(`/api/search/cad/persons/${encodeURIComponent(citizenId)}/warnings`, {
+        title,
+        description: personWarningForm.description,
+        subject_display: resolvePersonName(selectedPerson),
+      });
+      setSelectedPerson((current) => {
+        if (!current) return current;
+        const activeWarnings = upsertWarningList(current.active_warnings, created).filter((item) => String(item?.status || 'active') === 'active');
+        return {
+          ...current,
+          active_warnings: activeWarnings,
+          warning_count: activeWarnings.length,
+        };
+      });
+      setPersonWarningForm(EMPTY_WARNING_FORM);
+    } catch (err) {
+      alert('Failed to issue warning:\n' + formatErr(err));
+    } finally {
+      setPersonWarningSaving(false);
+    }
+  }
+
+  async function createVehicleWarning() {
+    const plate = String(selectedVehicle?.plate || '').trim();
+    if (!plate) return;
+    const title = String(vehicleWarningForm.title || '').trim();
+    if (!title) {
+      alert('Warning title is required');
+      return;
+    }
+    setVehicleWarningSaving(true);
+    try {
+      const created = await api.post(`/api/search/cad/vehicles/${encodeURIComponent(plate)}/warnings`, {
+        title,
+        description: vehicleWarningForm.description,
+        subject_display: plate,
+      });
+      setSelectedVehicle((current) => {
+        if (!current) return current;
+        const activeWarnings = upsertWarningList(current.active_warnings, created).filter((item) => String(item?.status || 'active') === 'active');
+        return {
+          ...current,
+          active_warnings: activeWarnings,
+          warning_count: activeWarnings.length,
+        };
+      });
+      setVehicleWarningForm(EMPTY_WARNING_FORM);
+    } catch (err) {
+      alert('Failed to issue warning:\n' + formatErr(err));
+    } finally {
+      setVehicleWarningSaving(false);
+    }
+  }
+
+  async function updateWarningStatus(warningId, status, subjectType) {
+    setWarningStatusUpdatingId(Number(warningId || 0));
+    try {
+      const updated = await api.patch(`/api/search/warnings/${warningId}`, { status });
+      if (subjectType === 'person') {
+        setSelectedPerson((current) => {
+          if (!current) return current;
+          const activeWarnings = upsertWarningList(current.active_warnings, updated)
+            .filter((item) => String(item?.status || 'active') === 'active');
+          return { ...current, active_warnings: activeWarnings, warning_count: activeWarnings.length };
+        });
+      } else if (subjectType === 'vehicle') {
+        setSelectedVehicle((current) => {
+          if (!current) return current;
+          const activeWarnings = upsertWarningList(current.active_warnings, updated)
+            .filter((item) => String(item?.status || 'active') === 'active');
+          return { ...current, active_warnings: activeWarnings, warning_count: activeWarnings.length };
+        });
+      }
+    } catch (err) {
+      alert('Failed to update warning:\n' + formatErr(err));
+    } finally {
+      setWarningStatusUpdatingId(null);
+    }
+  }
+
   const personRegistrations = Array.isArray(selectedPerson?.cad_vehicle_registrations)
     ? selectedPerson.cad_vehicle_registrations
     : [];
+  const selectedPersonWarnings = Array.isArray(selectedPerson?.active_warnings) ? selectedPerson.active_warnings : [];
+  const selectedVehicleWarnings = Array.isArray(selectedVehicle?.active_warnings) ? selectedVehicle.active_warnings : [];
   const recordsEmbeddedPerson = useMemo(() => buildRecordsPerson(selectedPerson), [selectedPerson]);
   const selectedPersonRecordCount = Math.max(0, Number(selectedPerson?.criminal_record_count || 0));
   const selectedPersonMedicalCount = Math.max(0, Number(selectedPerson?.medical_analysis_count || 0));
@@ -479,7 +621,9 @@ export default function Search() {
         onClose={() => {
           setSelectedPerson(null);
           setShowRecordsModal(false);
+          setShowArrestReportsModal(false);
           setLicenseStatusDraft('valid');
+          setPersonWarningForm(EMPTY_WARNING_FORM);
         }}
         title={selectedPerson ? resolvePersonName(selectedPerson) : ''}
         wide
@@ -567,6 +711,82 @@ export default function Search() {
               </div>
             ) : null}
 
+            {isLaw ? (
+              <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">
+                    Person Warnings ({selectedPersonWarnings.length})
+                  </h4>
+                  <span className="text-xs text-cad-muted">Filed by {filingOfficerLabel}</span>
+                </div>
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={personWarningForm.title}
+                    onChange={(e) => setPersonWarningForm((prev) => ({ ...prev, title: e.target.value }))}
+                    placeholder="Warning title (e.g. Verbal warning - dangerous driving)"
+                    className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                  />
+                  <textarea
+                    value={personWarningForm.description}
+                    onChange={(e) => setPersonWarningForm((prev) => ({ ...prev, description: e.target.value }))}
+                    rows={2}
+                    placeholder="Warning notes / context"
+                    className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={createPersonWarning}
+                      disabled={personWarningSaving}
+                      className="px-3 py-2 bg-amber-600/90 hover:bg-amber-500 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      {personWarningSaving ? 'Issuing...' : 'Issue Person Warning'}
+                    </button>
+                  </div>
+                  {selectedPersonWarnings.length > 0 ? (
+                    <div className="space-y-2 pt-1">
+                      {selectedPersonWarnings.slice(0, 6).map((warning) => (
+                        <div key={`person-warning-${warning.id}`} className="bg-cad-card border border-cad-border rounded px-3 py-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm text-cad-ink">{warning.title || 'Warning'}</p>
+                              {warning.description ? (
+                                <p className="text-xs text-cad-muted mt-1 whitespace-pre-wrap">{warning.description}</p>
+                              ) : null}
+                              <p className="text-[11px] text-cad-muted mt-1">
+                                {formatOfficerDisplay(warning)} | {formatDateTimeAU(`${warning.created_at}Z`, '-', false)}
+                              </p>
+                            </div>
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => updateWarningStatus(warning.id, 'resolved', 'person')}
+                                disabled={warningStatusUpdatingId === warning.id}
+                                className="px-2 py-1 text-[11px] border border-emerald-500/30 text-emerald-300 bg-emerald-500/10 rounded hover:bg-emerald-500/20 disabled:opacity-50"
+                              >
+                                Resolve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateWarningStatus(warning.id, 'cancelled', 'person')}
+                                disabled={warningStatusUpdatingId === warning.id}
+                                className="px-2 py-1 text-[11px] border border-gray-500/30 text-gray-300 bg-gray-500/10 rounded hover:bg-gray-500/20 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-cad-muted">No active person warnings.</p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
             <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
                 {isFire ? 'Licence / Identity (CAD)' : 'Driver Licence (CAD)'}
@@ -640,14 +860,40 @@ export default function Search() {
               </div>
             )}
 
-            <div className="pt-1 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowRecordsModal(true)}
-                className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors"
-              >
-                {recordsButtonLabel}
-              </button>
+            <div className="pt-1">
+              {isLaw && (
+                <div className="mb-2 bg-cad-surface border border-cad-border rounded-lg px-3 py-2">
+                  <p className="text-xs text-cad-muted uppercase tracking-wider">Charge Filing</p>
+                  <p className="text-sm text-cad-ink mt-1">{filingOfficerLabel}</p>
+                  <p className="text-xs text-cad-muted mt-1">
+                    Use Arrest Reports to draft charges without applying fines/jail until finalization.
+                  </p>
+                </div>
+              )}
+              <div className="flex justify-end gap-2 flex-wrap">
+                {isLaw && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowRecordsModal(false);
+                      setShowArrestReportsModal(true);
+                    }}
+                    className="px-4 py-2 bg-blue-600/90 hover:bg-blue-500 text-white rounded text-sm font-medium transition-colors"
+                  >
+                    Open Arrest Reports
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowArrestReportsModal(false);
+                    setShowRecordsModal(true);
+                  }}
+                  className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors"
+                >
+                  {recordsButtonLabel}
+                </button>
+              </div>
             </div>
             </div>
           )
@@ -660,6 +906,7 @@ export default function Search() {
           setSelectedVehicle(null);
           setVehicleOwner(null);
           setRegistrationStatusDraft('valid');
+          setVehicleWarningForm(EMPTY_WARNING_FORM);
         }}
         title={selectedVehicle ? `Vehicle ${selectedVehicle.plate || ''}` : ''}
         wide
@@ -721,6 +968,82 @@ export default function Search() {
               )}
             </div>
 
+            {isLaw && (
+              <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">
+                    Vehicle Warnings ({selectedVehicleWarnings.length})
+                  </h4>
+                  <span className="text-xs text-cad-muted">Filed by {filingOfficerLabel}</span>
+                </div>
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={vehicleWarningForm.title}
+                    onChange={(e) => setVehicleWarningForm((prev) => ({ ...prev, title: e.target.value }))}
+                    placeholder="Warning title (e.g. Vehicle warning - repeated burnouts)"
+                    className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                  />
+                  <textarea
+                    value={vehicleWarningForm.description}
+                    onChange={(e) => setVehicleWarningForm((prev) => ({ ...prev, description: e.target.value }))}
+                    rows={2}
+                    placeholder="Vehicle warning notes"
+                    className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={createVehicleWarning}
+                      disabled={vehicleWarningSaving}
+                      className="px-3 py-2 bg-amber-600/90 hover:bg-amber-500 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      {vehicleWarningSaving ? 'Issuing...' : 'Issue Vehicle Warning'}
+                    </button>
+                  </div>
+                  {selectedVehicleWarnings.length > 0 ? (
+                    <div className="space-y-2 pt-1">
+                      {selectedVehicleWarnings.slice(0, 6).map((warning) => (
+                        <div key={`vehicle-warning-${warning.id}`} className="bg-cad-card border border-cad-border rounded px-3 py-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm text-cad-ink">{warning.title || 'Warning'}</p>
+                              {warning.description ? (
+                                <p className="text-xs text-cad-muted mt-1 whitespace-pre-wrap">{warning.description}</p>
+                              ) : null}
+                              <p className="text-[11px] text-cad-muted mt-1">
+                                {formatOfficerDisplay(warning)} | {formatDateTimeAU(`${warning.created_at}Z`, '-', false)}
+                              </p>
+                            </div>
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => updateWarningStatus(warning.id, 'resolved', 'vehicle')}
+                                disabled={warningStatusUpdatingId === warning.id}
+                                className="px-2 py-1 text-[11px] border border-emerald-500/30 text-emerald-300 bg-emerald-500/10 rounded hover:bg-emerald-500/20 disabled:opacity-50"
+                              >
+                                Resolve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateWarningStatus(warning.id, 'cancelled', 'vehicle')}
+                                disabled={warningStatusUpdatingId === warning.id}
+                                className="px-2 py-1 text-[11px] border border-gray-500/30 text-gray-300 bg-gray-500/10 rounded hover:bg-gray-500/20 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-cad-muted">No active vehicle warnings.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {vehicleOwner && (
               <div className="bg-cad-surface rounded px-3 py-3">
                 <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
@@ -745,6 +1068,21 @@ export default function Search() {
       >
         {recordsEmbeddedPerson && (
           <Records
+            embeddedPerson={recordsEmbeddedPerson}
+            embeddedDepartmentId={activeDepartment?.id || null}
+            hideHeader
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={isLaw && showArrestReportsModal && !!recordsEmbeddedPerson}
+        onClose={() => setShowArrestReportsModal(false)}
+        title={selectedPerson ? `Arrest Reports - ${resolvePersonName(selectedPerson)}` : 'Arrest Reports'}
+        wide
+      >
+        {recordsEmbeddedPerson && isLaw && (
+          <ArrestReports
             embeddedPerson={recordsEmbeddedPerson}
             embeddedDepartmentId={activeDepartment?.id || null}
             hideHeader

@@ -16,6 +16,7 @@ const STATUS_STYLES = {
   charge: 'bg-red-500/20 text-red-400 border-red-500/30',
   fine: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
   warning: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  arrest_report: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
 };
 
 const STATUS_LABELS = {
@@ -33,6 +34,7 @@ const STATUS_LABELS = {
   charge: 'Charge',
   fine: 'Fine',
   warning: 'Warning',
+  arrest_report: 'Arrest Report',
 };
 
 export default function StatusBadge({ status, className = '' }) {

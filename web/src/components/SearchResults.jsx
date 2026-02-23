@@ -33,6 +33,7 @@ export default function SearchResults({ type, results, onSelect }) {
         if (isPerson) {
           const warrantCount = Math.max(0, Number(item?.active_warrant_count ?? item?.warrant_count ?? 0));
           const boloCount = Math.max(0, Number(item?.active_bolo_count ?? item?.bolo_count ?? 0));
+          const warningCount = Math.max(0, Number(item?.warning_count || 0));
           const recordCount = Math.max(0, Number(item?.criminal_record_count || 0));
           const medicalCount = Math.max(0, Number(item?.medical_analysis_count || 0));
           return (
@@ -58,7 +59,7 @@ export default function SearchResults({ type, results, onSelect }) {
                   </span>
                 )}
               </div>
-              {(warrantCount > 0 || boloCount > 0 || item?.repeat_offender || medicalCount > 0) && (
+              {(warrantCount > 0 || boloCount > 0 || warningCount > 0 || item?.repeat_offender || medicalCount > 0) && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {warrantCount > 0 ? (
                     <span className="inline-flex items-center px-2 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-[11px] font-medium text-red-300">
@@ -68,6 +69,11 @@ export default function SearchResults({ type, results, onSelect }) {
                   {boloCount > 0 ? (
                     <span className="inline-flex items-center px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-[11px] font-medium text-amber-300">
                       POI{boloCount > 1 ? ` x${boloCount}` : ''}
+                    </span>
+                  ) : null}
+                  {warningCount > 0 ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded border border-yellow-500/40 bg-yellow-500/10 text-[11px] font-medium text-yellow-300">
+                      Warning{warningCount > 1 ? ` x${warningCount}` : ''}
                     </span>
                   ) : null}
                   {item?.repeat_offender ? (
@@ -94,6 +100,7 @@ export default function SearchResults({ type, results, onSelect }) {
           ? String(item?.cad_driver_license?.expiry_at || item?.expiry_at || '').trim()
           : String(item?.cad_registration?.expiry_at || item?.expiry_at || '').trim();
 
+        const warningCount = Math.max(0, Number(item?.warning_count || 0));
         return (
           <button
             key={key}
@@ -118,7 +125,7 @@ export default function SearchResults({ type, results, onSelect }) {
               {expiry ? `Expiry: ${formatDateAU(expiry, '-')}` : 'No expiry recorded'}
             </p>
 
-            {item?.has_warrant || item?.has_bolo ? (
+            {(item?.has_warrant || item?.has_bolo || warningCount > 0) ? (
               <div className="mt-2 flex flex-wrap gap-1">
                 {item?.has_warrant ? (
                   <span className="inline-flex items-center px-2 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-[11px] font-medium text-red-300">
@@ -128,6 +135,11 @@ export default function SearchResults({ type, results, onSelect }) {
                 {item?.has_bolo ? (
                   <span className="inline-flex items-center px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-[11px] font-medium text-amber-300">
                     POI{Number(item?.bolo_count || 0) > 1 ? ` x${Number(item.bolo_count)}` : ''}
+                  </span>
+                ) : null}
+                {warningCount > 0 ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded border border-yellow-500/40 bg-yellow-500/10 text-[11px] font-medium text-yellow-300">
+                    Warning{warningCount > 1 ? ` x${warningCount}` : ''}
                   </span>
                 ) : null}
               </div>

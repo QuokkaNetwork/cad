@@ -1627,7 +1627,18 @@ const OffenceCatalog = {
 
 // --- Criminal Records ---
 const CriminalRecords = {
-  findByCitizenId(citizenId) {
+  findByCitizenId(citizenId, options = {}) {
+    const mode = String(options?.mode || 'all').trim().toLowerCase();
+    if (mode === 'records') {
+      return db.prepare(
+        "SELECT * FROM criminal_records WHERE citizen_id = ? AND type != 'arrest_report' ORDER BY created_at DESC"
+      ).all(citizenId);
+    }
+    if (mode === 'arrest_reports') {
+      return db.prepare(
+        "SELECT * FROM criminal_records WHERE citizen_id = ? AND type = 'arrest_report' ORDER BY created_at DESC"
+      ).all(citizenId);
+    }
     return db.prepare(
       'SELECT * FROM criminal_records WHERE citizen_id = ? ORDER BY created_at DESC'
     ).all(citizenId);
@@ -1635,7 +1646,7 @@ const CriminalRecords = {
   countByCitizenId(citizenId) {
     const normalized = String(citizenId || '').trim();
     if (!normalized) return 0;
-    const row = db.prepare('SELECT COUNT(*) AS count FROM criminal_records WHERE citizen_id = ?').get(normalized);
+    const row = db.prepare("SELECT COUNT(*) AS count FROM criminal_records WHERE citizen_id = ? AND type != 'arrest_report'").get(normalized);
     return Number(row?.count || 0);
   },
   countByCitizenIds(citizenIds = []) {
@@ -1652,7 +1663,7 @@ const CriminalRecords = {
     const rows = db.prepare(`
       SELECT citizen_id, COUNT(*) AS count
       FROM criminal_records
-      WHERE citizen_id IN (${placeholders})
+      WHERE citizen_id IN (${placeholders}) AND type != 'arrest_report'
       GROUP BY citizen_id
     `).all(...ids);
 
@@ -1678,9 +1689,17 @@ const CriminalRecords = {
     officer_callsign,
     department_id,
     jail_minutes,
+    workflow_status,
+    finalized_record_id,
+    finalized_at,
+    finalized_by_user_id,
   }) {
     const info = db.prepare(
-      'INSERT INTO criminal_records (citizen_id, type, title, description, fine_amount, offence_items_json, officer_name, officer_callsign, department_id, jail_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      `INSERT INTO criminal_records (
+        citizen_id, type, title, description, fine_amount, offence_items_json,
+        officer_name, officer_callsign, department_id, jail_minutes,
+        workflow_status, finalized_record_id, finalized_at, finalized_by_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       citizen_id,
       type,
@@ -1691,12 +1710,27 @@ const CriminalRecords = {
       officer_name || '',
       officer_callsign || '',
       department_id,
-      Number.isFinite(Number(jail_minutes)) ? Math.max(0, Math.trunc(Number(jail_minutes))) : 0
+      Number.isFinite(Number(jail_minutes)) ? Math.max(0, Math.trunc(Number(jail_minutes))) : 0,
+      String(workflow_status || 'finalized'),
+      Number.isInteger(Number(finalized_record_id)) && Number(finalized_record_id) > 0 ? Number(finalized_record_id) : null,
+      finalized_at ? String(finalized_at) : null,
+      Number.isInteger(Number(finalized_by_user_id)) && Number(finalized_by_user_id) > 0 ? Number(finalized_by_user_id) : null
     );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['type', 'title', 'description', 'fine_amount', 'offence_items_json', 'jail_minutes'];
+    const allowed = [
+      'type',
+      'title',
+      'description',
+      'fine_amount',
+      'offence_items_json',
+      'jail_minutes',
+      'workflow_status',
+      'finalized_record_id',
+      'finalized_at',
+      'finalized_by_user_id',
+    ];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -1706,6 +1740,11 @@ const CriminalRecords = {
           values.push(String(fields[key] || '[]'));
         } else if (key === 'jail_minutes') {
           values.push(Math.max(0, Math.trunc(Number(fields[key] || 0))));
+        } else if (key === 'finalized_record_id' || key === 'finalized_by_user_id') {
+          const parsed = Number(fields[key]);
+          values.push(Number.isInteger(parsed) && parsed > 0 ? parsed : null);
+        } else if (key === 'finalized_at') {
+          values.push(fields[key] ? String(fields[key]) : null);
         } else {
           values.push(fields[key]);
         }
@@ -1722,6 +1761,83 @@ const CriminalRecords = {
     return db.prepare(
       'SELECT * FROM criminal_records ORDER BY created_at DESC LIMIT ? OFFSET ?'
     ).all(limit, offset);
+  },
+};
+
+// --- Search Warnings (Person / Vehicle) ---
+const CadWarnings = {
+  listBySubject(subjectType, subjectKey, status = 'active', limit = 50) {
+    const type = String(subjectType || '').trim().toLowerCase();
+    const key = String(subjectKey || '').trim();
+    if (!type || !key) return [];
+    const normalizedStatus = String(status || 'active').trim().toLowerCase();
+    if (normalizedStatus === 'all') {
+      return db.prepare(
+        'SELECT * FROM cad_warnings WHERE subject_type = ? AND subject_key = ? ORDER BY created_at DESC LIMIT ?'
+      ).all(type, key, Math.max(1, Math.trunc(Number(limit) || 50)));
+    }
+    return db.prepare(
+      'SELECT * FROM cad_warnings WHERE subject_type = ? AND subject_key = ? AND status = ? ORDER BY created_at DESC LIMIT ?'
+    ).all(type, key, normalizedStatus || 'active', Math.max(1, Math.trunc(Number(limit) || 50)));
+  },
+  countActiveBySubject(subjectType, subjectKey) {
+    const row = db.prepare(
+      "SELECT COUNT(*) AS count FROM cad_warnings WHERE subject_type = ? AND subject_key = ? AND status = 'active'"
+    ).get(String(subjectType || '').trim().toLowerCase(), String(subjectKey || '').trim());
+    return Number(row?.count || 0);
+  },
+  findById(id) {
+    return db.prepare('SELECT * FROM cad_warnings WHERE id = ?').get(id);
+  },
+  create({
+    subject_type,
+    subject_key,
+    subject_display,
+    title,
+    description,
+    officer_name,
+    officer_callsign,
+    department_id,
+    created_by_user_id,
+    status,
+  }) {
+    const info = db.prepare(`
+      INSERT INTO cad_warnings (
+        subject_type, subject_key, subject_display, title, description, status,
+        officer_name, officer_callsign, department_id, created_by_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      String(subject_type || '').trim().toLowerCase(),
+      String(subject_key || '').trim(),
+      String(subject_display || '').trim(),
+      String(title || '').trim(),
+      String(description || ''),
+      String(status || 'active').trim().toLowerCase() || 'active',
+      String(officer_name || '').trim(),
+      String(officer_callsign || '').trim(),
+      Number.isInteger(Number(department_id)) && Number(department_id) > 0 ? Number(department_id) : null,
+      Number.isInteger(Number(created_by_user_id)) && Number(created_by_user_id) > 0 ? Number(created_by_user_id) : null
+    );
+    return this.findById(info.lastInsertRowid);
+  },
+  updateStatus(id, status, resolvedByUserId = null) {
+    const normalized = String(status || '').trim().toLowerCase();
+    const allowed = new Set(['active', 'resolved', 'cancelled']);
+    if (!allowed.has(normalized)) return this.findById(id);
+    db.prepare(`
+      UPDATE cad_warnings
+      SET status = ?,
+          resolved_by_user_id = ?,
+          resolved_at = CASE WHEN ? = 'active' THEN NULL ELSE datetime('now') END,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(
+      normalized,
+      Number.isInteger(Number(resolvedByUserId)) && Number(resolvedByUserId) > 0 ? Number(resolvedByUserId) : null,
+      normalized,
+      id
+    );
+    return this.findById(id);
   },
 };
 
@@ -3122,6 +3238,7 @@ module.exports = {
   WarrantCommunityMessages,
   OffenceCatalog,
   CriminalRecords,
+  CadWarnings,
   PatientAnalyses,
   DriverLicenses,
   VehicleRegistrations,

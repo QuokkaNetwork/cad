@@ -13,7 +13,7 @@ const { audit } = require('../utils/audit');
 const { processPendingFineJobs } = require('../services/fivemFineProcessor');
 
 const router = express.Router();
-const VALID_RECORD_TYPES = new Set(['charge', 'fine', 'warning']);
+const VALID_RECORD_TYPES = new Set(['charge', 'fine', 'warning', 'arrest_report']);
 const ACTIVE_LINK_MAX_AGE_MS = 5 * 60 * 1000;
 
 function parseSqliteUtc(value) {
@@ -128,11 +128,49 @@ function buildDefaultOffenceTitle(items) {
   return `${top.join('; ')}${suffix}`;
 }
 
+function queueEnforcementForRecord(record, req) {
+  if (!record || record.type === 'warning' || record.type === 'arrest_report') return;
+  const citizenId = String(record.citizen_id || '').trim();
+  if (!citizenId) return;
+
+  const fivemFineEnabled = String(Settings.get('fivem_bridge_qbox_fines_enabled') || 'true').toLowerCase() === 'true';
+  if (record.type === 'fine' && Number(record.fine_amount || 0) > 0 && fivemFineEnabled) {
+    try {
+      FiveMFineJobs.create({
+        citizen_id: citizenId,
+        amount: Number(record.fine_amount || 0),
+        reason: record.title,
+        issued_by_user_id: req.user.id,
+        source_record_id: record.id,
+      });
+      processPendingFineJobs().catch((err) => {
+        console.error('[FineProcessor] Immediate record fine run failed:', err?.message || err);
+      });
+    } catch (err) {
+      console.error('[Records] Failed to queue fine job for record', record.id, ':', err?.message || err);
+    }
+  }
+
+  if (Number(record.jail_minutes || 0) > 0) {
+    try {
+      FiveMJailJobs.create({
+        citizen_id: citizenId,
+        jail_minutes: Number(record.jail_minutes || 0),
+        reason: record.title,
+        issued_by_user_id: req.user.id,
+        source_record_id: record.id,
+      });
+    } catch (err) {
+      console.error('[Records] Failed to queue jail job for record', record.id, ':', err?.message || err);
+    }
+  }
+}
+
 // List records (with optional citizen_id filter)
 router.get('/', requireAuth, (req, res) => {
-  const { citizen_id, limit, offset } = req.query;
+  const { citizen_id, limit, offset, mode } = req.query;
   if (citizen_id) {
-    const records = CriminalRecords.findByCitizenId(citizen_id);
+    const records = CriminalRecords.findByCitizenId(citizen_id, { mode: String(mode || 'all') });
     return res.json(records);
   }
   const records = CriminalRecords.list(
@@ -172,9 +210,10 @@ router.post('/', requireAuth, (req, res) => {
 
   const normalizedTitle = String(title || '').trim();
   if (type !== undefined && !VALID_RECORD_TYPES.has(String(type).trim().toLowerCase())) {
-    return res.status(400).json({ error: 'type must be charge, fine, or warning' });
+    return res.status(400).json({ error: 'type must be charge, fine, warning, or arrest_report' });
   }
-  let recordType = normalizeRecordType(type, 'charge');
+  const requestedType = normalizeRecordType(type, 'charge');
+  let recordType = requestedType;
   let recordFineAmount = 0;
   const rawJailMinutes = Number(jail_minutes ?? 0);
   if (jail_minutes !== undefined && (!Number.isFinite(rawJailMinutes) || rawJailMinutes < 0)) {
@@ -187,7 +226,9 @@ router.post('/', requireAuth, (req, res) => {
   let offenceItemsJson = '[]';
 
   if (resolvedOffences && resolvedOffences.items.length > 0) {
-    recordType = resolvedOffences.totalFine > 0 ? 'fine' : 'charge';
+    recordType = requestedType === 'arrest_report'
+      ? 'arrest_report'
+      : (resolvedOffences.totalFine > 0 ? 'fine' : 'charge');
     recordFineAmount = resolvedOffences.totalFine;
     recordJailMinutes = Math.max(0, Math.trunc(Number(resolvedOffences.totalJailMinutes || 0))) + manualJailMinutesInput;
     recordTitle = normalizedTitle || buildDefaultOffenceTitle(resolvedOffences.items);
@@ -197,14 +238,18 @@ router.post('/', requireAuth, (req, res) => {
       return res.status(400).json({ error: 'title is required' });
     }
     if (!VALID_RECORD_TYPES.has(recordType)) {
-      return res.status(400).json({ error: 'type must be charge, fine, or warning' });
+      return res.status(400).json({ error: 'type must be charge, fine, warning, or arrest_report' });
     }
-    if (recordType === 'fine') {
+    if (recordType === 'fine' || recordType === 'arrest_report') {
       const amount = Number(fine_amount || 0);
       if (!Number.isFinite(amount) || amount < 0) {
         return res.status(400).json({ error: 'fine_amount must be a non-negative number' });
       }
-      recordFineAmount = amount;
+      if (recordType === 'fine') {
+        recordFineAmount = amount;
+      } else {
+        recordFineAmount = amount;
+      }
     }
   }
 
@@ -228,44 +273,16 @@ router.post('/', requireAuth, (req, res) => {
     officer_callsign: officerCallsign,
     department_id: department_id || (unit ? unit.department_id : null),
     jail_minutes: recordJailMinutes,
+    workflow_status: recordType === 'arrest_report' ? 'pending' : 'finalized',
   });
 
-  const fivemFineEnabled = String(Settings.get('fivem_bridge_qbox_fines_enabled') || 'true').toLowerCase() === 'true';
-  if (record.type === 'fine' && Number(record.fine_amount || 0) > 0 && fivemFineEnabled) {
-    try {
-      FiveMFineJobs.create({
-        citizen_id,
-        amount: Number(record.fine_amount || 0),
-        reason: record.title,
-        issued_by_user_id: req.user.id,
-        source_record_id: record.id,
-      });
-      processPendingFineJobs().catch((err) => {
-        console.error('[FineProcessor] Immediate record fine run failed:', err?.message || err);
-      });
-    } catch (err) {
-      console.error('[Records] Failed to queue fine job for record', record.id, ':', err?.message || err);
-    }
-  }
-
-  if (record.type !== 'warning' && Number(record.jail_minutes || 0) > 0) {
-    try {
-      FiveMJailJobs.create({
-        citizen_id,
-        jail_minutes: Number(record.jail_minutes || 0),
-        reason: record.title,
-        issued_by_user_id: req.user.id,
-        source_record_id: record.id,
-      });
-    } catch (err) {
-      console.error('[Records] Failed to queue jail job for record', record.id, ':', err?.message || err);
-    }
-  }
+  queueEnforcementForRecord(record, req);
 
   audit(req.user.id, 'record_created', {
     recordId: record.id,
     citizen_id,
     type: record.type,
+    workflow_status: String(record.workflow_status || ''),
     title: record.title,
     jail_minutes: Number(record.jail_minutes || 0),
     offence_items_count: resolvedOffences?.items?.length || 0,
@@ -278,6 +295,9 @@ router.patch('/:id', requireAuth, (req, res) => {
   const recordId = parseInt(req.params.id, 10);
   const record = CriminalRecords.findById(recordId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
+  if (record.type === 'arrest_report' && String(record.workflow_status || '').toLowerCase() === 'finalized') {
+    return res.status(400).json({ error: 'Finalized arrest reports cannot be edited. Edit the finalized record instead.' });
+  }
 
   const { type, title, description, fine_amount, jail_minutes, offence_items } = req.body || {};
   const updates = {};
@@ -289,8 +309,12 @@ router.patch('/:id', requireAuth, (req, res) => {
       return res.status(400).json({ error: resolved.error });
     }
     updates.offence_items_json = JSON.stringify(resolved.items);
+    const preserveArrestReportType = String(record.type || '') === 'arrest_report'
+      || String(type || '').trim().toLowerCase() === 'arrest_report';
     if (resolved.items.length > 0) {
-      updates.type = resolved.totalFine > 0 ? 'fine' : 'charge';
+      updates.type = preserveArrestReportType
+        ? 'arrest_report'
+        : (resolved.totalFine > 0 ? 'fine' : 'charge');
       updates.fine_amount = resolved.totalFine;
       const offenceJailMinutes = Math.max(0, Math.trunc(Number(resolved.totalJailMinutes || 0)));
       if (jail_minutes === undefined) {
@@ -305,6 +329,9 @@ router.patch('/:id', requireAuth, (req, res) => {
       if (title === undefined) {
         updates.title = buildDefaultOffenceTitle(resolved.items);
       }
+      if (preserveArrestReportType) {
+        updates.workflow_status = 'pending';
+      }
     } else if (type === undefined && fine_amount === undefined) {
       updates.fine_amount = 0;
       if (record.type === 'fine') updates.type = 'charge';
@@ -315,7 +342,7 @@ router.patch('/:id', requireAuth, (req, res) => {
     if (type !== undefined) {
       const nextType = normalizeRecordType(type, '');
       if (!VALID_RECORD_TYPES.has(nextType)) {
-        return res.status(400).json({ error: 'type must be charge, fine, or warning' });
+        return res.status(400).json({ error: 'type must be charge, fine, warning, or arrest_report' });
       }
       updates.type = nextType;
     }
@@ -326,8 +353,8 @@ router.patch('/:id', requireAuth, (req, res) => {
       if (!Number.isFinite(amount) || amount < 0) {
         return res.status(400).json({ error: 'fine_amount must be a non-negative number' });
       }
-      updates.fine_amount = nextType === 'fine' ? amount : 0;
-    } else if (updates.type !== undefined && nextType !== 'fine') {
+      updates.fine_amount = (nextType === 'fine' || nextType === 'arrest_report') ? amount : 0;
+    } else if (updates.type !== undefined && nextType !== 'fine' && nextType !== 'arrest_report') {
       updates.fine_amount = 0;
     }
 
@@ -367,7 +394,10 @@ router.patch('/:id', requireAuth, (req, res) => {
   CriminalRecords.update(recordId, updates);
   const updated = CriminalRecords.findById(recordId);
 
-  if (updated.type === 'fine' && Number(updated.fine_amount || 0) > 0) {
+  if (updated.type === 'arrest_report') {
+    FiveMFineJobs.detachSourceRecord(recordId, 'Arrest report pending finalization');
+    FiveMJailJobs.detachSourceRecord(recordId, 'Arrest report pending finalization');
+  } else if (updated.type === 'fine' && Number(updated.fine_amount || 0) > 0) {
     if (updates.type !== undefined || updates.title !== undefined || updates.fine_amount !== undefined) {
       FiveMFineJobs.updatePendingBySourceRecordId(recordId, {
         amount: Number(updated.fine_amount || 0),
@@ -378,7 +408,7 @@ router.patch('/:id', requireAuth, (req, res) => {
     FiveMFineJobs.detachSourceRecord(recordId, 'Record updated to non-fine');
   }
 
-  if (updated.type !== 'warning' && Number(updated.jail_minutes || 0) > 0) {
+  if (updated.type !== 'warning' && updated.type !== 'arrest_report' && Number(updated.jail_minutes || 0) > 0) {
     FiveMJailJobs.upsertPendingBySourceRecordId(recordId, {
       citizen_id: updated.citizen_id,
       jail_minutes: Number(updated.jail_minutes || 0),
@@ -393,11 +423,67 @@ router.patch('/:id', requireAuth, (req, res) => {
   res.json(updated);
 });
 
+// Finalize an arrest report into an enforceable criminal record (queues fines/jail on finalization)
+router.post('/:id/finalize-arrest-report', requireAuth, (req, res) => {
+  const arrestReportId = parseInt(req.params.id, 10);
+  const arrestReport = CriminalRecords.findById(arrestReportId);
+  if (!arrestReport) return res.status(404).json({ error: 'Record not found' });
+  if (String(arrestReport.type || '') !== 'arrest_report') {
+    return res.status(400).json({ error: 'Record is not an arrest report' });
+  }
+  if (String(arrestReport.workflow_status || '').toLowerCase() === 'finalized' && Number(arrestReport.finalized_record_id || 0) > 0) {
+    const existingFinal = CriminalRecords.findById(Number(arrestReport.finalized_record_id || 0));
+    return res.json({ arrest_report: arrestReport, finalized_record: existingFinal || null, already_finalized: true });
+  }
+
+  const finalType = Number(arrestReport.fine_amount || 0) > 0 ? 'fine' : 'charge';
+  const finalizedRecord = CriminalRecords.create({
+    citizen_id: arrestReport.citizen_id,
+    type: finalType,
+    title: arrestReport.title,
+    description: arrestReport.description,
+    fine_amount: Number(arrestReport.fine_amount || 0),
+    offence_items_json: String(arrestReport.offence_items_json || '[]'),
+    officer_name: arrestReport.officer_name || '',
+    officer_callsign: arrestReport.officer_callsign || '',
+    department_id: arrestReport.department_id || null,
+    jail_minutes: Number(arrestReport.jail_minutes || 0),
+    workflow_status: 'finalized',
+  });
+
+  queueEnforcementForRecord(finalizedRecord, req);
+
+  CriminalRecords.update(arrestReportId, {
+    workflow_status: 'finalized',
+    finalized_record_id: Number(finalizedRecord.id || 0),
+    finalized_at: new Date().toISOString(),
+    finalized_by_user_id: req.user.id,
+  });
+  const updatedArrestReport = CriminalRecords.findById(arrestReportId);
+
+  audit(req.user.id, 'arrest_report_finalized', {
+    arrest_report_id: arrestReportId,
+    finalized_record_id: finalizedRecord.id,
+    citizen_id: finalizedRecord.citizen_id,
+    final_type: finalizedRecord.type,
+    fine_amount: Number(finalizedRecord.fine_amount || 0),
+    jail_minutes: Number(finalizedRecord.jail_minutes || 0),
+  });
+
+  res.json({
+    arrest_report: updatedArrestReport,
+    finalized_record: finalizedRecord,
+  });
+});
+
 // Delete a record
 router.delete('/:id', requireAuth, (req, res) => {
   const recordId = parseInt(req.params.id, 10);
   const record = CriminalRecords.findById(recordId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
+  if (record.type === 'arrest_report' && String(record.workflow_status || '').toLowerCase() === 'finalized') {
+    return res.status(400).json({ error: 'Finalized arrest reports cannot be deleted. Delete the finalized record if required.' });
+  }
 
   const detachedFineJobs = FiveMFineJobs.detachSourceRecord(recordId, 'Record deleted');
   const detachedJailJobs = FiveMJailJobs.detachSourceRecord(recordId, 'Record deleted');
