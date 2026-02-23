@@ -55,17 +55,125 @@ function colorWithAlpha(color, alpha, fallback = `rgba(0,82,194,${alpha})`) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function WatermarkPanel({ logo, accent, className = '', children }) {
+// Live stat cell in the top strip
+function StatCell({ label, value, tone = 'default', loading, pulse }) {
+  const tones = {
+    default: { num: 'text-cad-ink', bg: 'border-cad-border bg-cad-surface/50' },
+    blue: { num: 'text-sky-400', bg: 'border-sky-500/20 bg-sky-500/5' },
+    red: { num: 'text-red-400', bg: 'border-red-500/20 bg-red-500/5' },
+    green: { num: 'text-emerald-400', bg: 'border-emerald-500/20 bg-emerald-500/5' },
+    amber: { num: 'text-amber-300', bg: 'border-amber-500/20 bg-amber-500/5' },
+  };
+  const t = tones[tone] || tones.default;
+
+  return (
+    <div className={`relative flex-1 min-w-0 rounded-xl border px-3.5 py-3 ${t.bg}`}>
+      {pulse && value > 0 && (
+        <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" style={{ boxShadow: '0 0 6px rgba(248,113,113,0.8)' }} />
+      )}
+      <p className="text-[9px] uppercase tracking-[0.18em] text-cad-muted">{label}</p>
+      <p className={`text-2xl font-bold tabular-nums mt-0.5 ${t.num}`}>
+        {loading ? <span className="text-cad-muted text-xl">–</span> : value}
+      </p>
+    </div>
+  );
+}
+
+// Section heading
+function SectionHeading({ children }) {
+  return (
+    <p className="text-[9px] uppercase tracking-[0.2em] text-cad-muted mb-2">{children}</p>
+  );
+}
+
+// A navigation action button in the quick-launch grid
+function ActionButton({ label, sublabel, route, variant = 'default', accent, navigate }) {
+  if (variant === 'primary') {
+    return (
+      <button
+        type="button"
+        onClick={() => navigate(route)}
+        className="relative group col-span-2 flex items-center gap-3 rounded-xl border px-4 py-3.5 text-white font-semibold text-sm overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-xl"
+        style={{
+          borderColor: colorWithAlpha(accent, 0.5),
+          background: `linear-gradient(135deg, ${accent}, ${colorWithAlpha(accent, 0.7)})`,
+          boxShadow: `0 8px 24px ${colorWithAlpha(accent, 0.3)}`,
+        }}
+      >
+        <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <div className="min-w-0 flex-1">
+          <div className="truncate">{label}</div>
+          {sublabel && <div className="text-xs font-normal text-white/70 mt-0.5 truncate">{sublabel}</div>}
+        </div>
+        <div className="w-1.5 h-1.5 rounded-full bg-white/60 flex-shrink-0" />
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(route)}
+      className="flex items-center gap-2.5 rounded-xl border border-cad-border bg-cad-surface/60 hover:border-cad-border hover:bg-cad-surface px-3.5 py-2.5 text-left text-sm text-cad-ink transition-all hover:-translate-y-0.5 group"
+      style={{ '--hover-border': colorWithAlpha(accent, 0.4) }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = colorWithAlpha(accent, 0.35)}
+      onMouseLeave={e => e.currentTarget.style.borderColor = ''}
+    >
+      <svg className="w-3.5 h-3.5 text-cad-muted group-hover:text-cad-ink transition-colors flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </svg>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+// A department-specific panel card
+function PanelCard({ panel, accent, navigate }) {
   return (
     <div
-      className={`relative overflow-hidden rounded-xl border bg-cad-card ${className}`}
-      style={{ borderColor: colorWithAlpha(accent, 0.22, 'rgba(255,255,255,0.1)') }}
+      className="rounded-xl border overflow-hidden"
+      style={{ borderColor: colorWithAlpha(accent, 0.18, 'rgba(42,58,78,1)') }}
     >
       <div
-        className="absolute inset-0 opacity-70"
-        style={{ background: `linear-gradient(135deg, ${colorWithAlpha(accent, 0.08)}, transparent 55%)` }}
-      />
-      <div className="relative">{children}</div>
+        className="px-4 py-3 border-b flex items-center justify-between gap-3"
+        style={{
+          borderColor: colorWithAlpha(accent, 0.15, 'rgba(42,58,78,1)'),
+          background: colorWithAlpha(accent, 0.07),
+        }}
+      >
+        <div>
+          <p className="text-[9px] uppercase tracking-[0.18em] text-cad-muted">{panel.eyebrow}</p>
+          <p className="text-sm font-semibold text-cad-ink mt-0.5">{panel.title}</p>
+        </div>
+        {panel.value && (
+          <p className={`text-3xl font-bold tabular-nums ${panel.valueTone || 'text-cad-accent-light'}`}>
+            {panel.value}
+          </p>
+        )}
+      </div>
+      <div className="px-4 py-3 bg-cad-card/60">
+        <p className="text-xs text-cad-muted leading-relaxed mb-3">{panel.body}</p>
+        <div className="flex flex-wrap gap-2">
+          {panel.actions.map((action) => (
+            <button
+              key={`${panel.key}:${action.route}`}
+              type="button"
+              onClick={() => navigate(action.route)}
+              className={
+                action.variant === 'primary'
+                  ? 'px-3 py-1.5 rounded-lg text-white text-xs font-semibold transition-colors'
+                  : 'px-3 py-1.5 rounded-lg bg-cad-surface border border-cad-border text-cad-ink text-xs hover:bg-cad-card transition-colors'
+              }
+              style={action.variant === 'primary' ? { backgroundColor: accent, boxShadow: `0 4px 12px ${colorWithAlpha(accent, 0.3)}` } : undefined}
+            >
+              {action.variant === 'primary' ? `+ ${action.label}` : action.label}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -127,10 +235,7 @@ export default function DepartmentHome() {
         : Promise.resolve([]);
 
       const [callsPayload, unitsPayload, bolosPayload, warrantsPayload] = await Promise.all([
-        callsRequest,
-        unitsRequest,
-        bolosRequest,
-        warrantsRequest,
+        callsRequest, unitsRequest, bolosRequest, warrantsRequest,
       ]);
       const calls = normalizeCallsPayload(callsPayload);
       const units = normalizeUnitsPayload(unitsPayload);
@@ -166,12 +271,8 @@ export default function DepartmentHome() {
   }, [deptId, isDispatch, isPoliceDepartment]);
 
   const scheduleRefresh = useCallback(() => {
-    if (refreshTimerRef.current) {
-      clearTimeout(refreshTimerRef.current);
-    }
-    refreshTimerRef.current = setTimeout(() => {
-      fetchStats();
-    }, REFRESH_DEBOUNCE_MS);
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = setTimeout(fetchStats, REFRESH_DEBOUNCE_MS);
   }, [fetchStats]);
 
   useEffect(() => {
@@ -233,12 +334,10 @@ export default function DepartmentHome() {
 
   async function goOnDuty() {
     if (!activeDepartment) return;
-
     if (!activeDepartment.is_dispatch) {
       setShowOnDutyModal(true);
       return;
     }
-
     setOnDutyLoading(true);
     try {
       const unit = await api.post('/api/units/me', {
@@ -261,47 +360,12 @@ export default function DepartmentHome() {
     ? 'Dispatch'
     : (isFireDepartment ? 'Fire & Rescue' : (isEmsDepartment ? 'Paramedic' : 'Law Enforcement'));
   const unitLabel = isFireDepartment ? 'Crew' : 'Unit';
-  const responseBoardLabel = isFireDepartment ? 'Response Board' : (isDispatch ? 'Dispatch Board' : 'Response Board');
   const primaryBoardRoute = isDispatch ? '/dispatch' : '/units';
-  const dutyTone = onActiveDeptDuty
-    ? 'On duty in this department'
-    : (onOtherDeptDuty ? 'On duty in another department' : 'Currently off duty');
-  const dutyToneColor = onActiveDeptDuty
-    ? 'text-emerald-300'
-    : (onOtherDeptDuty ? 'text-amber-300' : 'text-cad-muted');
-
-  const statCards = [
-    {
-      label: isFireDepartment ? 'Active Incidents' : 'Active Calls',
-      value: stats.active_calls,
-      tone: 'text-cad-accent-light',
-      help: isDispatch ? 'Open work on the board' : 'Current live workload',
-    },
-    { label: 'Urgent / 000', value: stats.urgent_calls, tone: 'text-red-400', help: 'Requires immediate triage' },
-    {
-      label: isFireDepartment ? 'Crews On Duty' : 'Units On Duty',
-      value: stats.on_duty_units,
-      tone: 'text-emerald-400',
-      help: 'Staff currently signed on',
-    },
-    {
-      label: isFireDepartment ? 'Crews Available' : 'Units Available',
-      value: stats.available_units,
-      tone: 'text-sky-400',
-      help: 'Ready for allocation',
-    },
-    {
-      label: isFireDepartment ? 'Crews Assigned' : 'Units Assigned',
-      value: stats.assigned_units,
-      tone: 'text-amber-300',
-      help: 'Committed to active work',
-    },
-  ];
 
   const quickActions = (() => {
     if (isDispatch) {
       return [
-        { label: 'Open Dispatch Board', route: '/dispatch', variant: 'primary' },
+        { label: 'Dispatch Board', sublabel: 'Live call management', route: '/dispatch', variant: 'primary' },
         { label: 'Lookup', route: '/search' },
         { label: 'Units', route: '/units' },
         { label: 'Incidents', route: '/incidents' },
@@ -309,8 +373,8 @@ export default function DepartmentHome() {
     }
     if (isPoliceDepartment) {
       return [
-        { label: 'Response Board', route: '/units', variant: 'primary' },
-        { label: 'Individual / Vehicle Lookup', route: '/search' },
+        { label: 'Response Board', sublabel: 'Live unit & call management', route: '/units', variant: 'primary' },
+        { label: 'Lookup', route: '/search' },
         { label: 'Records', route: '/records' },
         { label: 'Arrest Reports', route: '/arrest-reports' },
         { label: 'Warrants', route: '/warrants' },
@@ -321,7 +385,7 @@ export default function DepartmentHome() {
     }
     if (isEmsDepartment) {
       return [
-        { label: 'Response Board', route: '/units', variant: 'primary' },
+        { label: 'Response Board', sublabel: 'Live crew & job management', route: '/units', variant: 'primary' },
         { label: 'Treatment Log', route: '/ems-treatment' },
         { label: 'Transport Tracker', route: '/ems-transport' },
         { label: 'Patient Reports', route: '/records' },
@@ -330,7 +394,7 @@ export default function DepartmentHome() {
     }
     if (isFireDepartment) {
       return [
-        { label: 'Response Board', route: '/units', variant: 'primary' },
+        { label: 'Response Board', sublabel: 'Live appliance & incident management', route: '/units', variant: 'primary' },
         { label: 'Incident Reports', route: '/records' },
         { label: 'Lookup', route: '/search' },
         { label: 'Apparatus', route: '/fire-apparatus' },
@@ -339,43 +403,9 @@ export default function DepartmentHome() {
       ];
     }
     return [
-      { label: responseBoardLabel, route: primaryBoardRoute, variant: 'primary' },
+      { label: 'Response Board', sublabel: 'Live operational overview', route: primaryBoardRoute, variant: 'primary' },
       { label: 'Lookup', route: '/search' },
       { label: 'Incidents', route: '/incidents' },
-    ];
-  })();
-
-  const workflowChecklist = (() => {
-    if (isDispatch) {
-      return [
-        'Monitor new calls, timers, and priority alerts on the dispatch board.',
-        'Allocate the closest available units and track pursuits in real time.',
-        'Use lookup for cross-checks before escalating or linking incidents.',
-      ];
-    }
-    if (isPoliceDepartment) {
-      return [
-        'Use lookup to confirm licence and registration details before actioning.',
-        'Create arrest reports for draft and supervisor review, then finalise when ready.',
-        'Link records, warrants, POIs, and evidence under a shared incident or case.',
-      ];
-    }
-    if (isEmsDepartment) {
-      return [
-        'Allocate crews on the response board, then document care in Treatment Log.',
-        'Use Transport Tracker for destination, ETA, and handover status.',
-        'Complete patient reports for clinical records and follow-up review.',
-      ];
-    }
-    if (isFireDepartment) {
-      return [
-        'Use Response Board for live incident allocation and appliance coordination.',
-        'Document post-incident outcomes in Incident Reports.',
-        'Maintain pre-plans and apparatus readiness for repeat-risk locations.',
-      ];
-    }
-    return [
-      'Use the relevant tab workflow for live response, lookup, and documentation.',
     ];
   })();
 
@@ -386,7 +416,7 @@ export default function DepartmentHome() {
           key: 'warrants',
           eyebrow: 'Warrants',
           title: 'Outstanding warrant workload',
-          value: loading ? '...' : String(stats.active_warrants),
+          value: loading ? '–' : String(stats.active_warrants),
           valueTone: 'text-amber-300',
           body: 'Create, review, and action outstanding warrants for active investigations.',
           actions: [
@@ -397,9 +427,9 @@ export default function DepartmentHome() {
         {
           key: 'pois',
           eyebrow: 'POIs',
-          title: 'Persons and vehicles of interest',
-          value: loading ? '...' : String(stats.active_bolos),
-          valueTone: 'text-cad-accent-light',
+          title: 'Persons & vehicles of interest',
+          value: loading ? '–' : String(stats.active_bolos),
+          valueTone: 'text-sky-400',
           body: 'Track POIs linked to investigations, vehicles, and current operational activity.',
           actions: [
             { label: 'New POI', route: '/bolos?new=1', variant: 'primary' },
@@ -410,7 +440,7 @@ export default function DepartmentHome() {
         {
           key: 'casework',
           eyebrow: 'Casework',
-          title: 'Records and arrest workflow',
+          title: 'Records & arrest workflow',
           body: 'Use arrest reports for draft and supervisor review, then finalise to apply fines or custodial outcomes.',
           actions: [
             { label: 'Records', route: '/records' },
@@ -426,7 +456,7 @@ export default function DepartmentHome() {
           key: 'dispatch-board',
           eyebrow: 'Dispatch',
           title: 'Live call management',
-          body: 'Use the dispatch board for call triage, macros, priority tones, pursuit tracking, and unit allocation.',
+          body: 'Call triage, macros, priority tones, pursuit tracking, and unit allocation.',
           actions: [
             { label: 'Open Dispatch Board', route: '/dispatch', variant: 'primary' },
             { label: 'Lookup', route: '/search' },
@@ -436,7 +466,7 @@ export default function DepartmentHome() {
           key: 'coordination',
           eyebrow: 'Coordination',
           title: 'Operational coordination',
-          body: 'Monitor available units, active incidents, and escalation workload from the live overview above.',
+          body: 'Monitor available units, active incidents, and escalation workload from the live overview.',
           actions: [
             { label: 'Units', route: '/units' },
             { label: 'Incidents', route: '/incidents' },
@@ -449,8 +479,8 @@ export default function DepartmentHome() {
         {
           key: 'clinical',
           eyebrow: 'Clinical',
-          title: 'Treatment and transport workflow',
-          body: 'Document treatment, medications and procedures first, then complete transport destination and handover details.',
+          title: 'Treatment & transport',
+          body: 'Document treatment, medications and procedures, then complete transport destination and handover details.',
           actions: [
             { label: 'Treatment Log', route: '/ems-treatment', variant: 'primary' },
             { label: 'Transport Tracker', route: '/ems-transport' },
@@ -485,8 +515,8 @@ export default function DepartmentHome() {
         {
           key: 'planning',
           eyebrow: 'Planning',
-          title: 'Readiness and pre-planning',
-          body: 'Use Apparatus and Pre-Plans to maintain readiness, site knowledge, and recurring risk information.',
+          title: 'Readiness & pre-planning',
+          body: 'Maintain apparatus readiness, site knowledge, and recurring risk information.',
           actions: [
             { label: 'Apparatus', route: '/fire-apparatus' },
             { label: 'Pre-Plans', route: '/fire-preplans' },
@@ -498,283 +528,323 @@ export default function DepartmentHome() {
     return [];
   })();
 
+  // Split quickActions: primary is first (col-span-2), rest are regular
+  const primaryAction = quickActions.find(a => a.variant === 'primary');
+  const secondaryActions = quickActions.filter(a => a.variant !== 'primary');
+
   return (
-    <div className="space-y-5 relative">
-      <section
-        className="relative overflow-hidden rounded-3xl border p-5 sm:p-6"
+    <div className="flex flex-col gap-4">
+
+      {/* ── Department hero strip ──────────────────────────── */}
+      <div
+        className="relative overflow-hidden rounded-2xl border"
         style={{
-          borderColor: colorWithAlpha(deptColor, 0.24, 'rgba(255,255,255,0.1)'),
-          background:
-            `radial-gradient(circle at 10% 15%, ${colorWithAlpha(deptColor, 0.22)}, transparent 48%),` +
-            `radial-gradient(circle at 90% 5%, ${colorWithAlpha(deptColor, 0.1)}, transparent 45%),` +
-            'linear-gradient(180deg, rgba(16,22,33,0.96), rgba(12,16,25,0.97))',
-          boxShadow: `0 18px 44px ${colorWithAlpha(deptColor, 0.14)}`,
+          borderColor: colorWithAlpha(deptColor, 0.22, 'rgba(42,58,78,1)'),
+          background: `linear-gradient(135deg, ${colorWithAlpha(deptColor, 0.18)} 0%, rgba(12,16,25,0.97) 55%)`,
+          boxShadow: `0 12px 40px ${colorWithAlpha(deptColor, 0.12)}`,
         }}
       >
-        <div className="absolute inset-0 cad-ambient-grid opacity-40" />
-        <div className="cad-ambient-orb cad-orb-float-a -top-12 -left-10 w-44 h-44" style={{ backgroundColor: colorWithAlpha(deptColor, 0.24) }} />
-        <div className="cad-ambient-orb cad-orb-float-b bottom-4 right-10 w-52 h-52" style={{ backgroundColor: colorWithAlpha(deptColor, 0.12) }} />
+        {/* Ambient grid */}
+        <div className="absolute inset-0 cad-ambient-grid opacity-25 pointer-events-none" />
 
-        {deptLogo ? (
-          <div className="pointer-events-none absolute right-3 top-3 bottom-3 w-[38%] hidden xl:block opacity-25 cad-watermark-fade">
-            <img src={deptLogo} alt="" className="w-full h-full object-contain cad-watermark-image" />
+        {/* Accent top border */}
+        <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: `linear-gradient(90deg, ${deptColor}, transparent)` }} />
+
+        {/* Background watermark */}
+        {deptLogo && (
+          <div className="pointer-events-none absolute right-4 top-0 bottom-0 hidden xl:flex items-center opacity-[0.06]" style={{ width: '22%' }}>
+            <img src={deptLogo} alt="" className="w-full h-full object-contain" style={{ filter: 'grayscale(1) brightness(2)' }} />
           </div>
-        ) : null}
+        )}
 
-        <div className="relative grid grid-cols-1 xl:grid-cols-[1.35fr_0.65fr] gap-4">
-          <div className="min-w-0 rounded-2xl border border-white/5 bg-black/10 p-4 sm:p-5">
-            <div className="flex flex-wrap items-center gap-2 mb-4">
-              <span className="px-3 py-1 rounded-full border border-cad-border bg-cad-surface/70 text-xs uppercase tracking-[0.16em] text-cad-muted">
-                {departmentTypeLabel}
-              </span>
-              <span
-                className="px-3 py-1 rounded-full border text-xs"
-                style={{
-                  borderColor: colorWithAlpha(deptColor, 0.28),
-                  backgroundColor: colorWithAlpha(deptColor, 0.09),
-                  color: '#d9e7ff',
-                }}
-              >
-                {loading ? 'Syncing overview...' : `Live overview - ${stats.on_duty_units} on duty`}
-              </span>
-              {lastUpdated ? (
-                <span className="text-xs text-cad-muted">
-                  Refreshed {formatTimeAU(lastUpdated, '-', true)}
-                </span>
-              ) : null}
-            </div>
-
-            <div className="flex items-start gap-4">
+        <div className="relative px-5 py-4 sm:px-6">
+          <div className="flex items-start gap-4">
+            {/* Logo */}
+            <div
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl border flex items-center justify-center overflow-hidden flex-shrink-0"
+              style={{ borderColor: colorWithAlpha(deptColor, 0.3), backgroundColor: colorWithAlpha(deptColor, 0.1) }}
+            >
               {deptLogo ? (
-                <div
-                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl p-2 border bg-cad-surface/75 shadow-inner flex-shrink-0"
-                  style={{ borderColor: colorWithAlpha(deptColor, 0.25) }}
-                >
-                  <img src={deptLogo} alt="" className="w-full h-full object-contain" />
-                </div>
+                <img src={deptLogo} alt="" className="w-10 h-10 sm:w-12 sm:h-12 object-contain" />
               ) : (
-                <div
-                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border bg-cad-surface/75 text-lg text-cad-muted flex items-center justify-center flex-shrink-0"
-                  style={{ borderColor: colorWithAlpha(deptColor, 0.25) }}
-                >
-                  {activeDepartment?.short_name?.slice(0, 3) || 'DEP'}
-                </div>
+                <span className="text-sm font-bold text-cad-muted">{activeDepartment?.short_name?.slice(0, 3) || 'DEP'}</span>
               )}
-
-              <div className="min-w-0 flex-1">
-                <h2 className="text-3xl sm:text-4xl font-semibold tracking-tight text-cad-ink leading-tight">
-                  {activeDepartment?.name || 'Department'}
-                </h2>
-                <p className="text-base sm:text-lg text-cad-muted mt-2 max-w-3xl">{slogan}</p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4">
-                  <div className="rounded-xl border border-cad-border bg-cad-surface/55 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-[0.15em] text-cad-muted">Duty</p>
-                    <p className={`text-sm font-medium mt-1 ${dutyToneColor}`}>{dutyTone}</p>
-                  </div>
-                  <div className="rounded-xl border border-cad-border bg-cad-surface/55 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-[0.15em] text-cad-muted">{unitLabel}</p>
-                    <p className="text-sm font-medium mt-1 text-cad-ink truncate">
-                      {onActiveDeptDuty ? (myUnit?.callsign || 'On duty') : 'Not signed on'}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-cad-border bg-cad-surface/55 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-[0.15em] text-cad-muted">Status</p>
-                    <p className="text-sm font-medium mt-1 text-cad-ink capitalize">
-                      {onActiveDeptDuty ? String(myUnit?.status || 'available').replace(/_/g, ' ') : 'Offline'}
-                    </p>
-                  </div>
-                </div>
-              </div>
             </div>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
-            <WatermarkPanel logo={deptLogo} accent={deptColor} className="px-4 py-3">
-              <p className="text-xs text-cad-muted uppercase tracking-[0.15em]">Local Time</p>
-              <p className="text-2xl sm:text-3xl font-semibold mt-1 tabular-nums">{clockTimeLabel}</p>
-              <div className="flex items-center justify-between gap-2 mt-1">
-                <p className="text-sm text-cad-muted">{clockDateLabel}</p>
-                {lastUpdated ? (
-                  <p className="text-xs text-cad-muted">Updated {formatTimeAU(lastUpdated, '-', true)}</p>
-                ) : null}
-              </div>
-            </WatermarkPanel>
-
-            <WatermarkPanel logo={deptLogo} accent={deptColor} className="px-4 py-3">
-              <p className="text-xs text-cad-muted uppercase tracking-[0.15em] mb-2">Duty Controls</p>
-              {onActiveDeptDuty ? (
-                <>
-                  <div className="text-xs text-cad-muted mb-2">
-                    Signed on as <span className="text-cad-ink font-medium">{myUnit?.callsign || unitLabel}</span>
-                  </div>
-                  <button
-                    onClick={goOffDuty}
-                    disabled={offDutyLoading}
-                    className="w-full px-3 py-2 text-sm bg-red-500/12 text-red-300 border border-red-500/30 rounded-lg font-medium hover:bg-red-500/18 transition-colors disabled:opacity-50"
-                  >
-                    {offDutyLoading ? 'Processing...' : 'Go Off Duty'}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={goOnDuty}
-                    disabled={onOtherDeptDuty || onDutyLoading}
-                    className="w-full px-3 py-2 text-sm text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                    style={{ backgroundColor: deptColor }}
-                    title={onOtherDeptDuty ? 'You are already on duty in another department' : 'Go On Duty'}
-                  >
-                    {onOtherDeptDuty ? 'On Duty Elsewhere' : (onDutyLoading ? 'Processing...' : 'Go On Duty')}
-                  </button>
-                  <p className="text-xs text-cad-muted mt-2">
-                    {onOtherDeptDuty
-                      ? 'Sign off from your current department before joining this one.'
-                      : 'Sign on to begin live response and operational actions.'}
-                  </p>
-                </>
-              )}
-            </WatermarkPanel>
-          </div>
-        </div>
-      </section>
-
-      <div className="relative isolate">
-        {deptLogo ? (
-          <div className="pointer-events-none absolute inset-x-0 top-0 bottom-0 hidden sm:flex items-start justify-center">
-            <div className="w-[620px] h-[620px] mt-10 cad-page-watermark-mask opacity-90">
-              <img src={deptLogo} alt="" className="w-full h-full object-contain cad-page-watermark-image" />
-            </div>
-          </div>
-        ) : null}
-
-        <div className="relative space-y-4">
-          <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
-            {statCards.map((card) => (
-              <WatermarkPanel key={card.label} logo={deptLogo} accent={deptColor} className="p-4">
-                <p className="text-[11px] text-cad-muted uppercase tracking-[0.15em]">{card.label}</p>
-                <p className={`text-2xl font-semibold mt-1 ${card.tone}`}>{loading ? '...' : card.value}</p>
-                <p className="text-xs text-cad-muted mt-1">{card.help}</p>
-              </WatermarkPanel>
-            ))}
-          </section>
-
-          <section className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.75fr] gap-4">
-            <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4 sm:p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[11px] text-cad-muted uppercase tracking-[0.15em]">Operational Workspace</p>
-                  <h3 className="text-xl font-semibold mt-1">Quick launch</h3>
-                  <p className="text-sm text-cad-muted mt-1">
-                    Open the most-used workflows for {activeDepartment?.name || 'this department'}.
-                  </p>
-                </div>
-                <div
-                  className="hidden sm:block rounded-full border px-3 py-1 text-xs"
+            {/* Name / slogan */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className="text-[9px] uppercase tracking-[0.2em] px-2 py-0.5 rounded-md border"
                   style={{
-                    borderColor: colorWithAlpha(deptColor, 0.28),
-                    backgroundColor: colorWithAlpha(deptColor, 0.08),
-                    color: '#d9e7ff',
+                    borderColor: colorWithAlpha(deptColor, 0.3),
+                    backgroundColor: colorWithAlpha(deptColor, 0.1),
+                    color: '#c8d8f4',
                   }}
                 >
                   {departmentTypeLabel}
-                </div>
+                </span>
+                <span className="text-[9px] uppercase tracking-[0.15em] text-cad-muted">
+                  {loading ? 'Syncing...' : `${stats.on_duty_units} on duty`}
+                </span>
+                {lastUpdated && (
+                  <span className="text-[9px] text-cad-muted hidden sm:inline">· Updated {formatTimeAU(lastUpdated, '-', true)}</span>
+                )}
               </div>
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-cad-ink leading-tight">
+                {activeDepartment?.name || 'Department'}
+              </h2>
+              <p className="text-xs sm:text-sm text-cad-muted mt-1">{slogan}</p>
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mt-4">
-                {quickActions.map((action) => (
-                  <button
-                    key={`${action.route}:${action.label}`}
-                    type="button"
-                    onClick={() => navigate(action.route)}
-                    className={
-                      action.variant === 'primary'
-                        ? 'text-left rounded-xl border px-3 py-3 text-white font-medium transition-colors'
-                        : 'text-left rounded-xl border border-cad-border bg-cad-surface/70 px-3 py-3 text-cad-ink hover:border-cad-accent/40 hover:bg-cad-surface transition-colors'
-                    }
-                    style={
-                      action.variant === 'primary'
-                        ? {
-                            backgroundColor: colorWithAlpha(deptColor, 0.92, deptColor),
-                            borderColor: colorWithAlpha(deptColor, 0.7),
-                            boxShadow: `0 10px 24px ${colorWithAlpha(deptColor, 0.2)}`,
-                          }
-                        : undefined
-                    }
-                  >
-                    <div className="text-sm">{action.label}</div>
-                    <div className={`text-xs mt-1 ${action.variant === 'primary' ? 'text-white/85' : 'text-cad-muted'}`}>
-                      Open workspace
-                    </div>
-                  </button>
-                ))}
+            {/* Clock */}
+            <div className="hidden md:flex flex-col items-end flex-shrink-0">
+              <p className="text-2xl font-bold tabular-nums text-cad-ink">{clockTimeLabel}</p>
+              <p className="text-xs text-cad-muted mt-0.5">{clockDateLabel}</p>
+            </div>
+          </div>
+
+          {/* Duty & unit status row */}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {/* Duty status indicator */}
+            <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+              onActiveDeptDuty ? 'border-emerald-500/25 bg-emerald-500/8' :
+              onOtherDeptDuty ? 'border-amber-500/25 bg-amber-500/8' :
+              'border-cad-border bg-cad-surface/40'
+            }`}>
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                onActiveDeptDuty ? 'bg-emerald-400' :
+                onOtherDeptDuty ? 'bg-amber-400' :
+                'bg-cad-muted'
+              }`} style={onActiveDeptDuty ? { boxShadow: '0 0 8px rgba(52,211,153,0.7)' } : {}} />
+              <div>
+                <p className="text-[9px] uppercase tracking-[0.15em] text-cad-muted">Duty</p>
+                <p className={`text-xs font-semibold ${onActiveDeptDuty ? 'text-emerald-300' : onOtherDeptDuty ? 'text-amber-300' : 'text-cad-muted'}`}>
+                  {onActiveDeptDuty ? 'Active in this dept.' : onOtherDeptDuty ? 'In another dept.' : 'Off duty'}
+                </p>
               </div>
-            </WatermarkPanel>
+            </div>
 
-            <WatermarkPanel logo={deptLogo} accent={deptColor} className="p-4 sm:p-5">
-              <p className="text-[11px] text-cad-muted uppercase tracking-[0.15em]">Workflow Guidance</p>
-              <h3 className="text-lg font-semibold mt-1">Recommended operating flow</h3>
-              <ol className="space-y-2 mt-4">
-                {workflowChecklist.map((item, index) => (
-                  <li key={item} className="flex items-start gap-3">
-                    <span
-                      className="mt-0.5 w-5 h-5 rounded-full text-[11px] flex items-center justify-center border shrink-0"
-                      style={{
-                        borderColor: colorWithAlpha(deptColor, 0.32),
-                        backgroundColor: colorWithAlpha(deptColor, 0.12),
-                        color: '#d9e7ff',
-                      }}
-                    >
-                      {index + 1}
-                    </span>
-                    <span className="text-sm text-cad-muted leading-5">{item}</span>
-                  </li>
-                ))}
-              </ol>
-            </WatermarkPanel>
-          </section>
-
-          {departmentPanels.length > 0 && (
-            <section className={`grid grid-cols-1 gap-4 ${departmentPanels.length > 2 ? 'xl:grid-cols-3' : 'xl:grid-cols-2'}`}>
-              {departmentPanels.map((panel) => (
-                <WatermarkPanel key={panel.key} logo={deptLogo} accent={deptColor} className="p-4 sm:p-5">
-                  <p className="text-[11px] text-cad-muted uppercase tracking-[0.15em]">{panel.eyebrow}</p>
-                  {panel.value ? (
-                    <div className="flex items-end justify-between gap-3 mt-2">
-                      <h3 className="text-lg font-semibold leading-tight">{panel.title}</h3>
-                      <p className={`text-3xl font-semibold ${panel.valueTone || 'text-cad-accent-light'}`}>{panel.value}</p>
-                    </div>
-                  ) : (
-                    <h3 className="text-lg font-semibold mt-2 leading-tight">{panel.title}</h3>
-                  )}
-                  <p className="text-sm text-cad-muted mt-2">{panel.body}</p>
-                  <div className="flex flex-wrap gap-2 mt-4">
-                    {panel.actions.map((action) => (
-                      <button
-                        key={`${panel.key}:${action.route}`}
-                        type="button"
-                        onClick={() => navigate(action.route)}
-                        className={
-                          action.variant === 'primary'
-                            ? 'px-3 py-1.5 rounded-lg text-white text-sm font-medium transition-colors'
-                            : 'px-3 py-1.5 rounded-lg bg-cad-surface border border-cad-border text-cad-ink text-sm hover:border-cad-accent/50 transition-colors'
-                        }
-                        style={action.variant === 'primary' ? { backgroundColor: deptColor } : undefined}
-                      >
-                        {action.variant === 'primary' ? `+ ${action.label}` : action.label}
-                      </button>
-                    ))}
+            {onActiveDeptDuty && (
+              <>
+                <div className="flex items-center gap-2 rounded-lg border border-cad-border bg-cad-surface/40 px-3 py-2">
+                  <div>
+                    <p className="text-[9px] uppercase tracking-[0.15em] text-cad-muted">{unitLabel}</p>
+                    <p className="text-xs font-semibold text-cad-ink">{myUnit?.callsign || 'On duty'}</p>
                   </div>
-                </WatermarkPanel>
-              ))}
-            </section>
-          )}
+                </div>
+                <div className="flex items-center gap-2 rounded-lg border border-cad-border bg-cad-surface/40 px-3 py-2">
+                  <div>
+                    <p className="text-[9px] uppercase tracking-[0.15em] text-cad-muted">Status</p>
+                    <p className="text-xs font-semibold text-cad-ink capitalize">{String(myUnit?.status || 'available').replace(/_/g, ' ')}</p>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Duty controls */}
+            <div className="ml-auto flex gap-2">
+              {onActiveDeptDuty ? (
+                <button
+                  onClick={goOffDuty}
+                  disabled={offDutyLoading}
+                  className="px-4 py-2 rounded-xl border border-red-500/30 bg-red-500/10 text-red-300 text-sm font-semibold hover:bg-red-500/15 transition-colors disabled:opacity-50"
+                >
+                  {offDutyLoading ? 'Processing...' : 'Go Off Duty'}
+                </button>
+              ) : (
+                <button
+                  onClick={goOnDuty}
+                  disabled={onOtherDeptDuty || onDutyLoading}
+                  className="px-4 py-2 rounded-xl border text-white text-sm font-semibold transition-all hover:-translate-y-0.5 disabled:opacity-50"
+                  style={{
+                    borderColor: colorWithAlpha(deptColor, 0.5),
+                    background: onOtherDeptDuty ? undefined : `linear-gradient(135deg, ${deptColor}, ${colorWithAlpha(deptColor, 0.75)})`,
+                    boxShadow: onOtherDeptDuty ? undefined : `0 6px 18px ${colorWithAlpha(deptColor, 0.3)}`,
+                    backgroundColor: onOtherDeptDuty ? 'rgba(42,58,78,0.8)' : undefined,
+                  }}
+                  title={onOtherDeptDuty ? 'You are already on duty in another department' : undefined}
+                >
+                  {onOtherDeptDuty ? 'On Duty Elsewhere' : (onDutyLoading ? 'Processing...' : 'Go On Duty')}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
+      {/* ── Live stat strip ────────────────────────────────── */}
+      <div className="flex gap-3 flex-wrap sm:flex-nowrap">
+        <StatCell
+          label={isFireDepartment ? 'Active Incidents' : 'Active Calls'}
+          value={stats.active_calls}
+          tone="blue"
+          loading={loading}
+        />
+        <StatCell
+          label="Urgent / 000"
+          value={stats.urgent_calls}
+          tone="red"
+          loading={loading}
+          pulse
+        />
+        <StatCell
+          label={isFireDepartment ? 'Crews On Duty' : 'Units On Duty'}
+          value={stats.on_duty_units}
+          tone="green"
+          loading={loading}
+        />
+        <StatCell
+          label={isFireDepartment ? 'Crews Available' : 'Units Available'}
+          value={stats.available_units}
+          tone="default"
+          loading={loading}
+        />
+        <StatCell
+          label={isFireDepartment ? 'Crews Assigned' : 'Assigned'}
+          value={stats.assigned_units}
+          tone="amber"
+          loading={loading}
+        />
+        {isPoliceDepartment && (
+          <>
+            <StatCell label="Warrants" value={stats.active_warrants} tone="amber" loading={loading} />
+            <StatCell label="POIs" value={stats.active_bolos} tone="blue" loading={loading} />
+          </>
+        )}
+      </div>
+
+      {/* ── Main content: quick launch + dept panels ───────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-4">
+
+        {/* Quick launch workspace */}
+        <div
+          className="rounded-2xl border overflow-hidden"
+          style={{ borderColor: colorWithAlpha(deptColor, 0.16, 'rgba(42,58,78,1)') }}
+        >
+          <div
+            className="px-4 py-3 border-b flex items-center justify-between"
+            style={{
+              borderColor: colorWithAlpha(deptColor, 0.14, 'rgba(42,58,78,1)'),
+              background: colorWithAlpha(deptColor, 0.06),
+            }}
+          >
+            <div>
+              <SectionHeading>Operational Workspace</SectionHeading>
+              <p className="text-sm font-semibold text-cad-ink">Quick Launch</p>
+            </div>
+            <span
+              className="text-[9px] uppercase tracking-wider px-2 py-1 rounded-lg border"
+              style={{
+                borderColor: colorWithAlpha(deptColor, 0.25),
+                backgroundColor: colorWithAlpha(deptColor, 0.08),
+                color: '#c8d8f4',
+              }}
+            >
+              {departmentTypeLabel}
+            </span>
+          </div>
+
+          <div className="p-4 bg-cad-card/50">
+            {/* Primary action (full width) */}
+            {primaryAction && (
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <ActionButton {...primaryAction} accent={deptColor} navigate={navigate} />
+              </div>
+            )}
+            {/* Secondary actions grid */}
+            {secondaryActions.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-3 gap-2">
+                {secondaryActions.map(action => (
+                  <ActionButton key={action.route} {...action} accent={deptColor} navigate={navigate} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Workflow guidance panel */}
+        <div
+          className="rounded-2xl border overflow-hidden"
+          style={{ borderColor: colorWithAlpha(deptColor, 0.16, 'rgba(42,58,78,1)') }}
+        >
+          <div
+            className="px-4 py-3 border-b"
+            style={{
+              borderColor: colorWithAlpha(deptColor, 0.14, 'rgba(42,58,78,1)'),
+              background: colorWithAlpha(deptColor, 0.06),
+            }}
+          >
+            <SectionHeading>Workflow</SectionHeading>
+            <p className="text-sm font-semibold text-cad-ink">Operating Procedure</p>
+          </div>
+          <div className="p-4 bg-cad-card/50">
+            {(() => {
+              const steps = isDispatch
+                ? [
+                    'Monitor new calls, timers, and priority alerts on the dispatch board.',
+                    'Allocate the closest available units and track pursuits in real time.',
+                    'Use lookup for cross-checks before escalating or linking incidents.',
+                  ]
+                : isPoliceDepartment
+                ? [
+                    'Use lookup to confirm licence and registration details before actioning.',
+                    'Create arrest reports for draft and supervisor review, then finalise when ready.',
+                    'Link records, warrants, POIs, and evidence under a shared incident.',
+                  ]
+                : isEmsDepartment
+                ? [
+                    'Allocate crews on the response board, then document care in Treatment Log.',
+                    'Use Transport Tracker for destination, ETA, and handover status.',
+                    'Complete patient reports for clinical records and follow-up review.',
+                  ]
+                : isFireDepartment
+                ? [
+                    'Use Response Board for live incident allocation and appliance coordination.',
+                    'Document post-incident outcomes in Incident Reports.',
+                    'Maintain pre-plans and apparatus readiness for repeat-risk locations.',
+                  ]
+                : ['Use the relevant workflow for live response, lookup, and documentation.'];
+              return (
+                <ol className="space-y-3">
+                  {steps.map((step, i) => (
+                    <li key={i} className="flex gap-3 items-start">
+                      <span
+                        className="mt-0.5 w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center border shrink-0 tabular-nums"
+                        style={{
+                          borderColor: colorWithAlpha(deptColor, 0.35),
+                          backgroundColor: colorWithAlpha(deptColor, 0.12),
+                          color: '#c8d8f4',
+                        }}
+                      >
+                        {i + 1}
+                      </span>
+                      <p className="text-xs text-cad-muted leading-relaxed">{step}</p>
+                    </li>
+                  ))}
+                </ol>
+              );
+            })()}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Department-specific panels ─────────────────────── */}
+      {departmentPanels.length > 0 && (
+        <div className={`grid grid-cols-1 gap-4 ${departmentPanels.length >= 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-2'}`}>
+          {departmentPanels.map((panel) => (
+            <PanelCard key={panel.key} panel={panel} accent={deptColor} navigate={navigate} />
+          ))}
+        </div>
+      )}
+
+      {/* Error */}
       {error && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2">
-          <p className="text-xs text-red-300 whitespace-pre-wrap">{error}</p>
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 flex items-center gap-3">
+          <svg className="w-4 h-4 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <p className="text-xs text-red-300">{error}</p>
         </div>
       )}
 
