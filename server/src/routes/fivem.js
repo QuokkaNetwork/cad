@@ -728,8 +728,8 @@ function summarizeVehicleBoloFlags(flags = []) {
   const labels = flags
     .map((flag) => formatVehicleBoloFlag(flag))
     .filter(Boolean);
-  if (labels.length === 0) return 'Vehicle BOLO match';
-  return `BOLO Flags: ${labels.join(', ')}`;
+  if (labels.length === 0) return 'Vehicle POI match';
+  return `POI Flags: ${labels.join(', ')}`;
 }
 
 function normalizeDateOnly(value) {

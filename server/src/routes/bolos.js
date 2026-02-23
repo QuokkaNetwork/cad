@@ -128,7 +128,7 @@ router.post('/', requireAuth, (req, res) => {
 // Resolve a BOLO
 router.patch('/:id/resolve', requireAuth, (req, res) => {
   const bolo = Bolos.findById(parseInt(req.params.id, 10));
-  if (!bolo) return res.status(404).json({ error: 'BOLO not found' });
+  if (!bolo) return res.status(404).json({ error: 'POI not found' });
 
   Bolos.updateStatus(bolo.id, 'resolved');
   audit(req.user.id, 'bolo_resolved', { boloId: bolo.id });
@@ -139,7 +139,7 @@ router.patch('/:id/resolve', requireAuth, (req, res) => {
 // Cancel a BOLO
 router.patch('/:id/cancel', requireAuth, (req, res) => {
   const bolo = Bolos.findById(parseInt(req.params.id, 10));
-  if (!bolo) return res.status(404).json({ error: 'BOLO not found' });
+  if (!bolo) return res.status(404).json({ error: 'POI not found' });
 
   Bolos.updateStatus(bolo.id, 'cancelled');
   audit(req.user.id, 'bolo_cancelled', { boloId: bolo.id });

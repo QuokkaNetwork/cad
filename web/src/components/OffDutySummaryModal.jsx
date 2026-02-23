@@ -41,7 +41,7 @@ function buildStatRows(summary) {
     { key: 'records_created', label: 'Reports / Records Filed' },
     { key: 'shift_notes_created', label: 'Shift Notes Added' },
     { key: 'warrants_created', label: 'Warrants Created' },
-    { key: 'bolos_created', label: 'BOLOs Created' },
+    { key: 'bolos_created', label: 'POIs Created' },
     { key: 'patient_analyses_created', label: 'Patient Analyses Created' },
     { key: 'patient_analyses_updated', label: 'Patient Analyses Updated' },
     { key: 'pursuit_outcomes_logged', label: 'Pursuit Outcomes Logged' },

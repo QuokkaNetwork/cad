@@ -105,7 +105,7 @@ export default function BOLOs() {
       const data = await api.get(`/api/bolos?department_id=${deptId}`);
       setBolos(data);
     } catch (err) {
-      console.error('Failed to load BOLOs:', err);
+      console.error('Failed to load POIs:', err);
     }
   }, [deptId, isLaw]);
 
@@ -241,7 +241,7 @@ export default function BOLOs() {
       resetCreateForm();
       fetchData();
     } catch (err) {
-      alert('Failed to create BOLO: ' + err.message);
+      alert('Failed to create POI: ' + err.message);
     }
   }
 
@@ -250,17 +250,17 @@ export default function BOLOs() {
       await api.patch(`/api/bolos/${id}/resolve`);
       fetchData();
     } catch (err) {
-      alert('Failed to resolve BOLO: ' + err.message);
+      alert('Failed to resolve POI: ' + err.message);
     }
   }
 
   async function cancelBolo(id) {
-    if (!confirm('Cancel this BOLO?')) return;
+    if (!confirm('Cancel this POI?')) return;
     try {
       await api.patch(`/api/bolos/${id}/cancel`);
       fetchData();
     } catch (err) {
-      alert('Failed to cancel BOLO: ' + err.message);
+      alert('Failed to cancel POI: ' + err.message);
     }
   }
 
@@ -274,7 +274,7 @@ export default function BOLOs() {
               onClick={openCreateModal}
               className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
             >
-              + New BOLO
+              + New POI
             </button>
           </div>
 
@@ -288,12 +288,12 @@ export default function BOLOs() {
               />
             ))}
             {bolos.length === 0 && (
-              <p className="text-sm text-cad-muted col-span-full text-center py-8">No active BOLOs</p>
+              <p className="text-sm text-cad-muted col-span-full text-center py-8">No active POIs</p>
             )}
           </div>
 
-          {/* New BOLO Modal */}
-          <Modal open={showNew} onClose={closeCreateModal} title="Create BOLO">
+          {/* New POI Modal */}
+          <Modal open={showNew} onClose={closeCreateModal} title="Create POI">
             <form onSubmit={createBolo} className="space-y-3">
               {/* Type toggle */}
               <div className="flex bg-cad-surface rounded border border-cad-border overflow-hidden">
@@ -511,7 +511,7 @@ export default function BOLOs() {
                   type="submit"
                   className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors"
                 >
-                  Create BOLO
+                  Create POI
                 </button>
                 <button
                   type="button"
@@ -526,9 +526,9 @@ export default function BOLOs() {
         </>
       ) : (
         <div className="bg-cad-card border border-cad-border rounded-lg p-5">
-          <h2 className="text-xl font-bold mb-2">BOLO Board</h2>
+          <h2 className="text-xl font-bold mb-2">POI Board</h2>
           <p className="text-sm text-cad-muted">
-            BOLO management is available for law enforcement departments only.
+            POI (Person of Interest) management is available for law enforcement departments only.
           </p>
         </div>
       )}

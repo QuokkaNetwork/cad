@@ -328,20 +328,20 @@ export default function DepartmentHome() {
           </div>
 
           <div className="bg-cad-card border border-cad-border rounded-xl p-4">
-            <p className="text-xs text-cad-muted uppercase tracking-wider">Active BOLOs</p>
+            <p className="text-xs text-cad-muted uppercase tracking-wider">Active POIs</p>
             <p className="text-3xl font-semibold text-cad-accent-light mt-2">{loading ? '...' : stats.active_bolos}</p>
             <div className="flex items-center gap-2 mt-3">
               <button
                 onClick={() => navigate('/bolos?new=1')}
                 className="px-3 py-1.5 rounded bg-cad-accent hover:bg-cad-accent-light text-white text-xs font-medium transition-colors"
               >
-                + New BOLO
+                + New POI
               </button>
               <button
                 onClick={() => navigate('/bolos')}
                 className="px-3 py-1.5 rounded bg-cad-surface border border-cad-border hover:border-cad-accent/50 text-cad-ink text-xs transition-colors"
               >
-                View BOLOs
+                View POIs
               </button>
             </div>
           </div>
