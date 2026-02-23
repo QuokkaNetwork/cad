@@ -9,11 +9,27 @@ const POSTER_WIDTH = 1080;
 const POSTER_HEIGHT = 1350;
 
 const PHOTO_FRAME = Object.freeze({
-  x: 72,
-  y: 278,
-  width: 450,
-  height: 610,
+  x: 58,
+  y: 276,
+  width: 468,
+  height: 622,
   radius: 14,
+});
+
+const TEMPLATE_TEXT_LAYOUT = Object.freeze({
+  x: 600,
+  topY: 360,
+  gapY: 140,
+  nameValueOffsetY: 78,
+  locationValueOffsetY: 78,
+  warrantCountValueOffsetY: 78,
+  wantedForValueOffsetY: 92,
+  nameFontSize: 38,
+  locationFontSize: 38,
+  warrantCountFontSize: 42,
+  wantedForFontSize: 34,
+  nameLineHeight: 46,
+  wantedForLineHeight: 50,
 });
 
 const TEXT_COLORS = Object.freeze({
@@ -261,25 +277,79 @@ function buildPosterFieldOverlaySvg({
   const nameLines = wrapText(safeName, { maxCharsPerLine: 18, maxLines: 2 });
 
   const line = (text, x, y, size, fill = TEXT_COLORS.white, weight = 700) => (
-    `<text x="${x}" y="${y}" fill="${fill}" font-family="Arial, Helvetica, sans-serif" font-size="${size}" font-weight="${weight}">${xmlEscape(text)}</text>`
+    `<text x="${x}" y="${y}" fill="${fill}" font-family="Arial, Helvetica, sans-serif" font-size="${size}" font-weight="${weight}" paint-order="stroke fill" stroke="rgba(0,0,0,0.18)" stroke-width="1.5">${xmlEscape(text)}</text>`
   );
 
-  const labelX = 600;
-  const valueX = 600;
-  const topY = 360;
-  const gapY = 140;
-  const wantedForLineHeight = 50;
-  const wantedForStartY = topY + (gapY * 3) + 58;
-  const nameLineStartY = topY + 62;
-  const nameLineHeight = 46;
+  const valueX = TEMPLATE_TEXT_LAYOUT.x;
+  const topY = TEMPLATE_TEXT_LAYOUT.topY;
+  const gapY = TEMPLATE_TEXT_LAYOUT.gapY;
+  const wantedForStartY = topY + (gapY * 3) + TEMPLATE_TEXT_LAYOUT.wantedForValueOffsetY;
+  const nameLineStartY = topY + TEMPLATE_TEXT_LAYOUT.nameValueOffsetY;
+  const nameLineHeight = TEMPLATE_TEXT_LAYOUT.nameLineHeight;
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${POSTER_WIDTH}" height="${POSTER_HEIGHT}" viewBox="0 0 ${POSTER_WIDTH} ${POSTER_HEIGHT}">`,
-    ...nameLines.map((value, index) => line(value, valueX, nameLineStartY + (index * nameLineHeight), 38, TEXT_COLORS.white, 700)),
-    line(safeLocation || 'Los Santos', valueX, topY + gapY + 62, 38, TEXT_COLORS.white, 700),
-    line(safeWarrantCount, valueX, topY + (gapY * 2) + 62, 42, TEXT_COLORS.white, 900),
-    ...wantedLines.map((value, index) => line(value, valueX, wantedForStartY + (index * wantedForLineHeight), 34, TEXT_COLORS.white, 700)),
+    ...nameLines.map((value, index) => line(
+      value,
+      valueX,
+      nameLineStartY + (index * nameLineHeight),
+      TEMPLATE_TEXT_LAYOUT.nameFontSize,
+      TEXT_COLORS.white,
+      700
+    )),
+    line(
+      safeLocation || 'Los Santos',
+      valueX,
+      topY + gapY + TEMPLATE_TEXT_LAYOUT.locationValueOffsetY,
+      TEMPLATE_TEXT_LAYOUT.locationFontSize,
+      TEXT_COLORS.white,
+      700
+    ),
+    line(
+      safeWarrantCount,
+      valueX,
+      topY + (gapY * 2) + TEMPLATE_TEXT_LAYOUT.warrantCountValueOffsetY,
+      TEMPLATE_TEXT_LAYOUT.warrantCountFontSize,
+      TEXT_COLORS.white,
+      900
+    ),
+    ...wantedLines.map((value, index) => line(
+      value,
+      valueX,
+      wantedForStartY + (index * TEMPLATE_TEXT_LAYOUT.wantedForLineHeight),
+      TEMPLATE_TEXT_LAYOUT.wantedForFontSize,
+      TEXT_COLORS.white,
+      700
+    )),
     '</svg>',
+  ].join('');
+}
+
+function buildTemplatePlaceholderPhotoSvg() {
+  const width = PHOTO_FRAME.width - 12;
+  const height = PHOTO_FRAME.height - 12;
+  const centerX = Math.round(width / 2);
+  const headY = 186;
+  const torsoY = 302;
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `<defs>
+      <linearGradient id="bgFade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="rgba(255,255,255,0.06)" />
+        <stop offset="100%" stop-color="rgba(255,255,255,0.02)" />
+      </linearGradient>
+      <linearGradient id="sil" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#d7dce8" stop-opacity="0.45" />
+        <stop offset="100%" stop-color="#c7cedd" stop-opacity="0.22" />
+      </linearGradient>
+    </defs>`,
+    `<rect x="0" y="0" width="${width}" height="${height}" rx="${Math.max(8, PHOTO_FRAME.radius - 4)}" fill="url(#bgFade)" />`,
+    `<circle cx="${centerX}" cy="${headY}" r="92" fill="url(#sil)" stroke="rgba(255,255,255,0.18)" stroke-width="3" />`,
+    `<path d="M ${centerX - 136} ${torsoY} C ${centerX - 136} ${torsoY - 78}, ${centerX - 80} ${torsoY - 120}, ${centerX} ${torsoY - 120} C ${centerX + 80} ${torsoY - 120}, ${centerX + 136} ${torsoY - 78}, ${centerX + 136} ${torsoY} L ${centerX + 136} ${torsoY + 184} Q ${centerX + 136} ${torsoY + 214}, ${centerX + 106} ${torsoY + 214} L ${centerX - 106} ${torsoY + 214} Q ${centerX - 136} ${torsoY + 214}, ${centerX - 136} ${torsoY + 184} Z" fill="url(#sil)" stroke="rgba(255,255,255,0.15)" stroke-width="3" />`,
+    `<rect x="${centerX - 148}" y="${height - 154}" width="296" height="68" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)" stroke-width="2" />`,
+    `<text x="${centerX}" y="${height - 112}" text-anchor="middle" fill="${TEXT_COLORS.muted}" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="0.5">No licence photo</text>`,
+    `</svg>`,
   ].join('');
 }
 
@@ -397,6 +467,16 @@ async function renderWantedPoster({
         top: PHOTO_FRAME.y,
       });
     }
+  }
+  if (!hasMugshot && hasCustomTemplate) {
+    const placeholderPhoto = await sharp(Buffer.from(buildTemplatePlaceholderPhotoSvg()))
+      .png()
+      .toBuffer();
+    composites.push({
+      input: placeholderPhoto,
+      left: PHOTO_FRAME.x + 6,
+      top: PHOTO_FRAME.y + 6,
+    });
   }
 
   if (hasCustomTemplate) {
