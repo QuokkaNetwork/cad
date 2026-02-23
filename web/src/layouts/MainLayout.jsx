@@ -23,7 +23,8 @@ function buildWatermarkCssValue(url) {
 export default function MainLayout() {
   const location = useLocation();
   const { activeDepartment } = useDepartment();
-  const hideSidebar = ['/settings', '/home'].includes(location.pathname) || location.pathname.startsWith('/admin');
+  const isAdminRoute = location.pathname.startsWith('/admin');
+  const hideSidebar = ['/settings', '/home'].includes(location.pathname) || isAdminRoute;
   const hasDepartmentTheme = !!(activeDepartment && !hideSidebar);
   const departmentColor = String(activeDepartment?.color || '#0052C2').trim() || '#0052C2';
   const departmentLogo = String(activeDepartment?.icon || '').trim();
@@ -37,7 +38,7 @@ export default function MainLayout() {
 
   return (
     <div
-      className={`h-screen flex flex-col ${hasDepartmentTheme ? 'cad-department-theme' : ''}`}
+      className={`h-screen flex flex-col ${hasDepartmentTheme ? 'cad-department-theme' : ''} ${isAdminRoute ? 'cad-admin-route' : ''}`}
       style={themeStyle}
     >
       <Header />
@@ -45,7 +46,7 @@ export default function MainLayout() {
         {!hideSidebar && <Sidebar />}
         <main className="cad-app-main-shell flex-1 overflow-y-auto p-6 bg-cad-bg relative">
           <div className="cad-app-main-overlay" aria-hidden="true" />
-          <div className="cad-app-page-content relative z-10">
+          <div className={`cad-app-page-content relative z-10 ${isAdminRoute ? 'cad-admin-page-content' : ''}`}>
             <Outlet />
           </div>
         </main>

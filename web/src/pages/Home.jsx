@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+﻿import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -42,7 +42,7 @@ function DepartmentCard({ dept, onSelect, index = 0 }) {
   return (
     <button
       onClick={() => onSelect(dept)}
-      className="relative w-full text-left rounded-2xl border overflow-hidden min-h-[176px] p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl bg-cad-card/95"
+      className="relative w-full text-left rounded-2xl border overflow-hidden min-h-[176px] p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl bg-cad-card/95 cad-sheen"
       style={{
         borderColor: colorWithAlpha(accent, 0.28, 'rgba(255,255,255,0.12)'),
         boxShadow: `0 10px 28px ${colorWithAlpha(accent, 0.14)}`,
@@ -109,129 +109,11 @@ function DepartmentCard({ dept, onSelect, index = 0 }) {
             }}
           >
             Launch
-            <span aria-hidden="true">→</span>
+            <span aria-hidden="true">-&gt;</span>
           </div>
         </div>
       </div>
     </button>
-  );
-}
-
-function LandingHero({ user, departments, isAdmin }) {
-  const linked = !!user?.discord_id;
-  const cards = departments.slice(0, 4);
-  const primaryLogo = cards.find((d) => String(d?.icon || '').trim())?.icon || '';
-
-  return (
-    <section className="relative overflow-hidden rounded-3xl border border-cad-border bg-cad-card/90 p-5 sm:p-7 mb-6">
-      <div className="absolute inset-0 cad-ambient-grid opacity-50" />
-      <div className="cad-ambient-orb cad-orb-float-a -top-10 -left-10 w-48 h-48 bg-cad-accent/30" />
-      <div className="cad-ambient-orb cad-orb-float-b top-8 right-4 w-56 h-56 bg-cad-gold/12" />
-
-      <div className="relative grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-5">
-        <div className="space-y-5">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cad-border bg-cad-surface/70 text-xs text-cad-muted">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            Secure CAD Access
-          </div>
-
-          <div>
-            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-cad-ink">
-              {user?.name ? `${user.name}, select a workspace` : 'Select a department workspace'}
-            </h1>
-            <p className="text-cad-muted mt-2 max-w-2xl">
-              Open the department you are rostered to and continue into dispatch, records, search, and incident workflows.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <HeroStat label="Workspaces" value={departments.length} tone="cad" />
-            <HeroStat label="Discord Access" value={linked ? 'Verified' : 'Pending'} tone={linked ? 'ok' : 'warn'} />
-            <HeroStat label="Profile" value={isAdmin ? 'Administrator' : 'Operator'} tone={isAdmin ? 'gold' : 'cad'} />
-          </div>
-
-          <div className="rounded-2xl border border-cad-border bg-cad-surface/55 p-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div>
-                <p className="text-xs uppercase tracking-[0.16em] text-cad-muted">Operational Guidance</p>
-                <p className="text-sm text-cad-ink mt-1">Choose the correct department before going on duty to ensure permissions, unit status, and reports are routed correctly.</p>
-              </div>
-              <div className="text-xs text-cad-muted sm:text-right">
-                {isAdmin ? 'Admin tools remain available after department selection.' : 'Department access is controlled by your linked Discord roles.'}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="relative">
-          {primaryLogo ? (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="w-56 h-56 cad-page-watermark-mask opacity-80">
-                <img src={primaryLogo} alt="" className="w-full h-full object-contain cad-page-watermark-image" />
-              </div>
-            </div>
-          ) : null}
-          <div className="relative rounded-2xl border border-cad-border bg-cad-surface/65 p-4 sm:p-5 overflow-hidden">
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.16em] text-cad-muted">Available Workspaces</p>
-                <h3 className="font-semibold mt-1">Department Access</h3>
-              </div>
-              <div className="text-xs px-2.5 py-1 rounded-full border border-cad-border bg-cad-card/70 text-cad-muted">
-                {departments.length} total
-              </div>
-            </div>
-
-            <div className="space-y-2.5">
-              {cards.map((dept) => (
-                <div
-                  key={`hero-${dept.id}`}
-                  className="flex items-center gap-3 rounded-xl border border-cad-border bg-cad-card/85 px-3 py-2.5"
-                >
-                  {dept.icon ? (
-                    <img src={dept.icon} alt="" className="w-8 h-8 object-contain rounded-lg bg-cad-surface border border-cad-border p-0.5" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-lg border border-cad-border bg-cad-surface flex items-center justify-center text-[10px] text-cad-muted">
-                      {getInitials(dept.short_name || dept.name)}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{dept.name}</p>
-                    <p className="text-xs text-cad-muted truncate">{dept.short_name || getDepartmentKindLabel(dept)}</p>
-                  </div>
-                  <span
-                    className="px-2 py-0.5 rounded border text-[10px] uppercase tracking-wider"
-                    style={{
-                      borderColor: colorWithAlpha(dept.color || '#0052C2', 0.25),
-                      backgroundColor: colorWithAlpha(dept.color || '#0052C2', 0.08),
-                      color: '#dce8ff',
-                    }}
-                  >
-                    {getDepartmentKindLabel(dept)}
-                  </span>
-                </div>
-              ))}
-              {departments.length > cards.length && (
-                <div className="text-xs text-cad-muted pt-1">
-                  +{departments.length - cards.length} more department{departments.length - cards.length === 1 ? '' : 's'} available below
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-cad-border/70 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
-                <p className="text-xs uppercase tracking-wider text-cad-muted">Session</p>
-                <p className="text-xs mt-1 text-cad-ink">{linked ? 'Discord-linked session active' : 'Link Discord to unlock department access'}</p>
-              </div>
-              <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
-                <p className="text-xs uppercase tracking-wider text-cad-muted">Next Step</p>
-                <p className="text-xs mt-1 text-cad-ink">Select a department card below to enter the operational dashboard.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -247,6 +129,205 @@ function HeroStat({ label, value, tone = 'cad' }) {
       <p className="text-xs uppercase tracking-[0.16em] text-cad-muted">{label}</p>
       <p className="text-lg font-semibold mt-1 truncate">{value}</p>
     </div>
+  );
+}
+
+function MiniCount({ label, value }) {
+  return (
+    <div className="rounded-lg border border-cad-border bg-cad-card/70 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-[0.16em] text-cad-muted">{label}</p>
+      <p className="text-base font-semibold mt-1">{value}</p>
+    </div>
+  );
+}
+
+function departmentListLabel(departments) {
+  const count = Number(departments?.length || 0);
+  return `${count} available`;
+}
+
+function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment, onOpenAdmin }) {
+  const linked = !!user?.discord_id;
+  const cards = departments.slice(0, 4);
+  const primaryLogo = cards.find((d) => String(d?.icon || '').trim())?.icon || '';
+
+  const kindCounts = departments.reduce(
+    (acc, dept) => {
+      const kind = getDepartmentKindLabel(dept).toLowerCase();
+      if (kind.includes('dispatch')) acc.dispatch += 1;
+      else if (kind.includes('police')) acc.police += 1;
+      else if (kind.includes('ems')) acc.ems += 1;
+      else if (kind.includes('fire')) acc.fire += 1;
+      else acc.other += 1;
+      return acc;
+    },
+    { dispatch: 0, police: 0, ems: 0, fire: 0, other: 0 }
+  );
+
+  const readiness = !linked ? 'Setup Required' : departments.length > 0 ? 'Ready To Launch' : 'Access Pending';
+
+  return (
+    <section className="relative overflow-hidden rounded-3xl border border-cad-border bg-cad-card/90 mb-6 cad-sheen">
+      <div className="absolute inset-0 cad-ambient-grid opacity-50" />
+      <div className="cad-ambient-orb cad-orb-float-a -top-10 -left-10 w-48 h-48 bg-cad-accent/30" />
+      <div className="cad-ambient-orb cad-orb-float-b top-8 right-4 w-56 h-56 bg-cad-gold/12" />
+      {primaryLogo ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="w-[32rem] h-[32rem] cad-page-watermark-mask opacity-90">
+            <img src={primaryLogo} alt="" className="w-full h-full object-contain cad-page-watermark-image" />
+          </div>
+        </div>
+      ) : null}
+
+      <div className="relative p-5 sm:p-7">
+        <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-5">
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cad-border bg-cad-surface/70 text-xs text-cad-muted">
+                <span className={`w-2 h-2 rounded-full ${linked ? 'bg-emerald-400' : 'bg-amber-300'}`} />
+                CAD Access
+              </span>
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cad-border bg-cad-card/70 text-xs text-cad-muted">
+                {readiness}
+              </span>
+              {kindCounts.other > 0 && (
+                <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cad-border bg-cad-card/70 text-xs text-cad-muted">
+                  {kindCounts.other} additional workspace type{kindCounts.other === 1 ? '' : 's'}
+                </span>
+              )}
+            </div>
+
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-cad-ink">
+                {user?.name ? `Welcome, ${user.name}` : 'CAD Operations'}
+              </h1>
+              <p className="text-cad-muted mt-2 max-w-2xl">
+                Select your department workspace to access dispatch, lookup, incident, records, and operational tools with the correct permissions.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <HeroStat label="Workspaces" value={departments.length} tone="cad" />
+              <HeroStat label="Discord Access" value={linked ? 'Verified' : 'Pending'} tone={linked ? 'ok' : 'warn'} />
+              <HeroStat label="Profile" value={isAdmin ? 'Administrator' : 'Operator'} tone={isAdmin ? 'gold' : 'cad'} />
+            </div>
+
+            <div className="rounded-2xl border border-cad-border bg-cad-surface/55 p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-cad-muted">Operational Guidance</p>
+                  <p className="text-sm text-cad-ink mt-1">
+                    Choose the correct department before going on duty so unit status, reports, incidents, and tasking stay with the right team.
+                  </p>
+                </div>
+                <div className="text-xs text-cad-muted sm:text-right">
+                  {isAdmin ? 'Admin tools remain available after department selection.' : 'Access is controlled by your linked Discord roles.'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="relative rounded-2xl border border-cad-border bg-cad-surface/70 p-4 sm:p-5 overflow-hidden">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-cad-muted">Available Workspaces</p>
+                  <h3 className="font-semibold mt-1">Department Access</h3>
+                </div>
+                <div className="text-xs px-2.5 py-1 rounded-full border border-cad-border bg-cad-card/70 text-cad-muted">
+                  {departments.length} total
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <MiniCount label="Police" value={kindCounts.police} />
+                <MiniCount label="Dispatch" value={kindCounts.dispatch} />
+                <MiniCount label="EMS" value={kindCounts.ems} />
+                <MiniCount label="Fire" value={kindCounts.fire} />
+              </div>
+
+              <div className="space-y-2.5">
+                {cards.map((dept) => (
+                  <button
+                    key={`hero-${dept.id}`}
+                    onClick={() => onSelectDepartment(dept)}
+                    className="w-full text-left flex items-center gap-3 rounded-xl border border-cad-border bg-cad-card/85 px-3 py-2.5 hover:border-cad-accent/25 hover:bg-cad-card transition-colors"
+                  >
+                    {dept.icon ? (
+                      <img src={dept.icon} alt="" className="w-8 h-8 object-contain rounded-lg bg-cad-surface border border-cad-border p-0.5" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-lg border border-cad-border bg-cad-surface flex items-center justify-center text-[10px] text-cad-muted">
+                        {getInitials(dept.short_name || dept.name)}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{dept.name}</p>
+                      <p className="text-xs text-cad-muted truncate">{dept.short_name || getDepartmentKindLabel(dept)}</p>
+                    </div>
+                    <span
+                      className="px-2 py-0.5 rounded border text-[10px] uppercase tracking-wider"
+                      style={{
+                        borderColor: colorWithAlpha(dept.color || '#0052C2', 0.25),
+                        backgroundColor: colorWithAlpha(dept.color || '#0052C2', 0.08),
+                        color: '#dce8ff',
+                      }}
+                    >
+                      {getDepartmentKindLabel(dept)}
+                    </span>
+                  </button>
+                ))}
+                {departments.length > cards.length && (
+                  <div className="text-xs text-cad-muted pt-1">
+                    +{departments.length - cards.length} more department{departments.length - cards.length === 1 ? '' : 's'} available below
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-cad-border/70 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
+                  <p className="text-xs uppercase tracking-wider text-cad-muted">Session</p>
+                  <p className="text-xs mt-1 text-cad-ink">{linked ? 'Discord-linked session active' : 'Link Discord to unlock department access'}</p>
+                </div>
+                <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
+                  <p className="text-xs uppercase tracking-wider text-cad-muted">Next Step</p>
+                  <p className="text-xs mt-1 text-cad-ink">
+                    {departments.length ? 'Select a department card below to enter the operational dashboard.' : 'Wait for department role mappings, then launch a workspace.'}
+                  </p>
+                </div>
+              </div>
+
+              {isAdmin && (
+                <div className="mt-3 rounded-xl border border-cad-gold/20 bg-cad-gold/5 px-3 py-2.5">
+                  <p className="text-xs uppercase tracking-[0.16em] text-cad-gold">Administrator Access</p>
+                  <p className="text-xs text-cad-muted mt-1">Admin workspace is also available in the department grid below.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 pt-5 border-t border-cad-border/80">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4">
+            <div>
+              <h2 className="text-xl font-bold">Department Workspaces</h2>
+              <p className="text-sm text-cad-muted">
+                Choose a department to enter its operational dashboard, lookup tools, and active incident workflows.
+              </p>
+            </div>
+            <div className="text-xs text-cad-muted uppercase tracking-[0.16em]">
+              {departmentListLabel(departments)}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
+            {departments.map((dept, idx) => (
+              <DepartmentCard key={dept.id} dept={dept} onSelect={onSelectDepartment} index={idx} />
+            ))}
+            {isAdmin && <AdminCard onOpen={onOpenAdmin} />}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -266,7 +347,7 @@ function SetupPrompt({ user }) {
   }
 
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-cad-border bg-cad-card/90">
+    <div className="relative overflow-hidden rounded-3xl border border-cad-border bg-cad-card/90 cad-sheen">
       <div className="absolute inset-0 cad-ambient-grid opacity-60" />
       <div className="cad-ambient-orb cad-orb-float-a -top-6 -left-8 w-44 h-44 bg-[#5865F2]/30" />
       <div className="cad-ambient-orb cad-orb-float-b top-6 right-6 w-52 h-52 bg-cad-gold/15" />
@@ -290,7 +371,7 @@ function SetupPrompt({ user }) {
           </h2>
           <p className="text-cad-muted mt-2 max-w-xl">
             {!hasDiscord
-              ? 'Link your Discord account to unlock department access. Your Discord roles are used to determine which CAD workspaces you can enter.'
+              ? 'Link your Discord account to unlock department access. Your Discord roles determine which CAD workspaces you can enter.'
               : 'Your Discord account is linked, but no departments are assigned yet. Ask an administrator to map your Discord roles to CAD departments.'}
           </p>
 
@@ -331,7 +412,7 @@ function StepRow({ number, text, done = false }) {
   return (
     <div className="flex gap-3 items-start rounded-xl border border-cad-border bg-cad-card/70 p-3">
       <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${done ? 'bg-emerald-500/20 text-emerald-300' : 'bg-[#5865F2]/20 text-[#9ca8ff]'}`}>
-        {done ? '✓' : number}
+        {done ? 'OK' : number}
       </span>
       <p className="text-sm text-cad-muted leading-relaxed">{text}</p>
     </div>
@@ -342,7 +423,7 @@ function AdminCard({ onOpen }) {
   return (
     <button
       onClick={onOpen}
-      className="relative w-full text-left rounded-2xl border border-cad-gold/30 bg-cad-card min-h-[176px] p-5 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl"
+      className="relative w-full text-left rounded-2xl border border-cad-gold/30 bg-cad-card min-h-[176px] p-5 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl cad-sheen"
       style={{ boxShadow: '0 10px 28px rgba(245, 197, 66, 0.1)' }}
     >
       <div className="absolute inset-0 bg-gradient-to-br from-cad-gold/10 to-transparent" />
@@ -378,7 +459,7 @@ export default function Home() {
   if (needsSetup && !isAdmin) {
     return (
       <div className="w-full">
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-7xl mx-auto">
           <SetupPrompt user={user} />
         </div>
       </div>
@@ -387,29 +468,16 @@ export default function Home() {
 
   return (
     <div className="w-full">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         {needsSetup && isAdmin && <SetupBanner user={user} />}
 
-        <LandingHero user={user} departments={departmentList} isAdmin={isAdmin} />
-
-        <section className="bg-cad-card/80 border border-cad-border rounded-2xl p-4 sm:p-5">
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4">
-            <div>
-          <h2 className="text-xl font-bold">Department Workspaces</h2>
-          <p className="text-sm text-cad-muted">Choose a department to open its operational dashboard and tools.</p>
-        </div>
-        <div className="text-xs text-cad-muted uppercase tracking-[0.16em]">
-          {departmentList.length} available
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
-            {departmentList.map((dept, idx) => (
-              <DepartmentCard key={dept.id} dept={dept} onSelect={selectDepartment} index={idx} />
-            ))}
-            {isAdmin && <AdminCard onOpen={() => navigate('/admin')} />}
-          </div>
-        </section>
+        <WorkspaceHub
+          user={user}
+          departments={departmentList}
+          isAdmin={isAdmin}
+          onSelectDepartment={selectDepartment}
+          onOpenAdmin={() => navigate('/admin')}
+        />
       </div>
     </div>
   );

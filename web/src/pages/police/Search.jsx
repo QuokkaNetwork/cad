@@ -46,6 +46,57 @@ function formatGenderLabel(value) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
+function formatDateForLicenseCard(value, fallback = '') {
+  const text = String(value || '').trim();
+  if (!text) return fallback;
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) return text;
+  const date = new Date(parsed);
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = String(date.getFullYear());
+  return `${dd}-${mm}-${yyyy}`;
+}
+
+function listToLicenseCardText(value, fallback = 'None') {
+  let source = [];
+  if (Array.isArray(value)) {
+    source = value;
+  } else {
+    const single = String(value || '').trim();
+    if (single) source = [single];
+  }
+  const list = source
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean);
+  if (list.length === 0) return fallback;
+  return list.join(', ');
+}
+
+function sanitizeConditionsForLicenseCard(value) {
+  const list = Array.isArray(value)
+    ? value.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : (String(value || '').trim() ? [String(value || '').trim()] : []);
+  const hadQuizPass = list.some((entry) => /quiz\s*pass/i.test(entry));
+  const cleaned = list.filter((entry) => {
+    if (/quiz\s*pass/i.test(entry)) return false;
+    if (hadQuizPass && /^\d{1,3}%$/.test(entry)) return false;
+    return true;
+  });
+  return cleaned;
+}
+
+function resolveLicenseAddress(person, license) {
+  const direct = String(license?.address || person?.address || '').trim();
+  if (direct) return direct;
+  const line1 = String(person?.street || '').trim();
+  const line2 = String(person?.suburb || '').trim();
+  const state = String(person?.state || '').trim();
+  const postcode = String(person?.postcode || person?.postal || '').trim();
+  const secondLine = [line2, state, postcode].filter(Boolean).join(' ').trim();
+  return [line1, secondLine].filter(Boolean).join('\n').trim();
+}
+
 const EMPTY_WARNING_FORM = {
   title: '',
   description: '',
@@ -82,79 +133,75 @@ function CadVictoriaLicenseCard({ person }) {
   }
 
   const fullName = resolvePersonName(person);
-  const licenceNumber = String(license.license_number || '-').trim() || '-';
-  const dob = formatDateAU(license.date_of_birth || person?.birthdate || '', '-');
-  const expiry = formatDateAU(license.expiry_at || '', '-');
-  const status = formatStatusLabel(license.status || '');
-  const licenceType = Array.isArray(license.license_classes) && license.license_classes.length > 0
-    ? license.license_classes.join(', ')
-    : '-';
-  const conditions = Array.isArray(license.conditions) && license.conditions.length > 0
-    ? license.conditions.join(', ')
-    : '-';
+  const licenceNumber = String(license.license_number || '').trim() || 'Auto';
+  const dob = formatDateForLicenseCard(license.date_of_birth || person?.birthdate || '', 'Unknown');
+  const expiry = formatDateForLicenseCard(license.expiry_at || '', 'None');
+  const licenceType = listToLicenseCardText(license.license_classes, 'None');
+  const conditions = listToLicenseCardText(sanitizeConditionsForLicenseCard(license.conditions), 'None');
   const mugshot = String(license.mugshot_url || '').trim();
-  const gender = formatGenderLabel(license.gender || person?.gender || '');
+  const address = resolveLicenseAddress(person, license) || 'Not recorded';
 
   return (
-    <div
-      className="relative overflow-hidden rounded-[18px] border border-[#7ca270] p-4 text-[#0f2215] shadow-[0_18px_40px_rgba(5,24,13,0.32)]"
-      style={{
-        backgroundImage: 'radial-gradient(circle at 20% 40%, rgba(255,255,255,0.55), rgba(255,255,255,0.12) 34%, transparent 50%), repeating-linear-gradient(168deg, rgba(93,145,78,0.26) 0px, rgba(93,145,78,0.26) 2px, rgba(226,244,216,0.16) 2px, rgba(226,244,216,0.16) 8px), linear-gradient(160deg, #dbeec9 0%, #c4e1a8 45%, #d8ecc6 100%)',
-      }}
-    >
-      <div className="mb-3 rounded-[10px] bg-gradient-to-r from-[#044497] to-[#1c5dab] px-4 py-2 text-center text-white shadow-inner">
-        <p className="text-[28px] leading-none font-black tracking-[0.08em]">DRIVER LICENCE</p>
-        <p className="text-[24px] leading-none font-extrabold tracking-[0.06em]">VICTORIA AUSTRALIA</p>
-      </div>
+    <div className="cad-license-viewer">
+      <section className="id-card" aria-label="Victorian Driver Licence">
+        <img className="id-card-watermark" src="/vicroads-logo.png" alt="" aria-hidden="true" />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_210px] gap-4 items-start">
-        <div>
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.07em] text-[#354a3a] font-bold">Name</p>
-              <p className="mt-1 text-[34px] leading-none font-extrabold uppercase tracking-[0.02em] break-words">{fullName}</p>
+        <header className="id-card-header">
+          <div className="id-card-banner">
+            <div className="id-card-banner-line1">DRIVER LICENCE</div>
+            <div className="id-card-banner-line2">VICTORIA AUSTRALIA</div>
+          </div>
+        </header>
+
+        <h2 className="id-card-title">Victorian Driver Licence</h2>
+
+        <div className="id-card-body">
+          <div className="id-card-main">
+            <div className="id-card-top">
+              <div className="id-card-name-block">
+                <span className="id-card-top-label">Name</span>
+                <span className="id-card-name">{fullName || 'Unknown'}</span>
+              </div>
+              <div className="id-card-licence-block">
+                <span className="id-card-top-label">Licence No.</span>
+                <span className="id-card-licence-no">{licenceNumber}</span>
+              </div>
             </div>
-            <div className="sm:text-right min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.07em] text-[#354a3a] font-bold">Licence No.</p>
-              <p className="mt-1 text-[34px] leading-none font-extrabold tracking-[0.02em] break-all">{licenceNumber}</p>
+
+            <div className="id-card-address-block">
+              <span className="id-label">Address</span>
+              <span className="id-value id-card-address-value">{address}</span>
+            </div>
+
+            <div className="id-card-bottom-grid">
+              <div className="id-card-field">
+                <span className="id-label">Licence Expiry</span>
+                <span className="id-value">{expiry}</span>
+              </div>
+              <div className="id-card-field">
+                <span className="id-label">Date Of Birth</span>
+                <span className="id-value">{dob}</span>
+              </div>
+              <div className="id-card-field">
+                <span className="id-label">Licence Type</span>
+                <span className="id-value">{licenceType}</span>
+              </div>
+              <div className="id-card-field">
+                <span className="id-label">Conditions</span>
+                <span className="id-value">{conditions}</span>
+              </div>
             </div>
           </div>
 
-          <div className="mt-4 border-t border-[#18382442] pt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.07em] text-[#32493a] font-bold">Licence Expiry</p>
-              <p className="text-[29px] leading-none font-extrabold">{expiry}</p>
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.07em] text-[#32493a] font-bold">Date Of Birth</p>
-              <p className="text-[29px] leading-none font-extrabold">{dob}</p>
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.07em] text-[#32493a] font-bold">Licence Type</p>
-              <p className="text-[29px] leading-none font-extrabold break-words">{licenceType}</p>
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.07em] text-[#32493a] font-bold">Conditions</p>
-              <p className="text-[29px] leading-none font-extrabold break-words">{conditions}</p>
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-2 text-[12px]">
-            <span className="rounded-full border border-[#18382442] bg-white/45 px-2 py-1">Status: <strong>{status || '-'}</strong></span>
-            <span className="rounded-full border border-[#18382442] bg-white/45 px-2 py-1">Gender: <strong>{gender || '-'}</strong></span>
-            <span className="rounded-full border border-[#18382442] bg-white/45 px-2 py-1">Citizen ID: <strong className="font-mono">{person?.citizenid || '-'}</strong></span>
-          </div>
-        </div>
-
-        <div className="flex flex-col items-start gap-2">
-          <div className="h-[250px] w-[210px] rounded-[8px] border border-[#18382472] bg-white/45 overflow-hidden">
+          <div className="id-card-photo-panel">
             {mugshot ? (
-              <img src={mugshot} alt="Licence photo" className="h-full w-full object-cover object-top" />
-            ) : null}
+              <img className="id-card-photo" alt="Licence photo" src={mugshot} />
+            ) : (
+              <div className="id-card-photo id-card-photo-placeholder" aria-hidden="true" />
+            )}
           </div>
-          <img src="/vicroads-logo.png" alt="VicRoads" className="h-auto w-[152px] rounded border border-[#18382459] bg-white/90 p-0.5" />
         </div>
-      </div>
+      </section>
     </div>
   );
 }
