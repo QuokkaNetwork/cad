@@ -21,11 +21,13 @@ const {
 const { getVehicleByPlate, getCharacterById, getLicenseByCitizenId } = require('../db/qbox');
 const bus = require('../utils/eventBus');
 const { audit } = require('../utils/audit');
+const FiveMPrintJobs = require('../services/fivemPrintJobs');
 
 const router = express.Router();
 const QUIET_BRIDGE_GET_PATHS = new Set([
   '/fine-jobs',
   '/jail-jobs',
+  '/print-jobs',
   '/call-prompts',
   '/alarm-zones',
 ]);
@@ -3387,6 +3389,46 @@ router.post('/fine-jobs/:id/failed', requireBridgeAuth, (req, res) => {
 
   const error = String(req.body?.error || 'Fine adapter failed').trim() || 'Fine adapter failed';
   FiveMFineJobs.markFailed(id, error);
+  return res.json({ ok: true });
+});
+
+router.get('/print-jobs', requireBridgeAuth, (req, res) => {
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+  const jobs = FiveMPrintJobs.listPending(limit).map((job) => {
+    const activeLink = resolveActiveLinkForBridgeJob(job);
+    return {
+      ...job,
+      game_id: String(job.game_id || activeLink?.game_id || ''),
+      steam_id: String(job.steam_id || activeLink?.steam_id || ''),
+      citizen_id: String(job.citizen_id || activeLink?.citizen_id || ''),
+      player_name: String(job.player_name || activeLink?.player_name || ''),
+    };
+  });
+  return res.json(jobs);
+});
+
+router.post('/print-jobs/:id/sent', requireBridgeAuth, (req, res) => {
+  const id = Number.parseInt(String(req.params.id || '').trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid print job id' });
+  }
+  const job = FiveMPrintJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Print job not found' });
+
+  FiveMPrintJobs.markSent(id);
+  return res.json({ ok: true });
+});
+
+router.post('/print-jobs/:id/failed', requireBridgeAuth, (req, res) => {
+  const id = Number.parseInt(String(req.params.id || '').trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid print job id' });
+  }
+  const job = FiveMPrintJobs.findById(id);
+  if (!job) return res.status(404).json({ error: 'Print job not found' });
+
+  const error = String(req.body?.error || 'Print job failed').trim() || 'Print job failed';
+  FiveMPrintJobs.markFailed(id, error);
   return res.json({ ok: true });
 });
 

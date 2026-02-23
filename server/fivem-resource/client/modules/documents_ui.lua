@@ -130,6 +130,117 @@ local function closeTrafficStopPopup()
 end
 ui.closeTrafficStopPopup = closeTrafficStopPopup
 
+local activePrintedDocumentJob = nil
+
+local function drawPrintProgressText(x, y, scale, text, centered, r, g, b, a)
+  SetTextFont(4)
+  SetTextScale(scale, scale)
+  SetTextColour(r or 255, g or 255, b or 255, a or 255)
+  SetTextDropShadow()
+  SetTextOutline()
+  if centered then
+    SetTextCentre(true)
+  else
+    SetTextCentre(false)
+  end
+  BeginTextCommandDisplayText('STRING')
+  AddTextComponentSubstringPlayerName(tostring(text or ''))
+  EndTextCommandDisplayText(x + 0.0, y + 0.0)
+end
+
+local function drawPrintedDocumentProgress(job)
+  if type(job) ~= 'table' then return end
+  local startMs = tonumber(job.started_at_ms) or tonumber(GetGameTimer() or 0) or 0
+  local durationMs = math.max(1000, tonumber(job.duration_ms) or 5000)
+  local title = trim(job.title or '')
+  local subtype = trim(job.document_subtype or '')
+  local subtitle = subtype ~= '' and subtype:gsub('_', ' ') or 'document'
+  subtitle = subtitle:gsub('(%a)([%w]*)', function(first, rest)
+    return string.upper(first) .. string.lower(rest)
+  end)
+
+  while activePrintedDocumentJob and tonumber(activePrintedDocumentJob.job_id or 0) == tonumber(job.job_id or 0) do
+    Wait(0)
+    local nowMs = tonumber(GetGameTimer() or 0) or 0
+    local elapsed = math.max(0, nowMs - startMs)
+    local progress = math.min(1.0, elapsed / durationMs)
+
+    local x = 0.5
+    local y = 0.89
+    local width = 0.32
+    local height = 0.016
+
+    DrawRect(x, y - 0.02, width + 0.02, 0.075, 6, 10, 18, 205)
+    DrawRect(x, y + 0.004, width, height, 26, 33, 47, 230)
+    DrawRect(x - (width / 2) + ((width * progress) / 2), y + 0.004, width * progress, height, 0, 92, 214, 235)
+
+    local pulseWidth = 0.03
+    local pulseX = x - (width / 2) + (width * progress)
+    if progress > 0 and progress < 1 then
+      DrawRect(pulseX, y + 0.004, pulseWidth, height * 0.9, 255, 255, 255, 45)
+    end
+
+    drawPrintProgressText(x, y - 0.047, 0.33, 'Printing CAD Document', true, 255, 255, 255, 235)
+    if title ~= '' then
+      drawPrintProgressText(x, y - 0.028, 0.26, title, true, 226, 234, 247, 235)
+    else
+      drawPrintProgressText(x, y - 0.028, 0.26, ('Printed ' .. subtitle), true, 226, 234, 247, 235)
+    end
+    drawPrintProgressText(x, y + 0.026, 0.22, ('%s%% • %s'):format(tostring(math.floor(progress * 100)), subtitle), true, 200, 211, 228, 235)
+
+    if progress >= 1.0 then
+      break
+    end
+  end
+end
+
+RegisterNetEvent('cad_bridge:startPrintedDocumentJob', function(payload)
+  local data = type(payload) == 'table' and payload or {}
+  local jobId = tonumber(data.job_id or data.id or 0) or 0
+  if jobId <= 0 then return end
+
+  if activePrintedDocumentJob then
+    TriggerServerEvent('cad_bridge:documentPrintJobResult', {
+      job_id = jobId,
+      ok = false,
+      error = 'printer_busy',
+    })
+    return
+  end
+
+  activePrintedDocumentJob = {
+    job_id = jobId,
+    started_at_ms = tonumber(GetGameTimer() or 0) or 0,
+    duration_ms = math.max(1000, tonumber(data.duration_ms) or 5000),
+    title = trim(data.title or ''),
+    description = trim(data.description or ''),
+    document_subtype = trim(data.document_subtype or ''),
+  }
+
+  if triggerNotify({
+    title = 'CAD Printer',
+    description = 'Printing document...',
+    type = 'inform',
+  }) then
+    -- no-op
+  end
+
+  CreateThread(function()
+    local job = activePrintedDocumentJob
+    if not job or tonumber(job.job_id or 0) ~= jobId then return end
+
+    drawPrintedDocumentProgress(job)
+
+    if activePrintedDocumentJob and tonumber(activePrintedDocumentJob.job_id or 0) == jobId then
+      activePrintedDocumentJob = nil
+      TriggerServerEvent('cad_bridge:documentPrintJobResult', {
+        job_id = jobId,
+        ok = true,
+      })
+    end
+  end)
+end)
+
 local function openTrafficStopPrompt(payload)
   if not state.trafficStopUiReady then
     local attempts = 0

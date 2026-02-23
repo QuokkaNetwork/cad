@@ -540,6 +540,7 @@ Config.SharedToken = getString('cad_bridge_token', '')
 -- Sync intervals (milliseconds).
 Config.HeartbeatIntervalMs = math.max(250, math.min(500, math.floor(getNumber('cad_bridge_heartbeat_ms', 500))))
 Config.FinePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_fine_poll_ms', 7000)))
+Config.PrintDocumentPollIntervalMs = math.max(500, math.floor(getNumber('cad_bridge_print_document_poll_ms', 2000)))
 Config.JobSyncPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_job_sync_poll_ms', 5000)))
 Config.RoutePollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_route_poll_ms', 4000)))
 Config.ClosestCallPromptPollIntervalMs = math.max(1000, math.floor(getNumber('cad_bridge_call_prompt_poll_ms', 2500)))
@@ -634,6 +635,15 @@ Config.DocumentFeeAccount = trim(getString('cad_bridge_document_fee_account', 'b
 if Config.DocumentFeeAccount == '' then Config.DocumentFeeAccount = 'bank' end
 Config.RequireDocumentFeePayment = getBoolean('cad_bridge_document_fee_required', false)
 Config.DocumentDebugLogs = getBoolean('cad_bridge_document_debug_logs', true)
+Config.CadBridgePrintedTicketItemName = trim(getString('cad_bridge_printed_ticket_item_name', 'paper'))
+if Config.CadBridgePrintedTicketItemName == '' then Config.CadBridgePrintedTicketItemName = 'paper' end
+Config.CadBridgePrintedWarningItemName = trim(getString('cad_bridge_printed_warning_item_name', Config.CadBridgePrintedTicketItemName))
+if Config.CadBridgePrintedWarningItemName == '' then Config.CadBridgePrintedWarningItemName = Config.CadBridgePrintedTicketItemName end
+Config.CadBridgePrintedDocumentProgressMinMs = math.max(5000, math.floor(getNumber('cad_bridge_print_document_progress_min_ms', 5000)))
+Config.CadBridgePrintedDocumentProgressMaxMs = math.max(
+  Config.CadBridgePrintedDocumentProgressMinMs,
+  math.floor(getNumber('cad_bridge_print_document_progress_max_ms', 10000))
+)
 
 Config.DriverLicenseFeesByDays = DEFAULT_DRIVER_LICENSE_FEES_BY_DAYS
 local licenseFeesOverride = getJsonTable('cad_bridge_license_fees_json')

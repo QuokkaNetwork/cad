@@ -12,6 +12,7 @@ const {
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const qbox = require('../db/qbox');
+const FiveMPrintJobs = require('../services/fivemPrintJobs');
 
 const router = express.Router();
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
@@ -254,6 +255,15 @@ function resolveOfficerWarningIdentity(req) {
     officer_callsign: String(unit?.callsign || '').trim(),
     department_id: Number(unit?.department_id || 0) || null,
   };
+}
+
+function buildWarningPrintDescription(warning) {
+  const parts = [];
+  const title = String(warning?.title || '').trim();
+  if (title) parts.push(title);
+  const subject = String(warning?.subject_display || warning?.subject_key || '').trim();
+  if (subject) parts.push(subject);
+  return parts.join(' | ').slice(0, 500);
 }
 
 function decoratePersonHistoryFlags(person, {
@@ -662,6 +672,57 @@ router.patch('/warnings/:id', requireAuth, (req, res) => {
     status,
   });
   res.json(updated);
+});
+
+router.post('/warnings/:id/print', requireAuth, (req, res) => {
+  const warningId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(warningId) || warningId <= 0) {
+    return res.status(400).json({ error: 'Invalid warning id' });
+  }
+
+  const warning = CadWarnings.findById(warningId);
+  if (!warning) return res.status(404).json({ error: 'Warning not found' });
+
+  const unit = Units.findByUserId(req.user.id);
+  if (!unit) {
+    return res.status(400).json({ error: 'You must be on duty to print documents in-game' });
+  }
+
+  const metadata = {
+    source: 'cad_warning',
+    warning_id: Number(warning.id || 0),
+    subject_type: String(warning.subject_type || '').trim(),
+    subject_key: String(warning.subject_key || '').trim(),
+    subject_display: String(warning.subject_display || '').trim(),
+    title: String(warning.title || '').trim(),
+    notes: String(warning.description || '').trim(),
+    officer_name: String(warning.officer_name || '').trim() || String(req.user?.steam_name || req.user?.email || 'Unknown Officer').trim(),
+    officer_callsign: String(warning.officer_callsign || '').trim() || String(unit.callsign || '').trim(),
+    status: String(warning.status || '').trim(),
+    issued_at: new Date().toISOString(),
+  };
+
+  const job = FiveMPrintJobs.create({
+    user_id: req.user.id,
+    citizen_id: String(req.body?.citizen_id || '').trim(),
+    department_id: Number(unit.department_id || 0) || null,
+    document_type: 'cad_document',
+    document_subtype: 'written_warning',
+    title: `Printed Warning #${warning.id}`,
+    description: buildWarningPrintDescription(warning),
+    metadata,
+  });
+
+  audit(req.user.id, 'warning_print_job_created', {
+    print_job_id: Number(job.id || 0),
+    warning_id: Number(warning.id || 0),
+    subject_type: String(warning.subject_type || ''),
+    subject_key: String(warning.subject_key || ''),
+    unit_id: Number(unit.id || 0),
+    callsign: String(unit.callsign || ''),
+  });
+
+  return res.status(201).json({ ok: true, job });
 });
 
 // Update CAD driver license status/expiry.

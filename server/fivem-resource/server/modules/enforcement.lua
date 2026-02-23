@@ -295,6 +295,7 @@ end)
 local heartbeatInFlight = false
 local heartbeatInFlightSinceMs = 0
 local pollFineJobs = nil
+local pollPrintJobs = nil
 local pollJailJobs = nil
 local lastFastEnforcementPollMs = 0
 
@@ -322,6 +323,9 @@ local function triggerFastEnforcementPoll()
   lastFastEnforcementPollMs = now
   if pollFineJobs then
     pollFineJobs()
+  end
+  if pollPrintJobs then
+    pollPrintJobs()
   end
   if pollJailJobs then
     pollJailJobs()
@@ -2583,6 +2587,191 @@ local function addInventoryItemForJailRestore(sourceId, item, playerObject)
   return false, ('No supported inventory restore adapter for item %s'):format(name)
 end
 
+local activeDocumentPrintJobsById = {}
+local activeDocumentPrintJobIdBySource = {}
+
+local function choosePrintedDocumentItemName(job)
+  local subtype = trim(job and (job.document_subtype or job.subtype) or ''):lower()
+  if subtype == 'ticket' then
+    local configured = trim(Config and Config.CadBridgePrintedTicketItemName or '')
+    if configured ~= '' then return configured end
+  end
+  if subtype == 'written_warning' or subtype == 'warning' then
+    local configured = trim(Config and Config.CadBridgePrintedWarningItemName or '')
+    if configured ~= '' then return configured end
+  end
+
+  local fallback = trim(Config and Config.CadBridgePrintedTicketItemName or '')
+  if fallback ~= '' then return fallback end
+  return 'paper'
+end
+
+local function buildPrintedDocumentMetadata(job)
+  local metadata = {}
+  if type(job) == 'table' and type(job.metadata) == 'table' then
+    for key, value in pairs(job.metadata) do
+      metadata[key] = value
+    end
+  end
+
+  local title = trim(job and job.title or '')
+  local description = trim(job and job.description or '')
+  local subtype = trim(job and (job.document_subtype or job.subtype) or ''):lower()
+  local niceSubtype = subtype ~= '' and subtype:gsub('_', ' ') or 'document'
+  niceSubtype = niceSubtype:gsub('(%a)([%w]*)', function(first, rest)
+    return string.upper(first) .. string.lower(rest)
+  end)
+
+  metadata.document_type = trim(job and job.document_type or '') ~= '' and trim(job.document_type) or 'cad_document'
+  metadata.document_subtype = subtype ~= '' and subtype or 'document'
+  metadata.cad_print_job_id = tonumber(job and job.id or 0) or 0
+  metadata.title = title
+  metadata.description = description
+  metadata.label = title ~= '' and title or ('Printed ' .. niceSubtype)
+  metadata.printed_at = os.date('!%Y-%m-%dT%H:%M:%SZ')
+
+  local summaryParts = {}
+  if title ~= '' then summaryParts[#summaryParts + 1] = title end
+  if description ~= '' then summaryParts[#summaryParts + 1] = description end
+  metadata.info = metadata.info or (table.concat(summaryParts, ' | '):sub(1, 220))
+
+  return metadata
+end
+
+local function markPrintJobFailedRemote(jobId, err)
+  request('POST', ('/api/integration/fivem/print-jobs/%s/failed'):format(tostring(jobId)), {
+    error = err or 'Print job failed',
+  }, function() end)
+end
+
+local function markPrintJobSentRemote(jobId)
+  request('POST', ('/api/integration/fivem/print-jobs/%s/sent'):format(tostring(jobId)), {}, function() end)
+end
+
+local function clearActiveDocumentPrintJob(jobId, sourceId)
+  local resolvedJobId = tonumber(jobId) or 0
+  local resolvedSourceId = tonumber(sourceId) or 0
+
+  if resolvedJobId > 0 then
+    local existing = activeDocumentPrintJobsById[resolvedJobId]
+    if existing and resolvedSourceId <= 0 then
+      resolvedSourceId = tonumber(existing.source_id) or 0
+    end
+    activeDocumentPrintJobsById[resolvedJobId] = nil
+  end
+
+  if resolvedSourceId > 0 and tonumber(activeDocumentPrintJobIdBySource[resolvedSourceId]) == resolvedJobId then
+    activeDocumentPrintJobIdBySource[resolvedSourceId] = nil
+  end
+end
+
+local function startPrintedDocumentJob(job)
+  local jobId = tonumber(job and job.id or 0) or 0
+  if jobId <= 0 then return false, 'invalid_print_job', false end
+  if activeDocumentPrintJobsById[jobId] then
+    return false, 'print_already_active', true
+  end
+
+  local sourceId = resolvePlayerSourceForJob(job)
+  if not sourceId or sourceId <= 0 then
+    return false, 'Target character is not currently online for print delivery', true
+  end
+  if not GetPlayerName(sourceId) then
+    return false, 'Target player not available for print delivery', true
+  end
+
+  local busyJobId = tonumber(activeDocumentPrintJobIdBySource[sourceId]) or 0
+  if busyJobId > 0 and activeDocumentPrintJobsById[busyJobId] then
+    return false, 'printer_busy', true
+  end
+
+  local minMs = math.max(5000, math.floor(tonumber(Config and Config.CadBridgePrintedDocumentProgressMinMs or 5000) or 5000))
+  local maxMs = math.max(minMs, math.floor(tonumber(Config and Config.CadBridgePrintedDocumentProgressMaxMs or 10000) or 10000))
+  local durationMs = minMs
+  if maxMs > minMs then
+    durationMs = math.random(minMs, maxMs)
+  end
+
+  local state = {
+    job_id = jobId,
+    source_id = sourceId,
+    job = job,
+    started_at_ms = nowMs(),
+    duration_ms = durationMs,
+  }
+  activeDocumentPrintJobsById[jobId] = state
+  activeDocumentPrintJobIdBySource[sourceId] = jobId
+
+  TriggerClientEvent('cad_bridge:startPrintedDocumentJob', sourceId, {
+    job_id = jobId,
+    duration_ms = durationMs,
+    title = trim(job.title or ''),
+    description = trim(job.description or ''),
+    document_subtype = trim(job.document_subtype or ''),
+  })
+
+  CreateThread(function()
+    Wait(durationMs + 15000)
+    local active = activeDocumentPrintJobsById[jobId]
+    if not active then return end
+    clearActiveDocumentPrintJob(jobId, active.source_id)
+    markPrintJobFailedRemote(jobId, 'Client print confirmation timed out')
+    notifyAlert(sourceId, 'CAD Printer', 'Printing failed or timed out. Please try again.', 'warning')
+  end)
+
+  return true, '', false
+end
+
+RegisterNetEvent('cad_bridge:documentPrintJobResult', function(payload)
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+
+  local data = type(payload) == 'table' and payload or {}
+  local jobId = tonumber(data.job_id or data.id or 0) or 0
+  if jobId <= 0 then return end
+
+  local active = activeDocumentPrintJobsById[jobId]
+  if type(active) ~= 'table' then return end
+  if tonumber(active.source_id or 0) ~= src then return end
+
+  local ok = data.ok == true or tonumber(data.ok or 0) == 1
+  local errText = trim(data.error or '')
+  local job = active.job or {}
+
+  clearActiveDocumentPrintJob(jobId, src)
+
+  if not ok then
+    markPrintJobFailedRemote(jobId, errText ~= '' and errText or 'Client cancelled print')
+    if errText ~= '' then
+      notifyAlert(src, 'CAD Printer', ('Print cancelled: %s'):format(errText), 'warning')
+    else
+      notifyAlert(src, 'CAD Printer', 'Print cancelled.', 'warning')
+    end
+    return
+  end
+
+  local playerObject = getQbxPlayerForInventory(src)
+  if not playerObject then playerObject = getQbPlayerForInventory(src) end
+
+  local itemName = choosePrintedDocumentItemName(job)
+  local itemMetadata = buildPrintedDocumentMetadata(job)
+  local addOk, addErr = addInventoryItemForJailRestore(src, {
+    name = itemName,
+    amount = 1,
+    metadata = itemMetadata,
+  }, playerObject)
+
+  if not addOk then
+    markPrintJobFailedRemote(jobId, addErr or 'Inventory add failed')
+    notifyAlert(src, 'CAD Printer', 'Printed document could not be added to inventory.', 'error')
+    return
+  end
+
+  markPrintJobSentRemote(jobId)
+  local label = trim(itemMetadata.label or job.title or 'Printed document')
+  notifyAlert(src, 'CAD Printer', ('%s added to your inventory.'):format(label), 'success')
+end)
+
 local function captureAndClearJailInventory(sourceId, citizenId, context)
   if not isJailInventoryManagementEnabled() then
     return true, 'disabled'
@@ -3000,6 +3189,53 @@ local function applyJail(job)
 
   return false, ('Unknown jail adapter: %s'):format(tostring(adapter)), false
 end
+
+local printJobPollInFlight = false
+pollPrintJobs = function()
+  if not hasBridgeConfig() then
+    return
+  end
+  if printJobPollInFlight or isBridgeBackoffActive('print_job_poll') then
+    return
+  end
+
+  printJobPollInFlight = true
+  request('GET', '/api/integration/fivem/print-jobs?limit=25', nil, function(status, body, responseHeaders)
+    printJobPollInFlight = false
+    if status == 429 then
+      setBridgeBackoff('print_job_poll', responseHeaders, 5000, 'print job poll')
+      return
+    end
+    if status ~= 200 then
+      return
+    end
+
+    local ok, jobs = pcall(json.decode, body)
+    if not ok or type(jobs) ~= 'table' then
+      return
+    end
+
+    for _, job in ipairs(jobs) do
+      CreateThread(function()
+        local success, err, transient = startPrintedDocumentJob(job)
+        if success then
+          return
+        end
+        if transient then
+          return
+        end
+        markPrintJobFailedRemote(job.id, err or 'Print delivery failed')
+      end)
+    end
+  end)
+end
+
+CreateThread(function()
+  while true do
+    Wait(math.max(500, tonumber(Config.PrintDocumentPollIntervalMs) or 2000))
+    pollPrintJobs()
+  end
+end)
 
 local jailPollInFlight = false
 pollJailJobs = function()

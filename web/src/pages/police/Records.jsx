@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../api/client';
@@ -84,6 +85,100 @@ function mapRecordToEditForm(record) {
     // When offences are attached, the edit form stores only "extra" jail time added on top.
     jail_minutes: Math.max(0, totalJailMinutes - Math.max(0, offenceJailTotal)),
   };
+}
+
+function normalizeArrestWorkflowStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized || normalized === 'pending') return 'draft';
+  if (normalized === 'supervisor_review') return 'supervisor_review';
+  if (normalized === 'finalized') return 'finalized';
+  return 'draft';
+}
+
+function arrestWorkflowLabel(value) {
+  const normalized = normalizeArrestWorkflowStatus(value);
+  if (normalized === 'supervisor_review') return 'Supervisor Review';
+  if (normalized === 'finalized') return 'Finalized';
+  return 'Draft';
+}
+
+function arrestWorkflowPillClass(value) {
+  const normalized = normalizeArrestWorkflowStatus(value);
+  if (normalized === 'finalized') return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
+  if (normalized === 'supervisor_review') return 'border-orange-500/40 bg-orange-500/15 text-orange-300';
+  return 'border-blue-500/40 bg-blue-500/15 text-blue-300';
+}
+
+function buildArrestReportExportPayload(record, person) {
+  const offenceItems = parseRecordOffenceItems(record);
+  const offenceFineTotal = offenceItems.reduce(
+    (sum, item) => sum + (Number(item.line_total || (Number(item.fine_amount || 0) * Number(item.quantity || 1))) || 0),
+    0
+  );
+  const offenceJailTotal = offenceItems.reduce(
+    (sum, item) => sum + (Number(item.line_jail_minutes || (Number(item.jail_minutes || 0) * Number(item.quantity || 1))) || 0),
+    0
+  );
+  return {
+    format: 'victoria_police_arrest_report_v1',
+    generated_at: new Date().toISOString(),
+    arrest_report: {
+      id: Number(record?.id || 0),
+      workflow_status: normalizeArrestWorkflowStatus(record?.workflow_status),
+      workflow_status_label: arrestWorkflowLabel(record?.workflow_status),
+      title: String(record?.title || ''),
+      notes: String(record?.description || ''),
+      fine_amount_total: Number(record?.fine_amount || 0),
+      jail_minutes_total: Number(record?.jail_minutes || 0),
+      offence_fine_total: offenceFineTotal,
+      offence_jail_total: offenceJailTotal,
+      created_at: record?.created_at || null,
+      finalized_record_id: Number(record?.finalized_record_id || 0) || null,
+      finalized_at: record?.finalized_at || null,
+    },
+    subject: person ? {
+      citizen_id: String(person?.citizenid || ''),
+      first_name: String(person?.firstname || ''),
+      last_name: String(person?.lastname || ''),
+      full_name: `${String(person?.firstname || '').trim()} ${String(person?.lastname || '').trim()}`.trim(),
+      birthdate: String(person?.birthdate || ''),
+    } : null,
+    filing_officer: {
+      name: String(record?.officer_name || ''),
+      callsign: String(record?.officer_callsign || ''),
+    },
+    charges: offenceItems.map((item) => ({
+      offence_id: Number(item?.offence_id || 0) || null,
+      code: String(item?.code || ''),
+      title: String(item?.title || ''),
+      quantity: Number(item?.quantity || 1),
+      fine_amount_each: Number(item?.fine_amount || 0),
+      jail_minutes_each: Number(item?.jail_minutes || 0),
+      line_total: Number(item?.line_total || 0),
+      line_jail_minutes: Number(item?.line_jail_minutes || 0),
+    })),
+  };
+}
+
+function downloadJson(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function toTitleCase(value) {
@@ -505,6 +600,7 @@ function LawOffenceFields({ catalog, selection, setSelection, loading, totalFine
 
 export default function Records({ embeddedPerson = null, embeddedDepartmentId = null, hideHeader = false, mode = 'records' }) {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const { activeDepartment } = useDepartment();
   const layoutType = getDepartmentLayoutType(activeDepartment);
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
@@ -513,6 +609,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
   const isArrestReportsMode = isLaw && String(mode || '').trim().toLowerCase() === 'arrest_reports';
   const isEmbedded = !!embeddedPerson;
   const effectiveDepartmentId = embeddedDepartmentId || activeDepartment?.id;
+  const routeCitizenId = String(searchParams.get('citizen_id') || '').trim();
 
   const pageCopy = isLaw
     ? {
@@ -572,7 +669,10 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
   const [editMedicalForm, setEditMedicalForm] = useState(EMPTY_MEDICAL_FORM);
   const [editFireForm, setEditFireForm] = useState(EMPTY_FIRE_FORM);
   const [deletingRecordId, setDeletingRecordId] = useState(null);
+  const [printingRecordId, setPrintingRecordId] = useState(null);
   const [finalizingRecordId, setFinalizingRecordId] = useState(null);
+  const [submittingReviewRecordId, setSubmittingReviewRecordId] = useState(null);
+  const [returningDraftRecordId, setReturningDraftRecordId] = useState(null);
   const [currentUnit, setCurrentUnit] = useState(null);
   const [offenceCatalog, setOffenceCatalog] = useState([]);
   const [loadingOffenceCatalog, setLoadingOffenceCatalog] = useState(false);
@@ -684,6 +784,49 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
     embeddedPerson?.firstname,
     embeddedPerson?.lastname,
   ]);
+
+  useEffect(() => {
+    if (isEmbedded) return;
+    if (!routeCitizenId) return;
+    const selectedCid = String(selectedPerson?.citizenid || '').trim();
+    if (selectedCid && selectedCid.toUpperCase() === routeCitizenId.toUpperCase()) return;
+
+    let cancelled = false;
+    async function loadPersonFromRoute() {
+      try {
+        let person = null;
+        try {
+          person = await api.get(`/api/search/persons/${encodeURIComponent(routeCitizenId)}`);
+        } catch {
+          person = await api.get(`/api/search/cad/persons/${encodeURIComponent(routeCitizenId)}`);
+        }
+        if (cancelled || !person) return;
+        const normalized = {
+          ...person,
+          citizenid: String(person?.citizenid || routeCitizenId).trim(),
+          firstname: String(person?.firstname || '').trim(),
+          lastname: String(person?.lastname || '').trim(),
+        };
+        setSelectedPerson(normalized);
+        setNewForm({
+          ...EMPTY_NEW_FORM,
+          person_name: `${normalized.firstname || ''} ${normalized.lastname || ''}`.trim(),
+        });
+        setNewOffenceSelection({});
+        setEditOffenceSelection({});
+        setShowEdit(false);
+        setEditingRecord(null);
+        await refreshSelectedPersonRecords(normalized.citizenid);
+      } catch (err) {
+        if (!cancelled) {
+          alert('Failed to load selected person from URL: ' + (err?.message || 'Request failed'));
+        }
+      }
+    }
+
+    loadPersonFromRoute();
+    return () => { cancelled = true; };
+  }, [isEmbedded, routeCitizenId, selectedPerson?.citizenid]);
 
   async function refreshSelectedPersonRecords(citizenId) {
     if (!citizenId) {
@@ -909,9 +1052,28 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
     }
   }
 
+  async function printRecordInGame(record) {
+    if (!record?.id) return;
+    const recordType = String(record.type || '').trim().toLowerCase();
+    if (!['fine', 'warning'].includes(recordType)) return;
+
+    const subjectName = `${String(selectedPerson?.firstname || '').trim()} ${String(selectedPerson?.lastname || '').trim()}`.trim();
+    setPrintingRecordId(record.id);
+    try {
+      await api.post(`/api/records/${record.id}/print`, {
+        person_name: subjectName || String(record.citizen_id || '').trim(),
+      });
+      alert(`${recordType === 'fine' ? 'Ticket' : 'Warning'} sent to in-game printer queue.`);
+    } catch (err) {
+      alert('Failed to send print job: ' + err.message);
+    } finally {
+      setPrintingRecordId(null);
+    }
+  }
+
   async function finalizeArrestReport(record) {
     if (!record?.id) return;
-    if (String(record.workflow_status || '').toLowerCase() === 'finalized') return;
+    if (normalizeArrestWorkflowStatus(record.workflow_status) === 'finalized') return;
     const ok = confirm(`Finalize arrest report #${record.id}? This will apply fines/jail from the selected charges.`);
     if (!ok) return;
     setFinalizingRecordId(record.id);
@@ -925,6 +1087,127 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
     } finally {
       setFinalizingRecordId(null);
     }
+  }
+
+  async function submitArrestReportForReview(record) {
+    if (!record?.id) return;
+    const status = normalizeArrestWorkflowStatus(record.workflow_status);
+    if (status === 'supervisor_review' || status === 'finalized') return;
+    setSubmittingReviewRecordId(record.id);
+    try {
+      await api.post(`/api/records/${record.id}/submit-arrest-report-review`, {});
+      if (selectedPerson?.citizenid) {
+        await refreshSelectedPersonRecords(selectedPerson.citizenid);
+      }
+    } catch (err) {
+      alert('Failed to submit arrest report for supervisor review: ' + err.message);
+    } finally {
+      setSubmittingReviewRecordId(null);
+    }
+  }
+
+  async function returnArrestReportToDraft(record) {
+    if (!record?.id) return;
+    if (normalizeArrestWorkflowStatus(record.workflow_status) === 'finalized') return;
+    setReturningDraftRecordId(record.id);
+    try {
+      await api.post(`/api/records/${record.id}/return-arrest-report-draft`, {});
+      if (selectedPerson?.citizenid) {
+        await refreshSelectedPersonRecords(selectedPerson.citizenid);
+      }
+    } catch (err) {
+      alert('Failed to return arrest report to draft: ' + err.message);
+    } finally {
+      setReturningDraftRecordId(null);
+    }
+  }
+
+  function exportArrestReport(record) {
+    if (!record || String(record.type || '') !== 'arrest_report') return;
+    const payload = buildArrestReportExportPayload(record, selectedPerson);
+    const cid = String(selectedPerson?.citizenid || 'unknown').trim() || 'unknown';
+    downloadJson(`victoria-police-arrest-report-${cid}-${record.id}.json`, payload);
+  }
+
+  function printArrestReport(record) {
+    if (!record || String(record.type || '') !== 'arrest_report') return;
+    const payload = buildArrestReportExportPayload(record, selectedPerson);
+    const chargesRows = payload.charges.length > 0
+      ? payload.charges.map((charge) => `
+          <tr>
+            <td>${escapeHtml(charge.code || '-')}</td>
+            <td>${escapeHtml(charge.title || '-')}</td>
+            <td>${escapeHtml(String(charge.quantity || 1))}</td>
+            <td>$${Number(charge.fine_amount_each || 0).toLocaleString()}</td>
+            <td>${Number(charge.jail_minutes_each || 0)} min</td>
+          </tr>
+        `).join('')
+      : `<tr><td colspan="5">No charges attached</td></tr>`;
+    const officer = payload.filing_officer?.callsign
+      ? `${payload.filing_officer.callsign} - ${payload.filing_officer.name || ''}`.trim()
+      : (payload.filing_officer?.name || '-');
+    const subjectName = payload.subject?.full_name || payload.subject?.citizen_id || 'Unknown Person';
+    const subjectCid = payload.subject?.citizen_id || '-';
+    const html = `<!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Victoria Police Arrest Report #${payload.arrest_report.id}</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+          .header { border-bottom: 3px solid #0a2f6b; padding-bottom: 12px; margin-bottom: 18px; }
+          .brand { color: #0a2f6b; font-weight: 800; font-size: 24px; }
+          .sub { color: #b56d00; font-weight: 700; margin-top: 4px; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+          .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px 12px; }
+          .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .06em; }
+          .value { margin-top: 4px; font-weight: 600; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; font-size: 12px; vertical-align: top; }
+          th { background: #f3f4f6; }
+          .notes { white-space: pre-wrap; }
+          .footer { margin-top: 16px; font-size: 11px; color: #6b7280; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="brand">Victoria Police</div>
+          <div class="sub">Arrest Report</div>
+        </div>
+        <div class="grid">
+          <div class="card"><div class="label">Report</div><div class="value">#${payload.arrest_report.id} | ${escapeHtml(payload.arrest_report.workflow_status_label)}</div></div>
+          <div class="card"><div class="label">Filed By</div><div class="value">${escapeHtml(officer)}</div></div>
+          <div class="card"><div class="label">Subject</div><div class="value">${escapeHtml(subjectName)} (${escapeHtml(subjectCid)})</div></div>
+          <div class="card"><div class="label">Created</div><div class="value">${escapeHtml(formatDateTimeAU(payload.arrest_report.created_at ? `${payload.arrest_report.created_at}Z` : '', '-'))}</div></div>
+        </div>
+        <div class="card">
+          <div class="label">Case Title</div>
+          <div class="value">${escapeHtml(payload.arrest_report.title || '-')}</div>
+          <div class="label" style="margin-top:10px;">Notes</div>
+          <div class="value notes">${escapeHtml(payload.arrest_report.notes || '-')}</div>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Code</th><th>Charge</th><th>Qty</th><th>Fine Each</th><th>Jail Each</th></tr>
+          </thead>
+          <tbody>${chargesRows}</tbody>
+        </table>
+        <div class="grid" style="margin-top: 12px;">
+          <div class="card"><div class="label">Total Fine</div><div class="value">$${Number(payload.arrest_report.fine_amount_total || 0).toLocaleString()}</div></div>
+          <div class="card"><div class="label">Total Jail</div><div class="value">${Number(payload.arrest_report.jail_minutes_total || 0).toLocaleString()} minute(s)</div></div>
+        </div>
+        <div class="footer">Generated by CAD for Victoria Police workflow.</div>
+        <script>window.onload = () => window.print();</script>
+      </body>
+      </html>`;
+    const win = window.open('', '_blank', 'noopener,noreferrer,width=960,height=720');
+    if (!win) {
+      alert('Popup blocked. Please allow popups to print the arrest report.');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
   }
 
   return (
@@ -1036,6 +1319,9 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
             const medical = parseMedicalRecord(r);
             const fire = parseFireRecord(r);
             const offenceItems = parseRecordOffenceItems(r);
+            const arrestWorkflowStatus = normalizeArrestWorkflowStatus(r.workflow_status);
+            const isArrestReport = isLaw && String(r.type || '') === 'arrest_report';
+            const canFinalizeArrestReport = isArrestReport && arrestWorkflowStatus === 'supervisor_review';
             const offenceTotal = offenceItems.reduce(
               (sum, item) => sum + (Number(item.line_total || (item.fine_amount * item.quantity)) || 0),
               0
@@ -1049,15 +1335,11 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
               <div className="flex items-start justify-between mb-2 gap-3">
                 <div className="flex items-center gap-2 flex-wrap">
                   <StatusBadge status={r.type} />
-                  {isLaw && r.type === 'arrest_report' && (
+                  {isArrestReport && (
                     <span
-                      className={`text-[11px] px-2 py-0.5 rounded border ${
-                        String(r.workflow_status || '').toLowerCase() === 'finalized'
-                          ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
-                          : 'border-blue-500/40 bg-blue-500/15 text-blue-300'
-                      }`}
+                      className={`text-[11px] px-2 py-0.5 rounded border ${arrestWorkflowPillClass(arrestWorkflowStatus)}`}
                     >
-                      {String(r.workflow_status || '').toLowerCase() === 'finalized' ? 'Finalized' : 'Pending Finalization'}
+                      {arrestWorkflowLabel(arrestWorkflowStatus)}
                     </span>
                   )}
                   <span className="font-medium">{r.title}</span>
@@ -1078,7 +1360,27 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() !== 'finalized' && (
+                  {isArrestReport && arrestWorkflowStatus === 'draft' && (
+                    <button
+                      type="button"
+                      onClick={() => submitArrestReportForReview(r)}
+                      disabled={submittingReviewRecordId === r.id}
+                      className="px-2 py-1 text-xs bg-orange-500/10 text-orange-300 border border-orange-500/30 rounded hover:bg-orange-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {submittingReviewRecordId === r.id ? 'Submitting...' : 'Submit Review'}
+                    </button>
+                  )}
+                  {isArrestReport && arrestWorkflowStatus === 'supervisor_review' && (
+                    <button
+                      type="button"
+                      onClick={() => returnArrestReportToDraft(r)}
+                      disabled={returningDraftRecordId === r.id}
+                      className="px-2 py-1 text-xs bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded hover:bg-blue-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {returningDraftRecordId === r.id ? 'Returning...' : 'Return Draft'}
+                    </button>
+                  )}
+                  {canFinalizeArrestReport && (
                     <button
                       type="button"
                       onClick={() => finalizeArrestReport(r)}
@@ -1088,10 +1390,38 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                       {finalizingRecordId === r.id ? 'Finalizing...' : 'Finalize'}
                     </button>
                   )}
+                  {isArrestReport && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => printArrestReport(r)}
+                        className="px-2 py-1 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+                      >
+                        Print
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => exportArrestReport(r)}
+                        className="px-2 py-1 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
+                      >
+                        Export
+                      </button>
+                    </>
+                  )}
+                  {isLaw && !isArrestReport && (String(r.type || '').toLowerCase() === 'fine' || String(r.type || '').toLowerCase() === 'warning') && (
+                    <button
+                      type="button"
+                      onClick={() => printRecordInGame(r)}
+                      disabled={printingRecordId === r.id}
+                      className="px-2 py-1 text-xs bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 rounded hover:bg-indigo-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {printingRecordId === r.id ? 'Printing...' : (String(r.type || '').toLowerCase() === 'fine' ? 'Print Ticket' : 'Print Warning')}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => openEdit(r)}
-                    disabled={isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() === 'finalized'}
+                    disabled={isArrestReport && arrestWorkflowStatus === 'finalized'}
                     className="px-2 py-1 text-xs bg-cad-surface border border-cad-border rounded hover:bg-cad-card transition-colors"
                   >
                     Edit
@@ -1148,19 +1478,19 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                     ))}
                   </div>
                   <p className="text-amber-400">
-                    {isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() !== 'finalized' ? 'Pending Fine' : 'Total Fine'}: ${Number(offenceTotal || 0).toLocaleString()}
+                    {isArrestReport && arrestWorkflowStatus !== 'finalized' ? 'Pending Fine' : 'Total Fine'}: ${Number(offenceTotal || 0).toLocaleString()}
                   </p>
                   {Number(offenceJailTotal || 0) > 0 && (
                     <p className="text-rose-300">
-                      {isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() !== 'finalized' ? 'Pending Offence Jail Total' : 'Offence Jail Total'}: {Number(offenceJailTotal || 0).toLocaleString()} minute(s)
+                      {isArrestReport && arrestWorkflowStatus !== 'finalized' ? 'Pending Offence Jail Total' : 'Offence Jail Total'}: {Number(offenceJailTotal || 0).toLocaleString()} minute(s)
                     </p>
                   )}
                   {Number(r.jail_minutes || 0) > 0 && (
                     <p className="text-rose-300">
-                      {isLaw && r.type === 'arrest_report' && String(r.workflow_status || '').toLowerCase() !== 'finalized' ? 'Pending Jail' : 'Jail'}: {Number(r.jail_minutes || 0).toLocaleString()} minute(s)
+                      {isArrestReport && arrestWorkflowStatus !== 'finalized' ? 'Pending Jail' : 'Jail'}: {Number(r.jail_minutes || 0).toLocaleString()} minute(s)
                     </p>
                   )}
-                  {isLaw && r.type === 'arrest_report' && Number(r.finalized_record_id || 0) > 0 && (
+                  {isArrestReport && Number(r.finalized_record_id || 0) > 0 && (
                     <p className="text-emerald-300">Finalized Record: #{Number(r.finalized_record_id || 0)}</p>
                   )}
                   {r.description && (
@@ -1214,7 +1544,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 <p className="text-sm text-cad-ink font-medium mt-1">{filingOfficerLabel}</p>
                 {isArrestReportsMode && (
                   <p className="text-xs text-blue-300 mt-1">
-                    Arrest reports store charges and sentencing details without applying fines/jail until finalized.
+                    Victoria Police workflow: Draft {'->'} Supervisor Review {'->'} Finalize. Charges and sentencing stay pending until finalization.
                   </p>
                 )}
               </div>
@@ -1305,10 +1635,61 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
                 <p className="text-sm text-cad-ink font-medium mt-1">
                   {editingRecord?.officer_callsign ? `${editingRecord.officer_callsign} - ` : ''}{editingRecord?.officer_name || filingOfficerLabel}
                 </p>
-                {isArrestReportsMode && String(editingRecord?.workflow_status || '').toLowerCase() === 'finalized' && (
+                {isArrestReportsMode && normalizeArrestWorkflowStatus(editingRecord?.workflow_status) === 'finalized' && (
                   <p className="text-xs text-emerald-300 mt-1">
                     This arrest report has been finalized. Edit the finalized record for charge/fine changes.
                   </p>
+                )}
+                {isArrestReportsMode && editingRecord?.id && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className={`text-[11px] px-2 py-0.5 rounded border ${arrestWorkflowPillClass(editingRecord?.workflow_status)}`}>
+                      {arrestWorkflowLabel(editingRecord?.workflow_status)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => printArrestReport(editingRecord)}
+                      className="px-2 py-1 text-xs bg-cad-card border border-cad-border rounded hover:bg-cad-border transition-colors"
+                    >
+                      Print
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportArrestReport(editingRecord)}
+                      className="px-2 py-1 text-xs bg-cad-card border border-cad-border rounded hover:bg-cad-border transition-colors"
+                    >
+                      Export
+                    </button>
+                    {normalizeArrestWorkflowStatus(editingRecord?.workflow_status) === 'draft' && (
+                      <button
+                        type="button"
+                        onClick={() => submitArrestReportForReview(editingRecord)}
+                        disabled={submittingReviewRecordId === editingRecord.id}
+                        className="px-2 py-1 text-xs bg-orange-500/10 text-orange-300 border border-orange-500/30 rounded hover:bg-orange-500/20 transition-colors disabled:opacity-50"
+                      >
+                        {submittingReviewRecordId === editingRecord.id ? 'Submitting...' : 'Submit Review'}
+                      </button>
+                    )}
+                    {normalizeArrestWorkflowStatus(editingRecord?.workflow_status) === 'supervisor_review' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => returnArrestReportToDraft(editingRecord)}
+                          disabled={returningDraftRecordId === editingRecord.id}
+                          className="px-2 py-1 text-xs bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded hover:bg-blue-500/20 transition-colors disabled:opacity-50"
+                        >
+                          {returningDraftRecordId === editingRecord.id ? 'Returning...' : 'Return Draft'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => finalizeArrestReport(editingRecord)}
+                          disabled={finalizingRecordId === editingRecord.id}
+                          className="px-2 py-1 text-xs bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                        >
+                          {finalizingRecordId === editingRecord.id ? 'Finalizing...' : 'Finalize'}
+                        </button>
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
               <div>
@@ -1376,11 +1757,12 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
               type="submit"
               disabled={
                 editingSaving ||
-                (isLaw && loadingOffenceCatalog)
+                (isLaw && loadingOffenceCatalog) ||
+                (isArrestReportsMode && normalizeArrestWorkflowStatus(editingRecord?.workflow_status) === 'finalized')
               }
               className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
             >
-              {editingSaving ? 'Saving...' : 'Save Changes'}
+              {editingSaving ? 'Saving...' : (isArrestReportsMode && normalizeArrestWorkflowStatus(editingRecord?.workflow_status) === 'finalized' ? 'Finalized' : 'Save Changes')}
             </button>
             <button
               type="button"
