@@ -6,7 +6,7 @@ import PatientAnalysisPanel from '../../components/PatientAnalysisPanel';
 import Records from './Records';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { useDepartment } from '../../context/DepartmentContext';
-import { formatDateAU } from '../../utils/dateTime';
+import { formatDateAU, formatDateTimeAU } from '../../utils/dateTime';
 
 const LICENSE_STATUS_OPTIONS = ['valid', 'suspended', 'disqualified', 'expired'];
 const REGISTRATION_STATUS_OPTIONS = ['valid', 'suspended', 'revoked', 'expired'];
@@ -312,6 +312,11 @@ export default function Search() {
     ? selectedPerson.cad_vehicle_registrations
     : [];
   const recordsEmbeddedPerson = useMemo(() => buildRecordsPerson(selectedPerson), [selectedPerson]);
+  const selectedPersonRecordCount = Math.max(0, Number(selectedPerson?.criminal_record_count || 0));
+  const selectedPersonMedicalCount = Math.max(0, Number(selectedPerson?.medical_analysis_count || 0));
+  const selectedPersonWarrants = Array.isArray(selectedPerson?.active_warrants)
+    ? selectedPerson.active_warrants
+    : (Array.isArray(selectedPerson?.warrants) ? selectedPerson.warrants : []);
 
   return (
     <div>
@@ -423,13 +428,27 @@ export default function Search() {
       >
         {selectedPerson && (
           isParamedics ? (
-            <PatientAnalysisPanel
-              person={selectedPerson}
-              activeDepartmentId={activeDepartment?.id || null}
-            />
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {selectedPersonMedicalCount > 0 ? (
+                  <div className="px-3 py-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 text-sm text-cyan-200">
+                    Medical History: {selectedPersonMedicalCount} analys{selectedPersonMedicalCount === 1 ? 'is' : 'es'}
+                    {selectedPerson?.medical_last_analysis_at ? ` | Last: ${formatDateTimeAU(`${selectedPerson.medical_last_analysis_at}Z`, '-', false)}` : ''}
+                  </div>
+                ) : (
+                  <div className="px-3 py-2 rounded-lg border border-cad-border bg-cad-surface text-sm text-cad-muted">
+                    No recorded patient analyses yet.
+                  </div>
+                )}
+              </div>
+              <PatientAnalysisPanel
+                person={selectedPerson}
+                activeDepartmentId={activeDepartment?.id || null}
+              />
+            </div>
           ) : (
             <div className="space-y-4">
-            {(selectedPerson.has_warrant || selectedPerson.has_bolo) ? (
+            {(selectedPerson.has_warrant || selectedPerson.has_bolo || selectedPerson.repeat_offender) ? (
               <div className="flex flex-wrap gap-2">
                 {selectedPerson.has_warrant ? (
                   <div className="px-3 py-2 rounded-lg border border-red-500/40 bg-red-500/10 text-sm text-red-200">
@@ -441,6 +460,41 @@ export default function Search() {
                     Active BOLO{Number(selectedPerson.bolo_count || 0) > 1 ? `s (${Number(selectedPerson.bolo_count)})` : ''}
                   </div>
                 ) : null}
+                {selectedPerson.repeat_offender ? (
+                  <div className="px-3 py-2 rounded-lg border border-fuchsia-500/40 bg-fuchsia-500/10 text-sm text-fuchsia-200">
+                    Repeat Offender Flag ({selectedPersonRecordCount} records)
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {selectedPersonRecordCount > 0 ? (
+              <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-1">
+                  Criminal History Summary
+                </h4>
+                <p className="text-sm text-cad-muted">
+                  {selectedPersonRecordCount} record{selectedPersonRecordCount === 1 ? '' : 's'} found for this citizen.
+                  {selectedPerson.repeat_offender ? ' Repeat-offender flag is active.' : ''}
+                </p>
+              </div>
+            ) : null}
+
+            {selectedPersonWarrants.length > 0 ? (
+              <div className="bg-cad-surface border border-red-500/25 rounded-lg px-3 py-3">
+                <h4 className="text-sm font-semibold text-red-300 uppercase tracking-wider mb-2">
+                  Warrant Alerts ({selectedPersonWarrants.length})
+                </h4>
+                <div className="space-y-2">
+                  {selectedPersonWarrants.slice(0, 5).map((warrant) => (
+                    <div key={warrant.id} className="bg-cad-card border border-red-500/20 rounded px-3 py-2">
+                      <p className="text-sm text-cad-ink">{warrant.title || 'Active Warrant'}</p>
+                      {warrant.description ? (
+                        <p className="text-xs text-cad-muted mt-1 whitespace-pre-wrap">{warrant.description}</p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
 

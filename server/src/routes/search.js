@@ -4,6 +4,7 @@ const {
   CriminalRecords,
   Warrants,
   Bolos,
+  PatientAnalyses,
   DriverLicenses,
   VehicleRegistrations,
 } = require('../db/sqlite');
@@ -13,6 +14,7 @@ const qbox = require('../db/qbox');
 const router = express.Router();
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
 const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
+const REPEAT_OFFENDER_THRESHOLD = 3;
 
 function normalizeDateOnly(value) {
   const text = String(value || '').trim();
@@ -238,6 +240,25 @@ function buildCadPersonFromSources(req, citizenId, {
   };
 }
 
+function decoratePersonHistoryFlags(person, {
+  recordCount = 0,
+  medicalCount = 0,
+  medicalLastAnalysisAt = null,
+} = {}) {
+  const normalizedRecordCount = Math.max(0, Number(recordCount || 0));
+  const normalizedMedicalCount = Math.max(0, Number(medicalCount || 0));
+  return {
+    ...person,
+    active_warrant_count: Math.max(0, Number(person?.warrant_count || 0)),
+    active_bolo_count: Math.max(0, Number(person?.bolo_count || 0)),
+    criminal_record_count: normalizedRecordCount,
+    repeat_offender: normalizedRecordCount >= REPEAT_OFFENDER_THRESHOLD,
+    repeat_offender_threshold: REPEAT_OFFENDER_THRESHOLD,
+    medical_analysis_count: normalizedMedicalCount,
+    medical_last_analysis_at: medicalLastAnalysisAt || null,
+  };
+}
+
 function buildCadVehicleResponse(registration) {
   const reg = registration || {};
   return {
@@ -436,7 +457,21 @@ router.get('/cad/persons', requireAuth, async (req, res) => {
       .filter((person) => personMatchesNameFilters(person, firstNameFilter, lastNameFilter))
       .slice(0, 100);
 
-    res.json(filtered);
+    const citizenIds = filtered
+      .map((person) => String(person?.citizenid || '').trim())
+      .filter(Boolean);
+    const recordCounts = CriminalRecords.countByCitizenIds(citizenIds);
+    const medicalCounts = PatientAnalyses.countByCitizenIds(citizenIds);
+
+    res.json(filtered.map((person) => {
+      const citizenId = String(person?.citizenid || '').trim();
+      const medical = medicalCounts[citizenId] || {};
+      return decoratePersonHistoryFlags(person, {
+        recordCount: recordCounts[citizenId] || 0,
+        medicalCount: Number(medical.count || 0),
+        medicalLastAnalysisAt: medical.last_updated_at || null,
+      });
+    }));
   } catch (err) {
     res.status(500).json({ error: 'Search failed', message: err.message });
   }
@@ -466,8 +501,17 @@ router.get('/cad/persons/:citizenid', requireAuth, async (req, res) => {
       fallbackName,
       qboxPerson,
     });
+    const recordCount = CriminalRecords.countByCitizenId(citizenId);
+    const medicalSummary = PatientAnalyses.countByCitizenIds([citizenId])[citizenId] || {};
+    const decoratedPerson = decoratePersonHistoryFlags(person, {
+      recordCount,
+      medicalCount: Number(medicalSummary.count || 0),
+      medicalLastAnalysisAt: medicalSummary.last_updated_at || null,
+    });
     res.json({
-      ...person,
+      ...decoratedPerson,
+      active_warrants: Array.isArray(decoratedPerson.warrants) ? decoratedPerson.warrants : [],
+      active_bolos: Array.isArray(decoratedPerson.bolos) ? decoratedPerson.bolos : [],
       cad_driver_license: license || null,
       cad_vehicle_registrations: registrations,
     });

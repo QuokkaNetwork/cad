@@ -7,6 +7,7 @@ import UnitCard from '../../components/UnitCard';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
+import { formatDateTimeAU } from '../../utils/dateTime';
 
 function normalizeUnitStatus(value) {
   return String(value || '').trim().toLowerCase();
@@ -26,6 +27,10 @@ export default function Units() {
     online_count: 0,
     is_dispatch_department: false,
   });
+  const [shiftNotes, setShiftNotes] = useState([]);
+  const [shiftNotesLoading, setShiftNotesLoading] = useState(false);
+  const [shiftNoteSaving, setShiftNoteSaving] = useState(false);
+  const [shiftNoteDraft, setShiftNoteDraft] = useState('');
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -62,7 +67,27 @@ export default function Units() {
     }
   }, [deptId, isDispatchDepartment]);
 
-  useEffect(() => { fetchData(); }, [fetchData, locationKey]);
+  const fetchShiftNotes = useCallback(async () => {
+    if (!deptId) {
+      setShiftNotes([]);
+      return;
+    }
+    setShiftNotesLoading(true);
+    try {
+      const data = await api.get(`/api/shift-notes?department_id=${deptId}&limit=20`);
+      setShiftNotes(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load shift notes:', err);
+      setShiftNotes([]);
+    } finally {
+      setShiftNotesLoading(false);
+    }
+  }, [deptId]);
+
+  useEffect(() => {
+    fetchData();
+    fetchShiftNotes();
+  }, [fetchData, fetchShiftNotes, locationKey]);
 
   useEventSource({
     'unit:online': () => fetchData(),
@@ -73,6 +98,7 @@ export default function Units() {
     'call:assign': () => fetchData(),
     'call:unassign': () => fetchData(),
     'call:close': () => fetchData(),
+    'shiftnote:create': () => fetchShiftNotes(),
   });
 
   async function goOffDuty() {
@@ -121,6 +147,25 @@ export default function Units() {
       if (selectedCall?.id === callId) setSelectedCall(null);
     } catch (err) {
       alert('Failed to close call: ' + err.message);
+    }
+  }
+
+  async function addShiftNote() {
+    if (!deptId) return;
+    const note = String(shiftNoteDraft || '').trim();
+    if (!note) return;
+    setShiftNoteSaving(true);
+    try {
+      const created = await api.post('/api/shift-notes', {
+        department_id: deptId,
+        note,
+      });
+      setShiftNotes((current) => [created, ...(Array.isArray(current) ? current : [])].slice(0, 20));
+      setShiftNoteDraft('');
+    } catch (err) {
+      alert('Failed to save shift note: ' + err.message);
+    } finally {
+      setShiftNoteSaving(false);
     }
   }
 
@@ -212,6 +257,57 @@ export default function Units() {
           </p>
         </div>
       )}
+
+      <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <h3 className="font-semibold">
+            {isLaw ? 'Officer Shift Log' : isParamedics ? 'Crew Shift Log' : 'Shift Log'}
+          </h3>
+          <span className="text-xs text-cad-muted">
+            {shiftNotes.length} note{shiftNotes.length === 1 ? '' : 's'}
+          </span>
+        </div>
+        <div className="space-y-2 mb-3">
+          <textarea
+            value={shiftNoteDraft}
+            onChange={(e) => setShiftNoteDraft(e.target.value)}
+            rows={2}
+            placeholder={myUnit ? 'Document shift handoff notes, observations, or follow-ups...' : 'Go on duty to start your shift notes.'}
+            disabled={!deptId || !myUnit || shiftNoteSaving}
+            className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm resize-none disabled:opacity-60"
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={addShiftNote}
+              disabled={!myUnit || !String(shiftNoteDraft || '').trim() || shiftNoteSaving}
+              className="px-3 py-1.5 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium disabled:opacity-50"
+            >
+              {shiftNoteSaving ? 'Saving...' : 'Add Shift Note'}
+            </button>
+          </div>
+        </div>
+        {shiftNotesLoading ? (
+          <p className="text-sm text-cad-muted">Loading shift notes...</p>
+        ) : shiftNotes.length === 0 ? (
+          <p className="text-sm text-cad-muted">No shift notes yet for this department.</p>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {shiftNotes.map((note) => (
+              <div key={note.id} className="bg-cad-surface border border-cad-border rounded px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-xs text-cad-muted">
+                  <span>
+                    {note.unit_callsign ? <span className="font-mono text-cad-ink">{note.unit_callsign}</span> : 'No Unit'}{' '}
+                    {note.author_name ? `- ${note.author_name}` : ''}
+                  </span>
+                  <span>{formatDateTimeAU(note.created_at ? `${note.created_at}Z` : '', '-')}</span>
+                </div>
+                <p className="text-sm mt-1 whitespace-pre-wrap break-words">{note.note}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {hideSharedPanels ? (
         <div className="bg-cad-card border border-cad-border rounded-lg p-5">

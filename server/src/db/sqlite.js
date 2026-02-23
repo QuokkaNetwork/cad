@@ -751,6 +751,265 @@ const Calls = {
   },
 };
 
+// --- Traffic Stops ---
+const TrafficStops = {
+  findById(id) {
+    return db.prepare(`
+      SELECT ts.*,
+             us.steam_name AS creator_name,
+             u.callsign AS unit_callsign,
+             d.name AS department_name,
+             d.short_name AS department_short_name,
+             d.color AS department_color
+      FROM traffic_stops ts
+      LEFT JOIN users us ON us.id = ts.created_by_user_id
+      LEFT JOIN units u ON u.id = ts.unit_id
+      LEFT JOIN departments d ON d.id = ts.department_id
+      WHERE ts.id = ?
+    `).get(id);
+  },
+  listByDepartment(departmentId, limit = 100, offset = 0) {
+    const safeLimit = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
+    const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+    return db.prepare(`
+      SELECT ts.*,
+             us.steam_name AS creator_name,
+             u.callsign AS unit_callsign
+      FROM traffic_stops ts
+      LEFT JOIN users us ON us.id = ts.created_by_user_id
+      LEFT JOIN units u ON u.id = ts.unit_id
+      WHERE ts.department_id = ?
+      ORDER BY ts.created_at DESC, ts.id DESC
+      LIMIT ? OFFSET ?
+    `).all(departmentId, safeLimit, safeOffset);
+  },
+  listByCallId(callId) {
+    const parsedId = Number(callId);
+    if (!Number.isInteger(parsedId) || parsedId <= 0) return [];
+    return db.prepare(`
+      SELECT ts.*,
+             us.steam_name AS creator_name,
+             u.callsign AS unit_callsign
+      FROM traffic_stops ts
+      LEFT JOIN users us ON us.id = ts.created_by_user_id
+      LEFT JOIN units u ON u.id = ts.unit_id
+      WHERE ts.call_id = ?
+      ORDER BY ts.created_at DESC, ts.id DESC
+    `).all(parsedId);
+  },
+  create(fields = {}) {
+    const info = db.prepare(`
+      INSERT INTO traffic_stops (
+        department_id,
+        call_id,
+        unit_id,
+        created_by_user_id,
+        location,
+        postal,
+        plate,
+        reason,
+        outcome,
+        notes,
+        position_x,
+        position_y,
+        position_z,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      Number.isFinite(Number(fields.department_id)) ? Math.trunc(Number(fields.department_id)) : null,
+      Number.isFinite(Number(fields.call_id)) ? Math.trunc(Number(fields.call_id)) : null,
+      Number.isFinite(Number(fields.unit_id)) ? Math.trunc(Number(fields.unit_id)) : null,
+      Number.isFinite(Number(fields.created_by_user_id)) ? Math.trunc(Number(fields.created_by_user_id)) : null,
+      String(fields.location || '').trim(),
+      String(fields.postal || '').trim(),
+      String(fields.plate || '').trim().toUpperCase(),
+      String(fields.reason || '').trim(),
+      String(fields.outcome || '').trim(),
+      String(fields.notes || '').trim(),
+      Number.isFinite(Number(fields.position_x)) ? Number(fields.position_x) : null,
+      Number.isFinite(Number(fields.position_y)) ? Number(fields.position_y) : null,
+      Number.isFinite(Number(fields.position_z)) ? Number(fields.position_z) : null
+    );
+    return this.findById(info.lastInsertRowid);
+  },
+  update(id, fields = {}) {
+    const allowed = [
+      'department_id',
+      'call_id',
+      'unit_id',
+      'location',
+      'postal',
+      'plate',
+      'reason',
+      'outcome',
+      'notes',
+      'position_x',
+      'position_y',
+      'position_z',
+    ];
+    const updates = [];
+    const values = [];
+    for (const key of allowed) {
+      if (fields[key] === undefined) continue;
+      updates.push(`${key} = ?`);
+      if (key === 'plate') {
+        values.push(String(fields[key] || '').trim().toUpperCase());
+      } else if (['department_id', 'call_id', 'unit_id'].includes(key)) {
+        values.push(Number.isFinite(Number(fields[key])) ? Math.trunc(Number(fields[key])) : null);
+      } else if (['position_x', 'position_y', 'position_z'].includes(key)) {
+        values.push(Number.isFinite(Number(fields[key])) ? Number(fields[key]) : null);
+      } else {
+        values.push(String(fields[key] || '').trim());
+      }
+    }
+    if (updates.length === 0) return this.findById(id);
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+    db.prepare(`UPDATE traffic_stops SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    return this.findById(id);
+  },
+};
+
+function normalizeEvidenceEntityType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'criminal_record' || normalized === 'warrant') return normalized;
+  return '';
+}
+
+function hydrateEvidenceItemRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    metadata: parseJsonObjectValue(row.metadata_json),
+  };
+}
+
+// --- Evidence Items ---
+const EvidenceItems = {
+  findById(id) {
+    const row = db.prepare(`
+      SELECT ei.*,
+             us.steam_name AS creator_name
+      FROM evidence_items ei
+      LEFT JOIN users us ON us.id = ei.created_by_user_id
+      WHERE ei.id = ?
+    `).get(id);
+    return hydrateEvidenceItemRow(row);
+  },
+  listByEntity(entityType, entityId) {
+    const normalizedType = normalizeEvidenceEntityType(entityType);
+    const parsedId = Number(entityId);
+    if (!normalizedType || !Number.isInteger(parsedId) || parsedId <= 0) return [];
+    return db.prepare(`
+      SELECT ei.*,
+             us.steam_name AS creator_name
+      FROM evidence_items ei
+      LEFT JOIN users us ON us.id = ei.created_by_user_id
+      WHERE ei.entity_type = ? AND ei.entity_id = ?
+      ORDER BY ei.created_at DESC, ei.id DESC
+    `).all(normalizedType, parsedId).map(hydrateEvidenceItemRow);
+  },
+  create(fields = {}) {
+    const entityType = normalizeEvidenceEntityType(fields.entity_type);
+    const entityId = Number(fields.entity_id);
+    if (!entityType) throw new Error('entity_type is required');
+    if (!Number.isInteger(entityId) || entityId <= 0) throw new Error('entity_id is required');
+
+    const info = db.prepare(`
+      INSERT INTO evidence_items (
+        entity_type,
+        entity_id,
+        department_id,
+        case_number,
+        title,
+        description,
+        photo_url,
+        chain_status,
+        metadata_json,
+        created_by_user_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      entityType,
+      entityId,
+      Number.isFinite(Number(fields.department_id)) ? Math.trunc(Number(fields.department_id)) : null,
+      String(fields.case_number || '').trim(),
+      String(fields.title || '').trim(),
+      String(fields.description || '').trim(),
+      String(fields.photo_url || '').trim(),
+      String(fields.chain_status || 'logged').trim().toLowerCase().slice(0, 32) || 'logged',
+      JSON.stringify(parseJsonObjectValue(fields.metadata)),
+      Number.isFinite(Number(fields.created_by_user_id)) ? Math.trunc(Number(fields.created_by_user_id)) : null
+    );
+    return this.findById(info.lastInsertRowid);
+  },
+  delete(id) {
+    const info = db.prepare('DELETE FROM evidence_items WHERE id = ?').run(id);
+    return Number(info?.changes || 0);
+  },
+};
+
+// --- Shift Notes ---
+const ShiftNotes = {
+  listByDepartment(departmentId, { userId = null, limit = 50 } = {}) {
+    const parsedDeptId = Number(departmentId);
+    if (!Number.isInteger(parsedDeptId) || parsedDeptId <= 0) return [];
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    const params = [parsedDeptId];
+    let userFilter = '';
+    if (Number.isInteger(Number(userId)) && Number(userId) > 0) {
+      userFilter = 'AND sn.user_id = ?';
+      params.push(Math.trunc(Number(userId)));
+    }
+    params.push(safeLimit);
+    return db.prepare(`
+      SELECT sn.*,
+             us.steam_name AS author_name,
+             u.callsign AS unit_callsign
+      FROM shift_notes sn
+      LEFT JOIN users us ON us.id = sn.user_id
+      LEFT JOIN units u ON u.id = sn.unit_id
+      WHERE sn.department_id = ? ${userFilter}
+      ORDER BY sn.created_at DESC, sn.id DESC
+      LIMIT ?
+    `).all(...params);
+  },
+  create(fields = {}) {
+    const note = String(fields.note || '').trim();
+    if (!note) throw new Error('note is required');
+    const info = db.prepare(`
+      INSERT INTO shift_notes (
+        department_id,
+        user_id,
+        unit_id,
+        note,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      Number.isFinite(Number(fields.department_id)) ? Math.trunc(Number(fields.department_id)) : null,
+      Number.isFinite(Number(fields.user_id)) ? Math.trunc(Number(fields.user_id)) : null,
+      Number.isFinite(Number(fields.unit_id)) ? Math.trunc(Number(fields.unit_id)) : null,
+      note
+    );
+    return db.prepare(`
+      SELECT sn.*,
+             us.steam_name AS author_name,
+             u.callsign AS unit_callsign
+      FROM shift_notes sn
+      LEFT JOIN users us ON us.id = sn.user_id
+      LEFT JOIN units u ON u.id = sn.unit_id
+      WHERE sn.id = ?
+    `).get(info.lastInsertRowid);
+  },
+  delete(id) {
+    const info = db.prepare('DELETE FROM shift_notes WHERE id = ?').run(id);
+    return Number(info?.changes || 0);
+  },
+};
+
 // --- BOLOs ---
 const Bolos = {
   listByDepartment(departmentId, status = 'active') {
@@ -1012,6 +1271,38 @@ const CriminalRecords = {
       'SELECT * FROM criminal_records WHERE citizen_id = ? ORDER BY created_at DESC'
     ).all(citizenId);
   },
+  countByCitizenId(citizenId) {
+    const normalized = String(citizenId || '').trim();
+    if (!normalized) return 0;
+    const row = db.prepare('SELECT COUNT(*) AS count FROM criminal_records WHERE citizen_id = ?').get(normalized);
+    return Number(row?.count || 0);
+  },
+  countByCitizenIds(citizenIds = []) {
+    const ids = Array.isArray(citizenIds)
+      ? Array.from(new Set(
+        citizenIds
+          .map((id) => String(id || '').trim())
+          .filter(Boolean)
+      ))
+      : [];
+    if (ids.length === 0) return {};
+
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = db.prepare(`
+      SELECT citizen_id, COUNT(*) AS count
+      FROM criminal_records
+      WHERE citizen_id IN (${placeholders})
+      GROUP BY citizen_id
+    `).all(...ids);
+
+    const out = {};
+    for (const row of rows) {
+      const key = String(row?.citizen_id || '').trim();
+      if (!key) continue;
+      out[key] = Number(row?.count || 0);
+    }
+    return out;
+  },
   findById(id) {
     return db.prepare('SELECT * FROM criminal_records WHERE id = ?').get(id);
   },
@@ -1076,6 +1367,7 @@ const CriminalRecords = {
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
 const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
 const PATIENT_TRIAGE_CATEGORIES = new Set(['undetermined', 'immediate', 'urgent', 'delayed', 'minor', 'deceased']);
+const PATIENT_MCI_TAGS = new Set(['', 'green', 'yellow', 'red', 'black']);
 
 function parseJsonArrayValue(value) {
   if (Array.isArray(value)) return value;
@@ -1195,6 +1487,63 @@ function normalizePatientBodyMarks(value) {
   return cleaned;
 }
 
+function normalizePatientTreatmentLog(value) {
+  const source = parseJsonArrayValue(value).slice(0, 100);
+  const out = [];
+
+  for (let i = 0; i < source.length; i += 1) {
+    const entry = source[i];
+    if (!entry || typeof entry !== 'object') continue;
+
+    const id = String(entry.id || `${Date.now()}_${i}`).trim().slice(0, 80);
+    const category = String(entry.category || '').trim().toLowerCase().slice(0, 32) || 'treatment';
+    const name = String(entry.name || entry.medication || entry.procedure || '').trim().slice(0, 120);
+    const dose = String(entry.dose || '').trim().slice(0, 80);
+    const route = String(entry.route || '').trim().slice(0, 40);
+    const status = String(entry.status || '').trim().toLowerCase().slice(0, 24) || 'completed';
+    const timestamp = String(entry.timestamp || entry.time || '').trim().slice(0, 40);
+    const notes = String(entry.notes || entry.note || '').trim().slice(0, 200);
+
+    if (!name && !notes) continue;
+    out.push({
+      id,
+      category,
+      name,
+      dose,
+      route,
+      status,
+      timestamp,
+      notes,
+    });
+  }
+
+  return out;
+}
+
+function normalizePatientTransport(value) {
+  const source = parseJsonObjectValue(value);
+  const etaSource = source.eta_minutes;
+  const bedSource = source.bed_availability;
+  const etaNum = Number(etaSource);
+  const bedNum = Number(bedSource);
+
+  return {
+    destination: String(source.destination || '').trim().slice(0, 120),
+    eta_minutes: Number.isFinite(etaNum) ? Math.max(0, Math.min(999, Math.trunc(etaNum))) : null,
+    bed_availability: Number.isFinite(bedNum) ? Math.max(0, Math.min(999, Math.trunc(bedNum))) : null,
+    status: String(source.status || '').trim().toLowerCase().slice(0, 32),
+    unit_callsign: String(source.unit_callsign || '').trim().slice(0, 32),
+    notes: String(source.notes || '').trim().slice(0, 200),
+    updated_at: String(source.updated_at || '').trim().slice(0, 40),
+  };
+}
+
+function normalizePatientMciTag(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (PATIENT_MCI_TAGS.has(normalized)) return normalized;
+  return '';
+}
+
 function hydratePatientAnalysisRow(row) {
   if (!row) return row;
   return {
@@ -1204,6 +1553,10 @@ function hydratePatientAnalysisRow(row) {
     questionnaire: parseJsonObjectValue(row.questionnaire_json),
     vitals: parseJsonObjectValue(row.vitals_json),
     body_marks: normalizePatientBodyMarks(row.body_marks_json),
+    treatment_log: normalizePatientTreatmentLog(row.treatment_log_json),
+    transport: normalizePatientTransport(row.transport_json),
+    mci_incident_key: String(row.mci_incident_key || '').trim(),
+    mci_tag: normalizePatientMciTag(row.mci_tag),
   };
 }
 
@@ -1223,6 +1576,35 @@ const PatientAnalyses = {
       LIMIT ?
     `).all(normalized, safeLimit).map(hydratePatientAnalysisRow);
   },
+  countByCitizenIds(citizenIds = []) {
+    const ids = Array.isArray(citizenIds)
+      ? Array.from(new Set(
+        citizenIds
+          .map((id) => String(id || '').trim())
+          .filter(Boolean)
+      ))
+      : [];
+    if (ids.length === 0) return {};
+
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = db.prepare(`
+      SELECT citizen_id, COUNT(*) AS count, MAX(updated_at) AS last_updated_at
+      FROM patient_analyses
+      WHERE citizen_id IN (${placeholders})
+      GROUP BY citizen_id
+    `).all(...ids);
+
+    const out = {};
+    for (const row of rows) {
+      const key = String(row?.citizen_id || '').trim();
+      if (!key) continue;
+      out[key] = {
+        count: Number(row?.count || 0),
+        last_updated_at: row?.last_updated_at || null,
+      };
+    }
+    return out;
+  },
   create({
     citizen_id,
     patient_name,
@@ -1234,6 +1616,10 @@ const PatientAnalyses = {
     vitals,
     body_marks,
     notes,
+    treatment_log,
+    transport,
+    mci_incident_key,
+    mci_tag,
     created_by_user_id,
     updated_by_user_id,
   }) {
@@ -1253,12 +1639,16 @@ const PatientAnalyses = {
         questionnaire_json,
         vitals_json,
         body_marks_json,
+        treatment_log_json,
+        transport_json,
+        mci_incident_key,
+        mci_tag,
         notes,
         created_by_user_id,
         updated_by_user_id,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(
       normalizedCitizenId,
       String(patient_name || '').trim(),
@@ -1269,6 +1659,10 @@ const PatientAnalyses = {
       JSON.stringify(parseJsonObjectValue(questionnaire)),
       JSON.stringify(parseJsonObjectValue(vitals)),
       JSON.stringify(normalizePatientBodyMarks(body_marks)),
+      JSON.stringify(normalizePatientTreatmentLog(treatment_log)),
+      JSON.stringify(normalizePatientTransport(transport)),
+      String(mci_incident_key || '').trim().slice(0, 80),
+      normalizePatientMciTag(mci_tag),
       String(notes || '').trim(),
       created_by_user_id || null,
       updated_by_user_id || null
@@ -1314,6 +1708,24 @@ const PatientAnalyses = {
       updates.push('body_marks_json = ?');
       const source = fields.body_marks !== undefined ? fields.body_marks : fields.body_marks_json;
       values.push(JSON.stringify(normalizePatientBodyMarks(source)));
+    }
+    if (fields.treatment_log !== undefined || fields.treatment_log_json !== undefined) {
+      updates.push('treatment_log_json = ?');
+      const source = fields.treatment_log !== undefined ? fields.treatment_log : fields.treatment_log_json;
+      values.push(JSON.stringify(normalizePatientTreatmentLog(source)));
+    }
+    if (fields.transport !== undefined || fields.transport_json !== undefined) {
+      updates.push('transport_json = ?');
+      const source = fields.transport !== undefined ? fields.transport : fields.transport_json;
+      values.push(JSON.stringify(normalizePatientTransport(source)));
+    }
+    if (fields.mci_incident_key !== undefined) {
+      updates.push('mci_incident_key = ?');
+      values.push(String(fields.mci_incident_key || '').trim().slice(0, 80));
+    }
+    if (fields.mci_tag !== undefined) {
+      updates.push('mci_tag = ?');
+      values.push(normalizePatientMciTag(fields.mci_tag));
     }
     if (fields.notes !== undefined) {
       updates.push('notes = ?');
@@ -2282,6 +2694,9 @@ module.exports = {
   DiscordRoleMappings,
   Units,
   Calls,
+  TrafficStops,
+  EvidenceItems,
+  ShiftNotes,
   Bolos,
   Warrants,
   OffenceCatalog,

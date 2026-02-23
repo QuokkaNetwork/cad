@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
@@ -10,9 +10,21 @@ import StatusBadge from '../../components/StatusBadge';
 import { getHighContrastBadgeStyle } from '../../utils/color';
 
 const UNIT_STATUSES = ['available', 'busy', 'enroute', 'on-scene', 'unavailable'];
+const DISPATCH_MACROS = [
+  'Shots fired, multiple callers.',
+  'MVA with injuries, emergency services required.',
+  'Domestic disturbance in progress.',
+  'Suspicious person / vehicle reported.',
+  'Caller disconnected, callback pending.',
+];
 
 function isEmergency000Call(call) {
   return String(call?.job_code || '').trim() === '000';
+}
+
+function isPursuitCall(call) {
+  const hay = `${String(call?.title || '')} ${String(call?.description || '')} ${String(call?.job_code || '')}`.toLowerCase();
+  return /\bpursuit\b|\bvehicle pursuit\b|\bpolice pursuit\b/.test(hay);
 }
 
 function parseSqliteUtc(value) {
@@ -113,6 +125,18 @@ function parseEmergencyCallDescription(description) {
   };
 }
 
+function formatElapsedSinceSqlite(value, nowMs) {
+  const ts = parseSqliteUtc(value);
+  if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(nowMs)) return '-';
+  const diffMs = Math.max(0, nowMs - ts);
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 export default function Dispatch() {
   const { activeDepartment } = useDepartment();
   const { key: locationKey } = useLocation();
@@ -120,8 +144,13 @@ export default function Dispatch() {
   const [units, setUnits] = useState([]);
   const [unitPositionsById, setUnitPositionsById] = useState({});
   const [visibleDepartments, setVisibleDepartments] = useState([]);
+  const [trafficStops, setTrafficStops] = useState([]);
   const [showNewCall, setShowNewCall] = useState(false);
+  const [showTrafficStop, setShowTrafficStop] = useState(false);
   const [selectedCall, setSelectedCall] = useState(null);
+  const [creatingTrafficStop, setCreatingTrafficStop] = useState(false);
+  const [pursuitModeOnly, setPursuitModeOnly] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [form, setForm] = useState({
     title: '',
     priority: '3',
@@ -131,6 +160,17 @@ export default function Dispatch() {
     department_id: '',
     requested_department_ids: [],
   });
+  const [trafficStopForm, setTrafficStopForm] = useState({
+    department_id: '',
+    call_id: '',
+    location: '',
+    plate: '',
+    reason: '',
+    outcome: '',
+    notes: '',
+    link_selected_call: true,
+  });
+  const lastToneRef = useRef(0);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
@@ -147,6 +187,7 @@ export default function Dispatch() {
         setCalls(callsData);
         setUnits(dispatchData.units || []);
         setVisibleDepartments(dispatchData.departments || []);
+        setTrafficStops([]);
         const mapPositions = {};
         for (const unit of (Array.isArray(unitMapData) ? unitMapData : [])) {
           const unitId = Number(unit?.id);
@@ -158,14 +199,16 @@ export default function Dispatch() {
         }
         setUnitPositionsById(mapPositions);
       } else {
-        const [callsData, unitsData, unitMapData] = await Promise.all([
+        const [callsData, unitsData, unitMapData, trafficStopData] = await Promise.all([
           api.get(`/api/calls?department_id=${deptId}`),
           api.get(`/api/units?department_id=${deptId}`),
           api.get(`/api/units/map?department_id=${deptId}`).catch(() => []),
+          api.get(`/api/traffic-stops?department_id=${deptId}&limit=8`).catch(() => []),
         ]);
         setCalls(callsData);
         setUnits(unitsData);
         setVisibleDepartments([]);
+        setTrafficStops(Array.isArray(trafficStopData) ? trafficStopData : []);
         const mapPositions = {};
         for (const unit of (Array.isArray(unitMapData) ? unitMapData : [])) {
           const unitId = Number(unit?.id);
@@ -184,10 +227,38 @@ export default function Dispatch() {
   }, [deptId, isDispatch]);
 
   useEffect(() => { fetchData(); }, [fetchData, locationKey]);
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  function playPriorityTone(callPayload) {
+    const now = Date.now();
+    if (now - lastToneRef.current < 800) return;
+    lastToneRef.current = now;
+
+    const is000 = isEmergency000Call(callPayload);
+    const priority = String(callPayload?.priority || '').trim();
+    const src = is000 || priority === '1'
+      ? '/sounds/000call.mp3'
+      : '/sounds/cad-added-call.mp3';
+    try {
+      const audio = new Audio(src);
+      audio.volume = is000 || priority === '1' ? 1 : 0.6;
+      audio.play().catch(() => {});
+    } catch {
+      // Browser may block autoplay; ignore.
+    }
+  }
 
   // Real-time updates
   useEventSource({
-    'call:create': () => fetchData(),
+    'call:create': (payload) => {
+      if (payload?.call) {
+        playPriorityTone(payload.call);
+      }
+      fetchData();
+    },
     'call:update': () => fetchData(),
     'call:close': () => fetchData(),
     'call:assign': () => fetchData(),
@@ -195,6 +266,7 @@ export default function Dispatch() {
     'unit:online': () => fetchData(),
     'unit:offline': () => fetchData(),
     'unit:update': () => fetchData(),
+    'trafficstop:create': () => fetchData(),
   });
 
   // Group units by department for dispatch view
@@ -281,6 +353,60 @@ export default function Dispatch() {
     }
   }
 
+  function appendDispatchMacro(text) {
+    const snippet = String(text || '').trim();
+    if (!snippet) return;
+    setForm((current) => {
+      const currentDescription = String(current.description || '').trim();
+      const nextDescription = currentDescription ? `${currentDescription}\n${snippet}` : snippet;
+      return { ...current, description: nextDescription };
+    });
+  }
+
+  function openTrafficStopModal() {
+    const selectedTargetDeptId = Number(selectedCall?.department_id);
+    setTrafficStopForm({
+      department_id: isDispatch && Number.isInteger(selectedTargetDeptId) ? String(selectedTargetDeptId) : '',
+      call_id: selectedCall?.id ? String(selectedCall.id) : '',
+      location: String(selectedCall?.location || '').trim(),
+      plate: '',
+      reason: '',
+      outcome: '',
+      notes: '',
+      link_selected_call: !!selectedCall?.id,
+    });
+    setShowTrafficStop(true);
+  }
+
+  async function createTrafficStop(e) {
+    e.preventDefault();
+    try {
+      setCreatingTrafficStop(true);
+      const targetDeptId = isDispatch
+        ? Number(trafficStopForm.department_id || selectedCall?.department_id || '')
+        : Number(deptId);
+      const linkSelected = !!trafficStopForm.link_selected_call && !!selectedCall?.id;
+      const callId = linkSelected
+        ? Number(selectedCall?.id)
+        : Number(trafficStopForm.call_id || '');
+      await api.post('/api/traffic-stops', {
+        department_id: targetDeptId,
+        call_id: Number.isInteger(callId) && callId > 0 ? callId : null,
+        location: trafficStopForm.location,
+        plate: trafficStopForm.plate,
+        reason: trafficStopForm.reason,
+        outcome: trafficStopForm.outcome,
+        notes: trafficStopForm.notes,
+      });
+      setShowTrafficStop(false);
+      fetchData();
+    } catch (err) {
+      alert('Failed to create traffic stop: ' + err.message);
+    } finally {
+      setCreatingTrafficStop(false);
+    }
+  }
+
   async function updateCall(id, updates) {
     try {
       await api.patch(`/api/calls/${id}`, updates);
@@ -347,6 +473,11 @@ export default function Dispatch() {
   const incomingEmergencyCalls = useMemo(
     () => activeCalls.filter(call => isEmergency000Call(call)),
     [activeCalls]
+  );
+
+  const displayedCalls = useMemo(
+    () => (pursuitModeOnly ? activeCalls.filter((call) => isPursuitCall(call)) : activeCalls),
+    [activeCalls, pursuitModeOnly]
   );
 
   useEffect(() => {
@@ -459,30 +590,54 @@ export default function Dispatch() {
               000 Calls: {incomingEmergencyCalls.length}
             </span>
           )}
+          {pursuitModeOnly && (
+            <span className="text-xs px-2 py-1 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/35 font-semibold">
+              Pursuit Mode
+            </span>
+          )}
         </div>
-        <button
-          onClick={() => setShowNewCall(true)}
-          className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          + New Call
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPursuitModeOnly((prev) => !prev)}
+            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${
+              pursuitModeOnly
+                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
+                : 'bg-cad-surface text-cad-muted border-cad-border hover:text-cad-ink'
+            }`}
+          >
+            {pursuitModeOnly ? 'Exit Pursuit Mode' : 'Pursuit Mode'}
+          </button>
+          <button
+            onClick={openTrafficStopModal}
+            className="px-3 py-2 bg-blue-500/15 hover:bg-blue-500/20 text-blue-300 border border-blue-500/35 rounded-lg text-sm font-medium transition-colors"
+          >
+            + Traffic Stop
+          </button>
+          <button
+            onClick={() => setShowNewCall(true)}
+            className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            + New Call
+          </button>
+        </div>
       </div>
 
       {/* Main content */}
       <div className="flex gap-4 flex-1 min-h-0">
         {/* Calls list */}
         <div className="flex-1 overflow-y-auto space-y-3">
-          {activeCalls.length === 0 && (
+          {displayedCalls.length === 0 && (
             <div className="text-center py-12 text-cad-muted">
-              No active calls
+              {pursuitModeOnly ? 'No pursuit-tagged calls' : 'No active calls'}
             </div>
           )}
-          {activeCalls.map(call => (
+          {displayedCalls.map(call => (
             <CallCard
               key={call.id}
               call={call}
               onClick={() => setSelectedCall(call)}
               showDepartment={isDispatch}
+              nowMs={nowMs}
             />
           ))}
         </div>
@@ -549,6 +704,27 @@ export default function Dispatch() {
                 {units.length === 0 && (
                   <p className="text-sm text-cad-muted py-4 text-center">No units on duty</p>
                 )}
+              </div>
+              <div className="mt-5">
+                <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-3">
+                  Recent Traffic Stops ({trafficStops.length})
+                </h3>
+                <div className="space-y-2">
+                  {trafficStops.map((stop) => (
+                    <div key={stop.id} className="bg-cad-surface border border-cad-border/70 rounded px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-mono text-cad-accent-light">{stop.plate || 'NO-PLATE'}</p>
+                        <span className="text-[10px] text-cad-muted">#{stop.id}</span>
+                      </div>
+                      <p className="text-xs text-cad-muted mt-1 line-clamp-2">{stop.reason || 'No reason recorded'}</p>
+                      {stop.outcome ? <p className="text-[11px] text-cad-ink mt-1">Outcome: {stop.outcome}</p> : null}
+                      <p className="text-[10px] text-cad-muted mt-1">{stop.unit_callsign ? `${stop.unit_callsign} | ` : ''}{stop.location || 'No location'}</p>
+                    </div>
+                  ))}
+                  {trafficStops.length === 0 && (
+                    <p className="text-sm text-cad-muted py-2 text-center">No traffic stops logged yet.</p>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -672,6 +848,21 @@ export default function Dispatch() {
               className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-none"
               placeholder="Additional details..."
             />
+            <div className="mt-2">
+              <p className="text-[11px] text-cad-muted mb-1">Quick Notes</p>
+              <div className="flex flex-wrap gap-1.5">
+                {DISPATCH_MACROS.map((macro) => (
+                  <button
+                    key={macro}
+                    type="button"
+                    onClick={() => appendDispatchMacro(macro)}
+                    className="px-2 py-1 rounded border border-cad-border bg-cad-surface text-[11px] text-cad-muted hover:text-cad-ink"
+                  >
+                    {macro}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="flex gap-2 pt-2">
             <button
@@ -683,6 +874,120 @@ export default function Dispatch() {
             <button
               type="button"
               onClick={() => setShowNewCall(false)}
+              className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal open={showTrafficStop} onClose={() => setShowTrafficStop(false)} title="Traffic Stop Logger">
+        <form onSubmit={createTrafficStop} className="space-y-3">
+          {isDispatch && selectableDepartments.length > 0 && (
+            <div>
+              <label className="block text-sm text-cad-muted mb-1">Department *</label>
+              <select
+                required
+                value={trafficStopForm.department_id}
+                onChange={(e) => setTrafficStopForm((current) => ({ ...current, department_id: e.target.value }))}
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              >
+                <option value="">Select department...</option>
+                {selectableDepartments.map((department) => (
+                  <option key={`traffic-stop-dept-${department.id}`} value={department.id}>
+                    {department.name} ({department.short_name})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {selectedCall?.id ? (
+            <div className="rounded border border-cad-border bg-cad-surface p-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!trafficStopForm.link_selected_call}
+                  onChange={(e) => setTrafficStopForm((current) => ({
+                    ...current,
+                    link_selected_call: e.target.checked,
+                    call_id: e.target.checked ? String(selectedCall.id) : current.call_id,
+                  }))}
+                />
+                Link to selected call #{selectedCall.id} ({selectedCall.title})
+              </label>
+            </div>
+          ) : null}
+
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Location</label>
+            <input
+              type="text"
+              value={trafficStopForm.location}
+              onChange={(e) => setTrafficStopForm((current) => ({ ...current, location: e.target.value }))}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              placeholder="Road / street / landmark"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm text-cad-muted mb-1">Plate</label>
+              <input
+                type="text"
+                value={trafficStopForm.plate}
+                onChange={(e) => setTrafficStopForm((current) => ({ ...current, plate: e.target.value.toUpperCase() }))}
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm font-mono"
+                placeholder="ABC123"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-cad-muted mb-1">Outcome</label>
+              <input
+                type="text"
+                value={trafficStopForm.outcome}
+                onChange={(e) => setTrafficStopForm((current) => ({ ...current, outcome: e.target.value }))}
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+                placeholder="Warning / citation / arrest / clear"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Reason *</label>
+            <textarea
+              required
+              value={trafficStopForm.reason}
+              onChange={(e) => setTrafficStopForm((current) => ({ ...current, reason: e.target.value }))}
+              rows={2}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm resize-none"
+              placeholder="Speeding, suspicious vehicle, traffic offence..."
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Notes</label>
+            <textarea
+              value={trafficStopForm.notes}
+              onChange={(e) => setTrafficStopForm((current) => ({ ...current, notes: e.target.value }))}
+              rows={3}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm resize-none"
+              placeholder="Additional officer notes"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button
+              type="submit"
+              disabled={creatingTrafficStop}
+              className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {creatingTrafficStop ? 'Logging...' : 'Create Traffic Stop Record'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowTrafficStop(false)}
               className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors"
             >
               Cancel
@@ -738,6 +1043,9 @@ export default function Dispatch() {
             {!isEmergency000Call(selectedCall) && (
               <div>
                 <h3 className="font-medium text-lg break-words">{selectedCall.title}</h3>
+                <p className="text-xs text-cad-muted mt-1">
+                  Open: {formatElapsedSinceSqlite(selectedCall.created_at, nowMs)} | Last update: {formatElapsedSinceSqlite(selectedCall.updated_at || selectedCall.created_at, nowMs)}
+                </p>
                 {selectedCall.location && (
                   <p className="text-sm text-cad-muted mt-1 break-words">
                     Location: {selectedCall.location}
@@ -834,6 +1142,14 @@ export default function Dispatch() {
             {selectedCall.status !== 'closed' && (
               <div className="flex gap-2">
                 <button
+                  onClick={() => {
+                    openTrafficStopModal();
+                  }}
+                  className="px-3 py-1.5 text-xs bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded hover:bg-blue-500/20 transition-colors"
+                >
+                  Log Traffic Stop
+                </button>
+                <button
                   onClick={() => updateCall(selectedCall.id, { status: 'closed' })}
                   className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 transition-colors"
                 >
@@ -843,6 +1159,37 @@ export default function Dispatch() {
             )}
 
             {/* Assigned units */}
+            {isPursuitCall(selectedCall) && (
+              <div>
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Pursuit Tracking</h4>
+                {selectedCall.assigned_units?.length > 0 ? (
+                  <div className="space-y-1">
+                    {selectedCall.assigned_units.map((unit) => {
+                      const position = unitPositionsById[unit.id] || null;
+                      return (
+                        <div key={`pursuit-track-${unit.id}`} className="bg-cad-surface border border-emerald-500/20 rounded px-3 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-sm">
+                              <span className="font-mono" style={{ color: getUnitCallsignColor(unit) }}>{unit.callsign}</span>
+                              <span className="text-cad-muted"> {unit.user_name || ''}</span>
+                            </div>
+                            <StatusBadge status={unit.status} />
+                          </div>
+                          <p className="text-[11px] text-cad-muted mt-1">
+                            {position
+                              ? `Live position: X ${position.x.toFixed(1)} | Y ${position.y.toFixed(1)}`
+                              : 'Live position unavailable'}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-cad-muted">No units assigned to this pursuit yet.</p>
+                )}
+              </div>
+            )}
+
             <div>
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Assigned Units</h4>
               {selectedCall.assigned_units?.length > 0 ? (

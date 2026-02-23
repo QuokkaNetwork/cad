@@ -1,4 +1,4 @@
-import { formatDateAU } from '../utils/dateTime';
+import { formatDateAU, formatDateTimeAU } from '../utils/dateTime';
 
 function primaryTitle(type, item) {
   if (type === 'person') {
@@ -31,6 +31,10 @@ export default function SearchResults({ type, results, onSelect }) {
           ? (item?.citizenid || `p-${i}`)
           : (item?.plate || `v-${i}`);
         if (isPerson) {
+          const warrantCount = Math.max(0, Number(item?.active_warrant_count ?? item?.warrant_count ?? 0));
+          const boloCount = Math.max(0, Number(item?.active_bolo_count ?? item?.bolo_count ?? 0));
+          const recordCount = Math.max(0, Number(item?.criminal_record_count || 0));
+          const medicalCount = Math.max(0, Number(item?.medical_analysis_count || 0));
           return (
             <button
               key={key}
@@ -38,7 +42,46 @@ export default function SearchResults({ type, results, onSelect }) {
               onClick={() => onSelect?.(item)}
               className="w-full text-left px-4 py-3 hover:bg-cad-card transition-colors"
             >
-              <p className="font-medium">{title}</p>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium">{title}</p>
+                  {medicalCount > 0 && (
+                    <p className="text-[11px] text-cad-muted mt-1">
+                      Medical history: {medicalCount} analysis{medicalCount === 1 ? '' : 'es'}
+                      {item?.medical_last_analysis_at ? ` | Last: ${formatDateTimeAU(`${item.medical_last_analysis_at}Z`, '-', false)}` : ''}
+                    </p>
+                  )}
+                </div>
+                {recordCount > 0 && (
+                  <span className="text-[11px] text-cad-muted whitespace-nowrap">
+                    {recordCount} record{recordCount === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
+              {(warrantCount > 0 || boloCount > 0 || item?.repeat_offender || medicalCount > 0) && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {warrantCount > 0 ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-[11px] font-medium text-red-300">
+                      Warrant Alert{warrantCount > 1 ? ` x${warrantCount}` : ''}
+                    </span>
+                  ) : null}
+                  {boloCount > 0 ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-[11px] font-medium text-amber-300">
+                      BOLO{boloCount > 1 ? ` x${boloCount}` : ''}
+                    </span>
+                  ) : null}
+                  {item?.repeat_offender ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded border border-fuchsia-500/40 bg-fuchsia-500/10 text-[11px] font-medium text-fuchsia-300">
+                      Repeat Offender ({recordCount})
+                    </span>
+                  ) : null}
+                  {medicalCount > 0 ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded border border-cyan-500/40 bg-cyan-500/10 text-[11px] font-medium text-cyan-300">
+                      Medical Hx {medicalCount}
+                    </span>
+                  ) : null}
+                </div>
+              )}
             </button>
           );
         }

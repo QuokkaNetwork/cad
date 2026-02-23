@@ -22,6 +22,20 @@ const MARK_TYPES = [
 ];
 
 const MARK_SEVERITY = ['minor', 'moderate', 'severe', 'critical'];
+const MCI_TAG_OPTIONS = [
+  { value: '', label: 'Not MCI-tagged' },
+  { value: 'green', label: 'Green (Minor)' },
+  { value: 'yellow', label: 'Yellow (Delayed)' },
+  { value: 'red', label: 'Red (Immediate)' },
+  { value: 'black', label: 'Black (Deceased/Expectant)' },
+];
+const TRANSPORT_STATUS_OPTIONS = [
+  { value: '', label: 'Not transporting' },
+  { value: 'pending', label: 'Pending transport' },
+  { value: 'enroute', label: 'En route to hospital' },
+  { value: 'arrived', label: 'Arrived at hospital' },
+  { value: 'handover_complete', label: 'Handover complete' },
+];
 
 function resolvePersonName(person) {
   const fullName = String(person?.full_name || '').trim();
@@ -58,6 +72,17 @@ function buildDefaultDraft(person) {
       glucose: '',
     },
     body_marks: [],
+    treatment_log: [],
+    transport: {
+      destination: '',
+      eta_minutes: '',
+      bed_availability: '',
+      status: '',
+      unit_callsign: '',
+      notes: '',
+    },
+    mci_incident_key: '',
+    mci_tag: '',
     notes: '',
   };
 }
@@ -80,6 +105,15 @@ function toDraft(person, analysis) {
       ...(analysis.vitals && typeof analysis.vitals === 'object' ? analysis.vitals : {}),
     },
     body_marks: Array.isArray(analysis.body_marks) ? analysis.body_marks : [],
+    treatment_log: Array.isArray(analysis.treatment_log) ? analysis.treatment_log : [],
+    transport: {
+      ...base.transport,
+      ...(analysis.transport && typeof analysis.transport === 'object' ? analysis.transport : {}),
+      eta_minutes: (analysis.transport && analysis.transport.eta_minutes != null) ? String(analysis.transport.eta_minutes) : '',
+      bed_availability: (analysis.transport && analysis.transport.bed_availability != null) ? String(analysis.transport.bed_availability) : '',
+    },
+    mci_incident_key: String(analysis.mci_incident_key || '').trim(),
+    mci_tag: String(analysis.mci_tag || '').trim().toLowerCase(),
     notes: String(analysis.notes || '').trim(),
   };
 }
@@ -288,6 +322,45 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId }) {
     }));
   }
 
+  function addTreatmentLogItem() {
+    setDraft((current) => ({
+      ...current,
+      treatment_log: [
+        ...(Array.isArray(current.treatment_log) ? current.treatment_log : []),
+        {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          category: 'treatment',
+          name: '',
+          dose: '',
+          route: '',
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+          notes: '',
+        },
+      ],
+    }));
+  }
+
+  function updateTreatmentLogItem(id, key, value) {
+    setDraft((current) => ({
+      ...current,
+      treatment_log: (Array.isArray(current.treatment_log) ? current.treatment_log : []).map((entry) => (
+        String(entry?.id || '') === String(id || '')
+          ? { ...entry, [key]: value }
+          : entry
+      )),
+    }));
+  }
+
+  function removeTreatmentLogItem(id) {
+    setDraft((current) => ({
+      ...current,
+      treatment_log: (Array.isArray(current.treatment_log) ? current.treatment_log : []).filter(
+        (entry) => String(entry?.id || '') !== String(id || '')
+      ),
+    }));
+  }
+
   function loadHistoryItem(item) {
     setSelectedAnalysisId(item.id);
     setDraft(toDraft(person, item));
@@ -317,6 +390,14 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId }) {
       questionnaire: draft.questionnaire,
       vitals: draft.vitals,
       body_marks: draft.body_marks,
+      treatment_log: Array.isArray(draft.treatment_log) ? draft.treatment_log : [],
+      transport: {
+        ...(draft.transport || {}),
+        eta_minutes: draft.transport?.eta_minutes === '' ? null : Number(draft.transport?.eta_minutes),
+        bed_availability: draft.transport?.bed_availability === '' ? null : Number(draft.transport?.bed_availability),
+      },
+      mci_incident_key: draft.mci_incident_key,
+      mci_tag: draft.mci_tag,
       notes: draft.notes,
     };
 
@@ -495,6 +576,181 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId }) {
           </div>
 
           <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Treatment Log</h4>
+              <button
+                type="button"
+                onClick={addTreatmentLogItem}
+                className="px-2 py-1 text-xs rounded border border-cad-border text-cad-muted hover:text-cad-ink"
+              >
+                + Add Entry
+              </button>
+            </div>
+            {Array.isArray(draft.treatment_log) && draft.treatment_log.length > 0 ? (
+              <div className="space-y-2">
+                {draft.treatment_log.map((entry) => (
+                  <div key={entry.id} className="bg-cad-card border border-cad-border rounded p-2 space-y-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <select
+                        value={entry.category || 'treatment'}
+                        onChange={(e) => updateTreatmentLogItem(entry.id, 'category', e.target.value)}
+                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                      >
+                        <option value="treatment">Treatment</option>
+                        <option value="medication">Medication</option>
+                        <option value="procedure">Procedure</option>
+                        <option value="transport">Transport</option>
+                      </select>
+                      <input
+                        type="datetime-local"
+                        value={String(entry.timestamp || '').slice(0, 16)}
+                        onChange={(e) => updateTreatmentLogItem(entry.id, 'timestamp', e.target.value)}
+                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <input
+                        value={entry.name || ''}
+                        onChange={(e) => updateTreatmentLogItem(entry.id, 'name', e.target.value)}
+                        placeholder="Medication / procedure name"
+                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={entry.dose || ''}
+                        onChange={(e) => updateTreatmentLogItem(entry.id, 'dose', e.target.value)}
+                        placeholder="Dose / quantity"
+                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
+                      <input
+                        value={entry.route || ''}
+                        onChange={(e) => updateTreatmentLogItem(entry.id, 'route', e.target.value)}
+                        placeholder="Route (PO/IV/IM/etc)"
+                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={entry.status || ''}
+                        onChange={(e) => updateTreatmentLogItem(entry.id, 'status', e.target.value)}
+                        placeholder="Status"
+                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeTreatmentLogItem(entry.id)}
+                        className="px-3 py-2 text-xs border border-red-500/30 text-red-300 rounded hover:bg-red-500/10"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <textarea
+                      value={entry.notes || ''}
+                      onChange={(e) => updateTreatmentLogItem(entry.id, 'notes', e.target.value)}
+                      placeholder="Notes"
+                      rows={2}
+                      className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm resize-none"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-cad-muted">No treatments logged yet.</p>
+            )}
+          </div>
+
+          <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
+            <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Transport Tracker</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                value={draft.transport?.destination || ''}
+                onChange={(e) => setDraft((current) => ({
+                  ...current,
+                  transport: { ...(current.transport || {}), destination: e.target.value },
+                }))}
+                placeholder="Destination hospital"
+                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              />
+              <select
+                value={draft.transport?.status || ''}
+                onChange={(e) => setDraft((current) => ({
+                  ...current,
+                  transport: { ...(current.transport || {}), status: e.target.value },
+                }))}
+                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              >
+                {TRANSPORT_STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min="0"
+                value={draft.transport?.eta_minutes ?? ''}
+                onChange={(e) => setDraft((current) => ({
+                  ...current,
+                  transport: { ...(current.transport || {}), eta_minutes: e.target.value },
+                }))}
+                placeholder="ETA (minutes)"
+                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              />
+              <input
+                type="number"
+                min="0"
+                value={draft.transport?.bed_availability ?? ''}
+                onChange={(e) => setDraft((current) => ({
+                  ...current,
+                  transport: { ...(current.transport || {}), bed_availability: e.target.value },
+                }))}
+                placeholder="Beds available (if known)"
+                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              />
+              <input
+                value={draft.transport?.unit_callsign || ''}
+                onChange={(e) => setDraft((current) => ({
+                  ...current,
+                  transport: { ...(current.transport || {}), unit_callsign: e.target.value },
+                }))}
+                placeholder="Transport unit callsign"
+                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm md:col-span-2"
+              />
+            </div>
+            <textarea
+              value={draft.transport?.notes || ''}
+              onChange={(e) => setDraft((current) => ({
+                ...current,
+                transport: { ...(current.transport || {}), notes: e.target.value },
+              }))}
+              rows={2}
+              placeholder="Transport notes / destination updates"
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm resize-none"
+            />
+          </div>
+
+          <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
+            <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">MCI / START Triage</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                value={draft.mci_incident_key || ''}
+                onChange={(e) => setDraft((current) => ({ ...current, mci_incident_key: e.target.value }))}
+                placeholder="MCI Incident Key (shared across patients)"
+                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              />
+              <select
+                value={draft.mci_tag || ''}
+                onChange={(e) => setDraft((current) => ({ ...current, mci_tag: e.target.value }))}
+                className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
+              >
+                {MCI_TAG_OPTIONS.map((option) => (
+                  <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            <p className="text-xs text-cad-muted">
+              Use the same incident key for all patients in a mass casualty incident to group them together.
+            </p>
+          </div>
+
+          <div className="bg-cad-surface border border-cad-border rounded-lg p-3 space-y-3">
             <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Secondary Questions</h4>
             <input value={draft.questionnaire?.mechanism || ''} onChange={(e) => updateQuestionnaire('mechanism', e.target.value)} placeholder="Mechanism of injury / illness" className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm" />
             <input value={draft.questionnaire?.onset || ''} onChange={(e) => updateQuestionnaire('onset', e.target.value)} placeholder="Onset / timeline" className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm" />
@@ -574,12 +830,18 @@ export default function PatientAnalysisPanel({ person, activeDepartmentId }) {
                         ? 'border-cad-accent bg-cad-accent/10 text-cad-ink'
                         : 'border-cad-border bg-cad-card text-cad-muted hover:text-cad-ink'
                     }`}
-                  >
-                    <p className="font-semibold">#{item.id} - {formatStatusLabel(item.triage_category)}</p>
-                    <p>{formatDateAU(item.updated_at || item.created_at || '', '-')}</p>
-                  </button>
-                ))}
-              </div>
+                    >
+                      <p className="font-semibold">#{item.id} - {formatStatusLabel(item.triage_category)}</p>
+                      <p>{formatDateAU(item.updated_at || item.created_at || '', '-')}</p>
+                      {(Array.isArray(item.treatment_log) && item.treatment_log.length > 0) || item?.mci_tag ? (
+                        <p className="mt-1">
+                          {Array.isArray(item.treatment_log) && item.treatment_log.length > 0 ? `${item.treatment_log.length} tx` : '0 tx'}
+                          {item?.mci_tag ? ` | MCI ${String(item.mci_tag).toUpperCase()}` : ''}
+                        </p>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
             )}
           </div>
 

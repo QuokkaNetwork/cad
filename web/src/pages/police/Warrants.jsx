@@ -4,6 +4,7 @@ import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { api } from '../../api/client';
 import Modal from '../../components/Modal';
+import EvidencePanel from '../../components/EvidencePanel';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { formatDateTimeAU } from '../../utils/dateTime';
 
@@ -23,7 +24,7 @@ function normalizePersonSearchOption(row) {
   };
 }
 
-function WarrantCard({ warrant, onServe, onCancel }) {
+function WarrantCard({ warrant, onServe, onCancel, departmentId }) {
   const createdAt = formatDateTimeAU(warrant.created_at ? `${warrant.created_at}Z` : '', '');
   const subjectName = String(warrant.subject_name || '').trim() || 'Unknown Person';
   const citizenId = String(warrant.citizen_id || '').trim();
@@ -67,6 +68,16 @@ function WarrantCard({ warrant, onServe, onCancel }) {
         >
           Cancel
         </button>
+      </div>
+
+      <div className="mt-3">
+        <EvidencePanel
+          entityType="warrant"
+          entityId={warrant.id}
+          departmentId={departmentId || warrant.department_id || null}
+          title="Warrant Evidence"
+          compact
+        />
       </div>
     </div>
   );
@@ -243,6 +254,7 @@ export default function Warrants() {
                 warrant={warrant}
                 onServe={serveWarrant}
                 onCancel={cancelWarrant}
+                departmentId={deptId}
               />
             ))}
             {warrants.length === 0 && (

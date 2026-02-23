@@ -3,6 +3,7 @@ import { useDepartment } from '../../context/DepartmentContext';
 import { api } from '../../api/client';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
+import EvidencePanel from '../../components/EvidencePanel';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import {
   BODY_REGION_OPTIONS,
@@ -1235,6 +1236,15 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
           ) : (
             <FireFields form={editFireForm} setForm={setEditFireForm} />
           )}
+          {isLaw && editingRecord?.id ? (
+            <EvidencePanel
+              entityType="criminal_record"
+              entityId={editingRecord.id}
+              departmentId={editingRecord.department_id || effectiveDepartmentId || null}
+              title="Evidence Chain"
+              compact
+            />
+          ) : null}
           <div className="flex gap-2 pt-2">
             <button
               type="submit"

@@ -22,10 +22,32 @@ const PRIORITY_CARD_COLORS = {
   '4': 'border-gray-500/40 bg-gray-500/5',
 };
 
-export default function CallCard({ call, onClick, onAssign, onClose, units = [], showDepartment = false }) {
+function parseSqliteUtc(value) {
+  const text = String(value || '').trim();
+  if (!text) return NaN;
+  const normalized = text.replace(' ', 'T');
+  const withZone = normalized.endsWith('Z') ? normalized : `${normalized}Z`;
+  return Date.parse(withZone);
+}
+
+function formatElapsed(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '-';
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+export default function CallCard({ call, onClick, onAssign, onClose, units = [], showDepartment = false, nowMs = Date.now() }) {
   const priorityStyle = PRIORITY_COLORS[call.priority] || PRIORITY_COLORS['3'];
   const priorityCardStyle = PRIORITY_CARD_COLORS[call.priority] || PRIORITY_CARD_COLORS['3'];
   const isEmergency000 = String(call?.job_code || '').trim() === '000';
+  const createdTs = parseSqliteUtc(call?.created_at);
+  const updatedTs = parseSqliteUtc(call?.updated_at || call?.created_at);
+  const createdElapsed = formatElapsed(nowMs - createdTs);
+  const updatedElapsed = formatElapsed(nowMs - updatedTs);
 
   return (
     <div
@@ -101,9 +123,14 @@ export default function CallCard({ call, onClick, onAssign, onClose, units = [],
           <span className="text-xs text-cad-muted">
             {call.creator_name && `by ${call.creator_name}`}
           </span>
-          <span className="text-xs text-cad-muted">
-            {formatTimeAU(call.created_at ? `${call.created_at}Z` : '', '-')}
-          </span>
+          <div className="text-right">
+            <p className="text-xs text-cad-muted">
+              {formatTimeAU(call.created_at ? `${call.created_at}Z` : '', '-')}
+            </p>
+            <p className="text-[10px] text-cad-muted/80">
+              Open {createdElapsed} | Update {updatedElapsed}
+            </p>
+          </div>
         </div>
       </div>
     </div>
