@@ -81,6 +81,26 @@ function parseSortOrder(value, fallback = 0) {
   return Math.max(0, Math.trunc(parsed));
 }
 
+function normalizeJobNameKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeJobGrade(value, { wildcard = false } = {}) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return wildcard ? -1 : 0;
+  if (wildcard && parsed < 0) return -1;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function jobMappingMatchesPreview(mapping, job) {
+  const mappingName = normalizeJobNameKey(mapping?.job_name);
+  const jobName = normalizeJobNameKey(job?.job_name);
+  if (!mappingName || !jobName || mappingName !== jobName) return false;
+  const mappingGrade = normalizeJobGrade(mapping?.job_grade, { wildcard: true });
+  if (mappingGrade < 0) return true;
+  return mappingGrade === normalizeJobGrade(job?.job_grade);
+}
+
 const uploadRoot = path.resolve(__dirname, '../../data/uploads/department-icons');
 fs.mkdirSync(uploadRoot, { recursive: true });
 
@@ -443,6 +463,122 @@ router.post('/discord/sync', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Sync failed', message: err.message });
+  }
+});
+
+router.get('/discord/job-sync-preview', async (req, res) => {
+  const userId = parseInt(req.query.user_id, 10);
+  if (!userId) return res.status(400).json({ error: 'user_id is required' });
+
+  const user = Users.findById(userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const preferredCitizenId = String(user.preferred_citizen_id || '').trim();
+  const reverseEnabled = String(Settings.get('fivem_bridge_job_sync_reverse_enabled') || 'true').trim().toLowerCase() !== 'false';
+  const allMappings = DiscordRoleMappings.list();
+  const jobMappings = allMappings
+    .filter((mapping) => mapping.target_type === 'job' && String(mapping.discord_role_id || '').trim() !== '')
+    .map((mapping) => ({
+      id: Number(mapping.id || 0),
+      discord_role_id: String(mapping.discord_role_id || ''),
+      discord_role_name: String(mapping.discord_role_name || ''),
+      job_name: String(mapping.job_name || '').trim(),
+      job_grade: Number.isFinite(Number(mapping.job_grade)) ? Number(mapping.job_grade) : 0,
+      rank_mode: Number(mapping.job_grade) < 0 ? 'any' : 'exact',
+    }));
+
+  const response = {
+    enabled: reverseEnabled,
+    user: {
+      id: Number(user.id || 0),
+      steam_name: String(user.steam_name || ''),
+      discord_id: String(user.discord_id || ''),
+      preferred_citizen_id: preferredCitizenId,
+    },
+    qbox: {
+      job_table: String(Settings.get('qbox_job_table') || Settings.get('qbox_players_table') || 'players').trim() || 'players',
+      job_match_col: String(Settings.get('qbox_job_match_col') || 'license').trim() || 'license',
+      job_col: String(Settings.get('qbox_job_col') || 'job').trim() || 'job',
+      job_grade_col: String(Settings.get('qbox_job_grade_col') || '').trim(),
+    },
+    mapping_count: jobMappings.length,
+    reason: '',
+    detected_jobs: [],
+    matched_mappings: [],
+  };
+
+  if (!reverseEnabled) {
+    response.reason = 'reverse_job_role_sync_disabled';
+  } else if (!preferredCitizenId) {
+    response.reason = 'no_preferred_citizen_id';
+  } else if (jobMappings.length === 0) {
+    response.reason = 'no_job_mappings';
+  } else {
+    try {
+      let detectedJobs = [];
+      if (typeof qbox.getPlayerCharacterJobsByCitizenId === 'function') {
+        const rows = await qbox.getPlayerCharacterJobsByCitizenId(preferredCitizenId);
+        if (Array.isArray(rows)) {
+          detectedJobs = rows.map((row) => ({
+            citizen_id: String(row?.citizenid || '').trim(),
+            job_name: String(row?.name || '').trim(),
+            job_grade: normalizeJobGrade(row?.grade),
+          })).filter((row) => row.job_name);
+        }
+      }
+      if (detectedJobs.length === 0 && typeof qbox.getCharacterJobById === 'function') {
+        const row = await qbox.getCharacterJobById(preferredCitizenId);
+        const name = String(row?.name || '').trim();
+        if (name) {
+          detectedJobs = [{
+            citizen_id: String(row?.citizenid || preferredCitizenId).trim(),
+            job_name: name,
+            job_grade: normalizeJobGrade(row?.grade),
+          }];
+        }
+      }
+
+      response.detected_jobs = detectedJobs;
+      if (detectedJobs.length === 0) {
+        response.reason = 'no_jobs_detected';
+      } else {
+        const matched = [];
+        for (const mapping of jobMappings) {
+          if (!detectedJobs.some((job) => jobMappingMatchesPreview(mapping, job))) continue;
+          matched.push(mapping);
+        }
+        response.matched_mappings = matched;
+        response.reason = matched.length > 0 ? 'ok' : 'no_matching_mappings';
+      }
+    } catch (err) {
+      response.reason = 'lookup_failed';
+      response.error = err.message || 'Lookup failed';
+    }
+  }
+
+  return res.json(response);
+});
+
+router.post('/discord/sync-user', async (req, res) => {
+  const userId = parseInt(req.body?.user_id, 10);
+  if (!userId) return res.status(400).json({ error: 'user_id is required' });
+
+  const user = Users.findById(userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const discordId = String(user.discord_id || '').trim();
+  if (!discordId) return res.status(400).json({ error: 'User does not have a linked Discord account' });
+
+  try {
+    const { syncUserRoles } = require('../discord/bot');
+    const result = await syncUserRoles(discordId);
+    audit(req.user.id, 'discord_user_sync', {
+      targetUserId: userId,
+      discordId,
+      result,
+    });
+    res.json({ ok: true, user_id: userId, discord_id: discordId, result });
+  } catch (err) {
+    res.status(500).json({ error: 'User sync failed', message: err.message });
   }
 });
 
