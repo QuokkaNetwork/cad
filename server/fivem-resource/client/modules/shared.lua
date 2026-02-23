@@ -13,6 +13,10 @@ if state.emergencyUiOpen == nil then state.emergencyUiOpen = false end
 if state.emergencyUiReady == nil then state.emergencyUiReady = false end
 if state.emergencyUiAwaitingOpenAck == nil then state.emergencyUiAwaitingOpenAck = false end
 if state.emergencyUiOpenedAtMs == nil then state.emergencyUiOpenedAtMs = 0 end
+if state.trafficStopUiOpen == nil then state.trafficStopUiOpen = false end
+if state.trafficStopUiReady == nil then state.trafficStopUiReady = false end
+if state.trafficStopUiAwaitingOpenAck == nil then state.trafficStopUiAwaitingOpenAck = false end
+if state.trafficStopUiOpenedAtMs == nil then state.trafficStopUiOpenedAtMs = 0 end
 if state.driverLicenseUiOpen == nil then state.driverLicenseUiOpen = false end
 if state.vehicleRegistrationUiOpen == nil then state.vehicleRegistrationUiOpen = false end
 if state.idCardUiOpen == nil then state.idCardUiOpen = false end
@@ -578,7 +582,7 @@ function util.normalizeDepartmentIdList(value)
 end
 
 function ui.hasAnyCadBridgeModalOpen()
-  return state.emergencyUiOpen or state.driverLicenseUiOpen or state.vehicleRegistrationUiOpen
+  return state.emergencyUiOpen or state.trafficStopUiOpen or state.driverLicenseUiOpen or state.vehicleRegistrationUiOpen
 end
 
 function ui.refreshCadBridgeNuiFocus()
@@ -592,6 +596,9 @@ end
 if type(ui.closeEmergencyPopup) ~= 'function' then
   function ui.closeEmergencyPopup() end
 end
+if type(ui.closeTrafficStopPopup) ~= 'function' then
+  function ui.closeTrafficStopPopup() end
+end
 if type(ui.closeDriverLicensePopup) ~= 'function' then
   function ui.closeDriverLicensePopup() end
 end
@@ -601,6 +608,7 @@ end
 
 function ui.closeAllModals()
   ui.closeEmergencyPopup()
+  ui.closeTrafficStopPopup()
   ui.closeDriverLicensePopup()
   ui.closeVehicleRegistrationPopup()
 end

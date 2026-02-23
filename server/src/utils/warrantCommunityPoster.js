@@ -55,6 +55,75 @@ function truncateText(value, maxChars = 140) {
   return `${text.slice(0, Math.max(1, maxChars - 1)).trim()}...`;
 }
 
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+
+  const raw = String(value || '').trim();
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function extractWarrantChargeTitles(warrant, maxCount = 3) {
+  const details = parseJsonObject(warrant?.details_json || warrant?.details);
+  const candidateLists = [
+    details?.charges,
+    details?.offence_items,
+    details?.offense_items,
+    details?.offences,
+    details?.offenses,
+  ];
+
+  const titles = [];
+  const seen = new Set();
+
+  for (const list of candidateLists) {
+    if (!Array.isArray(list)) continue;
+    for (const row of list) {
+      const title = typeof row === 'string'
+        ? String(row || '').trim()
+        : String(
+          row?.title
+          || row?.charge_title
+          || row?.offence_title
+          || row?.offense_title
+          || row?.name
+          || ''
+        ).trim();
+      if (!title) continue;
+      const key = title.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      titles.push(title);
+      if (titles.length >= maxCount) {
+        return titles;
+      }
+    }
+  }
+
+  return titles;
+}
+
+function buildWantedForLines({ wantedFor, chargeTitles = [] }) {
+  const charges = Array.isArray(chargeTitles)
+    ? chargeTitles.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+
+  if (charges.length > 0) {
+    return charges
+      .slice(0, 3)
+      .map((title, index) => `${index + 1}. ${truncateText(title, 22)}`);
+  }
+
+  return wrapText(truncateText(wantedFor, 180), { maxCharsPerLine: 24, maxLines: 4 });
+}
+
 function wrapText(value, { maxCharsPerLine = 26, maxLines = 3 } = {}) {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
   if (!text) return [];
@@ -190,12 +259,15 @@ function buildWantedPosterSvg({
   location,
   warrantCount,
   wantedFor,
+  wantedForLines = null,
   hasMugshot = false,
 }) {
   const safeName = truncateText(name, 64);
   const safeLocation = truncateText(location, 42);
   const safeWarrantCount = String(Math.max(1, Number(warrantCount || 1)));
-  const wantedLines = wrapText(truncateText(wantedFor, 180), { maxCharsPerLine: 24, maxLines: 4 });
+  const wantedLines = Array.isArray(wantedForLines) && wantedForLines.length > 0
+    ? wantedForLines.slice(0, 4)
+    : buildWantedForLines({ wantedFor });
   const nameLines = wrapText(safeName, { maxCharsPerLine: 18, maxLines: 2 });
 
   const line = (text, x, y, size, fill = TEXT_COLORS.white, weight = 700) => (
@@ -269,11 +341,14 @@ function buildPosterFieldOverlaySvg({
   location,
   warrantCount,
   wantedFor,
+  wantedForLines = null,
 }) {
   const safeName = truncateText(name, 64);
   const safeLocation = truncateText(location, 42);
   const safeWarrantCount = String(Math.max(1, Number(warrantCount || 1)));
-  const wantedLines = wrapText(truncateText(wantedFor, 180), { maxCharsPerLine: 24, maxLines: 4 });
+  const wantedLines = Array.isArray(wantedForLines) && wantedForLines.length > 0
+    ? wantedForLines.slice(0, 4)
+    : buildWantedForLines({ wantedFor });
   const nameLines = wrapText(safeName, { maxCharsPerLine: 18, maxLines: 2 });
 
   const line = (text, x, y, size, fill = TEXT_COLORS.white, weight = 700) => (
@@ -411,6 +486,7 @@ async function renderWantedPoster({
   location = 'Los Santos',
   warrantCount = 1,
   wantedFor,
+  wantedForLines = null,
   mugshotBuffer = null,
 }) {
   const template = await loadCustomTemplateBuffer();
@@ -424,7 +500,7 @@ async function renderWantedPoster({
       .png()
       .toBuffer();
   } else {
-    const svg = buildWantedPosterSvg({ name, location, warrantCount, wantedFor, hasMugshot });
+    const svg = buildWantedPosterSvg({ name, location, warrantCount, wantedFor, wantedForLines, hasMugshot });
     baseBuffer = await sharp(Buffer.from(svg))
       .png()
       .toBuffer();
@@ -486,6 +562,7 @@ async function renderWantedPoster({
         location,
         warrantCount,
         wantedFor,
+        wantedForLines,
       })),
     });
   }
@@ -608,12 +685,17 @@ async function notifyWarrantCommunityPoster(warrant) {
   const location = getPosterLocationLabel();
   const mugshot = citizenId ? await loadMugshotBuffer(citizenId) : { buffer: null, sourceUrl: '', hasPhoto: false };
   const wantedFor = String(warrant.title || warrant.description || 'Active warrant').trim() || 'Active warrant';
+  const wantedForLines = buildWantedForLines({
+    wantedFor,
+    chargeTitles: extractWarrantChargeTitles(warrant, 3),
+  });
 
   const posterBuffer = await renderWantedPoster({
     name: warrant.subject_name,
     location,
     warrantCount,
     wantedFor,
+    wantedForLines,
     mugshotBuffer: mugshot.buffer,
   });
 

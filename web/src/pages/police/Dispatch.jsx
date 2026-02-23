@@ -97,6 +97,16 @@ function formatDistance(distanceMeters) {
   return `${(distanceMeters / 1000).toFixed(2)} km`;
 }
 
+function extractPostalFromLocationText(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const bracketMatch = text.match(/\((\d{3,6})\)\s*$/);
+  if (bracketMatch) return String(bracketMatch[1] || '').trim();
+  const labelMatch = text.match(/\bpostal\b\s*[:#-]?\s*(\d{3,6})\b/i);
+  if (labelMatch) return String(labelMatch[1] || '').trim();
+  return '';
+}
+
 function normalizeDepartmentIds(value) {
   if (Array.isArray(value)) {
     return Array.from(new Set(
@@ -199,6 +209,9 @@ export default function Dispatch() {
   const [showNewCall, setShowNewCall] = useState(false);
   const [showTrafficStop, setShowTrafficStop] = useState(false);
   const [selectedCall, setSelectedCall] = useState(null);
+  const [jobCodeInputFocused, setJobCodeInputFocused] = useState(false);
+  const [locationInputFocused, setLocationInputFocused] = useState(false);
+  const [unitLocationPickerValue, setUnitLocationPickerValue] = useState('');
   const [creatingTrafficStop, setCreatingTrafficStop] = useState(false);
   const [pursuitModeOnly, setPursuitModeOnly] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -208,6 +221,7 @@ export default function Dispatch() {
     location: '',
     description: '',
     job_code: '',
+    postal: '',
     department_id: '',
     requested_department_ids: [],
     pursuit_mode_enabled: false,
@@ -228,6 +242,8 @@ export default function Dispatch() {
   const [pursuitOutcomeForm, setPursuitOutcomeForm] = useState(() => buildPursuitOutcomeForm(null));
   const lastToneRef = useRef(0);
   const selectedCallIdRef = useRef(0);
+  const jobCodeBlurTimerRef = useRef(null);
+  const locationBlurTimerRef = useRef(null);
 
   const deptId = activeDepartment?.id;
   const isDispatch = !!activeDepartment?.is_dispatch;
@@ -290,6 +306,10 @@ export default function Dispatch() {
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
+  }, []);
+  useEffect(() => () => {
+    if (jobCodeBlurTimerRef.current) clearTimeout(jobCodeBlurTimerRef.current);
+    if (locationBlurTimerRef.current) clearTimeout(locationBlurTimerRef.current);
   }, []);
 
   function playPriorityTone(callPayload) {
@@ -413,15 +433,45 @@ export default function Dispatch() {
   }, [form.job_code, isDispatch, selectedRequestedDepartmentLayoutTypes, layoutType]);
 
   const locationSuggestions = useMemo(() => {
+    const query = String(form.location || '').trim();
+    if (!query) return [];
     const recentLocations = [
       ...(Array.isArray(calls) ? calls.map((call) => call?.location) : []),
       ...(Array.isArray(trafficStops) ? trafficStops.map((stop) => stop?.location) : []),
+      ...(Array.isArray(units) ? units.map((unit) => unit?.location) : []),
     ];
     return filterVictoriaLocationSuggestions(form.location, {
       recentLocations,
       limit: 10,
     });
-  }, [form.location, calls, trafficStops]);
+  }, [form.location, calls, trafficStops, units]);
+
+  const unitLocationOptions = useMemo(() => {
+    return (Array.isArray(units) ? units : [])
+      .map((unit) => {
+        const unitId = Number(unit?.id);
+        if (!Number.isInteger(unitId) || unitId <= 0) return null;
+        const callsign = String(unit?.callsign || '').trim();
+        const locationText = String(unit?.location || '').trim();
+        if (!locationText) return null;
+        if (callsign.toUpperCase() === 'DISPATCH') return null;
+        return {
+          unitId,
+          callsign,
+          userName: String(unit?.user_name || '').trim(),
+          departmentShortName: String(unit?.department_short_name || '').trim(),
+          location: locationText,
+          postal: extractPostalFromLocationText(locationText),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const aDept = String(a.departmentShortName || '');
+        const bDept = String(b.departmentShortName || '');
+        if (aDept !== bDept) return aDept.localeCompare(bDept, undefined, { sensitivity: 'base' });
+        return String(a.callsign || '').localeCompare(String(b.callsign || ''), undefined, { sensitivity: 'base' });
+      });
+  }, [units]);
 
   function applySuggestedJobCode(suggestion) {
     const code = String(suggestion?.code || '').trim();
@@ -438,7 +488,22 @@ export default function Dispatch() {
   function applySuggestedLocation(locationValue) {
     const text = String(locationValue || '').trim();
     if (!text) return;
-    setForm((current) => ({ ...current, location: text }));
+    setForm((current) => ({ ...current, location: text, postal: extractPostalFromLocationText(text) }));
+    setLocationInputFocused(false);
+  }
+
+  function applyUnitLocation(unitIdValue) {
+    const unitId = Number(unitIdValue);
+    if (!Number.isInteger(unitId) || unitId <= 0) return;
+    const option = unitLocationOptions.find((entry) => Number(entry.unitId) === unitId);
+    if (!option) return;
+    setForm((current) => ({
+      ...current,
+      location: option.location,
+      postal: option.postal || extractPostalFromLocationText(option.location),
+    }));
+    setUnitLocationPickerValue('');
+    setLocationInputFocused(false);
   }
 
   async function createCall(e) {
@@ -472,6 +537,7 @@ export default function Dispatch() {
         location: '',
         description: '',
         job_code: '',
+        postal: '',
         department_id: '',
         requested_department_ids: [],
         pursuit_mode_enabled: false,
@@ -1059,30 +1125,40 @@ export default function Dispatch() {
                   type="text"
                   value={form.job_code}
                   onChange={e => setForm(f => ({ ...f, job_code: e.target.value }))}
+                  onFocus={() => {
+                    if (jobCodeBlurTimerRef.current) clearTimeout(jobCodeBlurTimerRef.current);
+                    setJobCodeInputFocused(true);
+                  }}
+                  onBlur={() => {
+                    if (jobCodeBlurTimerRef.current) clearTimeout(jobCodeBlurTimerRef.current);
+                    jobCodeBlurTimerRef.current = setTimeout(() => setJobCodeInputFocused(false), 120);
+                  }}
                   className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-                  placeholder="Search/select a suggested code (e.g. FV, MVA, 000)"
+                  placeholder="Search/select a dispatch code (e.g. PURSUIT, SHOTS, MVA-INJ)"
                 />
                 <p className="text-[11px] text-cad-muted">
-                  Victoria AU-style suggested dispatch codes (editable). Click one to fill the code.
+                  Expanded GTA/RP dispatch code suggestions (editable). Type to filter or click to fill.
                 </p>
-                {jobCodeSuggestions.length > 0 && (
+                {(jobCodeInputFocused || String(form.job_code || '').trim()) && jobCodeSuggestions.length > 0 && (
                   <div className="max-h-40 overflow-y-auto rounded border border-cad-border bg-cad-surface">
                     {jobCodeSuggestions.map((suggestion) => (
                       <button
                         key={`job-code-suggest-${suggestion.code}`}
                         type="button"
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => applySuggestedJobCode(suggestion)}
                         className="w-full text-left px-3 py-2 border-b border-cad-border/50 last:border-b-0 hover:bg-cad-card transition-colors"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-mono text-sm text-cad-accent-light">{suggestion.code}</span>
                           <span className="text-[11px] text-cad-muted uppercase tracking-wider">
-                            {Array.isArray(suggestion.layouts) && suggestion.layouts.includes('all')
-                              ? 'Common'
-                              : 'Suggested'}
+                            {String(suggestion.category || (Array.isArray(suggestion.layouts) && suggestion.layouts.includes('all') ? 'Common' : 'Suggested'))}
                           </span>
                         </div>
                         <p className="text-xs text-cad-muted mt-1">{suggestion.label}</p>
+                        {suggestion.suggestedTitle ? (
+                          <p className="text-[11px] text-cad-muted/80 mt-1">Title: {suggestion.suggestedTitle}</p>
+                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -1093,22 +1169,59 @@ export default function Dispatch() {
           <div>
             <label className="block text-sm text-cad-muted mb-1">Location</label>
             <div className="space-y-2">
+              {unitLocationOptions.length > 0 && (
+                <div>
+                  <label className="block text-[11px] text-cad-muted uppercase tracking-wider mb-1">Use Unit Location</label>
+                  <select
+                    value={unitLocationPickerValue}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setUnitLocationPickerValue(value);
+                      if (value) applyUnitLocation(value);
+                    }}
+                    className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                  >
+                    <option value="">Select an on-duty unit to copy location/postal...</option>
+                    {unitLocationOptions.map((option) => (
+                      <option key={`call-location-unit-${option.unitId}`} value={option.unitId}>
+                        {option.departmentShortName ? `${option.departmentShortName} ` : ''}{option.callsign}
+                        {option.userName ? ` - ${option.userName}` : ''} | {option.location}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <input
                 type="text"
                 value={form.location}
-                onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+                onChange={e => {
+                  const nextLocation = e.target.value;
+                  setForm(f => ({ ...f, location: nextLocation, postal: extractPostalFromLocationText(nextLocation) }));
+                }}
+                onFocus={() => {
+                  if (locationBlurTimerRef.current) clearTimeout(locationBlurTimerRef.current);
+                  setLocationInputFocused(true);
+                }}
+                onBlur={() => {
+                  if (locationBlurTimerRef.current) clearTimeout(locationBlurTimerRef.current);
+                  locationBlurTimerRef.current = setTimeout(() => setLocationInputFocused(false), 120);
+                }}
                 className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
-                placeholder="Type to search location suggestions (Victoria AU presets + recent CAD locations)"
+                placeholder="Start typing a GTA street/location (e.g. Vespucci Blvd, Senora Fwy, Mirror Park)"
               />
               <p className="text-[11px] text-cad-muted">
-                Start typing and click a suggestion to fill the location.
+                Type to search GTA street names/highways/areas. Suggestions appear only while typing.
               </p>
-              {locationSuggestions.length > 0 && (
+              {form.postal ? (
+                <p className="text-[11px] text-cad-muted">Detected postal for routing: <span className="font-mono text-cad-ink">{form.postal}</span></p>
+              ) : null}
+              {locationInputFocused && String(form.location || '').trim().length > 0 && locationSuggestions.length > 0 && (
                 <div className="max-h-44 overflow-y-auto rounded border border-cad-border bg-cad-surface">
                   {locationSuggestions.map((locationSuggestion) => (
                     <button
                       key={`location-suggest-${locationSuggestion}`}
                       type="button"
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => applySuggestedLocation(locationSuggestion)}
                       className="w-full text-left px-3 py-2 border-b border-cad-border/50 last:border-b-0 hover:bg-cad-card transition-colors text-sm"
                     >

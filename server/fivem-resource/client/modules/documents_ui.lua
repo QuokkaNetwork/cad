@@ -89,6 +89,98 @@ local function closeEmergencyPopup()
 end
 ui.closeEmergencyPopup = closeEmergencyPopup
 
+local function setTrafficStopUiVisible(isVisible, payload)
+  local visible = isVisible == true
+  state.trafficStopUiOpen = visible
+
+  if visible then
+    state.trafficStopUiAwaitingOpenAck = true
+    state.trafficStopUiOpenedAtMs = tonumber(GetGameTimer() or 0) or 0
+    SetNuiFocus(true, true)
+    Wait(10)
+    SetNuiFocus(true, true)
+
+    SendNUIMessage({
+      action = 'cadBridgeTrafficStop:open',
+      payload = payload or {},
+    })
+    Wait(10)
+    SendNUIMessage({
+      action = 'cadBridgeTrafficStop:open',
+      payload = payload or {},
+    })
+  else
+    state.trafficStopUiAwaitingOpenAck = false
+    state.trafficStopUiOpenedAtMs = 0
+    if type(ui.refreshCadBridgeNuiFocus) == 'function' then
+      ui.refreshCadBridgeNuiFocus()
+    else
+      SetNuiFocus(false, false)
+    end
+    SendNUIMessage({
+      action = 'cadBridgeTrafficStop:close',
+      payload = {},
+    })
+  end
+end
+
+local function closeTrafficStopPopup()
+  if not state.trafficStopUiOpen then return end
+  setTrafficStopUiVisible(false, {})
+end
+ui.closeTrafficStopPopup = closeTrafficStopPopup
+
+local function openTrafficStopPrompt(payload)
+  if not state.trafficStopUiReady then
+    local attempts = 0
+    while not state.trafficStopUiReady and attempts < 20 do
+      attempts = attempts + 1
+      Wait(50)
+    end
+  end
+
+  if not state.trafficStopUiReady then
+    notifyEmergencyUiIssue('Traffic stop UI may not be fully loaded. If nothing appears, restart cad_bridge.')
+  end
+
+  if type(ui.closeAllModals) == 'function' then
+    ui.closeAllModals()
+  else
+    if state.emergencyUiOpen and type(ui.closeEmergencyPopup) == 'function' then ui.closeEmergencyPopup() end
+    if state.driverLicenseUiOpen and type(ui.closeDriverLicensePopup) == 'function' then ui.closeDriverLicensePopup() end
+    if state.vehicleRegistrationUiOpen and type(ui.closeVehicleRegistrationPopup) == 'function' then ui.closeVehicleRegistrationPopup() end
+  end
+
+  local defaults = type(payload) == 'table' and payload or {}
+  local out = {
+    plate = trim(defaults.plate or ''),
+    location = trim(defaults.location or ''),
+    street = trim(defaults.street or ''),
+    crossing = trim(defaults.crossing or ''),
+    postal = trim(defaults.postal or ''),
+    reason = trim(defaults.reason or ''),
+    outcome = trim(defaults.outcome or ''),
+    notes = trim(defaults.notes or ''),
+    max_plate_length = 16,
+    max_location_length = 160,
+    max_reason_length = 120,
+    max_outcome_length = 80,
+    max_notes_length = 500,
+  }
+
+  setTrafficStopUiVisible(true, out)
+
+  CreateThread(function()
+    Wait(2000)
+    if state.trafficStopUiOpen and state.trafficStopUiAwaitingOpenAck then
+      SendNUIMessage({
+        action = 'cadBridgeTrafficStop:open',
+        payload = out,
+      })
+    end
+  end)
+end
+
 local function openEmergencyPopup(departments)
   if not state.emergencyUiReady then
     local attempts = 0
@@ -198,6 +290,58 @@ RegisterNUICallback('cadBridge000Cancel', function(_data, cb)
   if cb then cb({ ok = true }) end
 end)
 
+RegisterNUICallback('cadBridgeTrafficStopReady', function(_data, cb)
+  state.trafficStopUiReady = true
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeTrafficStopOpened', function(_data, cb)
+  state.trafficStopUiAwaitingOpenAck = false
+  state.trafficStopUiOpenedAtMs = 0
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeTrafficStopSubmit', function(data, cb)
+  local plate = trim(data and data.plate or '')
+  local location = trim(data and data.location or '')
+  local street = trim(data and data.street or '')
+  local crossing = trim(data and data.crossing or '')
+  local postal = trim(data and data.postal or '')
+  local reason = trim(data and data.reason or '')
+  local outcome = trim(data and data.outcome or '')
+  local notes = trim(data and data.notes or '')
+
+  if reason == '' then
+    if cb then cb({ ok = false, error = 'reason_required' }) end
+    return
+  end
+
+  if #plate > 16 then plate = plate:sub(1, 16) end
+  if #location > 160 then location = location:sub(1, 160) end
+  if #reason > 120 then reason = reason:sub(1, 120) end
+  if #outcome > 80 then outcome = outcome:sub(1, 80) end
+  if #notes > 500 then notes = notes:sub(1, 500) end
+
+  closeTrafficStopPopup()
+  TriggerServerEvent('cad_bridge:submitTrafficStopPrompt', {
+    plate = plate,
+    location = location,
+    street = street,
+    crossing = crossing,
+    postal = postal,
+    reason = reason,
+    outcome = outcome,
+    notes = notes,
+  })
+
+  if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeTrafficStopCancel', function(_data, cb)
+  closeTrafficStopPopup()
+  if cb then cb({ ok = true }) end
+end)
+
 RegisterNUICallback('cadBridgeIdCardClose', function(_data, cb)
   closeShownIdCard()
   if cb then cb({ ok = true }) end
@@ -205,6 +349,10 @@ end)
 
 RegisterNetEvent('cad_bridge:prompt000', function(departments)
   openEmergencyPopup(departments)
+end)
+
+RegisterNetEvent('cad_bridge:promptTrafficStop', function(payload)
+  openTrafficStopPrompt(type(payload) == 'table' and payload or {})
 end)
 
 RegisterNetEvent('cad_bridge:showIdCard', function(payload)
@@ -349,6 +497,7 @@ CreateThread(function()
           ui.closeAllModals()
         else
           closeEmergencyPopup()
+          if type(ui.closeTrafficStopPopup) == 'function' then ui.closeTrafficStopPopup() end
           if type(ui.closeDriverLicensePopup) == 'function' then ui.closeDriverLicensePopup() end
           if type(ui.closeVehicleRegistrationPopup) == 'function' then ui.closeVehicleRegistrationPopup() end
         end
@@ -359,6 +508,14 @@ CreateThread(function()
         if (nowMs - tonumber(state.emergencyUiOpenedAtMs or 0)) > 2500 then
           closeEmergencyPopup()
           notifyEmergencyUiIssue('000 UI failed to initialize. Focus was released.')
+        end
+      end
+
+      if state.trafficStopUiAwaitingOpenAck and (tonumber(state.trafficStopUiOpenedAtMs or 0) > 0) then
+        local nowMs2 = tonumber(GetGameTimer() or 0) or 0
+        if (nowMs2 - tonumber(state.trafficStopUiOpenedAtMs or 0)) > 2500 then
+          closeTrafficStopPopup()
+          notifyEmergencyUiIssue('Traffic stop UI failed to initialize. Focus was released.')
         end
       end
     else

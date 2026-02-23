@@ -13,6 +13,23 @@ var departmentsEmpty = document.getElementById("departmentsEmpty");
 var departmentsList = document.getElementById("departmentsList");
 var departmentsError = document.getElementById("departmentsError");
 
+var trafficStopOverlay = document.getElementById("trafficStopOverlay");
+var trafficStopForm = document.getElementById("trafficStopForm");
+var trafficStopCloseBtn = document.getElementById("trafficStopCloseBtn");
+var trafficStopCancelBtn = document.getElementById("trafficStopCancelBtn");
+var trafficStopSubmitBtn = document.getElementById("trafficStopSubmitBtn");
+var trafficStopPlateInput = document.getElementById("trafficStopPlateInput");
+var trafficStopLocationInput = document.getElementById("trafficStopLocationInput");
+var trafficStopReasonInput = document.getElementById("trafficStopReasonInput");
+var trafficStopOutcomeInput = document.getElementById("trafficStopOutcomeInput");
+var trafficStopNotesInput = document.getElementById("trafficStopNotesInput");
+var trafficStopPlateCounter = document.getElementById("trafficStopPlateCounter");
+var trafficStopLocationCounter = document.getElementById("trafficStopLocationCounter");
+var trafficStopReasonCounter = document.getElementById("trafficStopReasonCounter");
+var trafficStopOutcomeCounter = document.getElementById("trafficStopOutcomeCounter");
+var trafficStopNotesCounter = document.getElementById("trafficStopNotesCounter");
+var trafficStopReasonError = document.getElementById("trafficStopReasonError");
+
 var licenseOverlay = document.getElementById("licenseOverlay");
 var licenseForm = document.getElementById("licenseForm");
 var licenseCloseBtn = document.getElementById("licenseCloseBtn");
@@ -60,12 +77,18 @@ var idCardTemplatePromise = null;
 var queuedIdCardPayload = null;
 
 var emergencyOpen = false;
+var trafficStopOpen = false;
 var licenseOpen = false;
 var registrationOpen = false;
 var idCardOpen = false;
 
 var titleLimit = 80;
 var detailsLimit = 600;
+var trafficStopPlateLimit = 16;
+var trafficStopLocationLimit = 160;
+var trafficStopReasonLimit = 120;
+var trafficStopOutcomeLimit = 80;
+var trafficStopNotesLimit = 500;
 var departments = [];
 var selectedDepartmentIds = [];
 var quizAnswers = {};
@@ -79,6 +102,7 @@ var licenseShowStatusPanel = false;
 var durationOptions = [];
 var selectedRegistrationDurationDays = 35;
 var registrationSubmitPending = false;
+var trafficStopHiddenFields = { street: "", crossing: "", postal: "" };
 
 function bindIdCardNodes() {
   idCardOverlay = document.getElementById("idCardOverlay");
@@ -260,11 +284,12 @@ function setVisible(node, visible) {
 }
 
 function anyModalOpen() {
-  return emergencyOpen || licenseOpen || registrationOpen || idCardOpen;
+  return emergencyOpen || trafficStopOpen || licenseOpen || registrationOpen || idCardOpen;
 }
 
 function closeAll() {
   cancelEmergencyForm();
+  cancelTrafficStopForm();
   cancelLicenseForm();
   cancelRegistrationForm();
   if (idCardOpen) requestCloseIdCard();
@@ -448,6 +473,139 @@ function cancelEmergencyForm() {
   if (!emergencyOpen) return;
   postNui("cadBridge000Cancel", {}).catch(function ignoreCancelError() {});
   closeEmergencyForm();
+}
+
+function updateTrafficStopCounters() {
+  if (trafficStopPlateCounter && trafficStopPlateInput) {
+    trafficStopPlateCounter.textContent = String(trafficStopPlateInput.value.length) + " / " + String(trafficStopPlateLimit);
+  }
+  if (trafficStopLocationCounter && trafficStopLocationInput) {
+    trafficStopLocationCounter.textContent = String(trafficStopLocationInput.value.length) + " / " + String(trafficStopLocationLimit);
+  }
+  if (trafficStopReasonCounter && trafficStopReasonInput) {
+    trafficStopReasonCounter.textContent = String(trafficStopReasonInput.value.length) + " / " + String(trafficStopReasonLimit);
+  }
+  if (trafficStopOutcomeCounter && trafficStopOutcomeInput) {
+    trafficStopOutcomeCounter.textContent = String(trafficStopOutcomeInput.value.length) + " / " + String(trafficStopOutcomeLimit);
+  }
+  if (trafficStopNotesCounter && trafficStopNotesInput) {
+    trafficStopNotesCounter.textContent = String(trafficStopNotesInput.value.length) + " / " + String(trafficStopNotesLimit);
+  }
+}
+
+function resetTrafficStopForm(payload) {
+  var data = payload || {};
+  trafficStopPlateLimit = Math.max(8, Math.min(32, Number(safeGet(data, "max_plate_length", 16)) || 16));
+  trafficStopLocationLimit = Math.max(40, Math.min(240, Number(safeGet(data, "max_location_length", 160)) || 160));
+  trafficStopReasonLimit = Math.max(20, Math.min(200, Number(safeGet(data, "max_reason_length", 120)) || 120));
+  trafficStopOutcomeLimit = Math.max(20, Math.min(120, Number(safeGet(data, "max_outcome_length", 80)) || 80));
+  trafficStopNotesLimit = Math.max(80, Math.min(1200, Number(safeGet(data, "max_notes_length", 500)) || 500));
+
+  if (trafficStopPlateInput) trafficStopPlateInput.maxLength = trafficStopPlateLimit;
+  if (trafficStopLocationInput) trafficStopLocationInput.maxLength = trafficStopLocationLimit;
+  if (trafficStopReasonInput) trafficStopReasonInput.maxLength = trafficStopReasonLimit;
+  if (trafficStopOutcomeInput) trafficStopOutcomeInput.maxLength = trafficStopOutcomeLimit;
+  if (trafficStopNotesInput) trafficStopNotesInput.maxLength = trafficStopNotesLimit;
+
+  if (trafficStopPlateInput) trafficStopPlateInput.value = String(safeGet(data, "plate", "") || "");
+  if (trafficStopLocationInput) trafficStopLocationInput.value = String(safeGet(data, "location", "") || "");
+  if (trafficStopReasonInput) trafficStopReasonInput.value = String(safeGet(data, "reason", "") || "");
+  if (trafficStopOutcomeInput) trafficStopOutcomeInput.value = String(safeGet(data, "outcome", "") || "");
+  if (trafficStopNotesInput) trafficStopNotesInput.value = String(safeGet(data, "notes", "") || "");
+
+  trafficStopHiddenFields = {
+    street: String(safeGet(data, "street", "") || "").trim(),
+    crossing: String(safeGet(data, "crossing", "") || "").trim(),
+    postal: String(safeGet(data, "postal", "") || "").trim(),
+  };
+
+  showErrorNode(trafficStopReasonError, "");
+  if (trafficStopSubmitBtn) {
+    trafficStopSubmitBtn.disabled = false;
+    trafficStopSubmitBtn.textContent = "Log Traffic Stop";
+  }
+  updateTrafficStopCounters();
+}
+
+function openTrafficStopForm(payload) {
+  if (emergencyOpen) closeEmergencyForm();
+  if (licenseOpen) closeLicenseForm();
+  if (registrationOpen) closeRegistrationForm();
+  resetTrafficStopForm(payload || {});
+  trafficStopOpen = true;
+  setVisible(trafficStopOverlay, true);
+  setTimeout(function focusTrafficStopReason() {
+    if (trafficStopReasonInput) {
+      trafficStopReasonInput.focus();
+      if (String(trafficStopReasonInput.value || "").trim()) trafficStopReasonInput.select();
+    }
+  }, 40);
+}
+
+function closeTrafficStopForm() {
+  trafficStopOpen = false;
+  setVisible(trafficStopOverlay, false);
+}
+
+async function submitTrafficStopForm() {
+  var plate = String(trafficStopPlateInput && trafficStopPlateInput.value || "").trim();
+  var location = String(trafficStopLocationInput && trafficStopLocationInput.value || "").trim();
+  var reason = String(trafficStopReasonInput && trafficStopReasonInput.value || "").trim();
+  var outcome = String(trafficStopOutcomeInput && trafficStopOutcomeInput.value || "").trim();
+  var notes = String(trafficStopNotesInput && trafficStopNotesInput.value || "").trim();
+
+  if (!reason) {
+    showErrorNode(trafficStopReasonError, "Reason is required.");
+    if (trafficStopReasonInput) trafficStopReasonInput.focus();
+    return;
+  }
+
+  showErrorNode(trafficStopReasonError, "");
+  if (trafficStopSubmitBtn) {
+    trafficStopSubmitBtn.disabled = true;
+    trafficStopSubmitBtn.textContent = "Logging...";
+  }
+
+  try {
+    var response = await postNui("cadBridgeTrafficStopSubmit", {
+      plate: plate,
+      location: location,
+      street: String(trafficStopHiddenFields.street || ""),
+      crossing: String(trafficStopHiddenFields.crossing || ""),
+      postal: String(trafficStopHiddenFields.postal || ""),
+      reason: reason,
+      outcome: outcome,
+      notes: notes,
+    });
+    var result = null;
+    try {
+      result = await response.json();
+    } catch (_err) {
+      result = null;
+    }
+    if (!response.ok || (result && result.ok === false)) {
+      if (result && result.error === "reason_required") {
+        showErrorNode(trafficStopReasonError, "Reason is required.");
+      }
+      if (trafficStopSubmitBtn) {
+        trafficStopSubmitBtn.disabled = false;
+        trafficStopSubmitBtn.textContent = "Log Traffic Stop";
+      }
+      return;
+    }
+    closeTrafficStopForm();
+  } catch (_err2) {
+    if (trafficStopSubmitBtn) {
+      trafficStopSubmitBtn.disabled = false;
+      trafficStopSubmitBtn.textContent = "Log Traffic Stop";
+    }
+  }
+}
+
+function cancelTrafficStopForm() {
+  if (!trafficStopOpen) return;
+  postNui("cadBridgeTrafficStopCancel", {}).catch(function ignoreTrafficStopCancelError() {});
+  closeTrafficStopForm();
 }
 
 var LICENSE_QUIZ_QUESTION_POOL = [
@@ -1156,6 +1314,15 @@ window.addEventListener("message", function onMessage(event) {
     closeEmergencyForm();
     return;
   }
+  if (message.action === "cadBridgeTrafficStop:open") {
+    openTrafficStopForm(message.payload || {});
+    postNui("cadBridgeTrafficStopOpened", {}).catch(function ignoreTrafficStopOpenedError() {});
+    return;
+  }
+  if (message.action === "cadBridgeTrafficStop:close") {
+    closeTrafficStopForm();
+    return;
+  }
   if (message.action === "cadBridgeLicense:open") {
     openLicenseForm(message.payload || {});
     return;
@@ -1559,6 +1726,7 @@ function initialize() {
   ensureIdCardTemplateLoaded();
 
   setVisible(overlay, false);
+  setVisible(trafficStopOverlay, false);
   setVisible(licenseOverlay, false);
   setVisible(registrationOverlay, false);
   setVisible(idCardOverlay, false);
@@ -1588,6 +1756,44 @@ function initialize() {
     });
   }
   updateCounters();
+
+  if (trafficStopForm) {
+    trafficStopForm.addEventListener("submit", function onTrafficStopSubmit(event) {
+      event.preventDefault();
+      submitTrafficStopForm();
+    });
+  }
+  if (trafficStopCloseBtn) trafficStopCloseBtn.addEventListener("click", cancelTrafficStopForm);
+  if (trafficStopCancelBtn) trafficStopCancelBtn.addEventListener("click", cancelTrafficStopForm);
+  if (trafficStopPlateInput) {
+    trafficStopPlateInput.addEventListener("input", function onTrafficStopPlateInput() {
+      updateTrafficStopCounters();
+    });
+  }
+  if (trafficStopLocationInput) {
+    trafficStopLocationInput.addEventListener("input", function onTrafficStopLocationInput() {
+      updateTrafficStopCounters();
+    });
+  }
+  if (trafficStopReasonInput) {
+    trafficStopReasonInput.addEventListener("input", function onTrafficStopReasonInput() {
+      if (String(trafficStopReasonInput.value || "").trim()) {
+        showErrorNode(trafficStopReasonError, "");
+      }
+      updateTrafficStopCounters();
+    });
+  }
+  if (trafficStopOutcomeInput) {
+    trafficStopOutcomeInput.addEventListener("input", function onTrafficStopOutcomeInput() {
+      updateTrafficStopCounters();
+    });
+  }
+  if (trafficStopNotesInput) {
+    trafficStopNotesInput.addEventListener("input", function onTrafficStopNotesInput() {
+      updateTrafficStopCounters();
+    });
+  }
+  updateTrafficStopCounters();
 
   if (licenseForm) {
     licenseForm.addEventListener("submit", function onLicenseSubmit(event) {
@@ -1652,6 +1858,11 @@ function initialize() {
     .then(function noop() {})
     .catch(function onReadyError(err) {
       console.error("[CAD UI] Ready signal failed:", err);
+    });
+  postNui("cadBridgeTrafficStopReady", {})
+    .then(function noopTrafficStopReady() {})
+    .catch(function onTrafficStopReadyError(err2) {
+      console.error("[CAD UI] Traffic stop ready signal failed:", err2);
     });
 
   updateMiniCadTabVisibility();

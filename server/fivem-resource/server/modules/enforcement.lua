@@ -10,65 +10,66 @@ end
 
 local TRAFFIC_STOP_BRIDGE_BACKOFF_SCOPE = 'traffic_stops'
 
-local function parseTrafficStopCommandFields(src, args)
+local function buildTrafficStopCommandPrefill(src, args)
   local s = tonumber(src) or 0
   local raw = trim(table.concat(args or {}, ' '))
-  if raw == '' then
-    return nil, 'usage'
-  end
-
   local pos = PlayerPositions[s]
-  local currentPlate = trim(pos and pos.license_plate or '')
-  local plate = ''
-  local reason = ''
-  local outcome = ''
-  local notes = ''
+  local defaults = {
+    plate = trim(pos and pos.license_plate or ''),
+    location = trim(pos and pos.location or ''),
+    street = trim(pos and pos.street or ''),
+    crossing = trim(pos and pos.crossing or ''),
+    postal = trim(pos and pos.postal or ''),
+    reason = '',
+    outcome = '',
+    notes = '',
+  }
+
+  if raw == '' then
+    return defaults
+  end
 
   if raw:find('|', 1, true) then
     local parts = splitByPipe(raw)
-    plate = trim(parts[1] or '')
-    reason = trim(parts[2] or '')
-    outcome = trim(parts[3] or '')
-    notes = trim(parts[4] or '')
-  else
-    local count = type(args) == 'table' and #args or 0
-    if count >= 2 then
-      plate = trim(args[1] or '')
-      reason = trim(table.concat(args, ' ', 2))
-    elseif count == 1 and currentPlate ~= '' then
-      plate = currentPlate
-      reason = raw
+    local p1 = trim(parts[1] or '')
+    local p2 = trim(parts[2] or '')
+    local p3 = trim(parts[3] or '')
+    local p4 = trim(parts[4] or '')
+
+    if p2 ~= '' then
+      if p1 ~= '' then defaults.plate = p1 end
+      defaults.reason = p2
+      defaults.outcome = p3
+      defaults.notes = p4
+      return defaults
     end
+
+    -- If only one pipe-delimited part was supplied, treat it as a reason prefill.
+    defaults.reason = p1
+    defaults.outcome = p2
+    defaults.notes = p3
+    return defaults
   end
 
-  if plate == '' and currentPlate ~= '' then
-    plate = currentPlate
+  local count = type(args) == 'table' and #args or 0
+  if count >= 2 then
+    defaults.plate = trim(args[1] or '') ~= '' and trim(args[1] or '') or defaults.plate
+    defaults.reason = trim(table.concat(args, ' ', 2))
+  else
+    defaults.reason = raw
   end
 
-  if reason == '' then
-    return nil, 'usage'
-  end
-
-  return {
-    plate = plate,
-    reason = reason,
-    outcome = outcome,
-    notes = notes,
-  }, nil
+  return defaults
 end
 
-local function submitTrafficStopCommand(src, args, commandLabel)
+local function submitTrafficStopFields(src, fields, sourceType)
   local s = tonumber(src) or 0
   if s <= 0 then return end
 
-  local fields, parseErr = parseTrafficStopCommandFields(s, args or {})
-  if not fields then
-    if parseErr == 'usage' then
-      notifyPlayer(s, ('Usage: /%s <plate> | <reason> | <outcome(optional)> | <notes(optional)>'):format(trim(commandLabel or 'trafficstop')))
-      notifyPlayer(s, ('Tip: while in a vehicle, /%s <reason> will use your current plate.'):format(trim(commandLabel or 'trafficstop')))
-    else
-      notifyPlayer(s, 'Failed to parse traffic stop command.')
-    end
+  local normalizedFields = type(fields) == 'table' and fields or {}
+  local reason = trim(normalizedFields.reason or '')
+  if reason == '' then
+    notifyPlayer(s, 'Traffic stop reason is required.')
     return
   end
 
@@ -86,11 +87,15 @@ local function submitTrafficStopCommand(src, args, commandLabel)
     player_name = characterName ~= '' and characterName or platformName,
     platform_name = platformName,
     character_name = characterName,
-    source_type = 'trafficstop_command',
-    plate = fields.plate,
-    reason = fields.reason,
-    outcome = fields.outcome,
-    notes = fields.notes,
+    source_type = trim(sourceType or 'trafficstop_command') ~= '' and trim(sourceType or 'trafficstop_command') or 'trafficstop_command',
+    plate = trim(normalizedFields.plate or ''),
+    location = trim(normalizedFields.location or ''),
+    street = trim(normalizedFields.street or ''),
+    crossing = trim(normalizedFields.crossing or ''),
+    postal = trim(normalizedFields.postal or ''),
+    reason = reason,
+    outcome = trim(normalizedFields.outcome or ''),
+    notes = trim(normalizedFields.notes or ''),
   }
 
   if type(pos) == 'table' then
@@ -101,10 +106,10 @@ local function submitTrafficStopCommand(src, args, commandLabel)
     }
     payload.heading = tonumber(pos.heading) or 0.0
     payload.speed = tonumber(pos.speed) or 0.0
-    payload.street = tostring(pos.street or '')
-    payload.crossing = tostring(pos.crossing or '')
-    payload.postal = tostring(pos.postal or '')
-    payload.location = tostring(pos.location or '')
+    if trim(payload.street) == '' then payload.street = tostring(pos.street or '') end
+    if trim(payload.crossing) == '' then payload.crossing = tostring(pos.crossing or '') end
+    if trim(payload.postal) == '' then payload.postal = tostring(pos.postal or '') end
+    if trim(payload.location) == '' then payload.location = tostring(pos.location or '') end
     if trim(payload.plate) == '' then
       payload.plate = trim(pos.license_plate or '')
     end
@@ -135,13 +140,41 @@ local function submitTrafficStopCommand(src, args, commandLabel)
   end)
 end
 
+local function openTrafficStopPromptForSource(src, args, commandLabel)
+  local s = tonumber(src) or 0
+  if s <= 0 then return end
+
+  local prefill = buildTrafficStopCommandPrefill(s, args or {})
+  prefill.command = trim(commandLabel or 'trafficstop')
+  prefill.source = 'trafficstop_command'
+
+  TriggerClientEvent('cad_bridge:promptTrafficStop', s, prefill)
+end
+
 RegisterCommand('trafficstop', function(src, args)
-  submitTrafficStopCommand(src, args, 'trafficstop')
+  openTrafficStopPromptForSource(src, args, 'trafficstop')
 end, false)
 
 RegisterCommand('ts', function(src, args)
-  submitTrafficStopCommand(src, args, 'ts')
+  openTrafficStopPromptForSource(src, args, 'ts')
 end, false)
+
+RegisterNetEvent('cad_bridge:submitTrafficStopPrompt', function(payload)
+  local src = tonumber(source) or 0
+  if src <= 0 then return end
+
+  local data = type(payload) == 'table' and payload or {}
+  submitTrafficStopFields(src, {
+    plate = data.plate or data.license_plate,
+    location = data.location,
+    street = data.street,
+    crossing = data.crossing,
+    postal = data.postal,
+    reason = data.reason,
+    outcome = data.outcome,
+    notes = data.notes,
+  }, 'trafficstop_prompt')
+end)
 
 local DISCORD_JOB_ROLE_SYNC_BRIDGE_BACKOFF_SCOPE = 'discord_job_role_sync'
 local lastDiscordJobRoleSyncAtMsBySource = {}

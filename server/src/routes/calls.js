@@ -254,6 +254,7 @@ router.post('/', requireAuth, (req, res) => {
     title,
     priority,
     location,
+    postal,
     description,
     job_code,
     requested_department_ids,
@@ -288,6 +289,7 @@ router.post('/', requireAuth, (req, res) => {
     title,
     priority: normalizedPriority,
     location: location || '',
+    postal: String(postal || '').trim(),
     description: description || '',
     job_code: job_code || '',
     status: 'active',
@@ -312,7 +314,7 @@ router.patch('/:id', requireAuth, (req, res) => {
   const isDispatcher = isUserInDispatchDepartment(req.user);
   if (!hasDept && !isDispatcher) return res.status(403).json({ error: 'Department access denied' });
 
-  const { title, priority, location, description, job_code, status, requested_department_ids } = req.body;
+  const { title, priority, location, postal, description, job_code, status, requested_department_ids } = req.body;
   const normalizedStatus = status === undefined
     ? undefined
     : String(status || '').trim().toLowerCase();
@@ -322,6 +324,7 @@ router.patch('/:id', requireAuth, (req, res) => {
     title,
     priority,
     location,
+    postal,
     description,
     job_code,
     status: normalizedStatus,

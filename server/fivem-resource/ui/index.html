@@ -70,6 +70,103 @@
       </section>
     </div>
 
+    <div id="trafficStopOverlay" class="overlay hidden" aria-hidden="true">
+      <section class="panel" role="dialog" aria-modal="true" aria-labelledby="trafficStop-title">
+        <header class="panel-header">
+          <div class="eyebrow">Traffic Stop Logger</div>
+          <button id="trafficStopCloseBtn" class="icon-btn" type="button" aria-label="Close">x</button>
+        </header>
+
+        <h1 id="trafficStop-title">Log Traffic Stop</h1>
+        <p class="subtitle">
+          Plate and location are auto-filled from Wraith/heartbeat when available. Review and edit if needed.
+        </p>
+
+        <form id="trafficStopForm" class="form" novalidate>
+          <div class="inline-grid two-col">
+            <div class="field">
+              <label for="trafficStopPlateInput">Plate</label>
+              <input
+                id="trafficStopPlateInput"
+                type="text"
+                maxlength="16"
+                placeholder="Auto-filled from Wraith"
+                autocomplete="off"
+              />
+              <div class="meta-row">
+                <span></span>
+                <span id="trafficStopPlateCounter" class="counter">0 / 16</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="trafficStopLocationInput">Location</label>
+              <input
+                id="trafficStopLocationInput"
+                type="text"
+                maxlength="160"
+                placeholder="Auto-filled from Wraith/heartbeat"
+                autocomplete="off"
+              />
+              <div class="meta-row">
+                <span></span>
+                <span id="trafficStopLocationCounter" class="counter">0 / 160</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="trafficStopReasonInput">Reason <span class="required">*</span></label>
+            <input
+              id="trafficStopReasonInput"
+              type="text"
+              maxlength="120"
+              placeholder="e.g. Speeding / suspicious vehicle / moving offence"
+              autocomplete="off"
+              required
+            />
+            <div class="meta-row">
+              <span id="trafficStopReasonError" class="error hidden">Reason is required.</span>
+              <span id="trafficStopReasonCounter" class="counter">0 / 120</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="trafficStopOutcomeInput">Outcome</label>
+            <input
+              id="trafficStopOutcomeInput"
+              type="text"
+              maxlength="80"
+              placeholder="e.g. Warning / infringement / arrest / no action"
+              autocomplete="off"
+            />
+            <div class="meta-row">
+              <span></span>
+              <span id="trafficStopOutcomeCounter" class="counter">0 / 80</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="trafficStopNotesInput">Notes</label>
+            <textarea
+              id="trafficStopNotesInput"
+              maxlength="500"
+              placeholder="Optional notes for the CAD traffic stop log."
+            ></textarea>
+            <div class="meta-row">
+              <span></span>
+              <span id="trafficStopNotesCounter" class="counter">0 / 500</span>
+            </div>
+          </div>
+
+          <footer class="actions">
+            <button id="trafficStopCancelBtn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="trafficStopSubmitBtn" class="btn btn-primary" type="submit">Log Traffic Stop</button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
     <div id="licenseOverlay" class="overlay hidden" aria-hidden="true">
       <section class="panel panel-license" role="dialog" aria-modal="true" aria-labelledby="license-title">
         <header class="panel-header">

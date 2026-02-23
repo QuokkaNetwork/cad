@@ -7,6 +7,7 @@ import Modal from '../../components/Modal';
 import EvidencePanel from '../../components/EvidencePanel';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { formatDateTimeAU } from '../../utils/dateTime';
+import { getOffenceCategoryLabel } from '../../utils/offenceCatalog';
 
 function normalizePersonSearchOption(row) {
   const source = row && typeof row === 'object' ? row : {};
@@ -22,6 +23,33 @@ function normalizePersonSearchOption(row) {
     citizenId,
     name: fullName || citizenId,
   };
+}
+
+function normalizeOffenceCatalogItem(item) {
+  const source = item && typeof item === 'object' ? item : {};
+  const id = Number(source.id || 0);
+  const title = String(source.title || '').trim();
+  if (!Number.isInteger(id) || id <= 0 || !title) return null;
+  return {
+    id,
+    code: String(source.code || '').trim(),
+    title,
+    description: String(source.description || '').trim(),
+    category: String(source.category || '').trim(),
+    is_active: Number(source.is_active ?? 1) !== 0,
+  };
+}
+
+function buildWarrantChargeTitle(charges) {
+  const items = Array.isArray(charges) ? charges : [];
+  if (!items.length) return '';
+  const names = items
+    .map((item) => String(item?.title || '').trim())
+    .filter(Boolean);
+  if (!names.length) return '';
+  const firstThree = names.slice(0, 3);
+  const suffix = names.length > 3 ? ` +${names.length - 3} more` : '';
+  return `Warrant - ${firstThree.join(', ')}${suffix}`;
 }
 
 function WarrantCard({ warrant, onServe, onCancel, departmentId }) {
@@ -93,6 +121,10 @@ export default function Warrants() {
   const [form, setForm] = useState({ subject_name: '', citizen_id: '', title: '', description: '' });
   const [personMatches, setPersonMatches] = useState([]);
   const [personSearching, setPersonSearching] = useState(false);
+  const [offenceCatalog, setOffenceCatalog] = useState([]);
+  const [offenceCatalogLoading, setOffenceCatalogLoading] = useState(false);
+  const [offenceQuery, setOffenceQuery] = useState('');
+  const [selectedCharges, setSelectedCharges] = useState([]);
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -102,6 +134,8 @@ export default function Warrants() {
     setForm({ subject_name: '', citizen_id: '', title: '', description: '' });
     setPersonMatches([]);
     setPersonSearching(false);
+    setOffenceQuery('');
+    setSelectedCharges([]);
   }
 
   function openCreateModal() {
@@ -171,6 +205,45 @@ export default function Warrants() {
   }, [showNew, form.subject_name]);
 
   useEffect(() => {
+    if (!isLaw || !showNew) return;
+    if (offenceCatalogLoading || offenceCatalog.length > 0) return;
+
+    let cancelled = false;
+    setOffenceCatalogLoading(true);
+    api.get('/api/records/offence-catalog')
+      .then((rows) => {
+        if (cancelled) return;
+        const normalized = Array.isArray(rows)
+          ? rows
+            .map(normalizeOffenceCatalogItem)
+            .filter((row) => row && row.is_active)
+            .sort((a, b) => {
+              const codeA = String(a.code || '').toLowerCase();
+              const codeB = String(b.code || '').toLowerCase();
+              if (codeA && codeB && codeA !== codeB) return codeA.localeCompare(codeB);
+              if (codeA && !codeB) return -1;
+              if (!codeA && codeB) return 1;
+              return a.title.localeCompare(b.title);
+            })
+          : [];
+        setOffenceCatalog(normalized);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load offence catalog for warrants:', err);
+          setOffenceCatalog([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOffenceCatalogLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLaw, showNew, offenceCatalog.length, offenceCatalogLoading]);
+
+  useEffect(() => {
     if (!isLaw) return;
     if (searchParams.get('new') !== '1') return;
     openCreateModal();
@@ -195,6 +268,39 @@ export default function Warrants() {
     setPersonMatches([]);
   }
 
+  function toggleCharge(offence) {
+    if (!offence || !offence.id) return;
+    setSelectedCharges((current) => {
+      const exists = current.some((row) => Number(row.offence_id) === Number(offence.id));
+      if (exists) {
+        return current.filter((row) => Number(row.offence_id) !== Number(offence.id));
+      }
+      return [
+        ...current,
+        {
+          offence_id: Number(offence.id),
+          code: String(offence.code || '').trim(),
+          title: String(offence.title || '').trim(),
+          category: String(offence.category || '').trim(),
+        },
+      ];
+    });
+  }
+
+  function removeCharge(offenceId) {
+    const id = Number(offenceId);
+    setSelectedCharges((current) => current.filter((row) => Number(row.offence_id) !== id));
+  }
+
+  function applyChargesToTitle() {
+    const suggested = buildWarrantChargeTitle(selectedCharges);
+    if (!suggested) {
+      alert('Select at least one charge first.');
+      return;
+    }
+    setForm((current) => ({ ...current, title: suggested }));
+  }
+
   async function createWarrant(e) {
     e.preventDefault();
     try {
@@ -204,7 +310,14 @@ export default function Warrants() {
         citizen_id: form.citizen_id,
         title: form.title,
         description: form.description,
-        details: {},
+        details: {
+          charges: selectedCharges.map((charge) => ({
+            offence_id: Number(charge.offence_id || 0),
+            code: String(charge.code || '').trim(),
+            title: String(charge.title || '').trim(),
+            category: String(charge.category || '').trim(),
+          })).filter((charge) => charge.offence_id > 0 && charge.title),
+        },
       });
       closeCreateModal();
       resetCreateForm();
@@ -317,6 +430,120 @@ export default function Warrants() {
                   className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
                   placeholder="e.g. Warrant for arrest - Armed robbery"
                 />
+                {selectedCharges.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={applyChargesToTitle}
+                      className="px-2.5 py-1 text-xs rounded border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 transition-colors"
+                    >
+                      Use Selected Charges as Title
+                    </button>
+                    <p className="text-[11px] text-cad-muted">
+                      Suggested: {buildWarrantChargeTitle(selectedCharges)}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="border border-cad-border rounded-lg p-3 bg-cad-card/40">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <label className="block text-sm text-cad-muted">Charges (optional)</label>
+                  {selectedCharges.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCharges([])}
+                      className="text-xs text-cad-muted hover:text-cad-ink transition-colors"
+                    >
+                      Clear all
+                    </button>
+                  ) : null}
+                </div>
+
+                {selectedCharges.length > 0 ? (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {selectedCharges.map((charge) => (
+                      <button
+                        key={`selected-charge-${charge.offence_id}`}
+                        type="button"
+                        onClick={() => removeCharge(charge.offence_id)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-amber-500/30 bg-amber-500/10 text-amber-200 text-xs"
+                        title="Remove charge"
+                      >
+                        <span className="font-mono text-[10px]">{charge.code || '#'}</span>
+                        <span>{charge.title}</span>
+                        <span className="text-cad-muted">×</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mb-3 text-xs text-cad-muted">Select charges to attach them to the warrant and quickly build the title.</p>
+                )}
+
+                <input
+                  type="text"
+                  value={offenceQuery}
+                  onChange={(e) => setOffenceQuery(e.target.value)}
+                  placeholder="Search charges by code, title, description..."
+                  className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+                />
+
+                <div className="mt-2 rounded border border-cad-border bg-cad-surface max-h-52 overflow-y-auto">
+                  {offenceCatalogLoading ? (
+                    <p className="px-3 py-2 text-xs text-cad-muted">Loading offence catalog...</p>
+                  ) : (() => {
+                    const query = String(offenceQuery || '').trim().toLowerCase();
+                    const filtered = offenceCatalog
+                      .filter((offence) => {
+                        if (!query) return true;
+                        return (
+                          String(offence.code || '').toLowerCase().includes(query)
+                          || String(offence.title || '').toLowerCase().includes(query)
+                          || String(offence.description || '').toLowerCase().includes(query)
+                          || String(offence.category || '').toLowerCase().includes(query)
+                        );
+                      })
+                      .slice(0, 24);
+
+                    if (filtered.length === 0) {
+                      return <p className="px-3 py-2 text-xs text-cad-muted">No charges match your search.</p>;
+                    }
+
+                    return filtered.map((offence) => {
+                      const selected = selectedCharges.some((row) => Number(row.offence_id) === Number(offence.id));
+                      return (
+                        <button
+                          key={`offence-${offence.id}`}
+                          type="button"
+                          onClick={() => toggleCharge(offence)}
+                          className={`w-full text-left px-3 py-2 border-b border-cad-border last:border-b-0 transition-colors ${
+                            selected ? 'bg-amber-500/10' : 'hover:bg-cad-card'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm text-cad-ink truncate">
+                                {offence.code ? <span className="font-mono text-cad-muted">{offence.code} </span> : null}
+                                {offence.title}
+                              </p>
+                              <p className="text-[11px] text-cad-muted truncate">
+                                {getOffenceCategoryLabel(offence.category)}
+                                {offence.description ? ` • ${offence.description}` : ''}
+                              </p>
+                            </div>
+                            <span className={`text-xs px-2 py-0.5 rounded border whitespace-nowrap ${
+                              selected
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                : 'bg-cad-card text-cad-muted border-cad-border'
+                            }`}>
+                              {selected ? 'Selected' : 'Add'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
               </div>
 
               <div>
