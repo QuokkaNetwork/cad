@@ -44,11 +44,11 @@ function Sync-Directory {
     [string[]]$ExcludeDirectories = @()
   )
 
-  if (-not (Test-Path $Source)) {
+  if (-not (Test-Path -LiteralPath $Source)) {
     throw "Source directory not found: $Source"
   }
 
-  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  [System.IO.Directory]::CreateDirectory($Destination) | Out-Null
 
   $args = @(
     $Source,
@@ -107,11 +107,11 @@ if (-not $SkipBuild) {
   Ensure-NpmBuild -ProjectPath $finesVicSource -ProjectLabel 'npwd_fines_victoria'
 }
 
-if (Test-Path $outputRoot) {
+if (Test-Path -LiteralPath $outputRoot) {
   Write-Host "==> Removing existing output: $outputRoot" -ForegroundColor Yellow
   Remove-Item -LiteralPath $outputRoot -Recurse -Force
 }
-New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+[System.IO.Directory]::CreateDirectory($outputRoot) | Out-Null
 
 Sync-Directory -Source $cadBridgeSource -Destination (Join-Path $outputRoot 'cad_bridge')
 Sync-Directory -Source $vicroadsSource -Destination (Join-Path $outputRoot 'npwd_vicroads') -ExcludeDirectories @('node_modules')
@@ -144,4 +144,4 @@ Rebuild this pack after changing cad_bridge or either NPWD app.
 [System.IO.File]::WriteAllText((Join-Path $outputRoot 'README.txt'), $readme, [System.Text.Encoding]::UTF8)
 
 Write-Host "`nPackaged resources into: $outputRoot" -ForegroundColor Green
-Get-ChildItem -Path $outputRoot -Directory | Select-Object Name, FullName | Format-Table -AutoSize
+Get-ChildItem -LiteralPath $outputRoot -Directory | Select-Object Name, FullName | Format-Table -AutoSize

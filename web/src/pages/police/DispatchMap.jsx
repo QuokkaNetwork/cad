@@ -4,7 +4,7 @@ import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 
 // GTA V/FiveM pause map uses a 2x3 tile grid. Community mapping references
-// and Cfx minimap tile docs commonly treat each tile as 4500 world units.
+// and Cfx minimap tile research commonly treat each tile as 4500 world units.
 // This gives a 9000 x 13500 world-space extent that matches the 2:3 atlas ratio.
 // We anchor it so Y=0 sits on the lower third boundary, which matches typical
 // GTA world coordinate distribution (Los Santos in the southern portion, Blaine north).
@@ -18,6 +18,17 @@ const WORLD_BOUNDS = {
 const MAP_CANVAS_WIDTH = 1000;
 const MAP_CANVAS_HEIGHT = 1500;
 const MAP_IMAGE_SRC = '/maps/FullMap.png';
+// `FullMap.png` contains transparent padding/non-atlas artwork around the pause-map atlas.
+// These normalized values define the calibrated atlas rectangle inside the image.
+// The rect was derived from the image alpha bounds (6144x9216 source; alpha bbox
+// 75,348 -> 6131,8576) and then fit to the exact 2:3 pause-map atlas ratio.
+const MAP_WORLD_IMAGE_RECT_NORMALIZED = {
+  x: 0.0586751302083333,
+  y: 0.0377604166666667,
+  width: 0.892903645833333,
+  height: 0.892903645833333,
+};
+const MAP_SUBGRID_WORLD_STEP = 1500;
 const MAP_MIN_ZOOM = 1;
 const MAP_MAX_ZOOM = 6;
 const MAP_BUTTON_ZOOM_STEP = 0.25;
@@ -37,21 +48,26 @@ function clampPanToViewport(viewport, scale, x, y) {
     return { x, y };
   }
 
-  const scaledWidth = width * scale;
-  const scaledHeight = height * scale;
+  const atlasRect = getWorldImageRect(width, height);
+  const scaledAtlasWidth = atlasRect.width * scale;
+  const scaledAtlasHeight = atlasRect.height * scale;
   let nextX = Number(x) || 0;
   let nextY = Number(y) || 0;
 
-  if (scaledWidth <= width) {
-    nextX = (width - scaledWidth) / 2;
+  if (scaledAtlasWidth <= width) {
+    nextX = ((width - scaledAtlasWidth) / 2) - (atlasRect.x * scale);
   } else {
-    nextX = clamp(nextX, width - scaledWidth, 0);
+    const maxX = -(atlasRect.x * scale);
+    const minX = width - ((atlasRect.x + atlasRect.width) * scale);
+    nextX = clamp(nextX, minX, maxX);
   }
 
-  if (scaledHeight <= height) {
-    nextY = (height - scaledHeight) / 2;
+  if (scaledAtlasHeight <= height) {
+    nextY = ((height - scaledAtlasHeight) / 2) - (atlasRect.y * scale);
   } else {
-    nextY = clamp(nextY, height - scaledHeight, 0);
+    const maxY = -(atlasRect.y * scale);
+    const minY = height - ((atlasRect.y + atlasRect.height) * scale);
+    nextY = clamp(nextY, minY, maxY);
   }
 
   return { x: round2(nextX), y: round2(nextY) };
@@ -62,18 +78,41 @@ function parseNum(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function toMapPoint(x, y, width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGHT) {
-  const px = ((x - WORLD_BOUNDS.minX) / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX)) * width;
-  const py = height - (((y - WORLD_BOUNDS.minY) / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY)) * height);
+function getWorldImageRect(width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGHT) {
   return {
-    x: Math.max(0, Math.min(width, px)),
-    y: Math.max(0, Math.min(height, py)),
+    x: width * MAP_WORLD_IMAGE_RECT_NORMALIZED.x,
+    y: height * MAP_WORLD_IMAGE_RECT_NORMALIZED.y,
+    width: width * MAP_WORLD_IMAGE_RECT_NORMALIZED.width,
+    height: height * MAP_WORLD_IMAGE_RECT_NORMALIZED.height,
+  };
+}
+
+function isPointInsideRect(pointX, pointY, rect) {
+  if (!rect) return false;
+  return (
+    Number(pointX) >= rect.x
+    && Number(pointX) <= (rect.x + rect.width)
+    && Number(pointY) >= rect.y
+    && Number(pointY) <= (rect.y + rect.height)
+  );
+}
+
+function toMapPoint(x, y, width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGHT) {
+  const rect = getWorldImageRect(width, height);
+  const px = rect.x + (((x - WORLD_BOUNDS.minX) / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX)) * rect.width);
+  const py = rect.y + rect.height - (((y - WORLD_BOUNDS.minY) / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY)) * rect.height);
+  return {
+    x: Math.max(rect.x, Math.min(rect.x + rect.width, px)),
+    y: Math.max(rect.y, Math.min(rect.y + rect.height, py)),
   };
 }
 
 function toWorldPoint(mapX, mapY, width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGHT) {
-  const x = WORLD_BOUNDS.minX + ((Number(mapX) / width) * (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX));
-  const y = WORLD_BOUNDS.minY + (((height - Number(mapY)) / height) * (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY));
+  const rect = getWorldImageRect(width, height);
+  const relX = (Number(mapX) - rect.x) / rect.width;
+  const relY = (Number(mapY) - rect.y) / rect.height;
+  const x = WORLD_BOUNDS.minX + (relX * (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX));
+  const y = WORLD_BOUNDS.minY + ((1 - relY) * (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY));
   return { x, y };
 }
 
@@ -160,10 +199,148 @@ function ZoneOverlay({ zone, width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGH
   const radius = parseNum(zone.radius);
   if (x === null || y === null || radius === null || radius <= 0) return null;
   const center = toMapPoint(x, y, width, height);
-  const sx = width / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX);
-  const sy = height / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY);
+  const rect = getWorldImageRect(width, height);
+  const sx = rect.width / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX);
+  const sy = rect.height / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY);
   const r = Math.max(2, radius * Math.min(sx, sy));
   return <circle cx={center.x} cy={center.y} r={r} fill="rgba(251, 191, 36, 0.08)" stroke="rgba(251, 191, 36, 0.45)" strokeWidth="2" />;
+}
+
+function MapGridOverlay({
+  width = MAP_CANVAS_WIDTH,
+  height = MAP_CANVAS_HEIGHT,
+  showGrid = true,
+  showLabels = true,
+}) {
+  const rect = getWorldImageRect(width, height);
+  const majorXStep = GTA_MAP_TILE_UNITS;
+  const majorYStep = GTA_MAP_TILE_UNITS;
+  const subStep = MAP_SUBGRID_WORLD_STEP;
+
+  const subVerticals = [];
+  for (let x = WORLD_BOUNDS.minX + subStep; x < WORLD_BOUNDS.maxX; x += subStep) {
+    if ((x - WORLD_BOUNDS.minX) % majorXStep === 0) continue;
+    const p = toMapPoint(x, WORLD_BOUNDS.minY, width, height);
+    subVerticals.push({ x, px: p.x });
+  }
+
+  const subHorizontals = [];
+  for (let y = WORLD_BOUNDS.minY + subStep; y < WORLD_BOUNDS.maxY; y += subStep) {
+    if ((y - WORLD_BOUNDS.minY) % majorYStep === 0) continue;
+    const p = toMapPoint(WORLD_BOUNDS.minX, y, width, height);
+    subHorizontals.push({ y, py: p.y });
+  }
+
+  const majorVerticals = [];
+  for (let x = WORLD_BOUNDS.minX; x <= WORLD_BOUNDS.maxX; x += majorXStep) {
+    const p = toMapPoint(x, WORLD_BOUNDS.minY, width, height);
+    majorVerticals.push({ x, px: p.x });
+  }
+
+  const majorHorizontals = [];
+  for (let y = WORLD_BOUNDS.minY; y <= WORLD_BOUNDS.maxY; y += majorYStep) {
+    const p = toMapPoint(WORLD_BOUNDS.minX, y, width, height);
+    majorHorizontals.push({ y, py: p.y });
+  }
+
+  const axisX = toMapPoint(0, WORLD_BOUNDS.minY, width, height).x;
+  const axisY = toMapPoint(WORLD_BOUNDS.minX, 0, width, height).y;
+
+  return (
+    <g pointerEvents="none">
+      <rect x={0} y={0} width={width} height={rect.y} fill="rgba(2, 6, 23, 0.36)" />
+      <rect x={0} y={rect.y + rect.height} width={width} height={Math.max(0, height - (rect.y + rect.height))} fill="rgba(2, 6, 23, 0.36)" />
+      <rect x={0} y={rect.y} width={rect.x} height={rect.height} fill="rgba(2, 6, 23, 0.36)" />
+      <rect x={rect.x + rect.width} y={rect.y} width={Math.max(0, width - (rect.x + rect.width))} height={rect.height} fill="rgba(2, 6, 23, 0.36)" />
+
+      <rect x={rect.x} y={rect.y} width={rect.width} height={rect.height} fill="rgba(2, 6, 23, 0.08)" stroke="rgba(148, 163, 184, 0.28)" strokeWidth="1.5" />
+
+      {showGrid ? (
+        <>
+          {subVerticals.map((line) => (
+            <line
+              key={`subvx-${line.x}`}
+              x1={line.px}
+              y1={rect.y}
+              x2={line.px}
+              y2={rect.y + rect.height}
+              stroke="rgba(148, 163, 184, 0.16)"
+              strokeWidth="1"
+              strokeDasharray="3 5"
+            />
+          ))}
+          {subHorizontals.map((line) => (
+            <line
+              key={`subhy-${line.y}`}
+              x1={rect.x}
+              y1={line.py}
+              x2={rect.x + rect.width}
+              y2={line.py}
+              stroke="rgba(148, 163, 184, 0.16)"
+              strokeWidth="1"
+              strokeDasharray="3 5"
+            />
+          ))}
+
+          {majorVerticals.map((line) => (
+            <line
+              key={`majorvx-${line.x}`}
+              x1={line.px}
+              y1={rect.y}
+              x2={line.px}
+              y2={rect.y + rect.height}
+              stroke="rgba(96, 165, 250, 0.38)"
+              strokeWidth="1.6"
+            />
+          ))}
+          {majorHorizontals.map((line) => (
+            <line
+              key={`majorhy-${line.y}`}
+              x1={rect.x}
+              y1={line.py}
+              x2={rect.x + rect.width}
+              y2={line.py}
+              stroke="rgba(96, 165, 250, 0.38)"
+              strokeWidth="1.6"
+            />
+          ))}
+
+          <line
+            x1={axisX}
+            y1={rect.y}
+            x2={axisX}
+            y2={rect.y + rect.height}
+            stroke="rgba(34, 197, 94, 0.55)"
+            strokeWidth="2"
+            strokeDasharray="8 6"
+          />
+          <line
+            x1={rect.x}
+            y1={axisY}
+            x2={rect.x + rect.width}
+            y2={axisY}
+            stroke="rgba(244, 114, 182, 0.45)"
+            strokeWidth="2"
+            strokeDasharray="8 6"
+          />
+        </>
+      ) : null}
+
+      {showLabels ? (
+        <>
+          <text x={rect.x + 8} y={rect.y + 18} fill="rgba(226,232,240,0.86)" fontSize="11" fontWeight="600">
+            Calibrated GTA Pause-Map Atlas (2x3 tiles)
+          </text>
+          <text x={rect.x + 8} y={rect.y + 33} fill="rgba(148,163,184,0.95)" fontSize="10">
+            Tile size 4500u | Subgrid 1500u | X axis = green | Y=0 boundary = pink
+          </text>
+          <text x={rect.x + 8} y={rect.y + rect.height - 10} fill="rgba(148,163,184,0.92)" fontSize="10">
+            X {WORLD_BOUNDS.minX}..{WORLD_BOUNDS.maxX} | Y {WORLD_BOUNDS.minY}..{WORLD_BOUNDS.maxY}
+          </text>
+        </>
+      ) : null}
+    </g>
+  );
 }
 
 export default function DispatchMap() {
@@ -197,6 +374,8 @@ export default function DispatchMap() {
     labels: true,
   });
   const mapZoom = mapView.scale;
+  const atlasCoveragePct = Math.round(MAP_WORLD_IMAGE_RECT_NORMALIZED.width * 1000) / 10;
+  const atlasFitZoomPct = Math.round((1 / MAP_WORLD_IMAGE_RECT_NORMALIZED.width) * 100);
 
   const loadMapData = useCallback(async () => {
     if (!departmentId) return;
@@ -581,7 +760,12 @@ export default function DispatchMap() {
           x: (unscaledX / mapViewportSize.width) * MAP_CANVAS_WIDTH,
           y: (unscaledY / mapViewportSize.height) * MAP_CANVAS_HEIGHT,
         };
-        setCursorWorld(toWorldPoint(mapPoint.x, mapPoint.y));
+        const atlasRect = getWorldImageRect(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT);
+        if (isPointInsideRect(mapPoint.x, mapPoint.y, atlasRect)) {
+          setCursorWorld(toWorldPoint(mapPoint.x, mapPoint.y));
+        } else {
+          setCursorWorld(null);
+        }
       } else {
         setCursorWorld(null);
       }
@@ -684,20 +868,25 @@ export default function DispatchMap() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.65fr)_420px] gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.85fr)_400px] gap-4 flex-1 min-h-0">
         <div className="bg-cad-card border border-cad-border rounded-lg overflow-hidden flex flex-col min-h-0">
-          <div className="px-4 py-3 border-b border-cad-border flex items-center justify-between gap-3">
-            <div className="font-semibold">Dispatch Area Map</div>
+          <div className="px-4 py-3 border-b border-cad-border/80 bg-gradient-to-r from-slate-950/45 via-cad-card to-cad-card flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold">Dispatch Area Map</div>
+              <div className="text-[11px] text-cad-muted mt-0.5">
+                Calibrated to GTA/FiveM pause-map atlas (2x3 tiles, 4500u per tile)
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 text-cad-muted"><span className="h-2 w-2 rounded-full bg-emerald-400" />Unit</span>
-              <span className="inline-flex items-center gap-1 text-cad-muted"><span className="h-2 w-2 rotate-45 bg-amber-400" />Call</span>
-              <span className="inline-flex items-center gap-1 text-cad-muted"><span className="h-2 w-2 rounded-full border border-amber-300" />Alarm Zone</span>
-              <span className="inline-flex items-center gap-1 text-cad-muted"><span className="h-px w-4 bg-fuchsia-300" />Pursuit Route</span>
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded border border-white/10 bg-black/20 text-cad-muted"><span className="h-2 w-2 rounded-full bg-emerald-400" />Unit</span>
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded border border-white/10 bg-black/20 text-cad-muted"><span className="h-2 w-2 rotate-45 bg-amber-400" />Call</span>
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded border border-white/10 bg-black/20 text-cad-muted"><span className="h-2 w-2 rounded-full border border-amber-300" />Alarm Zone</span>
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded border border-white/10 bg-black/20 text-cad-muted"><span className="h-px w-4 bg-fuchsia-300" />Pursuit</span>
             </div>
           </div>
           {error ? <div className="px-4 pt-4 text-sm text-rose-300">{error}</div> : null}
           <div className="p-4 flex-1 min-h-0 flex flex-col">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 {[
                   ['basemap', 'Map'],
@@ -720,6 +909,12 @@ export default function DispatchMap() {
                     {label}
                   </button>
                 ))}
+                <span className="inline-flex items-center rounded-md border border-cyan-400/25 bg-cyan-400/10 px-2.5 py-1 text-[11px] text-cyan-100">
+                  Atlas coverage {atlasCoveragePct}%
+                </span>
+                <span className="inline-flex items-center rounded-md border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] text-cad-muted">
+                  Atlas-fit zoom {atlasFitZoomPct}%
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" onClick={zoomOut} disabled={mapZoom <= MAP_MIN_ZOOM} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">-</button>
@@ -743,13 +938,24 @@ export default function DispatchMap() {
                 </button>
               </div>
             </div>
-            <div className="mb-2 text-[11px] text-cad-muted">
-              Drag to pan. Use mouse wheel to zoom. Coordinates below use GTA/FiveM world bounds mapped to the pause-map 2x3 tile grid.
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="text-cad-muted">Drag to pan. Mouse wheel zooms. Cursor coordinates only report inside the calibrated map atlas.</span>
+              <span className="inline-flex items-center rounded border border-cad-border bg-cad-surface/70 px-2 py-0.5 text-cad-muted">
+                Grid aligns to GTA pause-map tile boundaries
+              </span>
             </div>
 
-            <div className="relative rounded-lg border border-cad-border bg-gradient-to-b from-slate-950 to-slate-900 overflow-hidden flex-1 min-h-0">
-              <div className="absolute left-4 top-3 z-20 text-xs tracking-wide uppercase text-cad-muted bg-black/30 border border-white/10 rounded px-2 py-1">
-                Blaine County / Los Santos
+            <div className="relative rounded-lg border border-cad-border bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 overflow-hidden flex-1 min-h-0 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.02)]">
+              <div className="absolute left-4 top-3 z-20 rounded-md border border-white/10 bg-black/35 backdrop-blur px-3 py-2">
+                <div className="text-[10px] tracking-[0.16em] uppercase text-cad-muted">Dispatch Atlas</div>
+                <div className="text-xs font-semibold text-slate-100 mt-0.5">Los Santos / Blaine County</div>
+              </div>
+              <div className="absolute right-4 top-3 z-20 rounded-md border border-white/10 bg-black/35 backdrop-blur px-3 py-2">
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className="inline-flex items-center gap-1 text-emerald-200"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />X-axis</span>
+                  <span className="inline-flex items-center gap-1 text-pink-200"><span className="h-px w-3 bg-pink-400" />Y=0</span>
+                  <span className="inline-flex items-center gap-1 text-cyan-200"><span className="h-px w-3 bg-cyan-300" />4500u tile</span>
+                </div>
               </div>
               <div className="absolute inset-0 p-2 sm:p-3">
                 <div className="relative h-full w-full flex items-center justify-center">
@@ -778,21 +984,13 @@ export default function DispatchMap() {
                     <img
                       src={MAP_IMAGE_SRC}
                       alt="Los Santos dispatch map"
-                      className="absolute inset-0 w-full h-full object-contain opacity-90 pointer-events-none select-none"
+                      className="absolute inset-0 w-full h-full object-contain opacity-95 pointer-events-none select-none"
                       draggable={false}
                     />
                   ) : null}
-                  <div className="absolute inset-0 bg-gradient-to-b from-slate-950/20 via-transparent to-slate-950/35 pointer-events-none" />
-                  {layerVisibility.grid ? (
-                    <div
-                      className="absolute inset-0 opacity-25 pointer-events-none"
-                      style={{
-                        backgroundImage: 'linear-gradient(to right, rgba(148,163,184,.18) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,.18) 1px, transparent 1px)',
-                        backgroundSize: '60px 60px',
-                      }}
-                    />
-                  ) : null}
+                  <div className="absolute inset-0 bg-gradient-to-b from-slate-950/10 via-transparent to-slate-950/30 pointer-events-none" />
                   <svg viewBox={`0 0 ${MAP_CANVAS_WIDTH} ${MAP_CANVAS_HEIGHT}`} className="absolute inset-0 w-full h-full">
+                <MapGridOverlay showGrid={layerVisibility.grid} showLabels={layerVisibility.grid} />
                 {layerVisibility.zones && filteredZones.map((zone, idx) => (
                   <ZoneOverlay key={`zone-${String(zone.id || idx)}`} zone={zone} />
                 ))}
@@ -875,13 +1073,36 @@ export default function DispatchMap() {
               </div>
                 </div>
               </div>
-              <div className="absolute left-3 bottom-3 text-xs text-cad-muted bg-black/35 border border-white/10 rounded px-2 py-1">
-                {cursorWorld
-                  ? `X ${Math.round(cursorWorld.x)} | Y ${Math.round(cursorWorld.y)}`
-                  : `Bounds X ${WORLD_BOUNDS.minX}..${WORLD_BOUNDS.maxX} | Y ${WORLD_BOUNDS.minY}..${WORLD_BOUNDS.maxY}`}
+              <div className="absolute left-3 bottom-3 z-20 rounded-md border border-white/10 bg-black/40 backdrop-blur px-3 py-2 min-w-[260px]">
+                <div className="text-[10px] tracking-[0.16em] uppercase text-cad-muted">Cursor / Bounds</div>
+                <div className="text-xs mt-1">
+                  {cursorWorld ? (
+                    <span className="text-slate-100">
+                      X {Math.round(cursorWorld.x)} | Y {Math.round(cursorWorld.y)}
+                    </span>
+                  ) : (
+                    <span className="text-cad-muted">
+                      Cursor outside calibrated atlas (image padding area)
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-cad-muted mt-1">
+                  World bounds X {WORLD_BOUNDS.minX}..{WORLD_BOUNDS.maxX} | Y {WORLD_BOUNDS.minY}..{WORLD_BOUNDS.maxY}
+                </div>
               </div>
-              <div className="absolute right-3 bottom-3 text-xs text-cad-muted bg-black/35 border border-white/10 rounded px-2 py-1">
-                {loading ? 'Refreshing...' : `Calls without coordinates: ${unmappedCallsCount}`}
+              <div className="absolute right-3 bottom-3 z-20 rounded-md border border-white/10 bg-black/40 backdrop-blur px-3 py-2 text-xs min-w-[210px]">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-cad-muted">Map refresh</span>
+                  <span className={loading ? 'text-amber-200' : 'text-slate-100'}>{loading ? 'Refreshing...' : 'Live'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3 mt-1">
+                  <span className="text-cad-muted">Unmapped calls</span>
+                  <span className={unmappedCallsCount > 0 ? 'text-amber-200' : 'text-emerald-200'}>{unmappedCallsCount}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3 mt-1">
+                  <span className="text-cad-muted">Zoom</span>
+                  <span className="text-slate-100">{Math.round(mapZoom * 100)}%</span>
+                </div>
               </div>
             </div>
           </div>

@@ -33,6 +33,9 @@ set "NPM_INSTALL_FLAGS=--include=dev"
 set "POWERSHELL_BIN=powershell"
 set "RESOURCE_PACK_DIR=[quokkacad]"
 set "RESOURCE_PACK_SCRIPT=deploy\scripts\package-quokkacad.ps1"
+set "RESOURCE_PACK_CAD_MANIFEST=%RESOURCE_PACK_DIR%\cad_bridge\fxmanifest.lua"
+set "RESOURCE_PACK_VICROADS_MANIFEST=%RESOURCE_PACK_DIR%\npwd_vicroads\fxmanifest.lua"
+set "RESOURCE_PACK_FINES_MANIFEST=%RESOURCE_PACK_DIR%\npwd_fines_victoria\fxmanifest.lua"
 set "npm_config_production=false"
 set "npm_config_include=dev"
 
@@ -236,7 +239,9 @@ if "!UPDATED!"=="1" (
 )
 
 if "!UPDATED!"=="1" set "PACK_RESOURCES=1"
-if not exist "%RESOURCE_PACK_DIR%\cad_bridge\fxmanifest.lua" set "PACK_RESOURCES=1"
+if not exist "%RESOURCE_PACK_CAD_MANIFEST%" set "PACK_RESOURCES=1"
+if not exist "%RESOURCE_PACK_VICROADS_MANIFEST%" set "PACK_RESOURCES=1"
+if not exist "%RESOURCE_PACK_FINES_MANIFEST%" set "PACK_RESOURCES=1"
 if "!PACK_RESOURCES!"=="1" (
   if exist "%RESOURCE_PACK_SCRIPT%" (
     where %POWERSHELL_BIN% >nul 2>nul
@@ -244,6 +249,19 @@ if "!PACK_RESOURCES!"=="1" (
     echo [CAD] Packaging FiveM resources into %RESOURCE_PACK_DIR%...
     call %POWERSHELL_BIN% -NoProfile -ExecutionPolicy Bypass -File "%RESOURCE_PACK_SCRIPT%"
     if errorlevel 1 goto :fail
+    if not exist "%RESOURCE_PACK_CAD_MANIFEST%" (
+      echo [CAD] ERROR: Packaged resource missing cad_bridge manifest: %RESOURCE_PACK_CAD_MANIFEST%
+      goto :fail
+    )
+    if not exist "%RESOURCE_PACK_VICROADS_MANIFEST%" (
+      echo [CAD] ERROR: Packaged resource missing npwd_vicroads manifest: %RESOURCE_PACK_VICROADS_MANIFEST%
+      goto :fail
+    )
+    if not exist "%RESOURCE_PACK_FINES_MANIFEST%" (
+      echo [CAD] ERROR: Packaged resource missing npwd_fines_victoria manifest: %RESOURCE_PACK_FINES_MANIFEST%
+      goto :fail
+    )
+    echo [CAD] Resource pack verified: cad_bridge + npwd_vicroads + npwd_fines_victoria
   ) else (
     echo [CAD] WARNING: Resource pack script not found: %RESOURCE_PACK_SCRIPT%
   )
