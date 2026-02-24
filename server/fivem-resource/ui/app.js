@@ -48,6 +48,8 @@ var printedDocZoomOutBtn = document.getElementById("printedDocZoomOutBtn");
 var printedDocZoomResetBtn = document.getElementById("printedDocZoomResetBtn");
 var printedDocZoomInBtn = document.getElementById("printedDocZoomInBtn");
 var printedDocZoomLabel = document.getElementById("printedDocZoomLabel");
+var printedDocCopyPdfBtn = document.getElementById("printedDocCopyPdfBtn");
+var printedDocSavePdfBtn = document.getElementById("printedDocSavePdfBtn");
 var printedDocPdfStatus = document.getElementById("printedDocPdfStatus");
 var printedDocPdfViewport = document.getElementById("printedDocPdfViewport");
 var printedDocPdfPages = document.getElementById("printedDocPdfPages");
@@ -68,6 +70,7 @@ var printedDocNotes = document.getElementById("printedDocNotes");
 var printedDocExtraSection = document.getElementById("printedDocExtraSection");
 var printedDocExtra = document.getElementById("printedDocExtra");
 var printedDocQuickReference = document.getElementById("printedDocQuickReference");
+var printedDocCopyShareTextBtn = document.getElementById("printedDocCopyShareTextBtn");
 
 var licenseOverlay = document.getElementById("licenseOverlay");
 var licenseForm = document.getElementById("licenseForm");
@@ -151,6 +154,7 @@ var printedDocPdfRenderToken = 0;
 var printedDocPdfZoom = 1;
 var printedDocPdfFitZoom = 1;
 var printedDocPdfHasPdf = false;
+var printedDocStatusAutoHideTimer = 0;
 
 function bindIdCardNodes() {
   idCardOverlay = document.getElementById("idCardOverlay");
@@ -919,6 +923,238 @@ function normalizePrintedDocPdfBase64(metadata) {
   return "";
 }
 
+function normalizePrintedDocPdfMime(metadata) {
+  var mime = printedDocString(safeGet(metadata, "pdf_mime", ""));
+  if (!mime) mime = "application/pdf";
+  return mime;
+}
+
+function normalizePrintedDocPdfFilename(metadata) {
+  var filename = printedDocString(safeGet(metadata, "pdf_filename", ""));
+  if (!filename) {
+    var title = printedDocString(safeGet(metadata, "title", "")) || printedDocString(safeGet(metadata, "label", "")) || "cad-printed-document";
+    filename = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!filename) filename = "cad-printed-document";
+    filename = filename.slice(0, 64);
+  }
+  if (!/\.pdf$/i.test(filename)) filename += ".pdf";
+  return filename;
+}
+
+function getPrintedDocPdfAttachment(metadata) {
+  var safeMeta = metadata && typeof metadata === "object" ? metadata : {};
+  return {
+    base64: normalizePrintedDocPdfBase64(safeMeta),
+    mime: normalizePrintedDocPdfMime(safeMeta),
+    filename: normalizePrintedDocPdfFilename(safeMeta),
+  };
+}
+
+function getActivePrintedDocMetadata() {
+  if (!activePrintedDocPayload || typeof activePrintedDocPayload !== "object") return {};
+  var metadata = activePrintedDocPayload.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  return metadata;
+}
+
+function clearPrintedDocStatusAutoHide() {
+  if (!printedDocStatusAutoHideTimer) return;
+  try {
+    clearTimeout(printedDocStatusAutoHideTimer);
+  } catch (_err) {}
+  printedDocStatusAutoHideTimer = 0;
+}
+
+function setPrintedDocTransientStatus(message, isError, timeoutMs) {
+  setPrintedDocPdfStatus(message, isError === true);
+  clearPrintedDocStatusAutoHide();
+  var wait = Number(timeoutMs);
+  if (!Number.isFinite(wait) || wait < 400) wait = 2400;
+  printedDocStatusAutoHideTimer = setTimeout(function clearPrintedDocTransientStatus() {
+    printedDocStatusAutoHideTimer = 0;
+    if (!printedDocOpen) return;
+    setPrintedDocPdfStatus("", false);
+  }, wait);
+}
+
+function fallbackCopyText(text) {
+  try {
+    var textarea = document.createElement("textarea");
+    textarea.value = String(text || "");
+    textarea.setAttribute("readonly", "readonly");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    var copied = false;
+    try {
+      copied = document.execCommand("copy") === true;
+    } catch (_err) {
+      copied = false;
+    }
+    document.body.removeChild(textarea);
+    return copied;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function copyTextToClipboard(text) {
+  var payload = String(text == null ? "" : text);
+  if (!payload) return Promise.resolve(false);
+  if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    return navigator.clipboard.writeText(payload).then(function onClipboardSuccess() {
+      return true;
+    }).catch(function onClipboardFailure() {
+      return fallbackCopyText(payload);
+    });
+  }
+  return Promise.resolve(fallbackCopyText(payload));
+}
+
+function buildPrintedDocShareText() {
+  var metadata = getActivePrintedDocMetadata();
+  var lines = [];
+  var title = printedDocFirstNonEmpty([
+    safeGet(metadata, "label", ""),
+    safeGet(metadata, "title", ""),
+    activePrintedDocPayload && activePrintedDocPayload.itemLabel,
+    activePrintedDocPayload && activePrintedDocPayload.itemName
+  ], "CAD Printed Document");
+  var reference = formatPrintedDocReference(metadata);
+  var subject = printedDocFirstNonEmpty([
+    safeGet(metadata, "subject_name", ""),
+    safeGet(metadata, "subject_display", ""),
+    safeGet(metadata, "citizen_id", ""),
+    safeGet(metadata, "subject_key", "")
+  ], "");
+  var officer = printedDocFirstNonEmpty([
+    [printedDocString(safeGet(metadata, "officer_callsign", "")), printedDocString(safeGet(metadata, "officer_name", ""))].filter(Boolean).join(" - "),
+    safeGet(metadata, "officer_name", ""),
+    safeGet(metadata, "officer_callsign", "")
+  ], "");
+  var statusText = printedDocToTitleCase(printedDocFirstNonEmpty([safeGet(metadata, "status", ""), safeGet(metadata, "payable_status", "")], ""));
+  var fineText = formatPrintedDocMoney(printedDocFirstNonEmpty([safeGet(metadata, "fine_amount", 0), safeGet(metadata, "amount", 0)], 0));
+  var issuedText = formatPrintedDocDate(printedDocFirstNonEmpty([safeGet(metadata, "issued_at", ""), safeGet(metadata, "printed_at", "")], ""));
+  var summaryText = printedDocFirstNonEmpty([safeGet(metadata, "description", ""), safeGet(metadata, "info", "")], "");
+
+  lines.push(title);
+  if (reference) lines.push("Reference: " + reference);
+  if (subject) lines.push("Subject: " + subject);
+  if (officer) lines.push("Officer: " + officer);
+  if (statusText) lines.push("Status: " + statusText);
+  if (fineText && fineText !== "N/A") lines.push("Fine: " + fineText);
+  if (issuedText && issuedText !== "Unknown") lines.push("Issued: " + issuedText);
+  if (summaryText) {
+    lines.push("");
+    lines.push(summaryText);
+  }
+  return lines.join("\n").trim();
+}
+
+function copyPrintedDocShareText() {
+  var text = buildPrintedDocShareText();
+  if (!text) {
+    setPrintedDocTransientStatus("No document details available to copy.", true);
+    return;
+  }
+  copyTextToClipboard(text).then(function onCopied(ok) {
+    if (ok) setPrintedDocTransientStatus("Share text copied to clipboard.", false);
+    else setPrintedDocTransientStatus("Unable to copy share text in this viewer.", true);
+  });
+}
+
+function tryClipboardWritePdfBlob(blob) {
+  if (!blob) return Promise.resolve(false);
+  if (!navigator || !navigator.clipboard || typeof navigator.clipboard.write !== "function") {
+    return Promise.resolve(false);
+  }
+  if (typeof ClipboardItem !== "function") {
+    return Promise.resolve(false);
+  }
+  try {
+    var clipboardItem = new ClipboardItem({
+      [blob.type || "application/pdf"]: blob,
+    });
+    return navigator.clipboard.write([clipboardItem]).then(function onWriteOk() {
+      return true;
+    }).catch(function onWriteErr() {
+      return false;
+    });
+  } catch (_err) {
+    return Promise.resolve(false);
+  }
+}
+
+function copyPrintedDocPdf() {
+  var attachment = getPrintedDocPdfAttachment(getActivePrintedDocMetadata());
+  if (!attachment.base64) {
+    setPrintedDocTransientStatus("This document item does not contain a PDF attachment.", true);
+    return;
+  }
+
+  var bytes = null;
+  try {
+    bytes = base64ToUint8Array(attachment.base64);
+  } catch (_err) {
+    setPrintedDocTransientStatus("PDF data is invalid and could not be copied.", true);
+    return;
+  }
+  var blob = new Blob([bytes], { type: attachment.mime || "application/pdf" });
+
+  tryClipboardWritePdfBlob(blob).then(function onClipboardBlobWrite(blobCopied) {
+    if (blobCopied) {
+      setPrintedDocTransientStatus("PDF copied to clipboard.", false);
+      return;
+    }
+    var dataUrl = "data:" + (attachment.mime || "application/pdf") + ";base64," + attachment.base64;
+    return copyTextToClipboard(dataUrl).then(function onCopyDataUrl(ok) {
+      if (ok) {
+        setPrintedDocTransientStatus("PDF copied as shareable data URL text.", false, 3000);
+      } else {
+        setPrintedDocTransientStatus("Unable to copy the PDF in this viewer.", true);
+      }
+    });
+  });
+}
+
+function savePrintedDocPdf() {
+  var attachment = getPrintedDocPdfAttachment(getActivePrintedDocMetadata());
+  if (!attachment.base64) {
+    setPrintedDocTransientStatus("This document item does not contain a PDF attachment.", true);
+    return;
+  }
+
+  var bytes = null;
+  try {
+    bytes = base64ToUint8Array(attachment.base64);
+  } catch (_err) {
+    setPrintedDocTransientStatus("PDF data is invalid and could not be saved.", true);
+    return;
+  }
+
+  try {
+    var blob = new Blob([bytes], { type: attachment.mime || "application/pdf" });
+    var objectUrl = URL.createObjectURL(blob);
+    var anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = attachment.filename || "cad-printed-document.pdf";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(function revokePrintedDocObjectUrl() {
+      try { URL.revokeObjectURL(objectUrl); } catch (_err) {}
+    }, 3000);
+    setPrintedDocTransientStatus("PDF export started.", false);
+  } catch (_err) {
+    setPrintedDocTransientStatus("This viewer cannot save PDF files here. Use Copy PDF instead.", true, 3000);
+  }
+}
+
 function base64ToUint8Array(base64) {
   var binary = atob(String(base64 || ""));
   var bytes = new Uint8Array(binary.length);
@@ -930,6 +1166,7 @@ function base64ToUint8Array(base64) {
 
 function setPrintedDocPdfStatus(message, isError) {
   if (!printedDocPdfStatus) return;
+  clearPrintedDocStatusAutoHide();
   var text = String(message || "").trim();
   if (!text) {
     printedDocPdfStatus.classList.add("hidden");
@@ -980,6 +1217,7 @@ function resetPrintedDocPdfViewer() {
   printedDocPdfZoom = 1;
   printedDocPdfFitZoom = 1;
   clearPrintedDocPdfPages();
+  clearPrintedDocStatusAutoHide();
   setPrintedDocPdfStatus("", false);
   setPrintedDocViewerMode(false);
   updatePrintedDocZoomLabel();
@@ -2580,6 +2818,15 @@ function initialize() {
   });
   if (printedDocZoomInBtn) printedDocZoomInBtn.addEventListener("click", function onPrintedDocZoomIn() {
     changePrintedDocZoom(0.1);
+  });
+  if (printedDocCopyPdfBtn) printedDocCopyPdfBtn.addEventListener("click", function onPrintedDocCopyPdf() {
+    copyPrintedDocPdf();
+  });
+  if (printedDocSavePdfBtn) printedDocSavePdfBtn.addEventListener("click", function onPrintedDocSavePdf() {
+    savePrintedDocPdf();
+  });
+  if (printedDocCopyShareTextBtn) printedDocCopyShareTextBtn.addEventListener("click", function onPrintedDocCopyShareText() {
+    copyPrintedDocShareText();
   });
   if (printedDocPdfViewport) {
     printedDocPdfViewport.addEventListener("wheel", function onPrintedDocWheel(event) {

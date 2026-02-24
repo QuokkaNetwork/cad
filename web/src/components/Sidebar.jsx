@@ -364,6 +364,11 @@ export default function Sidebar() {
     ? [...navItems, CALL_DETAILS_NAV_ITEM]
     : navItems;
 
+  // Department sidebar should not appear at all until the user is on duty in that department.
+  if (activeDepartment && !isOnDutyForActiveDepartment) {
+    return null;
+  }
+
   return (
     <aside className="cad-app-sidebar-shell w-56 bg-cad-surface border-r border-cad-border flex flex-col h-full">
       {/* Main navigation */}

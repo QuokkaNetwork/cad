@@ -354,6 +354,45 @@ local function openVehicleRegistrationPopup(payload)
 end
 ui.openVehicleRegistrationPopup = openVehicleRegistrationPopup
 
+local function buildCurrentSeatedVehicleRegistrationPrefill()
+  local ped = PlayerPedId()
+  if not ped or ped == 0 then
+    return nil, 'Player ped not available.'
+  end
+  if not IsPedInAnyVehicle(ped, false) then
+    return nil, 'You need to be sitting in the vehicle you want to register before opening VicRoads.'
+  end
+
+  local vehicle = GetVehiclePedIsIn(ped, false)
+  if not isVehicleUsableForRegistration(vehicle) then
+    return nil, 'Unable to detect the vehicle you are sitting in. Exit and re-enter the vehicle, then try again.'
+  end
+
+  local plate = trim(GetVehicleNumberPlateText(vehicle) or '')
+  if plate == '' then
+    return nil, 'The vehicle plate could not be read. Re-seat in the vehicle and try again.'
+  end
+
+  local modelHash = GetEntityModel(vehicle)
+  local model = GetDisplayNameFromVehicleModel(modelHash)
+  if model and model ~= '' then
+    local localized = GetLabelText(model)
+    if localized and localized ~= '' and localized ~= 'NULL' then model = localized end
+  else
+    model = ''
+  end
+  if model == '' or model == 'NULL' or model == 'CARNOTFOUND' then
+    model = tostring(modelHash or '')
+  end
+
+  return {
+    plate = plate,
+    vehicle_model = trim(model or ''),
+    vehicle_colour = getVehicleColourLabel(vehicle),
+    source = 'npwd_vicroads',
+  }, ''
+end
+
 RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
   if state.vehicleRegistrationSubmitPending == true then
     if cb then cb({ ok = false, error = 'submit_in_progress' }) end
@@ -393,6 +432,19 @@ end)
 RegisterNUICallback('cadBridgeRegistrationCancel', function(_data, cb)
   closeVehicleRegistrationPopup()
   if cb then cb({ ok = true }) end
+end)
+
+RegisterNUICallback('cadBridgeNpwdVicRoadsOpenRegistration', function(_data, cb)
+  local payload, err = buildCurrentSeatedVehicleRegistrationPrefill()
+  if not payload then
+    local message = trim(err or 'You must be sitting in a vehicle to register it from the phone.')
+    notifyWarn('VicRoads', message)
+    if cb then cb({ ok = false, error = 'not_in_vehicle', message = message }) end
+    return
+  end
+
+  openVehicleRegistrationPopup(payload)
+  if cb then cb({ ok = true, message = 'VicRoads registration opened.' }) end
 end)
 
 RegisterNetEvent('cad_bridge:promptVehicleRegistration', function(payload)

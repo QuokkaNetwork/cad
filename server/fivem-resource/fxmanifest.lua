@@ -13,6 +13,7 @@ client_scripts {
   'client/modules/jail.lua',
   'client/modules/license.lua',
   'client/modules/registration.lua',
+  'client/modules/fines_vic.lua',
   'client/modules/documents_ui.lua',
   'client/modules/peds.lua',
   'client/modules/call_popup.lua',
@@ -31,4 +32,6 @@ files {
   'ui/vendor/pdf.min.js',
   'ui/overlay.webp',
   'ui/vicroads-logo.png',
+  'web/dist/**/*',
+  'web/finesvic-dist/**/*',
 }

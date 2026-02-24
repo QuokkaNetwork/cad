@@ -708,6 +708,21 @@ select {
   text-overflow: ellipsis;
 }
 
+.printed-doc-popup-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.printed-doc-action-btn {
+  min-height: 2rem;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
 .printed-doc-close-btn {
   padding-inline: 0.8rem;
 }
@@ -1159,6 +1174,11 @@ select {
   .printed-doc-popup-footer {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .printed-doc-popup-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .printed-doc-meta-grid {

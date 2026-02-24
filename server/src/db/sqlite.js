@@ -3260,6 +3260,51 @@ const InfringementNotices = {
     `).get(id);
     return hydrateInfringementNoticeRow(row);
   },
+  listByCitizenId(citizenId, {
+    limit = 100,
+    offset = 0,
+    include_cancelled = true,
+  } = {}) {
+    const normalizedCitizenId = String(citizenId || '').trim();
+    if (!normalizedCitizenId) return [];
+
+    const clauses = ['lower(i.citizen_id) = lower(?)'];
+    const params = [normalizedCitizenId];
+
+    if (!include_cancelled) {
+      clauses.push("i.status <> 'cancelled'");
+    }
+
+    const safeLimit = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
+    const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+    params.push(safeLimit, safeOffset);
+
+    return db.prepare(`
+      SELECT i.*,
+             cu.steam_name AS creator_name,
+             uu.steam_name AS updater_name,
+             d.name AS department_name,
+             d.short_name AS department_short_name
+      FROM infringement_notices i
+      LEFT JOIN users cu ON cu.id = i.created_by_user_id
+      LEFT JOIN users uu ON uu.id = i.updated_by_user_id
+      LEFT JOIN departments d ON d.id = i.department_id
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY
+        CASE
+          WHEN lower(trim(COALESCE(i.payable_status, ''))) = 'unpaid' AND lower(trim(COALESCE(i.status, ''))) = 'issued' THEN 0
+          WHEN lower(trim(COALESCE(i.payable_status, ''))) = 'court_listed' THEN 1
+          WHEN lower(trim(COALESCE(i.payable_status, ''))) = 'paid' THEN 3
+          ELSE 2
+        END,
+        CASE
+          WHEN i.due_date IS NOT NULL AND trim(i.due_date) <> '' THEN i.due_date
+          ELSE COALESCE(i.created_at, '')
+        END ASC,
+        i.id DESC
+      LIMIT ? OFFSET ?
+    `).all(...params).map(hydrateInfringementNoticeRow);
+  },
   listByDepartment(departmentId, {
     status = 'open',
     payable_status = '',

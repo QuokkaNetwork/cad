@@ -17,6 +17,7 @@ const {
   DriverLicenses,
   VehicleRegistrations,
   Bolos,
+  InfringementNotices,
 } = require('../db/sqlite');
 const { getVehicleByPlate, getCharacterById, getLicenseByCitizenId } = require('../db/qbox');
 const bus = require('../utils/eventBus');
@@ -115,6 +116,63 @@ function getFineDeliveryMode() {
 
 function getFineAccountKey() {
   return String(Settings.get('qbox_fine_account_key') || 'bank').trim() || 'bank';
+}
+
+function canPayInfringementOnline(notice) {
+  if (!notice) return false;
+  const status = String(notice.status || '').trim().toLowerCase();
+  const payableStatus = String(notice.payable_status || '').trim().toLowerCase();
+  const amount = Math.max(0, Number(notice.amount || 0));
+  return status === 'issued' && payableStatus === 'unpaid' && amount > 0;
+}
+
+function getInfringementOnlinePayBlockReason(notice) {
+  if (!notice) return 'Infringement notice not found';
+  const status = String(notice.status || '').trim().toLowerCase();
+  const payableStatus = String(notice.payable_status || '').trim().toLowerCase();
+  const amount = Math.max(0, Number(notice.amount || 0));
+
+  if (status === 'cancelled') return 'This infringement notice has been cancelled';
+  if (payableStatus === 'paid') return 'This infringement notice is already paid';
+  if (payableStatus === 'court_listed') return 'This infringement notice is court listed and cannot be paid online';
+  if (payableStatus === 'withdrawn') return 'This infringement notice has been withdrawn';
+  if (payableStatus === 'waived') return 'This infringement notice has been waived';
+  if (amount <= 0) return 'This infringement notice has no payable amount';
+  if (status && status !== 'issued') return `This infringement notice is not payable online (${status})`;
+  if (payableStatus && payableStatus !== 'unpaid') return `This infringement notice is not payable online (${payableStatus})`;
+  return '';
+}
+
+function serializeFinesVicNotice(notice) {
+  if (!notice) return null;
+  const amount = Math.max(0, Number(notice.amount || 0));
+  const canPayOnline = canPayInfringementOnline(notice);
+  return {
+    id: Number(notice.id || 0),
+    notice_number: String(notice.notice_number || '').trim(),
+    department_id: Number(notice.department_id || 0),
+    department_name: String(notice.department_name || '').trim(),
+    department_short_name: String(notice.department_short_name || '').trim(),
+    citizen_id: String(notice.citizen_id || '').trim(),
+    subject_name: String(notice.subject_name || '').trim(),
+    vehicle_plate: String(notice.vehicle_plate || '').trim(),
+    location: String(notice.location || '').trim(),
+    title: String(notice.title || '').trim(),
+    description: String(notice.description || '').trim(),
+    amount,
+    payable_status: String(notice.payable_status || '').trim().toLowerCase() || 'unpaid',
+    status: String(notice.status || '').trim().toLowerCase() || 'issued',
+    due_date: String(notice.due_date || '').trim(),
+    court_date: String(notice.court_date || '').trim(),
+    court_location: String(notice.court_location || '').trim(),
+    paid_at: String(notice.paid_at || '').trim(),
+    issued_at: String(notice.created_at || '').trim(),
+    updated_at: String(notice.updated_at || '').trim(),
+    officer_name: String(notice.officer_name || '').trim(),
+    officer_callsign: String(notice.officer_callsign || '').trim(),
+    can_pay_online: canPayOnline,
+    pay_block_reason: canPayOnline ? '' : getInfringementOnlinePayBlockReason(notice),
+  };
 }
 
 function normalizeAlarmZoneShape(value) {
@@ -3353,6 +3411,116 @@ router.get('/plate-status/:plate', requireBridgeAuth, (req, res) => {
     console.error('[FiveMBridge] Plate status lookup failed:', error);
     return res.status(500).json({ error: 'Failed to lookup plate status' });
   }
+});
+
+router.get('/fines-vic/notices', requireBridgeAuth, (req, res) => {
+  const citizenId = String(req.query.citizen_id || '').trim();
+  if (!citizenId) return res.status(400).json({ error: 'citizen_id is required' });
+
+  const includeCancelled = String(req.query.include_cancelled || 'true').trim().toLowerCase() !== 'false';
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const rows = InfringementNotices.listByCitizenId(citizenId, {
+    limit,
+    offset: 0,
+    include_cancelled: includeCancelled,
+  });
+
+  const notices = rows.map(serializeFinesVicNotice);
+  const payableNotices = notices.filter((notice) => notice?.can_pay_online);
+  const totalOutstanding = payableNotices.reduce((sum, notice) => sum + Math.max(0, Number(notice?.amount || 0)), 0);
+
+  return res.json({
+    ok: true,
+    citizen_id: citizenId,
+    account: getFineAccountKey(),
+    notices,
+    summary: {
+      total_notices: notices.length,
+      payable_count: payableNotices.length,
+      total_outstanding: Number(totalOutstanding.toFixed(2)),
+    },
+  });
+});
+
+router.get('/fines-vic/notices/:id', requireBridgeAuth, (req, res) => {
+  const noticeId = Number.parseInt(String(req.params.id || '').trim(), 10);
+  if (!Number.isInteger(noticeId) || noticeId <= 0) {
+    return res.status(400).json({ error: 'Invalid infringement notice id' });
+  }
+
+  const citizenId = String(req.query.citizen_id || '').trim();
+  if (!citizenId) return res.status(400).json({ error: 'citizen_id is required' });
+
+  const notice = InfringementNotices.findById(noticeId);
+  if (!notice) return res.status(404).json({ error: 'Infringement notice not found' });
+  if (String(notice.citizen_id || '').trim().toLowerCase() !== citizenId.toLowerCase()) {
+    return res.status(404).json({ error: 'Infringement notice not found' });
+  }
+
+  return res.json({
+    ok: true,
+    citizen_id: citizenId,
+    account: getFineAccountKey(),
+    notice: serializeFinesVicNotice(notice),
+  });
+});
+
+router.post('/fines-vic/notices/:id/pay', requireBridgeAuth, (req, res) => {
+  const noticeId = Number.parseInt(String(req.params.id || '').trim(), 10);
+  if (!Number.isInteger(noticeId) || noticeId <= 0) {
+    return res.status(400).json({ error: 'Invalid infringement notice id' });
+  }
+
+  const citizenId = String(req.body?.citizen_id || '').trim();
+  if (!citizenId) return res.status(400).json({ error: 'citizen_id is required' });
+
+  const notice = InfringementNotices.findById(noticeId);
+  if (!notice) return res.status(404).json({ error: 'Infringement notice not found' });
+  if (String(notice.citizen_id || '').trim().toLowerCase() !== citizenId.toLowerCase()) {
+    return res.status(404).json({ error: 'Infringement notice not found' });
+  }
+
+  if (String(notice.payable_status || '').trim().toLowerCase() === 'paid') {
+    return res.json({
+      ok: true,
+      already_paid: true,
+      notice: serializeFinesVicNotice(notice),
+    });
+  }
+
+  if (!canPayInfringementOnline(notice)) {
+    return res.status(400).json({ error: getInfringementOnlinePayBlockReason(notice) || 'This infringement notice cannot be paid online' });
+  }
+
+  const amountExpected = Number(req.body?.amount_expected);
+  const amount = Math.max(0, Number(notice.amount || 0));
+  if (Number.isFinite(amountExpected) && Math.abs(amountExpected - amount) > 0.009) {
+    return res.status(409).json({ error: 'Infringement amount has changed. Refresh notices and try again.' });
+  }
+
+  const updated = InfringementNotices.update(noticeId, {
+    payable_status: 'paid',
+    paid_at: new Date().toISOString(),
+    updated_by_user_id: null,
+  });
+
+  audit(null, 'infringement_notice_paid_fines_vic_phone', {
+    infringement_notice_id: noticeId,
+    notice_number: String(updated?.notice_number || notice.notice_number || ''),
+    citizen_id: citizenId,
+    amount,
+    payment_source: String(req.body?.payment_source || 'npwd_fines_vic').trim() || 'npwd_fines_vic',
+  });
+  bus.emit('infringement:update', {
+    departmentId: Number(updated?.department_id || notice.department_id || 0),
+    infringement: updated,
+  });
+
+  return res.json({
+    ok: true,
+    already_paid: false,
+    notice: serializeFinesVicNotice(updated),
+  });
 });
 
 router.get('/fine-jobs', requireBridgeAuth, (req, res) => {

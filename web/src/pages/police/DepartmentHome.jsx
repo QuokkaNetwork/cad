@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import GoOnDutyModal from '../../components/GoOnDutyModal';
@@ -844,13 +844,6 @@ export default function DepartmentHome() {
         detail: 'Go off duty there before joining this department workflow.',
       });
     }
-    if (hideInGameItems && hiddenFiveMRoutes.length > 0) {
-      items.push({
-        tone: 'amber',
-        title: 'In-game connection required for protected workflows',
-        detail: `Connect to FiveM to access ${joinLabelsNatural(hiddenFiveMRoutes.map(a => a.label))}.`,
-      });
-    }
     if (!items.length) {
       items.push({
         tone: 'green',
@@ -859,7 +852,7 @@ export default function DepartmentHome() {
       });
     }
     return items.slice(0, 5);
-  }, [sortedActiveCalls, nowMs, stats.active_calls, stats.available_units, onOtherDeptDuty, hideInGameItems, hiddenFiveMRoutes, primaryBoardRoute, isDispatch]);
+  }, [sortedActiveCalls, nowMs, stats.active_calls, stats.available_units, onOtherDeptDuty, primaryBoardRoute, isDispatch]);
 
   const myUnitAssignments = useMemo(() => {
     if (!myUnit) return [];
@@ -910,7 +903,7 @@ export default function DepartmentHome() {
   return (
     <div className="flex flex-col gap-4">
 
-      {/* â”€â”€ Department hero strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Department hero strip Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div
         className="relative overflow-hidden rounded-2xl border"
         style={{
@@ -1048,8 +1041,8 @@ export default function DepartmentHome() {
         </div>
       </div>
 
-      {/* â”€â”€ Live stat strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-      {/* Only the 5 core counters â€” dept-specific counts (warrants, POIs) live in the panels below */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Live stat strip Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* Only the 5 core counters Ã¢â‚¬â€ dept-specific counts (warrants, POIs) live in the panels below */}
       <div className="flex gap-3 flex-wrap sm:flex-nowrap">
         <StatCell
           label={isFireDepartment ? 'Active Incidents' : 'Active Calls'}
@@ -1084,7 +1077,7 @@ export default function DepartmentHome() {
         />
       </div>
 
-      {/* â”€â”€ Quick launch (full width, workflow steps inlined below) â”€â”€ */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Quick launch (full width, workflow steps inlined below) Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         <div className="xl:col-span-8 flex flex-col gap-4">
           <SectionCard
@@ -1381,7 +1374,7 @@ export default function DepartmentHome() {
             </div>
           )}
 
-          {/* Contextual notices for hidden items â€” mirrors sidebar banners */}
+          {/* Contextual notices for hidden items Ã¢â‚¬â€ mirrors sidebar banners */}
           {hiddenDutyRoutes.length > 0 && (
             <div className="mt-3 rounded-lg border border-cad-border bg-cad-surface/60 px-3 py-2 flex items-start gap-2">
               <svg className="w-3.5 h-3.5 text-cad-muted mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1392,18 +1385,7 @@ export default function DepartmentHome() {
               </p>
             </div>
           )}
-          {hiddenFiveMRoutes.length > 0 && (
-            <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 flex items-start gap-2">
-              <svg className="w-3.5 h-3.5 text-amber-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <p className="text-xs text-amber-200">
-                <span className="font-medium">In-game required</span> - connect to the FiveM server to access {joinLabelsNatural(hiddenFiveMRoutes.map(a => a.label))}.
-              </p>
-            </div>
-          )}
-
-          {/* Workflow steps â€” compact inline strip */}
+          {/* Workflow steps Ã¢â‚¬â€ compact inline strip */}
           <div className="mt-4 pt-3 border-t flex flex-wrap gap-3" style={{ borderColor: colorWithAlpha(deptColor, 0.12, 'rgba(42,58,78,0.5)') }}>
             <p className="text-[9px] uppercase tracking-[0.18em] text-cad-muted self-center flex-none">Workflow</p>
             {workflowSteps.map((step, i) => (
@@ -1425,7 +1407,7 @@ export default function DepartmentHome() {
         </div>
       </div>
 
-      {/* â”€â”€ Department-specific panels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Department-specific panels Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {visibleDepartmentPanels.length > 0 && (
         <div className={`grid grid-cols-1 gap-4 ${visibleDepartmentPanels.length >= 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-2'}`}>
           {visibleDepartmentPanels.map((panel) => (

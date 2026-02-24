@@ -2045,12 +2045,17 @@ local function applyFine(job)
   end
 
   local function notifyFineApplied(sourceId)
-    local message = ('You have been fined $%s'):format(tostring(math.floor(amount)))
-    if reason ~= '' then
-      message = message .. (' (%s)'):format(reason)
+    local notifyTitle = trim(job.notify_title or '')
+    local customMessage = trim(job.notify_message or job.notify_description or '')
+    local message = customMessage
+    if message == '' then
+      message = ('You have been fined $%s'):format(tostring(math.floor(amount)))
+      if reason ~= '' then
+        message = message .. (' (%s)'):format(reason)
+      end
     end
     TriggerClientEvent('cad_bridge:notifyFine', sourceId, {
-      title = 'CAD Fine Issued',
+      title = notifyTitle ~= '' and notifyTitle or 'CAD Fine Issued',
       description = message,
       amount = tonumber(amount) or 0,
       reason = reason,
@@ -2312,6 +2317,233 @@ local function applyFine(job)
 
   return false, ('Unknown fine adapter: %s'):format(tostring(Config.FineAdapter)), false
 end
+
+local function sendFinesVicPhoneResult(src, eventName, requestId, payload)
+  if not src or src == 0 then return end
+  local out = type(payload) == 'table' and payload or {}
+  out.request_id = trim(requestId or '')
+  TriggerClientEvent(eventName, src, out)
+end
+
+local function parseBridgeJsonBody(body)
+  local ok, decoded = pcall(json.decode, body or '{}')
+  if not ok or type(decoded) ~= 'table' then
+    return nil
+  end
+  return decoded
+end
+
+RegisterNetEvent('cad_bridge:finesVicListRequest', function(payload)
+  local src = source
+  local data = type(payload) == 'table' and payload or {}
+  local requestId = trim(data.request_id or '')
+  if requestId == '' then return end
+
+  if not hasBridgeConfig() then
+    sendFinesVicPhoneResult(src, 'cad_bridge:finesVicListResult', requestId, {
+      ok = false,
+      error = 'bridge_not_configured',
+      message = 'CAD bridge is not configured on this server.',
+    })
+    return
+  end
+
+  local citizenId = trim(getCitizenId(src) or '')
+  if citizenId == '' then
+    sendFinesVicPhoneResult(src, 'cad_bridge:finesVicListResult', requestId, {
+      ok = false,
+      error = 'missing_citizen_id',
+      message = 'No active character could be detected. Fully load into your character and try again.',
+    })
+    return
+  end
+
+  local path = ('/api/integration/fivem/fines-vic/notices?citizen_id=%s&limit=50'):format(urlEncode(citizenId))
+  request('GET', path, nil, function(status, body, responseHeaders)
+    local code = tonumber(status) or 0
+    local parsed = parseBridgeJsonBody(body)
+
+    if code == 429 then
+      setBridgeBackoff('fines_vic_list', responseHeaders, 5000, 'fines vic list')
+      sendFinesVicPhoneResult(src, 'cad_bridge:finesVicListResult', requestId, {
+        ok = false,
+        error = 'rate_limited',
+        message = 'Fines Victoria is busy right now. Please try again in a moment.',
+      })
+      return
+    end
+
+    if code ~= 200 then
+      sendFinesVicPhoneResult(src, 'cad_bridge:finesVicListResult', requestId, {
+        ok = false,
+        error = trim(parsed and parsed.error or '') ~= '' and trim(parsed.error) or 'lookup_failed',
+        message = trim(parsed and parsed.error or '') ~= '' and trim(parsed.error) or 'Failed to load your infringement notices.',
+      })
+      return
+    end
+
+    sendFinesVicPhoneResult(src, 'cad_bridge:finesVicListResult', requestId, {
+      ok = true,
+      citizen_id = citizenId,
+      character_name = getCharacterDisplayName(src),
+      account = trim(parsed and parsed.account or 'bank'),
+      notices = type(parsed and parsed.notices) == 'table' and parsed.notices or {},
+      summary = type(parsed and parsed.summary) == 'table' and parsed.summary or {},
+    })
+  end)
+end)
+
+RegisterNetEvent('cad_bridge:finesVicPayRequest', function(payload)
+  local src = source
+  local data = type(payload) == 'table' and payload or {}
+  local requestId = trim(data.request_id or '')
+  if requestId == '' then return end
+
+  local noticeId = tonumber(data.notice_id or data.id)
+  if not noticeId or noticeId <= 0 then
+    sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+      ok = false,
+      error = 'invalid_notice_id',
+      message = 'Invalid infringement notice selected.',
+    })
+    return
+  end
+
+  if not hasBridgeConfig() then
+    sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+      ok = false,
+      error = 'bridge_not_configured',
+      message = 'CAD bridge is not configured on this server.',
+    })
+    return
+  end
+
+  local citizenId = trim(getCitizenId(src) or '')
+  if citizenId == '' then
+    sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+      ok = false,
+      error = 'missing_citizen_id',
+      message = 'No active character could be detected. Fully load into your character and try again.',
+    })
+    return
+  end
+
+  local detailPath = ('/api/integration/fivem/fines-vic/notices/%s?citizen_id=%s'):format(
+    tostring(math.floor(noticeId)),
+    urlEncode(citizenId)
+  )
+
+  request('GET', detailPath, nil, function(status, body, responseHeaders)
+    local code = tonumber(status) or 0
+    local parsed = parseBridgeJsonBody(body)
+
+    if code == 429 then
+      setBridgeBackoff('fines_vic_pay', responseHeaders, 5000, 'fines vic pay detail')
+      sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+        ok = false,
+        error = 'rate_limited',
+        message = 'Fines Victoria is busy right now. Please try again in a moment.',
+      })
+      return
+    end
+
+    if code ~= 200 then
+      sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+        ok = false,
+        error = trim(parsed and parsed.error or '') ~= '' and trim(parsed.error) or 'lookup_failed',
+        message = trim(parsed and parsed.error or '') ~= '' and trim(parsed.error) or 'Unable to load that infringement notice.',
+      })
+      return
+    end
+
+    local notice = type(parsed.notice) == 'table' and parsed.notice or nil
+    local amount = math.max(0, tonumber(notice and notice.amount or 0) or 0)
+    local canPayOnline = notice and (notice.can_pay_online == true or notice.canPayOnline == true)
+    if not notice then
+      sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+        ok = false,
+        error = 'notice_missing',
+        message = 'The selected infringement notice is unavailable.',
+      })
+      return
+    end
+    if canPayOnline ~= true or amount <= 0 then
+      local blockMessage = trim(notice.pay_block_reason or notice.payBlockReason or '')
+      sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+        ok = false,
+        error = 'not_payable_online',
+        message = blockMessage ~= '' and blockMessage or 'This infringement notice cannot be paid online.',
+        notice = notice,
+      })
+      return
+    end
+
+    local account = trim(parsed.account or notice.account or 'bank')
+    local reason = trim(notice.notice_number or '')
+    if reason ~= '' then
+      reason = ('Fines Victoria %s'):format(reason)
+    else
+      reason = ('Fines Victoria Notice #%s'):format(tostring(math.floor(noticeId)))
+    end
+
+    local success, err, transient = applyFine({
+      citizen_id = citizenId,
+      amount = amount,
+      reason = reason,
+      account = account,
+      notify_title = 'Fines Victoria',
+      notify_message = ('Fine payment processed: $%s'):format(tostring(math.floor(amount))),
+    })
+    if not success then
+      sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+        ok = false,
+        error = transient and 'player_offline' or 'fine_apply_failed',
+        message = trim(err) ~= '' and trim(err) or 'Failed to apply the fine payment in-game.',
+        transient = transient == true,
+        notice = notice,
+      })
+      return
+    end
+
+    local payPath = ('/api/integration/fivem/fines-vic/notices/%s/pay'):format(tostring(math.floor(noticeId)))
+    request('POST', payPath, {
+      citizen_id = citizenId,
+      amount_expected = amount,
+      payment_source = 'npwd_fines_vic',
+    }, function(payStatus, payBody, payHeaders)
+      local payCode = tonumber(payStatus) or 0
+      local payParsed = parseBridgeJsonBody(payBody)
+
+      if payCode == 429 then
+        setBridgeBackoff('fines_vic_pay', payHeaders, 5000, 'fines vic pay confirm')
+      end
+
+      if payCode ~= 200 then
+        local backendErr = trim(payParsed and payParsed.error or '')
+        sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+          ok = false,
+          error = 'payment_record_failed',
+          message = backendErr ~= '' and (
+            'Payment was taken in-game, but CAD could not confirm the notice payment: ' .. backendErr
+          ) or 'Payment was taken in-game, but CAD could not confirm the notice payment. Please contact staff.',
+          notice = notice,
+          funds_deducted = true,
+        })
+        return
+      end
+
+      sendFinesVicPhoneResult(src, 'cad_bridge:finesVicPayResult', requestId, {
+        ok = true,
+        funds_deducted = true,
+        amount = amount,
+        account = account,
+        notice = type(payParsed.notice) == 'table' and payParsed.notice or notice,
+        already_paid = payParsed and payParsed.already_paid == true,
+        message = 'Infringement notice paid successfully.',
+      })
+    end)
+  end)
+end)
 
 local finePollInFlight = false
 pollFineJobs = function()
