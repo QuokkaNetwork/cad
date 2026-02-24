@@ -3,6 +3,7 @@ import { AuthProvider } from './context/AuthContext';
 import { DepartmentProvider } from './context/DepartmentContext';
 import { EventSourceProvider } from './context/EventSourceContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import RequireRulesAgreement from './components/RequireRulesAgreement';
 import RequireDepartment from './components/RequireDepartment';
 import RequireFiveMOnline from './components/RequireFiveMOnline';
 import MainLayout from './layouts/MainLayout';
@@ -59,28 +60,28 @@ export default function App() {
           >
             {/* General */}
             <Route path="/home" element={<Home />} />
-            <Route path="/departments" element={<Departments />} />
+            <Route path="/departments" element={<RequireRulesAgreement><Departments /></RequireRulesAgreement>} />
             <Route path="/rules" element={<Rules />} />
             <Route path="/settings" element={<Settings />} />
 
             {/* Police MDT */}
-            <Route path="/department" element={<RequireDepartment><DepartmentHome /></RequireDepartment>} />
-            <Route path="/dispatch" element={<RequireDepartment><Dispatch /></RequireDepartment>} />
-            <Route path="/map" element={<RequireDepartment><DispatchMap /></RequireDepartment>} />
-            <Route path="/units" element={<RequireDepartment><Units /></RequireDepartment>} />
-            <Route path="/search" element={<RequireDepartment><Search /></RequireDepartment>} />
-            <Route path="/incidents" element={<RequireDepartment><RequireFiveMOnline featureLabel="incidents"><Incidents /></RequireFiveMOnline></RequireDepartment>} />
-            <Route path="/records" element={<RequireDepartment><RequireFiveMOnline featureLabel="records"><Records /></RequireFiveMOnline></RequireDepartment>} />
-            <Route path="/arrest-reports" element={<RequireDepartment><RequireFiveMOnline featureLabel="arrest reports"><ArrestReports /></RequireFiveMOnline></RequireDepartment>} />
-            <Route path="/infringements" element={<RequireDepartment><RequireFiveMOnline featureLabel="infringement notices"><Infringements /></RequireFiveMOnline></RequireDepartment>} />
-            <Route path="/bolos" element={<RequireDepartment><BOLOs /></RequireDepartment>} />
-            <Route path="/warrants" element={<RequireDepartment><RequireFiveMOnline featureLabel="warrants"><Warrants /></RequireFiveMOnline></RequireDepartment>} />
-            <Route path="/evidence" element={<RequireDepartment><RequireFiveMOnline featureLabel="evidence management"><EvidenceManagement /></RequireFiveMOnline></RequireDepartment>} />
-            <Route path="/ems-treatment" element={<RequireDepartment><EmsTreatmentLog /></RequireDepartment>} />
-            <Route path="/ems-transport" element={<RequireDepartment><EmsTransportTracker /></RequireDepartment>} />
-            <Route path="/fire-apparatus" element={<RequireDepartment><FireApparatus /></RequireDepartment>} />
-            <Route path="/fire-preplans" element={<RequireDepartment><FirePrePlans /></RequireDepartment>} />
-            <Route path="/call-details" element={<RequireDepartment><CallDetails /></RequireDepartment>} />
+            <Route path="/department" element={<RequireRulesAgreement><RequireDepartment><DepartmentHome /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/dispatch" element={<RequireRulesAgreement><RequireDepartment><Dispatch /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/map" element={<RequireRulesAgreement><RequireDepartment><DispatchMap /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/units" element={<RequireRulesAgreement><RequireDepartment><Units /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/search" element={<RequireRulesAgreement><RequireDepartment><Search /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/incidents" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="incidents"><Incidents /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/records" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="records"><Records /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/arrest-reports" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="arrest reports"><ArrestReports /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/infringements" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="infringement notices"><Infringements /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/bolos" element={<RequireRulesAgreement><RequireDepartment><BOLOs /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/warrants" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="warrants"><Warrants /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/evidence" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="evidence management"><EvidenceManagement /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/ems-treatment" element={<RequireRulesAgreement><RequireDepartment><EmsTreatmentLog /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/ems-transport" element={<RequireRulesAgreement><RequireDepartment><EmsTransportTracker /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/fire-apparatus" element={<RequireRulesAgreement><RequireDepartment><FireApparatus /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/fire-preplans" element={<RequireRulesAgreement><RequireDepartment><FirePrePlans /></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/call-details" element={<RequireRulesAgreement><RequireDepartment><CallDetails /></RequireDepartment></RequireRulesAgreement>} />
 
             {/* Admin */}
             <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminHome /></ProtectedRoute>} />

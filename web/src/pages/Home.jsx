@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 
@@ -13,7 +13,7 @@ function formatDateTime(value) {
 
 function normalizeAnnouncements(rows) {
   if (!Array.isArray(rows)) return [];
-  return rows.slice(0, 6).map((row) => ({
+  return rows.slice(0, 8).map((row) => ({
     id: row?.id,
     title: String(row?.title || 'Announcement'),
     content: String(row?.content || ''),
@@ -22,7 +22,7 @@ function normalizeAnnouncements(rows) {
   }));
 }
 
-function Carousel({ images }) {
+function BackgroundCarousel({ images }) {
   const slides = Array.isArray(images) && images.length > 0 ? images : ['/1080.png', '/96.png'];
   const [index, setIndex] = useState(0);
 
@@ -38,59 +38,36 @@ function Carousel({ images }) {
     return () => window.clearInterval(id);
   }, [slides.length]);
 
-  const current = slides[index] || slides[0];
-
   return (
-    <section className="rounded-2xl border border-cad-border overflow-hidden bg-cad-card">
-      <div className="px-4 py-3 border-b border-cad-border flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">Gallery</p>
-          <p className="text-sm font-semibold text-cad-ink">Community Image Carousel</p>
-        </div>
-        {slides.length > 1 && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIndex((prev) => (prev - 1 + slides.length) % slides.length)}
-              className="w-8 h-8 rounded-lg border border-cad-border bg-cad-surface hover:bg-cad-card text-cad-muted hover:text-cad-ink transition-colors"
-              aria-label="Previous image"
-            >
-              ‹
-            </button>
-            <button
-              type="button"
-              onClick={() => setIndex((prev) => (prev + 1) % slides.length)}
-              className="w-8 h-8 rounded-lg border border-cad-border bg-cad-surface hover:bg-cad-card text-cad-muted hover:text-cad-ink transition-colors"
-              aria-label="Next image"
-            >
-              ›
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="relative bg-cad-surface">
+    <div className="absolute inset-0 overflow-hidden" aria-hidden="true">
+      {slides.map((src, slideIndex) => (
         <img
-          src={current}
-          alt="CAD home carousel"
-          className="w-full h-[260px] sm:h-[340px] object-cover"
+          key={`${src}-${slideIndex}`}
+          src={src}
+          alt=""
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${
+            slideIndex === index ? 'opacity-100' : 'opacity-0'
+          }`}
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-cad-bg/70 via-transparent to-transparent pointer-events-none" />
-        {slides.length > 1 && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
-            {slides.map((_, dotIndex) => (
-              <button
-                key={dotIndex}
-                type="button"
-                onClick={() => setIndex(dotIndex)}
-                aria-label={`Go to image ${dotIndex + 1}`}
-                className={`h-2 rounded-full transition-all ${dotIndex === index ? 'w-6 bg-cad-gold' : 'w-2 bg-white/40 hover:bg-white/60'}`}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
+      ))}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_12%,rgba(0,82,194,0.20),transparent_42%),radial-gradient(circle_at_85%_14%,rgba(216,180,108,0.16),transparent_42%),linear-gradient(180deg,rgba(6,10,18,0.25),rgba(6,10,18,0.78))]" />
+      <div className="absolute inset-0 bg-cad-bg/35" />
+      {slides.length > 1 && (
+        <div className="absolute bottom-4 left-4 flex items-center gap-1.5">
+          {slides.map((_, dotIndex) => (
+            <button
+              key={dotIndex}
+              type="button"
+              onClick={() => setIndex(dotIndex)}
+              aria-label={`Go to carousel slide ${dotIndex + 1}`}
+              className={`h-2 rounded-full transition-all ${
+                dotIndex === index ? 'w-6 bg-cad-gold' : 'w-2 bg-white/35 hover:bg-white/55'
+              }`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -104,7 +81,7 @@ function RuleUpdatePopup({ rules, onClose }) {
         </div>
         <div className="px-5 py-4 space-y-3">
           <p className="text-sm text-cad-muted">
-            Rules version <span className="text-cad-ink font-semibold">{rules?.version || 'Current'}</span> requires your acknowledgement before Discord access is kept/granted.
+            Rules version <span className="text-cad-ink font-semibold">{rules?.version || 'Current'}</span> requires your acknowledgement before department access.
           </p>
           <div className="rounded-xl border border-cad-border bg-cad-surface/60 p-3">
             <p className="text-xs text-cad-muted whitespace-pre-wrap leading-5">
@@ -132,13 +109,64 @@ function RuleUpdatePopup({ rules, onClose }) {
   );
 }
 
+function AnnouncementsPanel({ announcements, loading, error }) {
+  return (
+    <section className="rounded-2xl border border-white/10 bg-black/35 backdrop-blur-md shadow-xl h-full flex flex-col min-h-[320px]">
+      <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">Updates</p>
+          <h2 className="text-lg font-semibold text-cad-ink">Announcements</h2>
+        </div>
+        <Link to="/rules" className="text-xs text-cad-muted hover:text-cad-ink transition-colors">
+          Rules
+        </Link>
+      </div>
+
+      <div className="p-4 flex-1 min-h-0">
+        {loading && <p className="text-sm text-cad-muted">Loading announcements...</p>}
+        {!loading && error && (
+          <div className="rounded-xl border border-red-500/25 bg-red-500/6 p-3 text-sm text-red-200">
+            {error}
+          </div>
+        )}
+        {!loading && !error && announcements.length === 0 && (
+          <div className="rounded-xl border border-white/10 bg-black/25 p-4">
+            <p className="text-sm font-medium text-cad-ink">No active announcements</p>
+            <p className="text-xs text-cad-muted mt-1">Admins can post announcements from the admin panel.</p>
+          </div>
+        )}
+        {!loading && announcements.length > 0 && (
+          <div className="space-y-3 max-h-[420px] overflow-auto pr-1">
+            {announcements.map((item) => (
+              <article key={item.id} className="rounded-xl border border-white/10 bg-black/25 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-cad-ink">{item.title}</h3>
+                  <span className="text-[10px] text-cad-muted whitespace-nowrap">
+                    {formatDateTime(item.created_at)}
+                  </span>
+                </div>
+                {item.content ? (
+                  <p className="text-xs text-cad-muted mt-2 whitespace-pre-wrap leading-5">{item.content}</p>
+                ) : null}
+                {item.expires_at ? (
+                  <p className="text-[10px] text-cad-muted mt-2">Expires: {formatDateTime(item.expires_at)}</p>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function Home() {
-  const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, currentRulesVersion, hasAcceptedCurrentRules } = useAuth();
   const [cms, setCms] = useState(null);
   const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [cmsError, setCmsError] = useState('');
+  const [announcementsError, setAnnouncementsError] = useState('');
   const [dismissedRulesVersion, setDismissedRulesVersion] = useState('');
 
   useEffect(() => {
@@ -146,7 +174,9 @@ export default function Home() {
 
     async function load() {
       setLoading(true);
-      setError('');
+      setCmsError('');
+      setAnnouncementsError('');
+
       const [cmsRes, annRes] = await Promise.allSettled([
         api.get('/api/cms/content'),
         api.get('/api/announcements'),
@@ -157,13 +187,14 @@ export default function Home() {
       if (cmsRes.status === 'fulfilled') {
         setCms(cmsRes.value);
       } else {
-        setError(cmsRes.reason?.message || 'Failed to load home content');
+        setCmsError(cmsRes.reason?.message || 'Failed to load home content');
       }
 
       if (annRes.status === 'fulfilled') {
         setAnnouncements(normalizeAnnouncements(annRes.value));
       } else {
         setAnnouncements([]);
+        setAnnouncementsError(annRes.reason?.message || 'Failed to load announcements');
       }
 
       setLoading(false);
@@ -175,104 +206,44 @@ export default function Home() {
 
   const homeContent = cms?.home || {};
   const rulesContent = cms?.rules || {};
-  const currentRulesVersion = String(rulesContent?.version || '').trim();
+  const cmsRulesVersion = String(rulesContent?.version || '').trim();
+  const effectiveRulesVersion = String(currentRulesVersion || cmsRulesVersion || '').trim();
   const agreedRulesVersion = String(user?.rules_agreed_version || '').trim();
-  const rulesOutdated = !!currentRulesVersion && agreedRulesVersion !== currentRulesVersion;
+  const rulesOutdated = effectiveRulesVersion !== '' && !hasAcceptedCurrentRules && agreedRulesVersion !== effectiveRulesVersion;
 
   useEffect(() => {
     setDismissedRulesVersion('');
-  }, [currentRulesVersion]);
+  }, [effectiveRulesVersion]);
 
-  const showRulesPopup = rulesOutdated && dismissedRulesVersion !== currentRulesVersion;
+  const showRulesPopup = rulesOutdated && dismissedRulesVersion !== effectiveRulesVersion;
+
   const greetingName = useMemo(() => {
-    const raw = String(user?.steam_name || user?.name || '').trim();
-    if (!raw) return 'Operator';
-    return raw.split(' ')[0];
-  }, [user?.steam_name, user?.name]);
+    const raw = String(user?.steam_name || '').trim();
+    return raw ? raw.split(' ')[0] : 'Operator';
+  }, [user?.steam_name]);
+
+  const departmentsLink = rulesOutdated ? '/rules' : '/departments';
+  const departmentsLabel = rulesOutdated ? 'Agree To Rules First' : 'Open Departments';
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-6">
-      {showRulesPopup && (
+    <div className="max-w-7xl mx-auto space-y-5 pb-6">
+      {showRulesPopup ? (
         <RuleUpdatePopup
-          rules={rulesContent}
-          onClose={() => setDismissedRulesVersion(currentRulesVersion)}
+          rules={{ ...rulesContent, version: effectiveRulesVersion || rulesContent?.version }}
+          onClose={() => setDismissedRulesVersion(effectiveRulesVersion)}
         />
-      )}
+      ) : null}
 
-      <section className="relative overflow-hidden rounded-2xl border border-cad-border bg-cad-card">
-        <div className="absolute inset-0 cad-ambient-grid opacity-30 pointer-events-none" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_8%_8%,rgba(0,82,194,0.22),transparent_32%),radial-gradient(circle_at_90%_10%,rgba(216,180,108,0.14),transparent_34%)]" />
-        <div className="relative p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="max-w-2xl">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-cad-muted">CAD Home</p>
-              <h1 className="text-2xl sm:text-3xl font-bold text-cad-ink mt-2">
-                {String(homeContent.title || '').trim() || `Welcome, ${greetingName}`}
-              </h1>
-              <p className="text-sm text-cad-muted mt-2">
-                {String(homeContent.subtitle || '').trim() || 'Use CAD as a community home page, rules hub, and department launcher.'}
-              </p>
-              <p className="text-sm text-cad-muted/90 mt-3 whitespace-pre-wrap leading-6">
-                {String(homeContent.body || '').trim() || 'Open Rules to review policy updates, then use Departments to enter your assigned workspaces.'}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 min-w-[260px]">
-              <button
-                type="button"
-                onClick={() => navigate('/departments')}
-                className="rounded-xl border border-cad-border bg-cad-surface hover:bg-cad-card p-3 text-left transition-colors"
-              >
-                <p className="text-xs uppercase tracking-wider text-cad-muted">Departments</p>
-                <p className="text-sm font-semibold text-cad-ink mt-1">Open CAD workspaces</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/rules')}
-                className={`rounded-xl border p-3 text-left transition-colors ${
-                  rulesOutdated
-                    ? 'border-red-500/30 bg-red-500/8 hover:bg-red-500/12'
-                    : 'border-cad-border bg-cad-surface hover:bg-cad-card'
-                }`}
-              >
-                <p className="text-xs uppercase tracking-wider text-cad-muted">Rules</p>
-                <p className="text-sm font-semibold text-cad-ink mt-1">
-                  {rulesOutdated ? 'Review latest amendments' : 'View community rules'}
-                </p>
-              </button>
-              <div className="rounded-xl border border-cad-border bg-cad-surface/60 p-3">
-                <p className="text-xs uppercase tracking-wider text-cad-muted">Rules Status</p>
-                <p className={`text-sm font-semibold mt-1 ${rulesOutdated ? 'text-red-300' : 'text-emerald-300'}`}>
-                  {rulesOutdated ? `Action required (v${currentRulesVersion || '?'})` : 'Current'}
-                </p>
-                <p className="text-xs text-cad-muted mt-1">
-                  {user?.rules_agreed_at ? `Last agreed ${formatDateTime(user.rules_agreed_at)}` : 'No recorded agreement yet'}
-                </p>
-              </div>
-              <div className="rounded-xl border border-cad-border bg-cad-surface/60 p-3">
-                <p className="text-xs uppercase tracking-wider text-cad-muted">Discord</p>
-                <p className="text-sm font-semibold text-cad-ink mt-1">
-                  {user?.discord_name ? user.discord_name : 'Not linked'}
-                </p>
-                <p className="text-xs text-cad-muted mt-1">
-                  {user?.discord_id ? 'Rules agreement can grant the Discord access role.' : 'Link Discord in Settings to receive access role.'}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {rulesOutdated && (
+      {rulesOutdated ? (
         <section className="rounded-2xl border border-red-500/25 bg-red-500/6 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-[10px] uppercase tracking-[0.18em] text-red-300">Rule amendments/changes/additions</p>
               <p className="text-sm text-red-100 mt-1">
-                Rules version <span className="font-semibold">{currentRulesVersion}</span> is waiting for your agreement.
+                You must agree to rules version <span className="font-semibold">{effectiveRulesVersion}</span> before entering Departments.
               </p>
               <p className="text-xs text-cad-muted mt-1 whitespace-pre-wrap">
-                {String(rulesContent?.changes_summary || '').trim() || 'Open the rules page to review the latest changes.'}
+                {String(rulesContent?.changes_summary || '').trim() || 'Open the Rules page to review the latest changes.'}
               </p>
             </div>
             <Link
@@ -283,63 +254,105 @@ export default function Home() {
             </Link>
           </div>
         </section>
-      )}
+      ) : null}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.75fr] gap-6">
-        <Carousel images={homeContent.carousel_images} />
+      <section className="relative rounded-2xl border border-cad-border overflow-hidden min-h-[520px]">
+        <BackgroundCarousel images={homeContent.carousel_images} />
+        <div className="absolute inset-0 cad-ambient-grid opacity-20 pointer-events-none" />
 
-        <section className="rounded-2xl border border-cad-border bg-cad-card p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">Updates</p>
-              <h2 className="text-lg font-semibold text-cad-ink">Announcements</h2>
+        <div className="relative z-10 p-4 sm:p-6 min-h-[520px] grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-4">
+          <div className="flex flex-col justify-between gap-4">
+            <div className="max-w-3xl">
+              {cmsError ? (
+                <div className="inline-flex items-center rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs text-red-200 mb-3">
+                  {cmsError}
+                </div>
+              ) : null}
+              <p className="text-[10px] uppercase tracking-[0.2em] text-cad-muted">CAD Home</p>
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-cad-ink mt-2 leading-tight">
+                {String(homeContent.title || '').trim() || `Welcome back, ${greetingName}`}
+              </h1>
+              <p className="text-sm sm:text-base text-cad-muted mt-3 max-w-2xl leading-6">
+                {String(homeContent.subtitle || '').trim() || 'Community updates, rules, and department access in one place.'}
+              </p>
+              {String(homeContent.body || '').trim() ? (
+                <p className="text-sm text-cad-muted/90 mt-3 whitespace-pre-wrap leading-6 max-w-2xl">
+                  {String(homeContent.body || '').trim()}
+                </p>
+              ) : null}
             </div>
-            <Link to="/departments" className="text-xs text-cad-muted hover:text-cad-ink transition-colors">
-              Go to Departments
-            </Link>
+
+            <div className="rounded-2xl border border-white/10 bg-black/35 backdrop-blur-md p-4 sm:p-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Link
+                  to="/rules"
+                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    rulesOutdated
+                      ? 'bg-red-500/15 text-red-100 border border-red-500/25 hover:bg-red-500/20'
+                      : 'bg-cad-surface/70 text-cad-ink border border-white/10 hover:bg-cad-surface'
+                  }`}
+                >
+                  {rulesOutdated ? `Review Rules (v${effectiveRulesVersion})` : 'Rules'}
+                </Link>
+                <Link
+                  to={departmentsLink}
+                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    rulesOutdated
+                      ? 'bg-cad-surface/60 text-cad-muted border border-white/10 hover:text-cad-ink'
+                      : 'bg-cad-accent hover:bg-cad-accent-light text-white'
+                  }`}
+                >
+                  {departmentsLabel}
+                </Link>
+                <Link
+                  to="/settings"
+                  className="px-3.5 py-2 rounded-lg text-sm font-medium border border-white/10 bg-black/20 text-cad-muted hover:text-cad-ink transition-colors"
+                >
+                  Profile Settings
+                </Link>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Rules Status</p>
+                  <p className={`text-sm font-semibold mt-1 ${rulesOutdated ? 'text-red-200' : 'text-emerald-200'}`}>
+                    {rulesOutdated ? 'Agreement Required' : 'Up To Date'}
+                  </p>
+                  <p className="text-[11px] text-cad-muted mt-1">
+                    {effectiveRulesVersion ? `Current v${effectiveRulesVersion}` : 'No version set'}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Discord</p>
+                  <p className="text-sm font-semibold mt-1 text-cad-ink">
+                    {user?.discord_name ? user.discord_name : 'Not linked'}
+                  </p>
+                  <p className="text-[11px] text-cad-muted mt-1">
+                    {user?.discord_id ? 'Linked for access sync' : 'Link in Profile Settings'}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Last Agreement</p>
+                  <p className="text-sm font-semibold mt-1 text-cad-ink">
+                    {user?.rules_agreed_at ? formatDateTime(user.rules_agreed_at) : 'Not recorded'}
+                  </p>
+                  <p className="text-[11px] text-cad-muted mt-1">
+                    {agreedRulesVersion ? `Agreed v${agreedRulesVersion}` : 'No rules agreement yet'}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {loading && (
-            <p className="text-sm text-cad-muted mt-4">Loading home content...</p>
-          )}
-
-          {!loading && error && (
-            <div className="mt-4 rounded-xl border border-red-500/25 bg-red-500/6 p-3 text-sm text-red-200">
-              {error}
-            </div>
-          )}
-
-          {!loading && !error && announcements.length === 0 && (
-            <div className="mt-4 rounded-xl border border-cad-border bg-cad-surface/60 p-4">
-              <p className="text-sm font-medium text-cad-ink">No active announcements</p>
-              <p className="text-xs text-cad-muted mt-1">Admins can post announcements from the admin panel.</p>
-            </div>
-          )}
-
-          {!loading && announcements.length > 0 && (
-            <div className="mt-4 space-y-3 max-h-[360px] overflow-auto pr-1">
-              {announcements.map((item) => (
-                <article key={item.id} className="rounded-xl border border-cad-border bg-cad-surface/60 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-cad-ink">{item.title}</h3>
-                    <span className="text-[10px] text-cad-muted whitespace-nowrap">
-                      {formatDateTime(item.created_at)}
-                    </span>
-                  </div>
-                  {item.content && (
-                    <p className="text-xs text-cad-muted mt-2 whitespace-pre-wrap leading-5">{item.content}</p>
-                  )}
-                  {item.expires_at && (
-                    <p className="text-[10px] text-cad-muted mt-2">
-                      Expires: {formatDateTime(item.expires_at)}
-                    </p>
-                  )}
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
+          <AnnouncementsPanel
+            announcements={announcements}
+            loading={loading}
+            error={announcementsError}
+          />
+        </div>
+      </section>
     </div>
   );
 }

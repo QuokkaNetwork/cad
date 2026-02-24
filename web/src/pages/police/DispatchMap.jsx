@@ -9,18 +9,33 @@ const WORLD_BOUNDS = {
   minY: -4200,
   maxY: 8600,
 };
+const MAP_CANVAS_SIZE = 1000;
+const MAP_IMAGE_SRC = '/maps/FullMap.png';
 
 function parseNum(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-function toMapPoint(x, y, size = 1000) {
+function toMapPoint(x, y, size = MAP_CANVAS_SIZE) {
   const px = ((x - WORLD_BOUNDS.minX) / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX)) * size;
   const py = size - (((y - WORLD_BOUNDS.minY) / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY)) * size);
   return {
     x: Math.max(0, Math.min(size, px)),
     y: Math.max(0, Math.min(size, py)),
+  };
+}
+
+function headingLineFromMapPoint(point, heading, length = 18) {
+  const h = Number(heading);
+  if (!point || !Number.isFinite(h)) return null;
+  // GTA heading 0 is north; convert into SVG x/y vector.
+  const radians = ((h - 90) * Math.PI) / 180;
+  return {
+    x1: point.x,
+    y1: point.y,
+    x2: point.x + (Math.cos(radians) * length),
+    y2: point.y + (Math.sin(radians) * length),
   };
 }
 
@@ -114,6 +129,15 @@ export default function DispatchMap() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastLoadedAt, setLastLoadedAt] = useState('');
+  const [mapZoom, setMapZoom] = useState(1);
+  const [layerVisibility, setLayerVisibility] = useState({
+    basemap: true,
+    grid: true,
+    zones: true,
+    pursuits: true,
+    recommendations: true,
+    labels: true,
+  });
 
   const loadMapData = useCallback(async () => {
     if (!departmentId) return;
@@ -319,6 +343,42 @@ export default function DispatchMap() {
   }, [selectedCall, closestUnitRecommendations]);
 
   const unmappedCallsCount = Math.max(0, filteredCalls.length - callMarkers.length);
+  const selectedCallMarker = useMemo(
+    () => callMarkers.find((call) => Number(call.id) === Number(selectedCallId)) || null,
+    [callMarkers, selectedCallId],
+  );
+  const selectedUnitMarker = useMemo(
+    () => unitMarkers.find((unit) => Number(unit.id) === Number(selectedUnitId)) || null,
+    [unitMarkers, selectedUnitId],
+  );
+
+  useEffect(() => {
+    if (selectedCallId && !filteredCalls.some((c) => Number(c.id) === Number(selectedCallId))) {
+      setSelectedCallId(null);
+    }
+  }, [filteredCalls, selectedCallId]);
+
+  useEffect(() => {
+    if (selectedUnitId && !filteredUnits.some((u) => Number(u.id) === Number(selectedUnitId))) {
+      setSelectedUnitId(null);
+    }
+  }, [filteredUnits, selectedUnitId]);
+
+  const toggleLayer = (key) => {
+    setLayerVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  function zoomIn() {
+    setMapZoom((prev) => Math.min(2.5, Math.round((prev + 0.25) * 100) / 100));
+  }
+
+  function zoomOut() {
+    setMapZoom((prev) => Math.max(1, Math.round((prev - 0.25) * 100) / 100));
+  }
+
+  function resetMapView() {
+    setMapZoom(1);
+  }
 
   return (
     <div className="space-y-5">
@@ -385,14 +445,70 @@ export default function DispatchMap() {
           </div>
           {error ? <div className="px-4 pt-4 text-sm text-rose-300">{error}</div> : null}
           <div className="p-4">
-            <div className="relative rounded-lg border border-cad-border bg-gradient-to-b from-slate-950 to-slate-900 overflow-hidden aspect-[1.35]">
-              <div className="absolute inset-0 opacity-25" style={{ backgroundImage: 'linear-gradient(to right, rgba(148,163,184,.18) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,.18) 1px, transparent 1px)', backgroundSize: '60px 60px' }} />
-              <div className="absolute left-4 top-3 text-xs tracking-wide uppercase text-cad-muted">Blaine County / Los Santos</div>
-              <svg viewBox="0 0 1000 1000" className="absolute inset-0 w-full h-full">
-                {filteredZones.map((zone) => (
-                  <ZoneOverlay key={String(zone.id || Math.random())} zone={zone} />
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  ['basemap', 'Map'],
+                  ['grid', 'Grid'],
+                  ['zones', 'Zones'],
+                  ['pursuits', 'Pursuits'],
+                  ['recommendations', 'Closest'],
+                  ['labels', 'Labels'],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => toggleLayer(key)}
+                    className={`px-2.5 py-1 rounded-md border text-xs transition-colors ${
+                      layerVisibility[key]
+                        ? 'border-cad-accent/30 bg-cad-accent/10 text-cad-accent-light'
+                        : 'border-cad-border bg-cad-surface text-cad-muted hover:text-cad-ink'
+                    }`}
+                  >
+                    {label}
+                  </button>
                 ))}
-                {pursuitLines.map((line, idx) => (
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={zoomOut} disabled={mapZoom <= 1} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">-</button>
+                <div className="min-w-[60px] text-center text-xs text-cad-muted">{Math.round(mapZoom * 100)}%</div>
+                <button type="button" onClick={zoomIn} disabled={mapZoom >= 2.5} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">+</button>
+                <button type="button" onClick={resetMapView} disabled={mapZoom === 1} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">Reset</button>
+              </div>
+            </div>
+
+            <div className="relative rounded-lg border border-cad-border bg-gradient-to-b from-slate-950 to-slate-900 overflow-hidden">
+              <div className="absolute left-4 top-3 z-20 text-xs tracking-wide uppercase text-cad-muted bg-black/30 border border-white/10 rounded px-2 py-1">
+                Blaine County / Los Santos
+              </div>
+              <div className="relative w-full max-w-full aspect-square mx-auto overflow-hidden">
+                <div
+                  className="absolute inset-0 origin-center transition-transform duration-200"
+                  style={{ transform: `scale(${mapZoom})` }}
+                >
+                  {layerVisibility.basemap ? (
+                    <img
+                      src={MAP_IMAGE_SRC}
+                      alt="Los Santos dispatch map"
+                      className="absolute inset-0 w-full h-full object-cover opacity-90 pointer-events-none select-none"
+                      draggable={false}
+                    />
+                  ) : null}
+                  <div className="absolute inset-0 bg-gradient-to-b from-slate-950/20 via-transparent to-slate-950/35 pointer-events-none" />
+                  {layerVisibility.grid ? (
+                    <div
+                      className="absolute inset-0 opacity-25 pointer-events-none"
+                      style={{
+                        backgroundImage: 'linear-gradient(to right, rgba(148,163,184,.18) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,.18) 1px, transparent 1px)',
+                        backgroundSize: '60px 60px',
+                      }}
+                    />
+                  ) : null}
+                  <svg viewBox="0 0 1000 1000" className="absolute inset-0 w-full h-full">
+                {layerVisibility.zones && filteredZones.map((zone, idx) => (
+                  <ZoneOverlay key={`zone-${String(zone.id || idx)}`} zone={zone} />
+                ))}
+                {layerVisibility.pursuits && pursuitLines.map((line, idx) => (
                   <line
                     key={`${line.callId}-${idx}`}
                     x1={line.primaryPos.x}
@@ -404,7 +520,7 @@ export default function DispatchMap() {
                     strokeDasharray="5 4"
                   />
                 ))}
-                {closestRecommendationLines.map((line) => (
+                {layerVisibility.recommendations && closestRecommendationLines.map((line) => (
                   <line
                     key={`closest-${line.unitId}`}
                     x1={line.callMap.x}
@@ -425,6 +541,11 @@ export default function DispatchMap() {
                     <g key={`call-${call.id}`} onClick={() => setSelectedCallId(Number(call.id))} style={{ cursor: 'pointer' }}>
                       <rect x={p.x - (size / 2)} y={p.y - (size / 2)} width={size} height={size} fill={color} transform={`rotate(45 ${p.x} ${p.y})`} opacity={0.95} />
                       {selected ? <circle cx={p.x} cy={p.y} r={16} fill="none" stroke={color} strokeWidth="2" opacity="0.85" /> : null}
+                      {layerVisibility.labels ? (
+                        <text x={p.x + 9} y={p.y + 4} fill="#f8fafc" fontSize="12" fontWeight="700" stroke="rgba(2,6,23,0.9)" strokeWidth="3" paintOrder="stroke">
+                          {String(call.job_code || `C${call.id}`).slice(0, 10)}
+                        </text>
+                      ) : null}
                     </g>
                   );
                 })}
@@ -432,14 +553,38 @@ export default function DispatchMap() {
                   const p = unit.__map;
                   const selected = Number(selectedUnitId) === Number(unit.id);
                   const color = statusColor(unit.status);
+                  const headingLine = headingLineFromMapPoint(p, unit.position_heading, selected ? 22 : 16);
                   return (
                     <g key={`unit-${unit.id}`} onClick={() => setSelectedUnitId(Number(unit.id))} style={{ cursor: 'pointer' }}>
+                      {headingLine ? (
+                        <line
+                          x1={headingLine.x1}
+                          y1={headingLine.y1}
+                          x2={headingLine.x2}
+                          y2={headingLine.y2}
+                          stroke="rgba(226,232,240,0.7)"
+                          strokeWidth={selected ? 2.4 : 1.8}
+                          strokeLinecap="round"
+                        />
+                      ) : null}
                       <circle cx={p.x} cy={p.y} r={selected ? 8 : 6} fill={color} stroke="rgba(15,23,42,0.85)" strokeWidth="2" />
-                      <text x={p.x + 10} y={p.y - 8} fill="#e2e8f0" fontSize="13" fontWeight="600">{String(unit.callsign || '').toUpperCase()}</text>
+                      {layerVisibility.labels ? (
+                        <text x={p.x + 10} y={p.y - 8} fill="#e2e8f0" fontSize="13" fontWeight="600" stroke="rgba(2,6,23,0.9)" strokeWidth="3" paintOrder="stroke">
+                          {String(unit.callsign || '').toUpperCase()}
+                        </text>
+                      ) : null}
                     </g>
                   );
                 })}
-              </svg>
+                {selectedCallMarker ? (
+                  <circle cx={selectedCallMarker.__map.x} cy={selectedCallMarker.__map.y} r="26" fill="none" stroke="rgba(251,191,36,0.7)" strokeWidth="2" strokeDasharray="5 4" />
+                ) : null}
+                {selectedUnitMarker ? (
+                  <circle cx={selectedUnitMarker.__map.x} cy={selectedUnitMarker.__map.y} r="22" fill="none" stroke="rgba(34,197,94,0.7)" strokeWidth="2" strokeDasharray="4 4" />
+                ) : null}
+                  </svg>
+                </div>
+              </div>
               <div className="absolute right-3 bottom-3 text-xs text-cad-muted bg-black/35 border border-white/10 rounded px-2 py-1">
                 {loading ? 'Refreshing...' : `Calls without coordinates: ${unmappedCallsCount}`}
               </div>

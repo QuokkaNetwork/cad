@@ -1,5 +1,5 @@
 const express = require('express');
-const { requireAuth } = require('../auth/middleware');
+const { requireAuth, requireFiveMOnline } = require('../auth/middleware');
 const {
   CriminalRecords,
   CadWarnings,
@@ -18,6 +18,18 @@ const router = express.Router();
 const DRIVER_LICENSE_STATUSES = new Set(['valid', 'suspended', 'disqualified', 'expired']);
 const VEHICLE_REGISTRATION_STATUSES = new Set(['valid', 'suspended', 'revoked', 'expired']);
 const REPEAT_OFFENDER_THRESHOLD = 3;
+
+function buildPrintJobDeliveryTarget(req) {
+  const activeLink = req?.fivemLink || null;
+  return {
+    user_id: Number(req?.user?.id || 0) || null,
+    // Printed warnings should be delivered to the officer's inventory.
+    citizen_id: String(activeLink?.citizen_id || '').trim(),
+    game_id: String(activeLink?.game_id || '').trim(),
+    steam_id: String(req?.user?.steam_id || '').trim(),
+    discord_id: String(req?.user?.discord_id || '').trim(),
+  };
+}
 
 function normalizeDateOnly(value) {
   const text = String(value || '').trim();
@@ -674,7 +686,7 @@ router.patch('/warnings/:id', requireAuth, (req, res) => {
   res.json(updated);
 });
 
-router.post('/warnings/:id/print', requireAuth, (req, res) => {
+router.post('/warnings/:id/print', requireAuth, requireFiveMOnline, (req, res) => {
   const warningId = parseInt(req.params.id, 10);
   if (!Number.isInteger(warningId) || warningId <= 0) {
     return res.status(400).json({ error: 'Invalid warning id' });
@@ -703,8 +715,7 @@ router.post('/warnings/:id/print', requireAuth, (req, res) => {
   };
 
   const job = FiveMPrintJobs.create({
-    user_id: req.user.id,
-    citizen_id: String(req.body?.citizen_id || '').trim(),
+    ...buildPrintJobDeliveryTarget(req),
     department_id: Number(unit.department_id || 0) || null,
     document_type: 'cad_document',
     document_subtype: 'written_warning',

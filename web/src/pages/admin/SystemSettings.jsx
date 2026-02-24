@@ -448,16 +448,16 @@ export default function AdminSystemSettings() {
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Home Carousel Images JSON</label>
+            <label className="block text-xs text-cad-muted mb-1">Home Carousel Image Links (Multiple)</label>
             <textarea
               value={settings.cms_home_carousel_images_json || ''}
               onChange={e => updateSetting('cms_home_carousel_images_json', e.target.value)}
               rows={4}
               className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
-              placeholder='["/1080.png","/96.png","https://example.com/image.jpg"]'
+              placeholder={'https://example.com/image-1.jpg\nhttps://example.com/image-2.jpg\n/maps/FullMap.png'}
             />
             <p className="text-xs text-cad-muted mt-1">
-              Array of image URLs or local paths. Leave blank to use default CAD images.
+              Paste one image URL/path per line (supports multiple links). JSON arrays are also still supported. Leave blank to use default CAD images.
             </p>
           </div>
 

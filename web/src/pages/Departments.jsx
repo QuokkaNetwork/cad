@@ -132,43 +132,6 @@ function DepartmentCard({ dept, onSelect, index }) {
   );
 }
 
-function AdminCard({ onOpen }) {
-  return (
-    <button
-      onClick={onOpen}
-      className="group relative text-left rounded-2xl border border-cad-gold/20 overflow-hidden transition-all duration-200 hover:-translate-y-1 hover:shadow-2xl focus:outline-none"
-      style={{
-        background: 'linear-gradient(145deg, rgba(216,180,108,0.06), rgba(26,35,50,0.95))',
-        boxShadow: '0 4px 20px rgba(216,180,108,0.06)',
-      }}
-    >
-      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'linear-gradient(145deg, rgba(216,180,108,0.1), transparent 60%)' }} />
-      <div className="absolute top-0 left-0 right-0 h-0.5 bg-cad-gold opacity-60" />
-      <div className="relative p-4 flex flex-col gap-3">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border border-cad-gold/25 bg-cad-gold/10">
-            <svg className="w-5 h-5 text-cad-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-cad-ink leading-tight">Administration</p>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-cad-gold flex-shrink-0" style={{ boxShadow: '0 0 6px rgba(216,180,108,0.8)' }} />
-              <span className="text-[10px] uppercase tracking-widest text-cad-muted">Admin</span>
-            </div>
-          </div>
-          <div className="flex-shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-lg border border-cad-gold/25 bg-cad-gold/10 font-medium text-cad-gold">
-            Open
-          </div>
-        </div>
-        <p className="text-xs text-cad-muted leading-relaxed">Manage departments, Discord sync, alarm zones, and platform configuration.</p>
-      </div>
-    </button>
-  );
-}
-
 function StatusPill({ label, value, active }) {
   return (
     <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${active ? 'border-cad-accent/25 bg-cad-accent/8' : 'border-cad-border bg-cad-surface/40'}`}>
@@ -181,10 +144,10 @@ function StatusPill({ label, value, active }) {
   );
 }
 
-function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment, onOpenAdmin }) {
+function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment }) {
   const linked = !!user?.discord_id;
   const kinds = countDepartmentKinds(departments);
-  const totalTiles = departments.length + (isAdmin ? 1 : 0);
+  const totalTiles = departments.length;
 
   return (
     <div className="flex flex-col h-full gap-0">
@@ -278,24 +241,11 @@ function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment, onOpenAd
           <>
             <div className="flex items-center justify-between mb-4">
               <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">{totalTiles} workspace{totalTiles !== 1 ? 's' : ''} available</p>
-              {isAdmin && (
-                <button
-                  onClick={onOpenAdmin}
-                  className="text-xs text-cad-muted hover:text-cad-gold transition-colors flex items-center gap-1"
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  Admin Panel
-                </button>
-              )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
               {departments.map((dept, i) => (
                 <DepartmentCard key={dept.id} dept={dept} onSelect={onSelectDepartment} index={i} />
               ))}
-              {isAdmin && <AdminCard onOpen={onOpenAdmin} />}
             </div>
           </>
         )}
@@ -518,7 +468,6 @@ export default function Departments() {
             departments={departmentList}
             isAdmin={isAdmin}
             onSelectDepartment={selectDepartment}
-            onOpenAdmin={() => navigate('/admin')}
           />
         </div>
       </div>

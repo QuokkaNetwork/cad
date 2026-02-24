@@ -23,17 +23,34 @@ function parseCarouselImages(raw) {
   const fallback = ['/1080.png', '/96.png'];
   const text = String(raw || '').trim();
   if (!text) return fallback;
+  const normalizeList = (items) => {
+    const seen = new Set();
+    const urls = [];
+    for (const item of Array.isArray(items) ? items : []) {
+      const value = (typeof item === 'string' ? item : String(item?.url || '')).trim();
+      if (!value) continue;
+      const key = value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      urls.push(value);
+      if (urls.length >= 12) break;
+    }
+    return urls;
+  };
   try {
     const parsed = JSON.parse(text);
     if (!Array.isArray(parsed)) return fallback;
-    const urls = parsed
-      .map((item) => (typeof item === 'string' ? item : String(item?.url || '')))
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .slice(0, 12);
+    const urls = normalizeList(parsed);
     return urls.length > 0 ? urls : fallback;
   } catch {
-    return fallback;
+    // Also support simple admin input with one URL/path per line.
+    const lineUrls = normalizeList(
+      text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+    );
+    return lineUrls.length > 0 ? lineUrls : fallback;
   }
 }
 

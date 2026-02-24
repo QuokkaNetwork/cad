@@ -205,6 +205,18 @@ function buildPrintedRecordDescription(record) {
   return parts.join(' | ').slice(0, 500);
 }
 
+function buildPrintJobDeliveryTarget(req) {
+  const activeLink = req?.fivemLink || null;
+  return {
+    user_id: Number(req?.user?.id || 0) || null,
+    // Printed documents should land in the officer's inventory for handoff.
+    citizen_id: String(activeLink?.citizen_id || '').trim(),
+    game_id: String(activeLink?.game_id || '').trim(),
+    steam_id: String(req?.user?.steam_id || '').trim(),
+    discord_id: String(req?.user?.discord_id || '').trim(),
+  };
+}
+
 // List records (with optional citizen_id filter)
 router.get('/', requireAuth, (req, res) => {
   const { citizen_id, limit, offset, mode } = req.query;
@@ -626,8 +638,7 @@ router.post('/:id/print', requireAuth, (req, res) => {
   };
 
   const job = FiveMPrintJobs.create({
-    user_id: req.user.id,
-    citizen_id: String(record.citizen_id || '').trim(),
+    ...buildPrintJobDeliveryTarget(req),
     department_id: Number(unit.department_id || 0) || null,
     document_type: 'cad_document',
     document_subtype: subtype,

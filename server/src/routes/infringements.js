@@ -67,6 +67,18 @@ function buildPrintDescription(notice) {
   return parts.join(' | ').slice(0, 500);
 }
 
+function buildPrintJobDeliveryTarget(req) {
+  const activeLink = req?.fivemLink || null;
+  return {
+    user_id: Number(req?.user?.id || 0) || null,
+    // Target the printing officer's current in-game character/inventory, not the notice subject.
+    citizen_id: String(activeLink?.citizen_id || '').trim(),
+    game_id: String(activeLink?.game_id || '').trim(),
+    steam_id: String(req?.user?.steam_id || '').trim(),
+    discord_id: String(req?.user?.discord_id || '').trim(),
+  };
+}
+
 router.get('/', requireAuth, (req, res) => {
   const deptAccess = ensureLawDepartmentAccess(req, req.query.department_id);
   if (deptAccess.error) return res.status(deptAccess.status || 400).json({ error: deptAccess.error });
@@ -267,8 +279,7 @@ router.post('/:id/print', requireAuth, (req, res) => {
   };
 
   const job = FiveMPrintJobs.create({
-    user_id: req.user.id,
-    citizen_id: String(notice.citizen_id || '').trim(),
+    ...buildPrintJobDeliveryTarget(req),
     department_id: Number(unit.department_id || 0) || null,
     document_type: 'cad_document',
     document_subtype: 'ticket',
@@ -299,4 +310,3 @@ router.post('/:id/print', requireAuth, (req, res) => {
 });
 
 module.exports = router;
-

@@ -61,6 +61,11 @@ export function AuthProvider({ children }) {
     isAuthenticated: !!user,
     isAdmin: user?.is_admin || false,
     isFiveMOnline: !!user?.is_fivem_online,
+    currentRulesVersion: String(user?.current_rules_version || '').trim(),
+    hasAcceptedCurrentRules: (
+      String(user?.current_rules_version || '').trim() !== ''
+      && String(user?.rules_agreed_version || '').trim() === String(user?.current_rules_version || '').trim()
+    ),
     departments: user?.departments || [],
     logout,
     refreshUser,

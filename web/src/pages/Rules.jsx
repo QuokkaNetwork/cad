@@ -168,10 +168,10 @@ export default function Rules() {
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
-              to="/departments"
+              to="/home"
               className="text-sm text-cad-muted hover:text-cad-ink transition-colors"
             >
-              Go to Departments
+              Return Home
             </Link>
             <button
               type="button"

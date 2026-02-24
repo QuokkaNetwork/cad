@@ -3,7 +3,7 @@ const passport = require('passport');
 const config = require('../config');
 const { generateToken } = require('../auth/jwt');
 const { requireAuth, getUserFiveMOnlineStatus } = require('../auth/middleware');
-const { Users, UserDepartments, UserSubDepartments } = require('../db/sqlite');
+const { Users, UserDepartments, UserSubDepartments, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 
 const router = express.Router();
@@ -77,6 +77,7 @@ router.get('/me', requireAuth, (req, res) => {
   const departments = req.user.departments;
   const sub_departments = req.user.sub_departments || [];
   const fivemStatus = getUserFiveMOnlineStatus(req.user);
+  const currentRulesVersion = String(Settings.get('cms_rules_version') || '1').trim() || '1';
   res.json({
     id,
     steam_id,
@@ -88,6 +89,7 @@ router.get('/me', requireAuth, (req, res) => {
     created_at,
     rules_agreed_version: String(rules_agreed_version || '').trim(),
     rules_agreed_at: rules_agreed_at || null,
+    current_rules_version: currentRulesVersion,
     departments,
     sub_departments,
     is_fivem_online: !!fivemStatus.online,
