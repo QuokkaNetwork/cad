@@ -91,26 +91,28 @@ async function syncRulesAcceptedRole(user, member) {
   const shouldHaveRole = !!agreedVersion && agreedVersion === currentRulesVersion;
   const hasRole = member.roles.cache.has(configuredRoleId);
 
-  if (shouldHaveRole === hasRole) {
+  // Only grant the configured member/access role after agreeing to the current
+  // rules version. Do not revoke it later when the rules version changes.
+  if (!shouldHaveRole || hasRole) {
+    let reason = 'not_eligible_to_grant';
+    if (hasRole && shouldHaveRole) reason = 'already_granted';
+    else if (hasRole && !shouldHaveRole) reason = 'preserved_existing_role';
     return {
       configured: true,
       changed: false,
-      reason: shouldHaveRole ? 'already_granted' : 'already_revoked',
+      reason,
       role_id: configuredRoleId,
       rules_version: currentRulesVersion,
       agreed_version: agreedVersion || '',
       should_have_role: shouldHaveRole,
+      has_role: hasRole,
     };
   }
 
   try {
-    if (shouldHaveRole) {
-      await member.roles.add(configuredRoleId, `CAD rules accepted v${currentRulesVersion}`);
-    } else {
-      await member.roles.remove(configuredRoleId, `CAD rules reaccept required (current v${currentRulesVersion})`);
-    }
+    await member.roles.add(configuredRoleId, `CAD rules accepted v${currentRulesVersion}`);
 
-    audit(user.id, shouldHaveRole ? 'discord_rules_role_granted' : 'discord_rules_role_revoked', {
+    audit(user.id, 'discord_rules_role_granted', {
       discordId: user.discord_id,
       roleId: configuredRoleId,
       rules_version: currentRulesVersion,
@@ -120,7 +122,7 @@ async function syncRulesAcceptedRole(user, member) {
     return {
       configured: true,
       changed: true,
-      reason: shouldHaveRole ? 'granted' : 'revoked',
+      reason: 'granted',
       role_id: configuredRoleId,
       rules_version: currentRulesVersion,
       agreed_version: agreedVersion || '',
