@@ -32,6 +32,4 @@ files {
   'ui/vendor/pdf.min.js',
   'ui/overlay.webp',
   'ui/vicroads-logo.png',
-  'web/dist/**/*',
-  'web/finesvic-dist/**/*',
 }

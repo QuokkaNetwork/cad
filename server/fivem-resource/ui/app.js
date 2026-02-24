@@ -1,4 +1,4 @@
-var overlay = document.getElementById("overlay");
+﻿var overlay = document.getElementById("overlay");
 var form = document.getElementById("emergencyForm");
 var closeBtn = document.getElementById("closeBtn");
 var cancelBtn = document.getElementById("cancelBtn");
@@ -1289,6 +1289,10 @@ function loadPrintedDocPdf(metadata) {
 
   var base64 = normalizePrintedDocPdfBase64(metadata || {});
   if (!base64) {
+    var pdfMissingSubtype = printedDocString(safeGet(metadata, "document_subtype", "")).toLowerCase();
+    if (pdfMissingSubtype === "ticket") {
+      setPrintedDocPdfStatus("No PDF was embedded on this ticket. Showing paper-style fallback.", true);
+    }
     return Promise.resolve(false);
   }
 
@@ -1481,6 +1485,10 @@ function resetPrintedDocForm(payload) {
   var metadata = normalized.metadata || {};
 
   var subtype = printedDocString(safeGet(metadata, "document_subtype", ""));
+  if (printedDocFallback && printedDocFallback.classList) {
+    if (subtype.toLowerCase() === "ticket") printedDocFallback.classList.add("printed-doc-paper-ticket");
+    else printedDocFallback.classList.remove("printed-doc-paper-ticket");
+  }
   var typeText = subtype ? printedDocToTitleCase(subtype) : "Document";
   var titleText = printedDocFirstNonEmpty([
     safeGet(metadata, "label", ""),
@@ -2920,3 +2928,4 @@ if (document.readyState === "loading") {
 } else {
   initialize();
 }
+

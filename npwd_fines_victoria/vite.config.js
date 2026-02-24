@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     federation({
-      name: 'cad_bridge_fines_victoria',
+      name: 'npwd_fines_victoria',
       filename: 'remoteEntry.js',
       exposes: {
         './config': './npwd.config.js',
@@ -21,7 +21,7 @@ export default defineConfig({
   ],
   base: './',
   build: {
-    outDir: '../web/finesvic-dist',
+    outDir: './web/dist',
     emptyOutDir: true,
     modulePreload: false,
     assetsDir: '',

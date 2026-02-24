@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     federation({
-      name: 'cad_bridge_vicroads',
+      name: 'npwd_vicroads',
       filename: 'remoteEntry.js',
       exposes: {
         './config': './npwd.config.js',
@@ -21,7 +21,7 @@ export default defineConfig({
   ],
   base: './',
   build: {
-    outDir: '../web/dist',
+    outDir: './web/dist',
     emptyOutDir: true,
     modulePreload: false,
     assetsDir: '',

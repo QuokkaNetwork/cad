@@ -853,6 +853,48 @@ select {
   word-break: break-word;
 }
 
+.printed-doc-paper.printed-doc-paper-ticket {
+  border-color: rgba(89, 64, 19, 0.35);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.35), transparent 45%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(102, 71, 17, 0.08) 0px,
+      rgba(102, 71, 17, 0.08) 1px,
+      transparent 1px,
+      transparent 30px
+    ),
+    linear-gradient(180deg, #f8efd8, #f2e3bf);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 -1px 0 rgba(95, 68, 22, 0.08);
+}
+
+.printed-doc-paper.printed-doc-paper-ticket .printed-doc-meta-row,
+.printed-doc-paper.printed-doc-paper-ticket .printed-doc-section {
+  border-color: rgba(122, 92, 40, 0.28);
+  background: rgba(255, 251, 240, 0.65);
+}
+
+.printed-doc-paper.printed-doc-paper-ticket .printed-doc-meta-label,
+.printed-doc-paper.printed-doc-paper-ticket .printed-doc-extra-key {
+  color: #6d562b;
+}
+
+.printed-doc-paper.printed-doc-paper-ticket .printed-doc-meta-value {
+  color: #1f2022;
+  font-family: "Bahnschrift", "Segoe UI", Tahoma, sans-serif;
+}
+
+.printed-doc-paper.printed-doc-paper-ticket .printed-doc-section-label {
+  color: #8a5a00;
+}
+
+.printed-doc-paper.printed-doc-paper-ticket .printed-doc-body-text,
+.printed-doc-paper.printed-doc-paper-ticket .printed-doc-extra-value {
+  color: #232529;
+}
+
 .id-card-overlay {
   position: fixed;
   right: 1.05rem;
