@@ -56,6 +56,22 @@ function labelize(value) {
     .replace(/\b\w/g, (c) => c.toUpperCase()) || '-';
 }
 
+function normalizePersonSearchOption(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  const citizenId = String(source.citizenId || source.citizenid || source.citizen_id || '').trim();
+  const fullName = String(
+    source.name
+    || source.full_name
+    || `${String(source.firstname || '').trim()} ${String(source.lastname || '').trim()}`.trim()
+    || ''
+  ).trim();
+
+  return {
+    citizenId,
+    name: fullName || citizenId,
+  };
+}
+
 function badgeClass(kind, value) {
   const key = `${kind}:${String(value || '').trim().toLowerCase()}`;
   const map = {
@@ -149,7 +165,68 @@ function InfringementLockedCard() {
 }
 
 function FormFields({ form, setForm }) {
+  const [personMatches, setPersonMatches] = useState([]);
+  const [personSearching, setPersonSearching] = useState(false);
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  useEffect(() => {
+    const query = String(form.subject_name || '').trim();
+    if (String(form.citizen_id || '').trim()) {
+      setPersonMatches([]);
+      setPersonSearching(false);
+      return;
+    }
+    if (query.length < 2) {
+      setPersonMatches([]);
+      setPersonSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setPersonSearching(true);
+      try {
+        const payload = await api.get(`/api/search/cad/persons?q=${encodeURIComponent(query)}`);
+        if (cancelled) return;
+        const matches = Array.isArray(payload)
+          ? payload
+            .map(normalizePersonSearchOption)
+            .filter((entry) => entry.name)
+            .slice(0, 8)
+          : [];
+        setPersonMatches(matches);
+      } catch {
+        if (!cancelled) setPersonMatches([]);
+      } finally {
+        if (!cancelled) setPersonSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [form.subject_name, form.citizen_id]);
+
+  function onSubjectNameChange(value) {
+    setForm((prev) => ({
+      ...prev,
+      subject_name: value,
+      citizen_id: '',
+    }));
+  }
+
+  function selectPersonMatch(match) {
+    const normalized = normalizePersonSearchOption(match);
+    setForm((prev) => ({
+      ...prev,
+      subject_name: normalized.name || prev.subject_name,
+      citizen_id: normalized.citizenId || prev.citizen_id,
+    }));
+    setPersonMatches([]);
+    setPersonSearching(false);
+  }
+
   return (
     <div className="space-y-4">
       <section className="rounded-xl border border-cad-border bg-cad-card/60 p-4">
@@ -158,13 +235,34 @@ function FormFields({ form, setForm }) {
           <h3 className="text-sm font-semibold text-cad-ink mt-1">Recipient Details</h3>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm mb-1 text-cad-muted">Subject Name</label>
-            <input value={form.subject_name} onChange={(e) => setField('subject_name', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-          </div>
-          <div>
-            <label className="block text-sm mb-1 text-cad-muted">Citizen ID</label>
-            <input value={form.citizen_id} onChange={(e) => setField('citizen_id', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          <div className="md:col-span-2">
+            <label className="block text-sm mb-1 text-cad-muted">Civilian (Search & Select)</label>
+            <input
+              value={form.subject_name}
+              onChange={(e) => onSubjectNameChange(e.target.value)}
+              placeholder="Start typing the civilian name..."
+              className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2"
+            />
+            <div className="mt-1 text-xs text-cad-muted">
+              {String(form.citizen_id || '').trim()
+                ? `Selected civilian CID: ${String(form.citizen_id || '').trim()}`
+                : (personSearching ? 'Searching civilians...' : 'Select a civilian from the results below to attach the notice.')}
+            </div>
+            {personMatches.length > 0 ? (
+              <div className="mt-2 rounded-md border border-cad-border bg-cad-card overflow-hidden">
+                {personMatches.map((match) => (
+                  <button
+                    key={`${match.citizenId || match.name}`}
+                    type="button"
+                    onClick={() => selectPersonMatch(match)}
+                    className="w-full text-left px-3 py-2 border-b last:border-b-0 border-cad-border hover:bg-cad-surface/60 transition"
+                  >
+                    <div className="text-sm text-cad-ink">{match.name || 'Unknown Civilian'}</div>
+                    <div className="text-xs text-cad-muted">{match.citizenId || 'No Citizen ID'}</div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div>
             <label className="block text-sm mb-1 text-cad-muted">Vehicle Plate</label>
@@ -554,6 +652,22 @@ export default function Infringements() {
     if (!cid) return;
     setFilters((prev) => ({ ...prev, q: cid }));
     setCreateForm((prev) => ({ ...prev, citizen_id: cid }));
+
+    let cancelled = false;
+    api.get(`/api/search/cad/persons/${encodeURIComponent(cid)}`)
+      .then((person) => {
+        if (cancelled) return;
+        const normalized = normalizePersonSearchOption(person);
+        if (!normalized.name) return;
+        setCreateForm((prev) => {
+          if (String(prev.citizen_id || '').trim() !== cid) return prev;
+          if (String(prev.subject_name || '').trim()) return prev;
+          return { ...prev, subject_name: normalized.name };
+        });
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
   }, [search]);
 
   useEventSource({
@@ -711,7 +825,12 @@ export default function Infringements() {
 
   function openCreate() {
     const due = new Date(Date.now() + (14 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10);
-    setCreateForm({ ...EMPTY_FORM, citizen_id: createForm.citizen_id || '', due_date: due });
+    setCreateForm({
+      ...EMPTY_FORM,
+      subject_name: createForm.subject_name || '',
+      citizen_id: createForm.citizen_id || '',
+      due_date: due,
+    });
     setFormError('');
     setShowCreate(true);
   }

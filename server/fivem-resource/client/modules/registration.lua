@@ -2,6 +2,10 @@ local util = CadBridge and CadBridge.util or {}
 local ui = CadBridge and CadBridge.ui or {}
 local state = CadBridge and CadBridge.state or {}
 if state.vehicleRegistrationSubmitPending == nil then state.vehicleRegistrationSubmitPending = false end
+if state.npwdVicRoadsSubmitPending == nil then state.npwdVicRoadsSubmitPending = false end
+
+local vicRoadsPendingRequestsById = {}
+local vicRoadsRequestSeq = 0
 
 local function trim(value)
   if type(util.trim) == 'function' then
@@ -352,6 +356,55 @@ local function openVehicleRegistrationPopup(payload)
     payload = nextPayload,
   })
 end
+
+local function nextVicRoadsRequestId(prefix)
+  vicRoadsRequestSeq = (tonumber(vicRoadsRequestSeq) or 0) + 1
+  if vicRoadsRequestSeq > 999999 then vicRoadsRequestSeq = 1 end
+  return ('%s:%s:%s'):format(
+    trim(prefix ~= '' and prefix or 'vicroads'),
+    tostring(GetGameTimer() or 0),
+    tostring(vicRoadsRequestSeq)
+  )
+end
+
+local function awaitVicRoadsRegistrationReply(payload, timeoutMs)
+  local requestId = nextVicRoadsRequestId('vicroads_registration')
+  local pending = { done = false, response = nil }
+  vicRoadsPendingRequestsById[requestId] = pending
+
+  local nextPayload = type(payload) == 'table' and payload or {}
+  nextPayload.request_id = requestId
+  TriggerServerEvent('cad_bridge:submitVehicleRegistration', nextPayload)
+
+  local deadline = (tonumber(GetGameTimer() or 0) or 0) + math.max(3000, tonumber(timeoutMs) or 20000)
+  while pending.done ~= true and (tonumber(GetGameTimer() or 0) or 0) < deadline do
+    Wait(0)
+  end
+
+  vicRoadsPendingRequestsById[requestId] = nil
+
+  if pending.done ~= true then
+    return {
+      ok = false,
+      error = 'timeout',
+      error_code = 'timeout',
+      message = 'VicRoads registration request timed out. Please try again.',
+      request_id = requestId,
+    }
+  end
+
+  if type(pending.response) ~= 'table' then
+    return {
+      ok = false,
+      error = 'invalid_response',
+      error_code = 'invalid_response',
+      message = 'VicRoads registration returned an invalid response.',
+      request_id = requestId,
+    }
+  end
+
+  return pending.response
+end
 ui.openVehicleRegistrationPopup = openVehicleRegistrationPopup
 
 local function buildCurrentSeatedVehicleRegistrationPrefill()
@@ -406,7 +459,7 @@ RegisterNUICallback('cadBridgeRegistrationSubmit', function(data, cb)
   local durationDays = tonumber(data and data.duration_days or 0) or tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
   if durationDays < 1 then durationDays = 1 end
 
-  if plate == '' or model == '' or ownerName == '' then
+  if plate == '' or model == '' then
     if cb then cb({ ok = false, error = 'invalid_form' }) end
     return
   end
@@ -447,15 +500,83 @@ RegisterNUICallback('cadBridgeNpwdVicRoadsOpenRegistration', function(_data, cb)
   if cb then cb({ ok = true, message = 'VicRoads registration opened.' }) end
 end)
 
+RegisterNUICallback('cadBridgeNpwdVicRoadsGetPrefill', function(_data, cb)
+  local payload, err = buildCurrentSeatedVehicleRegistrationPrefill()
+  if not payload then
+    local message = trim(err or 'You must be sitting in a vehicle to register it from the phone.')
+    notifyWarn('VicRoads', message)
+    if cb then cb({ ok = false, error = 'not_in_vehicle', error_code = 'not_in_vehicle', message = message }) end
+    return
+  end
+
+  payload.duration_days = tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
+  if cb then cb({ ok = true, payload = payload }) end
+end)
+
+RegisterNUICallback('cadBridgeNpwdVicRoadsSubmitRegistration', function(data, cb)
+  if state.npwdVicRoadsSubmitPending == true then
+    if cb then
+      cb({
+        ok = false,
+        error = 'submit_in_progress',
+        error_code = 'submit_in_progress',
+        message = 'A VicRoads registration request is already in progress.',
+      })
+    end
+    return
+  end
+
+  local plate = trim(data and data.plate or data and data.license_plate or '')
+  local model = trim(data and data.vehicle_model or data and data.model or '')
+  local colour = trim(data and data.vehicle_colour or data and data.colour or data and data.color or '')
+  local ownerName = trim(data and data.owner_name or data and data.character_name or '')
+  local durationDays = tonumber(data and data.duration_days or 0) or tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
+  if durationDays < 1 then durationDays = 1 end
+
+  if plate == '' or model == '' then
+    if cb then
+      cb({
+        ok = false,
+        error = 'invalid_form',
+        error_code = 'invalid_form',
+        message = 'Plate and vehicle model are required.',
+      })
+    end
+    return
+  end
+
+  state.npwdVicRoadsSubmitPending = true
+  local result = awaitVicRoadsRegistrationReply({
+    plate = plate,
+    vehicle_model = model,
+    vehicle_colour = colour,
+    owner_name = ownerName,
+    duration_days = math.floor(durationDays),
+    source = 'npwd_vicroads',
+  }, 25000)
+  state.npwdVicRoadsSubmitPending = false
+
+  if cb then cb(result) end
+end)
+
 RegisterNetEvent('cad_bridge:promptVehicleRegistration', function(payload)
   openVehicleRegistrationPopup(payload or {})
 end)
 
 RegisterNetEvent('cad_bridge:vehicleRegistrationSubmitResult', function(payload)
   local result = type(payload) == 'table' and payload or {}
+  local requestId = trim(result.request_id or '')
   local ok = result.ok == true or result.success == true
   local message = trim(result.message or result.error or '')
   local errorCode = trim(result.error_code or '')
+
+  if requestId ~= '' then
+    local pending = vicRoadsPendingRequestsById[requestId]
+    if pending then
+      pending.response = result
+      pending.done = true
+    end
+  end
 
   state.vehicleRegistrationSubmitPending = false
 

@@ -8,7 +8,7 @@
           feeCharged and ' | Charged: ' or '',
           feeCharged and formatMoney(feeAmount) or ''
         ))
-        TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+        emitVehicleRegistrationSubmitResult({
           ok = true,
           message = 'Vehicle registration saved.',
         })
@@ -59,7 +59,7 @@
         else
           notifyPlayer(s, 'Registration renewal unavailable. You can renew when within 3 days of expiry.')
         end
-        TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+        emitVehicleRegistrationSubmitResult({
           ok = false,
           error_code = 'renewal_window_blocked',
           message = existingExpiry ~= '' and ('Registration renewal unavailable. You can renew within 3 days of expiry (current expiry: %s).'):format(existingExpiry) or 'Registration renewal unavailable. You can renew within 3 days of expiry.',
@@ -80,7 +80,7 @@
           })
           local ownershipMessage = 'You are not the owner of this vehicle, so you cannot register it.'
           notifyPlayer(s, ownershipMessage)
-          TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+          emitVehicleRegistrationSubmitResult({
             ok = false,
             error_code = 'not_owner',
             message = ownershipMessage,
@@ -101,7 +101,7 @@
       else
         notifyPlayer(s, 'Vehicle registration failed to save to CAD. Check server logs.')
       end
-      TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+      emitVehicleRegistrationSubmitResult({
         ok = false,
         error_code = 'save_failed',
         message = parsedError ~= '' and ('Vehicle registration failed: %s'):format(parsedError) or 'Vehicle registration failed to save to CAD. Check server logs.',
@@ -153,33 +153,50 @@ end)
 
 RegisterNetEvent('cad_bridge:submitVehicleRegistration', function(payload)
   local src = source
+  local requestId = trim(payload and payload.request_id or '')
+  local normalizedPayload = type(payload) == 'table' and payload or {}
   print(('[cad_bridge] >>> submitVehicleRegistration event received from src=%s'):format(tostring(src)))
   if not src or src == 0 then
     print('[cad_bridge] submitVehicleRegistration ABORTED: invalid source')
     return
   end
+
+  -- Allow phone/CAD registration UIs to omit owner_name and derive it from the active character.
+  if trim(normalizedPayload.owner_name or normalizedPayload.character_name or '') == '' then
+    local defaults = getCharacterDefaults(src)
+    local resolvedOwnerName = trim(defaults.full_name or getCharacterDisplayName(src) or '')
+    if resolvedOwnerName ~= '' then
+      normalizedPayload.owner_name = resolvedOwnerName
+      if trim(normalizedPayload.character_name or '') == '' then
+        normalizedPayload.character_name = resolvedOwnerName
+      end
+    end
+  end
+
   logDocumentTrace('registration-event-received', {
     source = tonumber(src) or 0,
-    payload = summarizeRegistrationPayloadForLog(payload),
+    payload = summarizeRegistrationPayloadForLog(normalizedPayload),
   }, true)
 
-  local formData, err = parseVehicleRegistrationForm(payload)
+  local formData, err = parseVehicleRegistrationForm(normalizedPayload)
   if not formData then
     logDocumentFailure('registration-validate-failed', {
       source = tonumber(src) or 0,
       error = trim(err or 'invalid_form'),
-      payload = summarizeRegistrationPayloadForLog(payload),
+      payload = summarizeRegistrationPayloadForLog(normalizedPayload),
     })
     notifyPlayer(src, err or 'Invalid registration details.')
-    TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', src, {
+    local result = {
       ok = false,
       error_code = 'invalid_form',
       message = err or 'Invalid registration details.',
-    })
+    }
+    if requestId ~= '' then result.request_id = requestId end
+    TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', src, result)
     return
   end
 
-  submitVehicleRegistration(src, formData)
+  submitVehicleRegistration(src, formData, { request_id = requestId })
 end)
 
 RegisterNetEvent('cad_bridge:requestShowId', function(targetSource)

@@ -30,6 +30,9 @@ if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "APP_DIR=%SCRIPT_DIR%"
 set "NPM_BIN="
 set "NPM_INSTALL_FLAGS=--include=dev"
+set "POWERSHELL_BIN=powershell"
+set "RESOURCE_PACK_DIR=[quokkacad]"
+set "RESOURCE_PACK_SCRIPT=deploy\scripts\package-quokkacad.ps1"
 set "npm_config_production=false"
 set "npm_config_include=dev"
 
@@ -162,6 +165,7 @@ if "%AUTO_UPDATE_BRANCH%"=="" set "AUTO_UPDATE_BRANCH=%CAD_REPO_BRANCH%"
 set "LOCAL_HEAD="
 set "REMOTE_HEAD="
 set "UPDATED=0"
+set "PACK_RESOURCES=0"
 
 echo [CAD] Checking for updates on startup...
 for /f %%I in ('git rev-parse HEAD 2^>nul') do set "LOCAL_HEAD=%%I"
@@ -228,6 +232,20 @@ if "!UPDATED!"=="1" (
       call %NPM_BIN% run build
       if errorlevel 1 goto :fail
     )
+  )
+)
+
+if "!UPDATED!"=="1" set "PACK_RESOURCES=1"
+if not exist "%RESOURCE_PACK_DIR%\cad_bridge\fxmanifest.lua" set "PACK_RESOURCES=1"
+if "!PACK_RESOURCES!"=="1" (
+  if exist "%RESOURCE_PACK_SCRIPT%" (
+    where %POWERSHELL_BIN% >nul 2>nul
+    if errorlevel 1 set "POWERSHELL_BIN=powershell.exe"
+    echo [CAD] Packaging FiveM resources into %RESOURCE_PACK_DIR%...
+    call %POWERSHELL_BIN% -NoProfile -ExecutionPolicy Bypass -File "%RESOURCE_PACK_SCRIPT%"
+    if errorlevel 1 goto :fail
+  ) else (
+    echo [CAD] WARNING: Resource pack script not found: %RESOURCE_PACK_SCRIPT%
   )
 )
 

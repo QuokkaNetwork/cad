@@ -902,6 +902,14 @@ function printedDocPdfLib() {
   if (typeof window === "undefined") return null;
   var lib = window.pdfjsLib || window["pdfjs-dist/build/pdf"];
   if (!lib || typeof lib.getDocument !== "function") return null;
+  if (lib.GlobalWorkerOptions && !lib.__cadBridgePdfWorkerConfigured) {
+    try {
+      lib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
+      lib.__cadBridgePdfWorkerConfigured = true;
+    } catch (err) {
+      console.warn("[CAD UI] Failed to configure PDF worker source:", err);
+    }
+  }
   return lib;
 }
 
@@ -1317,7 +1325,6 @@ function loadPrintedDocPdf(metadata) {
 
   return lib.getDocument({
     data: bytes,
-    disableWorker: true,
   }).promise.then(function onPdfLoaded(pdfDoc) {
     printedDocPdfDoc = pdfDoc || null;
     if (!printedDocPdfDoc) {

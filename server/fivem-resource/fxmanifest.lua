@@ -30,6 +30,7 @@ files {
   'ui/styles.css',
   'ui/app.js',
   'ui/vendor/pdf.min.js',
+  'ui/vendor/pdf.worker.min.js',
   'ui/overlay.webp',
   'ui/vicroads-logo.png',
 }

@@ -114,14 +114,23 @@
   end)
 end
 
-local function submitVehicleRegistration(src, formData)
+local function submitVehicleRegistration(src, formData, options)
   local s = tonumber(src)
   if not s then return end
+  local opts = type(options) == 'table' and options or {}
+  local requestId = trim(opts.request_id or '')
+  local function emitVehicleRegistrationSubmitResult(result)
+    local nextResult = type(result) == 'table' and result or {}
+    if requestId ~= '' and trim(nextResult.request_id or '') == '' then
+      nextResult.request_id = requestId
+    end
+    TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, nextResult)
+  end
   if isBridgeBackoffActive('registrations') then
     local waitSeconds = math.max(1, math.ceil(getEffectiveBackoffRemainingMs('registrations') / 1000))
     local message = ('CAD bridge is rate-limited. Try again in %ss.'):format(waitSeconds)
     notifyPlayer(s, message)
-    TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+    emitVehicleRegistrationSubmitResult({
       ok = false,
       error_code = 'bridge_rate_limited',
       message = message,
@@ -157,7 +166,7 @@ local function submitVehicleRegistration(src, formData)
       reason = 'missing_citizenid',
       payload = summarizeRegistrationPayloadForLog(payload),
     })
-    TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+    emitVehicleRegistrationSubmitResult({
       ok = false,
       error_code = 'missing_citizenid',
       message = message,
@@ -183,7 +192,7 @@ local function submitVehicleRegistration(src, formData)
         if daysUntilExpiry ~= nil and daysUntilExpiry > 3 then
           local message = ('Registration renewal unavailable. You can renew when within 3 days of expiry (current expiry: %s).'):format(tostring(existingParsed.registration.expiry_at or 'unknown'))
           notifyPlayer(s, message)
-          TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+          emitVehicleRegistrationSubmitResult({
             ok = false,
             error_code = 'renewal_window_blocked',
             message = message,
@@ -212,7 +221,7 @@ local function submitVehicleRegistration(src, formData)
           payload = summarizeRegistrationPayloadForLog(payload),
         })
         notifyPlayer(s, feeError)
-        TriggerClientEvent('cad_bridge:vehicleRegistrationSubmitResult', s, {
+        emitVehicleRegistrationSubmitResult({
           ok = false,
           error_code = 'fee_charge_failed_required',
           message = feeError,
