@@ -185,12 +185,12 @@ const Departments = {
   findByShortName(shortName) {
     return db.prepare('SELECT * FROM departments WHERE short_name = ?').get(shortName);
   },
-  create({ name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order }) {
+  create({ name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order, applications_open }) {
     const resolvedSortOrder = Number.isFinite(Number(sort_order))
       ? Math.max(0, Math.trunc(Number(sort_order)))
       : getNextSortOrder('departments');
     const info = db.prepare(
-      'INSERT INTO departments (name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO departments (name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order, applications_open) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(
       name,
       short_name || '',
@@ -200,12 +200,13 @@ const Departments = {
       normalizeDepartmentLayoutType(layout_type),
       String(fivem_job_name || '').trim(),
       Number.isFinite(Number(fivem_job_grade)) ? Math.max(0, Math.trunc(Number(fivem_job_grade))) : 0,
-      resolvedSortOrder
+      resolvedSortOrder,
+      applications_open ? 1 : 0
     );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['name', 'short_name', 'color', 'icon', 'slogan', 'is_active', 'dispatch_visible', 'is_dispatch', 'layout_type', 'fivem_job_name', 'fivem_job_grade', 'sort_order'];
+    const allowed = ['name', 'short_name', 'color', 'icon', 'slogan', 'is_active', 'dispatch_visible', 'is_dispatch', 'applications_open', 'layout_type', 'fivem_job_name', 'fivem_job_grade', 'sort_order'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -221,6 +222,8 @@ const Departments = {
         } else if (key === 'sort_order') {
           const sortOrder = Number(fields[key]);
           values.push(Number.isFinite(sortOrder) ? Math.max(0, Math.trunc(sortOrder)) : 0);
+        } else if (['is_active', 'dispatch_visible', 'is_dispatch', 'applications_open'].includes(key)) {
+          values.push(fields[key] ? 1 : 0);
         } else {
           values.push(fields[key]);
         }
@@ -250,6 +253,111 @@ const Departments = {
   },
   delete(id) {
     db.prepare('DELETE FROM departments WHERE id = ?').run(id);
+  },
+};
+
+// --- Department Applications ---
+const DEPARTMENT_APPLICATION_STATUSES = new Set(['pending', 'approved', 'rejected', 'withdrawn']);
+
+function normalizeDepartmentApplicationStatus(value, fallback = 'pending') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (DEPARTMENT_APPLICATION_STATUSES.has(normalized)) return normalized;
+  return fallback;
+}
+
+const DepartmentApplications = {
+  findById(id) {
+    return db.prepare('SELECT * FROM department_applications WHERE id = ?').get(id);
+  },
+  findPendingByUserAndDepartment(userId, departmentId) {
+    return db.prepare(`
+      SELECT * FROM department_applications
+      WHERE user_id = ? AND department_id = ? AND status = 'pending'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `).get(userId, departmentId);
+  },
+  listByUser(userId, limit = 50) {
+    const parsedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.trunc(Number(limit))) : 50;
+    return db.prepare(`
+      SELECT
+        da.*,
+        d.name AS department_name,
+        d.short_name AS department_short_name,
+        d.color AS department_color,
+        d.applications_open AS department_applications_open,
+        reviewer.steam_name AS reviewer_name
+      FROM department_applications da
+      JOIN departments d ON d.id = da.department_id
+      LEFT JOIN users reviewer ON reviewer.id = da.reviewed_by
+      WHERE da.user_id = ?
+      ORDER BY da.created_at DESC, da.id DESC
+      LIMIT ?
+    `).all(userId, parsedLimit);
+  },
+  listForAdmin({ status = '', limit = 200 } = {}) {
+    const parsedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.trunc(Number(limit))) : 200;
+    const normalizedStatus = normalizeDepartmentApplicationStatus(status, '');
+    const where = normalizedStatus ? 'WHERE da.status = ?' : '';
+    const params = normalizedStatus ? [normalizedStatus, parsedLimit] : [parsedLimit];
+    return db.prepare(`
+      SELECT
+        da.*,
+        d.name AS department_name,
+        d.short_name AS department_short_name,
+        d.color AS department_color,
+        applicant.steam_name AS applicant_name,
+        applicant.discord_name AS applicant_discord_name,
+        applicant.discord_id AS applicant_discord_id,
+        reviewer.steam_name AS reviewer_name
+      FROM department_applications da
+      JOIN departments d ON d.id = da.department_id
+      JOIN users applicant ON applicant.id = da.user_id
+      LEFT JOIN users reviewer ON reviewer.id = da.reviewed_by
+      ${where}
+      ORDER BY
+        CASE da.status
+          WHEN 'pending' THEN 0
+          WHEN 'approved' THEN 1
+          WHEN 'rejected' THEN 2
+          ELSE 3
+        END,
+        da.created_at DESC,
+        da.id DESC
+      LIMIT ?
+    `).all(...params);
+  },
+  create({ user_id, department_id, message }) {
+    const info = db.prepare(`
+      INSERT INTO department_applications (
+        user_id, department_id, status, message, review_notes, reviewed_by, reviewed_at, created_at, updated_at
+      ) VALUES (?, ?, 'pending', ?, '', NULL, NULL, datetime('now'), datetime('now'))
+    `).run(
+      user_id,
+      department_id,
+      String(message || '').trim()
+    );
+    return this.findById(info.lastInsertRowid);
+  },
+  updateStatus(id, { status, review_notes = '', reviewed_by = null }) {
+    const normalizedStatus = normalizeDepartmentApplicationStatus(status);
+    db.prepare(`
+      UPDATE department_applications
+      SET
+        status = ?,
+        review_notes = ?,
+        reviewed_by = ?,
+        reviewed_at = CASE WHEN ? = 'pending' THEN NULL ELSE datetime('now') END,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(
+      normalizedStatus,
+      String(review_notes || '').trim(),
+      reviewed_by || null,
+      normalizedStatus,
+      id
+    );
+    return this.findById(id);
   },
 };
 
@@ -4012,6 +4120,7 @@ module.exports = {
   Users,
   UserCitizenLinks,
   Departments,
+  DepartmentApplications,
   UserDepartments,
   SubDepartments,
   UserSubDepartments,

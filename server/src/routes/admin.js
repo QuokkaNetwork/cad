@@ -7,7 +7,7 @@ const { requireAuth, requireAdmin } = require('../auth/middleware');
 const {
   Users, Departments, UserDepartments, DiscordRoleMappings,
   Settings, AuditLog, Announcements, Units, FiveMPlayerLinks, UserCitizenLinks, FiveMJobSyncJobs, FiveMFineJobs, SubDepartments, OffenceCatalog,
-  DriverLicenses, VehicleRegistrations,
+  DriverLicenses, VehicleRegistrations, DepartmentApplications,
 } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
@@ -81,6 +81,21 @@ function parseSortOrder(value, fallback = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(0, Math.trunc(parsed));
+}
+
+function parseDepartmentApplicationsOpen(value, fallback = 0) {
+  if (value === undefined) return fallback ? 1 : 0;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  const text = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'open', 'on'].includes(text)) return 1;
+  if (['0', 'false', 'no', 'closed', 'off'].includes(text)) return 0;
+  return fallback ? 1 : 0;
+}
+
+function parseDepartmentApplicationStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  if (!['pending', 'approved', 'rejected', 'withdrawn'].includes(status)) return '';
+  return status;
 }
 
 function normalizeJobNameKey(value) {
@@ -374,6 +389,7 @@ router.post('/departments', (req, res) => {
     color,
     icon,
     slogan,
+    applications_open,
     layout_type,
     fivem_job_name,
     fivem_job_grade,
@@ -386,6 +402,7 @@ router.post('/departments', (req, res) => {
     color,
     icon,
     slogan,
+    applications_open: parseDepartmentApplicationsOpen(applications_open, 0),
     layout_type,
     fivem_job_name: String(fivem_job_name || '').trim(),
     fivem_job_grade: Number.isFinite(Number(fivem_job_grade)) ? Number(fivem_job_grade) : 0,
@@ -441,6 +458,49 @@ router.delete('/departments/:id', (req, res) => {
     }
     throw err;
   }
+});
+
+// --- Department Applications ---
+router.get('/department-applications', (req, res) => {
+  const status = parseDepartmentApplicationStatus(req.query?.status);
+  const limit = Number.parseInt(String(req.query?.limit || '200').trim(), 10);
+  const applications = DepartmentApplications.listForAdmin({
+    status,
+    limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 500) : 200,
+  });
+  res.json(applications);
+});
+
+router.patch('/department-applications/:id', (req, res) => {
+  const applicationId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(applicationId) || applicationId <= 0) {
+    return res.status(400).json({ error: 'Invalid application id' });
+  }
+  const application = DepartmentApplications.findById(applicationId);
+  if (!application) {
+    return res.status(404).json({ error: 'Application not found' });
+  }
+
+  const status = parseDepartmentApplicationStatus(req.body?.status);
+  if (!status || status === 'pending') {
+    return res.status(400).json({ error: 'status must be approved, rejected, or withdrawn' });
+  }
+
+  const reviewNotes = String(req.body?.review_notes || '').trim().slice(0, 4000);
+  const updated = DepartmentApplications.updateStatus(applicationId, {
+    status,
+    review_notes: reviewNotes,
+    reviewed_by: req.user.id,
+  });
+
+  audit(req.user.id, 'department_application_reviewed', {
+    application_id: applicationId,
+    target_user_id: application.user_id,
+    department_id: application.department_id,
+    status,
+  });
+
+  res.json(updated);
 });
 
 // --- Sub Departments ---

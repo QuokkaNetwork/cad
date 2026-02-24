@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import Modal from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
 
@@ -55,6 +56,39 @@ function countDepartmentKinds(departments) {
     },
     { dispatch: 0, police: 0, ems: 0, fire: 0, other: 0 }
   );
+}
+
+function formatDateTime(value) {
+  if (!value) return 'Unknown';
+  const parsed = new Date(String(value).replace(' ', 'T') + (String(value).includes('T') ? '' : 'Z'));
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString();
+}
+
+function getApplicationStatusMeta(status) {
+  const key = String(status || '').trim().toLowerCase();
+  if (key === 'approved') {
+    return {
+      label: 'Approved',
+      className: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    };
+  }
+  if (key === 'rejected') {
+    return {
+      label: 'Rejected',
+      className: 'bg-red-500/15 text-red-300 border-red-500/30',
+    };
+  }
+  if (key === 'withdrawn') {
+    return {
+      label: 'Withdrawn',
+      className: 'bg-gray-500/15 text-gray-300 border-gray-500/30',
+    };
+  }
+  return {
+    label: 'Pending Review',
+    className: 'bg-amber-500/15 text-amber-200 border-amber-500/25',
+  };
 }
 
 function DepartmentCard({ dept, onSelect, index }) {
@@ -386,6 +420,307 @@ function SetupPrompt({ user }) {
   );
 }
 
+function DepartmentApplicationsPortal({ user }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [portalData, setPortalData] = useState({ departments: [], applications: [] });
+  const [showApplyModal, setShowApplyModal] = useState(false);
+  const [selectedDepartment, setSelectedDepartment] = useState(null);
+  const [applicationMessage, setApplicationMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function loadPortalData() {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.get('/api/department-applications');
+      setPortalData({
+        departments: Array.isArray(data?.departments) ? data.departments : [],
+        applications: Array.isArray(data?.applications) ? data.applications : [],
+      });
+    } catch (err) {
+      setError(err.message || 'Failed to load department applications');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPortalData();
+  }, []);
+
+  const latestApplicationByDepartment = useMemo(() => {
+    const map = new Map();
+    for (const application of portalData.applications) {
+      const departmentId = Number(application?.department_id);
+      if (!departmentId || map.has(departmentId)) continue;
+      map.set(departmentId, application);
+    }
+    return map;
+  }, [portalData.applications]);
+
+  const openDepartments = portalData.departments.filter((dept) => !!dept.applications_open && !dept.is_assigned);
+  const closedDepartments = portalData.departments.filter((dept) => !dept.applications_open && !dept.is_assigned);
+  const pendingCount = portalData.applications.filter((app) => String(app?.status || '').toLowerCase() === 'pending').length;
+
+  function beginApply(department) {
+    setSelectedDepartment(department);
+    setApplicationMessage('');
+    setShowApplyModal(true);
+  }
+
+  async function submitApplication(e) {
+    e.preventDefault();
+    if (!selectedDepartment) return;
+    try {
+      setSubmitting(true);
+      await api.post('/api/department-applications', {
+        department_id: selectedDepartment.id,
+        message: applicationMessage,
+      });
+      setShowApplyModal(false);
+      setSelectedDepartment(null);
+      setApplicationMessage('');
+      await loadPortalData();
+    } catch (err) {
+      alert('Failed to submit application: ' + err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="relative h-full overflow-hidden rounded-3xl border border-cad-border bg-cad-card/90 shadow-[0_18px_50px_rgba(0,0,0,0.28)]">
+      <div className="absolute inset-0 cad-ambient-grid opacity-25" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_15%,rgba(0,82,194,0.18),transparent_35%),radial-gradient(circle_at_88%_10%,rgba(16,185,129,0.12),transparent_40%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0))]" />
+
+      <div className="relative z-10 h-full p-4 sm:p-6 flex flex-col gap-4 overflow-hidden">
+        <section className="rounded-2xl border border-cad-border bg-cad-surface/55 p-5 sm:p-6 flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-2 h-2 rounded-full bg-sky-400" style={{ boxShadow: '0 0 10px rgba(56,189,248,0.7)' }} />
+                <span className="text-[11px] uppercase tracking-[0.18em] text-cad-muted">Department Applications</span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-cad-ink">
+                No Department Access Yet
+              </h1>
+              <p className="text-sm sm:text-base text-cad-muted mt-2 leading-6 max-w-3xl">
+                Your Discord account is linked as {user?.discord_name || 'Linked User'}. Apply to a department below. CAD access is still granted by Discord role mapping after an application is reviewed.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:min-w-[240px]">
+              <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-widest text-cad-muted">Open</p>
+                <p className="text-sm font-semibold text-cad-ink">{openDepartments.length}</p>
+              </div>
+              <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-widest text-cad-muted">Closed</p>
+                <p className="text-sm font-semibold text-cad-ink">{closedDepartments.length}</p>
+              </div>
+              <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-widest text-cad-muted">Pending</p>
+                <p className="text-sm font-semibold text-cad-ink">{pendingCount}</p>
+              </div>
+              <div className="rounded-xl border border-cad-border bg-cad-card/70 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-widest text-cad-muted">Discord</p>
+                <p className="text-xs font-semibold text-emerald-300">Linked</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-cad-border bg-cad-card/65 p-3.5">
+            <p className="text-sm font-medium text-cad-ink">How access works</p>
+            <p className="text-xs text-cad-muted mt-1 leading-5">
+              Application approval records your request status. A CAD admin still needs to assign the matching Discord role before the department appears in your Departments list.
+            </p>
+          </div>
+        </section>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4 min-h-0 flex-1">
+          <section className="rounded-2xl border border-cad-border bg-cad-surface/45 p-4 sm:p-5 overflow-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-cad-ink">Available Departments</h2>
+              <button
+                type="button"
+                onClick={loadPortalData}
+                disabled={loading}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-cad-border bg-cad-card text-cad-muted hover:text-cad-ink transition-colors disabled:opacity-50"
+              >
+                {loading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+
+            {error ? (
+              <div className="rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-200">
+                {error}
+              </div>
+            ) : null}
+
+            {loading && portalData.departments.length === 0 ? (
+              <div className="text-sm text-cad-muted">Loading departments...</div>
+            ) : null}
+
+            <div className="space-y-3">
+              {portalData.departments.filter((dept) => !dept.is_assigned).map((dept) => {
+                const latestApplication = latestApplicationByDepartment.get(Number(dept.id));
+                const latestStatus = String(latestApplication?.status || '').toLowerCase();
+                const statusMeta = latestApplication ? getApplicationStatusMeta(latestStatus) : null;
+                const canApply = !!dept.applications_open && latestStatus !== 'pending' && latestStatus !== 'approved';
+
+                return (
+                  <div key={dept.id} className="rounded-xl border border-cad-border bg-cad-card/60 p-4">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-cad-ink truncate">{dept.name}</span>
+                          <span className="text-xs px-2 py-0.5 rounded border border-cad-border bg-cad-surface text-cad-muted">
+                            {dept.short_name || getDepartmentKindLabel(dept)}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded border ${dept.applications_open ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-gray-500/30 bg-gray-500/10 text-gray-300'}`}>
+                            {dept.applications_open ? 'Applications Open' : 'Applications Closed'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-cad-muted mt-1 leading-5">
+                          {String(dept.slogan || '').trim() || `${getDepartmentKindLabel(dept)} department access application`}
+                        </p>
+                        {latestApplication ? (
+                          <div className="mt-2 text-xs text-cad-muted space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`px-2 py-0.5 rounded border ${statusMeta.className}`}>{statusMeta.label}</span>
+                              <span>Submitted {formatDateTime(latestApplication.created_at)}</span>
+                              {latestApplication.reviewed_at ? <span>Reviewed {formatDateTime(latestApplication.reviewed_at)}</span> : null}
+                            </div>
+                            {String(latestApplication.review_notes || '').trim() ? (
+                              <p className="text-cad-muted">Review notes: {latestApplication.review_notes}</p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="flex items-center gap-2 sm:flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => beginApply(dept)}
+                          disabled={!canApply}
+                          className="px-3.5 py-2 rounded-lg text-xs font-medium bg-cad-accent hover:bg-cad-accent-light text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {latestStatus === 'pending'
+                            ? 'Pending Review'
+                            : latestStatus === 'approved'
+                              ? 'Approved (Awaiting Role)'
+                              : dept.applications_open
+                                ? 'Apply'
+                                : 'Closed'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {!loading && portalData.departments.filter((dept) => !dept.is_assigned).length === 0 ? (
+              <p className="text-sm text-cad-muted">No departments are available to apply for right now.</p>
+            ) : null}
+          </section>
+
+          <section className="rounded-2xl border border-cad-border bg-cad-surface/45 p-4 sm:p-5 overflow-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-cad-ink">Your Applications</h2>
+              <span className="text-[10px] uppercase tracking-widest text-cad-muted">{portalData.applications.length} total</span>
+            </div>
+
+            {portalData.applications.length === 0 ? (
+              <div className="rounded-xl border border-cad-border bg-cad-card/60 p-4">
+                <p className="text-sm text-cad-muted">You have not submitted any department applications yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {portalData.applications.map((application) => {
+                  const statusMeta = getApplicationStatusMeta(application.status);
+                  return (
+                    <div key={application.id} className="rounded-xl border border-cad-border bg-cad-card/60 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-cad-ink truncate">
+                            {application.department_name || 'Department'}
+                          </p>
+                          <p className="text-xs text-cad-muted mt-1">
+                            Submitted {formatDateTime(application.created_at)}
+                          </p>
+                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded border ${statusMeta.className}`}>
+                          {statusMeta.label}
+                        </span>
+                      </div>
+                      {String(application.message || '').trim() ? (
+                        <p className="text-xs text-cad-muted mt-2 whitespace-pre-wrap leading-5">
+                          {application.message}
+                        </p>
+                      ) : null}
+                      {String(application.review_notes || '').trim() ? (
+                        <div className="mt-2 rounded-lg border border-cad-border bg-cad-surface/50 p-2.5">
+                          <p className="text-[10px] uppercase tracking-widest text-cad-muted">Review Notes</p>
+                          <p className="text-xs text-cad-muted mt-1 whitespace-pre-wrap leading-5">{application.review_notes}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+
+      <Modal
+        open={showApplyModal}
+        onClose={() => !submitting && setShowApplyModal(false)}
+        title={selectedDepartment ? `Apply: ${selectedDepartment.name}` : 'Apply to Department'}
+        closeOnBackdrop={!submitting}
+        closeOnEscape={!submitting}
+      >
+        <form onSubmit={submitApplication} className="space-y-3">
+          <p className="text-sm text-cad-muted">
+            Tell the admin team why you want to join this department and any relevant experience.
+          </p>
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Application Message *</label>
+            <textarea
+              required
+              rows={6}
+              maxLength={4000}
+              value={applicationMessage}
+              onChange={(e) => setApplicationMessage(e.target.value)}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-y"
+              placeholder="Example: I am applying for Highway Patrol. I am active evenings and have prior patrol/dispatch experience..."
+            />
+            <p className="text-xs text-cad-muted mt-1">{applicationMessage.length}/4000</p>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={submitting || !applicationMessage.trim()}
+              className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {submitting ? 'Submitting...' : 'Submit Application'}
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => setShowApplyModal(false)}
+              className="px-4 py-2 bg-cad-card hover:bg-cad-border text-cad-muted rounded text-sm transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  );
+}
+
 function SetupBanner({ user }) {
   const [linking, setLinking] = useState(false);
   const hasDiscord = !!user?.discord_id;
@@ -447,12 +782,24 @@ export default function Departments() {
   }
 
   const needsSetup = !user?.discord_id || departmentList.length === 0;
+  const needsDiscordLink = !user?.discord_id;
+  const hasNoDepartmentAccess = departmentList.length === 0;
 
-  if (needsSetup && !isAdmin) {
+  if (!isAdmin && needsDiscordLink) {
     return (
       <div className="w-full h-[calc(100vh-56px)] flex flex-col overflow-hidden">
         <div className="flex-1 min-h-0 max-w-2xl w-full mx-auto flex flex-col">
           <SetupPrompt user={user} />
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAdmin && hasNoDepartmentAccess) {
+    return (
+      <div className="w-full h-[calc(100vh-56px)] flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 max-w-7xl w-full mx-auto flex flex-col p-2 sm:p-4">
+          <DepartmentApplicationsPortal user={user} />
         </div>
       </div>
     );

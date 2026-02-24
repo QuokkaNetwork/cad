@@ -156,6 +156,7 @@ app.use('/api/traffic-stops', require('./routes/trafficStops'));
 app.use('/api/shift-notes', require('./routes/shiftNotes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/cms', require('./routes/cms'));
+app.use('/api/department-applications', require('./routes/departmentApplications'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/integration/fivem', require('./routes/fivem'));
 

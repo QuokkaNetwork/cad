@@ -222,11 +222,8 @@ export default function Home() {
     return raw ? raw.split(' ')[0] : 'Operator';
   }, [user?.steam_name]);
 
-  const departmentsLink = rulesOutdated ? '/rules' : '/departments';
-  const departmentsLabel = rulesOutdated ? 'Agree To Rules First' : 'Open Departments';
-
   return (
-    <div className="max-w-7xl mx-auto space-y-5 pb-6">
+    <div className="w-full space-y-5 pb-6">
       {showRulesPopup ? (
         <RuleUpdatePopup
           rules={{ ...rulesContent, version: effectiveRulesVersion || rulesContent?.version }}
@@ -246,17 +243,14 @@ export default function Home() {
                 {String(rulesContent?.changes_summary || '').trim() || 'Open the Rules page to review the latest changes.'}
               </p>
             </div>
-            <Link
-              to="/rules"
-              className="px-3 py-1.5 rounded-lg bg-cad-accent hover:bg-cad-accent-light text-white text-sm font-medium transition-colors"
-            >
-              Open Rules
+            <Link to="/rules" className="text-sm text-cad-ink underline underline-offset-2 hover:text-white transition-colors">
+              Review on Rules page
             </Link>
           </div>
         </section>
       ) : null}
 
-      <section className="relative rounded-2xl border border-cad-border overflow-hidden min-h-[520px]">
+      <section className="relative overflow-hidden min-h-[520px]">
         <BackgroundCarousel images={homeContent.carousel_images} />
         <div className="absolute inset-0 cad-ambient-grid opacity-20 pointer-events-none" />
 
@@ -282,66 +276,35 @@ export default function Home() {
               ) : null}
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-black/35 backdrop-blur-md p-4 sm:p-5">
-              <div className="flex flex-wrap items-center gap-2">
-                <Link
-                  to="/rules"
-                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    rulesOutdated
-                      ? 'bg-red-500/15 text-red-100 border border-red-500/25 hover:bg-red-500/20'
-                      : 'bg-cad-surface/70 text-cad-ink border border-white/10 hover:bg-cad-surface'
-                  }`}
-                >
-                  {rulesOutdated ? `Review Rules (v${effectiveRulesVersion})` : 'Rules'}
-                </Link>
-                <Link
-                  to={departmentsLink}
-                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    rulesOutdated
-                      ? 'bg-cad-surface/60 text-cad-muted border border-white/10 hover:text-cad-ink'
-                      : 'bg-cad-accent hover:bg-cad-accent-light text-white'
-                  }`}
-                >
-                  {departmentsLabel}
-                </Link>
-                <Link
-                  to="/settings"
-                  className="px-3.5 py-2 rounded-lg text-sm font-medium border border-white/10 bg-black/20 text-cad-muted hover:text-cad-ink transition-colors"
-                >
-                  Profile Settings
-                </Link>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="rounded-xl border border-white/10 bg-black/25 backdrop-blur-sm px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wider text-cad-muted">Rules Status</p>
+                <p className={`text-sm font-semibold mt-1 ${rulesOutdated ? 'text-red-200' : 'text-emerald-200'}`}>
+                  {rulesOutdated ? 'Agreement Required' : 'Up To Date'}
+                </p>
+                <p className="text-[11px] text-cad-muted mt-1">
+                  {effectiveRulesVersion ? `Current v${effectiveRulesVersion}` : 'No version set'}
+                </p>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Rules Status</p>
-                  <p className={`text-sm font-semibold mt-1 ${rulesOutdated ? 'text-red-200' : 'text-emerald-200'}`}>
-                    {rulesOutdated ? 'Agreement Required' : 'Up To Date'}
-                  </p>
-                  <p className="text-[11px] text-cad-muted mt-1">
-                    {effectiveRulesVersion ? `Current v${effectiveRulesVersion}` : 'No version set'}
-                  </p>
-                </div>
+              <div className="rounded-xl border border-white/10 bg-black/25 backdrop-blur-sm px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wider text-cad-muted">Discord</p>
+                <p className="text-sm font-semibold mt-1 text-cad-ink">
+                  {user?.discord_name ? user.discord_name : 'Not linked'}
+                </p>
+                <p className="text-[11px] text-cad-muted mt-1">
+                  {user?.discord_id ? 'Linked for access sync' : 'Link in settings to sync access'}
+                </p>
+              </div>
 
-                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Discord</p>
-                  <p className="text-sm font-semibold mt-1 text-cad-ink">
-                    {user?.discord_name ? user.discord_name : 'Not linked'}
-                  </p>
-                  <p className="text-[11px] text-cad-muted mt-1">
-                    {user?.discord_id ? 'Linked for access sync' : 'Link in Profile Settings'}
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wider text-cad-muted">Last Agreement</p>
-                  <p className="text-sm font-semibold mt-1 text-cad-ink">
-                    {user?.rules_agreed_at ? formatDateTime(user.rules_agreed_at) : 'Not recorded'}
-                  </p>
-                  <p className="text-[11px] text-cad-muted mt-1">
-                    {agreedRulesVersion ? `Agreed v${agreedRulesVersion}` : 'No rules agreement yet'}
-                  </p>
-                </div>
+              <div className="rounded-xl border border-white/10 bg-black/25 backdrop-blur-sm px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wider text-cad-muted">Last Agreement</p>
+                <p className="text-sm font-semibold mt-1 text-cad-ink">
+                  {user?.rules_agreed_at ? formatDateTime(user.rules_agreed_at) : 'Not recorded'}
+                </p>
+                <p className="text-[11px] text-cad-muted mt-1">
+                  {agreedRulesVersion ? `Agreed v${agreedRulesVersion}` : 'No rules agreement yet'}
+                </p>
               </div>
             </div>
           </div>

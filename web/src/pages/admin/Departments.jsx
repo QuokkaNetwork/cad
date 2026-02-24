@@ -10,6 +10,13 @@ import {
   normalizeDepartmentLayoutType,
 } from '../../utils/departmentLayout';
 
+function formatDateTime(value) {
+  if (!value) return 'Unknown';
+  const parsed = new Date(String(value).replace(' ', 'T') + (String(value).includes('T') ? '' : 'Z'));
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString();
+}
+
 export default function AdminDepartments() {
   const { key: locationKey } = useLocation();
   const [departments, setDepartments] = useState([]);
@@ -18,12 +25,14 @@ export default function AdminDepartments() {
   const [showEdit, setShowEdit] = useState(false);
   const [showNewSub, setShowNewSub] = useState(false);
   const [showEditSub, setShowEditSub] = useState(false);
+  const [departmentApplications, setDepartmentApplications] = useState([]);
   const [form, setForm] = useState({
     name: '',
     short_name: '',
     color: '#0052C2',
     icon: '',
     slogan: '',
+    applications_open: 0,
     layout_type: DEPARTMENT_LAYOUT.LAW_ENFORCEMENT,
     fivem_job_name: '',
     fivem_job_grade: 0,
@@ -38,6 +47,7 @@ export default function AdminDepartments() {
     is_active: 1,
     is_dispatch: 0,
     dispatch_visible: 0,
+    applications_open: 0,
     layout_type: DEPARTMENT_LAYOUT.LAW_ENFORCEMENT,
     fivem_job_name: '',
     fivem_job_grade: 0,
@@ -68,6 +78,7 @@ export default function AdminDepartments() {
   const [movingSubDepartmentId, setMovingSubDepartmentId] = useState(null);
   const [deletingDepartmentId, setDeletingDepartmentId] = useState(null);
   const [deletingSubDepartmentId, setDeletingSubDepartmentId] = useState(null);
+  const [reviewingApplicationId, setReviewingApplicationId] = useState(null);
 
   const orderedDepartments = useMemo(
     () => [...departments].sort((a, b) => {
@@ -105,14 +116,26 @@ export default function AdminDepartments() {
     return map;
   }, [orderedSubDepartments]);
 
+  const pendingApplications = useMemo(
+    () => departmentApplications.filter((app) => String(app?.status || '').toLowerCase() === 'pending'),
+    [departmentApplications]
+  );
+
+  const recentReviewedApplications = useMemo(
+    () => departmentApplications.filter((app) => String(app?.status || '').toLowerCase() !== 'pending').slice(0, 12),
+    [departmentApplications]
+  );
+
   async function fetchDepts() {
     try {
-      const [depts, subs] = await Promise.all([
+      const [depts, subs, applications] = await Promise.all([
         api.get('/api/admin/departments'),
         api.get('/api/admin/sub-departments'),
+        api.get('/api/admin/department-applications?limit=200'),
       ]);
       setDepartments(depts);
       setSubDepartments(subs);
+      setDepartmentApplications(Array.isArray(applications) ? applications : []);
     } catch (err) {
       console.error('Failed to load departments:', err);
     }
@@ -139,6 +162,7 @@ export default function AdminDepartments() {
         ...form,
         icon,
         slogan: String(form.slogan || '').trim(),
+        applications_open: form.applications_open ? 1 : 0,
         layout_type: normalizeDepartmentLayoutType(form.layout_type),
         fivem_job_name: String(form.fivem_job_name || '').trim(),
         fivem_job_grade: Number(form.fivem_job_grade || 0),
@@ -150,6 +174,7 @@ export default function AdminDepartments() {
         color: '#0052C2',
         icon: '',
         slogan: '',
+        applications_open: 0,
         layout_type: DEPARTMENT_LAYOUT.LAW_ENFORCEMENT,
         fivem_job_name: '',
         fivem_job_grade: 0,
@@ -221,6 +246,7 @@ export default function AdminDepartments() {
       is_active: dept.is_active ? 1 : 0,
       is_dispatch: dept.is_dispatch ? 1 : 0,
       dispatch_visible: dept.dispatch_visible ? 1 : 0,
+      applications_open: dept.applications_open ? 1 : 0,
       layout_type: normalizeDepartmentLayoutType(dept.layout_type),
       fivem_job_name: dept.fivem_job_name || '',
       fivem_job_grade: Number.isFinite(Number(dept.fivem_job_grade)) ? Number(dept.fivem_job_grade) : 0,
@@ -246,6 +272,7 @@ export default function AdminDepartments() {
         is_active: editForm.is_active ? 1 : 0,
         is_dispatch: editForm.is_dispatch ? 1 : 0,
         dispatch_visible: editForm.dispatch_visible ? 1 : 0,
+        applications_open: editForm.applications_open ? 1 : 0,
         layout_type: normalizeDepartmentLayoutType(editForm.layout_type),
         fivem_job_name: String(editForm.fivem_job_name || '').trim(),
         fivem_job_grade: Number(editForm.fivem_job_grade || 0),
@@ -379,6 +406,24 @@ export default function AdminDepartments() {
     }
   }
 
+  async function reviewDepartmentApplication(application, status) {
+    if (reviewingApplicationId) return;
+    const actionLabel = status === 'approved' ? 'approve' : status === 'rejected' ? 'reject' : 'update';
+    const reviewNotes = window.prompt(`Optional notes for ${actionLabel}ing this application:`, '') ?? '';
+    setReviewingApplicationId(application.id);
+    try {
+      await api.patch(`/api/admin/department-applications/${application.id}`, {
+        status,
+        review_notes: reviewNotes,
+      });
+      fetchDepts();
+    } catch (err) {
+      alert(`Failed to ${actionLabel} application: ` + err.message);
+    } finally {
+      setReviewingApplicationId(null);
+    }
+  }
+
   return (
     <div className="max-w-7xl space-y-6">
       <AdminPageHeader
@@ -471,6 +516,9 @@ export default function AdminDepartments() {
                   Visible to Dispatch
                 </span>
               )}
+              <span className={`text-xs px-2 py-0.5 rounded border ${dept.applications_open ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-gray-500/20 text-gray-300 border-gray-500/30'}`}>
+                {dept.applications_open ? 'Applications Open' : 'Applications Closed'}
+              </span>
               <span className={`text-xs px-2 py-0.5 rounded ${dept.is_active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-500/20 text-gray-400'}`}>
                 {dept.is_active ? 'Active' : 'Inactive'}
               </span>
@@ -496,6 +544,111 @@ export default function AdminDepartments() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="mt-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Department Applications</h3>
+          <span className="text-xs text-cad-muted">{pendingApplications.length} pending / {departmentApplications.length} total</span>
+        </div>
+
+        {pendingApplications.length === 0 ? (
+          <div className="bg-cad-card border border-cad-border rounded-xl p-4">
+            <p className="text-sm text-cad-muted">No pending department applications.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {pendingApplications.map((application) => (
+              <div key={application.id} className="bg-cad-card border border-cad-border rounded-xl p-4">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-cad-ink">{application.applicant_name || 'Unknown User'}</span>
+                      {application.applicant_discord_id ? (
+                        <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                          Discord Linked
+                        </span>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-200 border border-amber-500/20">
+                          No Discord Link
+                        </span>
+                      )}
+                      <span className="text-xs px-2 py-0.5 rounded border border-cad-border bg-cad-surface text-cad-muted">
+                        {application.department_name || 'Department'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-cad-muted mt-1">
+                      Submitted {formatDateTime(application.created_at)}
+                    </p>
+                    {String(application.message || '').trim() ? (
+                      <p className="text-sm text-cad-muted mt-3 whitespace-pre-wrap leading-6">
+                        {application.message}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-cad-muted mt-3 italic">No application message provided.</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 lg:flex-col lg:items-stretch lg:min-w-[220px]">
+                    <button
+                      onClick={() => reviewDepartmentApplication(application, 'approved')}
+                      disabled={!!reviewingApplicationId}
+                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors disabled:opacity-50"
+                    >
+                      {reviewingApplicationId === application.id ? 'Saving...' : 'Approve'}
+                    </button>
+                    <button
+                      onClick={() => reviewDepartmentApplication(application, 'rejected')}
+                      disabled={!!reviewingApplicationId}
+                      className="px-3 py-2 bg-red-600/90 hover:bg-red-500 text-white rounded text-xs font-medium transition-colors disabled:opacity-50"
+                    >
+                      {reviewingApplicationId === application.id ? 'Saving...' : 'Reject'}
+                    </button>
+                    <p className="text-[11px] text-cad-muted leading-4 lg:mt-1">
+                      Approval records the review status. Department access still appears after the user receives the mapped Discord role.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {recentReviewedApplications.length > 0 && (
+          <div className="bg-cad-card border border-cad-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-medium text-cad-ink">Recently Reviewed</p>
+              <span className="text-xs text-cad-muted">{recentReviewedApplications.length} shown</span>
+            </div>
+            <div className="space-y-2">
+              {recentReviewedApplications.map((application) => (
+                <div key={application.id} className="rounded-lg border border-cad-border bg-cad-surface/40 px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-cad-ink">{application.applicant_name || 'Unknown User'}</span>
+                    <span className="text-xs text-cad-muted">{'->'} {application.department_name || 'Department'}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded border ${
+                      String(application.status || '').toLowerCase() === 'approved'
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
+                        : String(application.status || '').toLowerCase() === 'rejected'
+                          ? 'bg-red-500/15 text-red-300 border-red-500/25'
+                          : 'bg-gray-500/15 text-gray-300 border-gray-500/25'
+                    }`}>
+                      {String(application.status || 'unknown').replace(/^./, (c) => c.toUpperCase())}
+                    </span>
+                    <span className="text-xs text-cad-muted">
+                      {formatDateTime(application.reviewed_at || application.updated_at)}
+                    </span>
+                    {application.reviewer_name ? (
+                      <span className="text-xs text-cad-muted">by {application.reviewer_name}</span>
+                    ) : null}
+                  </div>
+                  {String(application.review_notes || '').trim() ? (
+                    <p className="text-xs text-cad-muted mt-1.5 whitespace-pre-wrap leading-5">{application.review_notes}</p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="mt-6 space-y-3">
@@ -619,6 +772,15 @@ export default function AdminDepartments() {
                 className="flex-1 bg-cad-card border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent" />
             </div>
           </div>
+          <label className="flex items-center gap-2 text-sm text-cad-muted">
+            <input
+              type="checkbox"
+              checked={!!form.applications_open}
+              onChange={e => setForm(f => ({ ...f, applications_open: e.target.checked ? 1 : 0 }))}
+              className="rounded"
+            />
+            Applications open for this department
+          </label>
           <div className="bg-cad-card border border-cad-border rounded-lg p-3 space-y-2">
             <p className="text-xs font-semibold text-cad-ink">FiveM Job Mapping</p>
             <div>
@@ -751,6 +913,15 @@ export default function AdminDepartments() {
               className="rounded"
             />
             Department is active
+          </label>
+          <label className="flex items-center gap-2 text-sm text-cad-muted">
+            <input
+              type="checkbox"
+              checked={!!editForm.applications_open}
+              onChange={e => setEditForm(f => ({ ...f, applications_open: e.target.checked ? 1 : 0 }))}
+              className="rounded"
+            />
+            Applications open for this department
           </label>
           <div className="bg-cad-card border border-cad-border rounded-lg p-3 space-y-2">
             <p className="text-xs font-semibold text-cad-ink">Dispatch Settings</p>
