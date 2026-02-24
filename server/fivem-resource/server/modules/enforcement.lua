@@ -2603,11 +2603,11 @@ local function addInventoryItemForJailRestore(sourceId, item, playerObject)
   end
 
   if GetResourceState('ox_inventory') == 'started' then
-    local ok, result = pcall(function()
+    local ok, result, extra = pcall(function()
       return exports.ox_inventory:AddItem(sourceId, name, amount, metadata, slot and math.floor(slot) or nil)
     end)
     if ok and result ~= false then return true, '' end
-    noteFailure('ox_inventory:AddItem', result)
+    noteFailure('ox_inventory:AddItem', ok and (extra or result) or result)
   end
 
   local exportAddAttempts = {
