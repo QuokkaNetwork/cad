@@ -1,17 +1,61 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 
+// GTA V/FiveM pause map uses a 2x3 tile grid. Community mapping references
+// and Cfx minimap tile docs commonly treat each tile as 4500 world units.
+// This gives a 9000 x 13500 world-space extent that matches the 2:3 atlas ratio.
+// We anchor it so Y=0 sits on the lower third boundary, which matches typical
+// GTA world coordinate distribution (Los Santos in the southern portion, Blaine north).
+const GTA_MAP_TILE_UNITS = 4500;
 const WORLD_BOUNDS = {
-  minX: -4200,
-  maxX: 4300,
-  minY: -4200,
-  maxY: 8600,
+  minX: -GTA_MAP_TILE_UNITS,
+  maxX: GTA_MAP_TILE_UNITS,
+  minY: -GTA_MAP_TILE_UNITS,
+  maxY: GTA_MAP_TILE_UNITS * 2,
 };
 const MAP_CANVAS_WIDTH = 1000;
 const MAP_CANVAS_HEIGHT = 1500;
 const MAP_IMAGE_SRC = '/maps/FullMap.png';
+const MAP_MIN_ZOOM = 1;
+const MAP_MAX_ZOOM = 6;
+const MAP_BUTTON_ZOOM_STEP = 0.25;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function round2(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function clampPanToViewport(viewport, scale, x, y) {
+  const width = Number(viewport?.width || 0);
+  const height = Number(viewport?.height || 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { x, y };
+  }
+
+  const scaledWidth = width * scale;
+  const scaledHeight = height * scale;
+  let nextX = Number(x) || 0;
+  let nextY = Number(y) || 0;
+
+  if (scaledWidth <= width) {
+    nextX = (width - scaledWidth) / 2;
+  } else {
+    nextX = clamp(nextX, width - scaledWidth, 0);
+  }
+
+  if (scaledHeight <= height) {
+    nextY = (height - scaledHeight) / 2;
+  } else {
+    nextY = clamp(nextY, height - scaledHeight, 0);
+  }
+
+  return { x: round2(nextX), y: round2(nextY) };
+}
 
 function parseNum(value) {
   const n = Number(value);
@@ -25,6 +69,12 @@ function toMapPoint(x, y, width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGHT) 
     x: Math.max(0, Math.min(width, px)),
     y: Math.max(0, Math.min(height, py)),
   };
+}
+
+function toWorldPoint(mapX, mapY, width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGHT) {
+  const x = WORLD_BOUNDS.minX + ((Number(mapX) / width) * (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX));
+  const y = WORLD_BOUNDS.minY + (((height - Number(mapY)) / height) * (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY));
+  return { x, y };
 }
 
 function headingLineFromMapPoint(point, heading, length = 18) {
@@ -131,7 +181,13 @@ export default function DispatchMap() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastLoadedAt, setLastLoadedAt] = useState('');
-  const [mapZoom, setMapZoom] = useState(1);
+  const mapViewportRef = useRef(null);
+  const dragStateRef = useRef(null);
+  const suppressMarkerClickUntilRef = useRef(0);
+  const [mapViewportSize, setMapViewportSize] = useState({ width: 0, height: 0 });
+  const [mapView, setMapView] = useState({ scale: 1, x: 0, y: 0 });
+  const [isMapDragging, setIsMapDragging] = useState(false);
+  const [cursorWorld, setCursorWorld] = useState(null);
   const [layerVisibility, setLayerVisibility] = useState({
     basemap: true,
     grid: true,
@@ -140,6 +196,7 @@ export default function DispatchMap() {
     recommendations: true,
     labels: true,
   });
+  const mapZoom = mapView.scale;
 
   const loadMapData = useCallback(async () => {
     if (!departmentId) return;
@@ -366,20 +423,212 @@ export default function DispatchMap() {
     }
   }, [filteredUnits, selectedUnitId]);
 
+  useEffect(() => {
+    const element = mapViewportRef.current;
+    if (!element) return undefined;
+
+    const updateViewportSize = () => {
+      const nextSize = {
+        width: element.clientWidth || 0,
+        height: element.clientHeight || 0,
+      };
+      setMapViewportSize((prev) => (
+        prev.width === nextSize.width && prev.height === nextSize.height ? prev : nextSize
+      ));
+      setMapView((prev) => {
+        const clamped = clampPanToViewport(nextSize, prev.scale, prev.x, prev.y);
+        if (clamped.x === prev.x && clamped.y === prev.y) return prev;
+        return { ...prev, ...clamped };
+      });
+    };
+
+    updateViewportSize();
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => updateViewportSize());
+      resizeObserver.observe(element);
+    } else {
+      window.addEventListener('resize', updateViewportSize);
+    }
+
+    return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      } else {
+        window.removeEventListener('resize', updateViewportSize);
+      }
+    };
+  }, []);
+
   const toggleLayer = (key) => {
     setLayerVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  function getViewportRelativePoint(event) {
+    const element = mapViewportRef.current;
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  function updateMapView(nextScale, focusPoint = null) {
+    setMapView((prev) => {
+      const scale = clamp(round2(nextScale), MAP_MIN_ZOOM, MAP_MAX_ZOOM);
+      if (!Number.isFinite(scale)) return prev;
+      const viewport = mapViewportSize;
+      let nextX = prev.x;
+      let nextY = prev.y;
+
+      if (scale !== prev.scale && viewport.width > 0 && viewport.height > 0) {
+        const focusX = Number(focusPoint?.x);
+        const focusY = Number(focusPoint?.y);
+        const px = Number.isFinite(focusX) ? focusX : (viewport.width / 2);
+        const py = Number.isFinite(focusY) ? focusY : (viewport.height / 2);
+        const mapX = (px - prev.x) / prev.scale;
+        const mapY = (py - prev.y) / prev.scale;
+        nextX = px - (mapX * scale);
+        nextY = py - (mapY * scale);
+      }
+
+      const clamped = clampPanToViewport(viewport, scale, nextX, nextY);
+      if (scale === prev.scale && clamped.x === prev.x && clamped.y === prev.y) return prev;
+      return {
+        scale,
+        x: clamped.x,
+        y: clamped.y,
+      };
+    });
+  }
+
   function zoomIn() {
-    setMapZoom((prev) => Math.min(2.5, Math.round((prev + 0.25) * 100) / 100));
+    updateMapView(mapZoom + MAP_BUTTON_ZOOM_STEP);
   }
 
   function zoomOut() {
-    setMapZoom((prev) => Math.max(1, Math.round((prev - 0.25) * 100) / 100));
+    updateMapView(mapZoom - MAP_BUTTON_ZOOM_STEP);
   }
 
   function resetMapView() {
-    setMapZoom(1);
+    updateMapView(MAP_MIN_ZOOM);
+  }
+
+  function centerMapOnMarker(marker, targetScale = null) {
+    if (!marker || !mapViewportSize.width || !mapViewportSize.height) return;
+    const point = marker.__map || marker;
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    setMapView((prev) => {
+      const scale = clamp(round2(targetScale || prev.scale), MAP_MIN_ZOOM, MAP_MAX_ZOOM);
+      const px = (point.x / MAP_CANVAS_WIDTH) * mapViewportSize.width;
+      const py = (point.y / MAP_CANVAS_HEIGHT) * mapViewportSize.height;
+      const nextX = (mapViewportSize.width / 2) - (px * scale);
+      const nextY = (mapViewportSize.height / 2) - (py * scale);
+      const clamped = clampPanToViewport(mapViewportSize, scale, nextX, nextY);
+      if (scale === prev.scale && clamped.x === prev.x && clamped.y === prev.y) return prev;
+      return { scale, x: clamped.x, y: clamped.y };
+    });
+  }
+
+  function handleMapWheel(event) {
+    event.preventDefault();
+    const point = getViewportRelativePoint(event);
+    if (!point) return;
+    const wheelDelta = Math.sign(event.deltaY);
+    const directionFactor = wheelDelta === 0 ? 0 : -wheelDelta;
+    const smoothFactor = 1 + (Math.min(1, Math.abs(event.deltaY) / 240) * 0.18 * directionFactor);
+    const next = clamp(mapZoom * (smoothFactor || 1), MAP_MIN_ZOOM, MAP_MAX_ZOOM);
+    updateMapView(next, point);
+  }
+
+  function handleMapPointerDown(event) {
+    if (event.button !== 0) return;
+    const point = getViewportRelativePoint(event);
+    if (!point) return;
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: mapView.x,
+      startY: mapView.y,
+      moved: false,
+    };
+    setIsMapDragging(true);
+    if (typeof event.currentTarget.setPointerCapture === 'function') {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+  }
+
+  function handleMapPointerMove(event) {
+    const point = getViewportRelativePoint(event);
+    if (point && mapViewportSize.width > 0 && mapViewportSize.height > 0) {
+      const unscaledX = (point.x - mapView.x) / mapView.scale;
+      const unscaledY = (point.y - mapView.y) / mapView.scale;
+      if (
+        Number.isFinite(unscaledX)
+        && Number.isFinite(unscaledY)
+        && unscaledX >= 0
+        && unscaledX <= mapViewportSize.width
+        && unscaledY >= 0
+        && unscaledY <= mapViewportSize.height
+      ) {
+        const mapPoint = {
+          x: (unscaledX / mapViewportSize.width) * MAP_CANVAS_WIDTH,
+          y: (unscaledY / mapViewportSize.height) * MAP_CANVAS_HEIGHT,
+        };
+        setCursorWorld(toWorldPoint(mapPoint.x, mapPoint.y));
+      } else {
+        setCursorWorld(null);
+      }
+    }
+
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.startClientX;
+    const dy = event.clientY - drag.startClientY;
+    if (!drag.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+      drag.moved = true;
+    }
+    const clamped = clampPanToViewport(mapViewportSize, mapView.scale, drag.startX + dx, drag.startY + dy);
+    setMapView((prev) => {
+      if (prev.x === clamped.x && prev.y === clamped.y) return prev;
+      return { ...prev, ...clamped };
+    });
+  }
+
+  function endMapPointerInteraction(event) {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.moved) {
+      suppressMarkerClickUntilRef.current = Date.now() + 150;
+    }
+    dragStateRef.current = null;
+    setIsMapDragging(false);
+    if (typeof event.currentTarget.releasePointerCapture === 'function') {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // no-op
+      }
+    }
+  }
+
+  function allowMarkerClick() {
+    return Date.now() >= suppressMarkerClickUntilRef.current;
+  }
+
+  function handleSelectCall(callId) {
+    if (!allowMarkerClick()) return;
+    setSelectedCallId(Number(callId));
+  }
+
+  function handleSelectUnit(unitId) {
+    if (!allowMarkerClick()) return;
+    setSelectedUnitId(Number(unitId));
   }
 
   return (
@@ -472,11 +721,29 @@ export default function DispatchMap() {
                 ))}
               </div>
               <div className="flex items-center gap-2">
-                <button type="button" onClick={zoomOut} disabled={mapZoom <= 1} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">-</button>
+                <button type="button" onClick={zoomOut} disabled={mapZoom <= MAP_MIN_ZOOM} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">-</button>
                 <div className="min-w-[60px] text-center text-xs text-cad-muted">{Math.round(mapZoom * 100)}%</div>
-                <button type="button" onClick={zoomIn} disabled={mapZoom >= 2.5} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">+</button>
-                <button type="button" onClick={resetMapView} disabled={mapZoom === 1} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">Reset</button>
+                <button type="button" onClick={zoomIn} disabled={mapZoom >= MAP_MAX_ZOOM} className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40">+</button>
+                <button
+                  type="button"
+                  onClick={resetMapView}
+                  disabled={mapZoom === MAP_MIN_ZOOM && mapView.x === 0 && mapView.y === 0}
+                  className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40"
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => centerMapOnMarker(selectedCallMarker || selectedUnitMarker, Math.max(1.6, mapZoom))}
+                  disabled={!selectedCallMarker && !selectedUnitMarker}
+                  className="px-2.5 py-1 rounded-md border border-cad-border bg-cad-surface text-xs disabled:opacity-40"
+                >
+                  Center Selected
+                </button>
               </div>
+            </div>
+            <div className="mb-2 text-[11px] text-cad-muted">
+              Drag to pan. Use mouse wheel to zoom. Coordinates below use GTA/FiveM world bounds mapped to the pause-map 2x3 tile grid.
             </div>
 
             <div className="relative rounded-lg border border-cad-border bg-gradient-to-b from-slate-950 to-slate-900 overflow-hidden">
@@ -484,12 +751,21 @@ export default function DispatchMap() {
                 Blaine County / Los Santos
               </div>
               <div
+                ref={mapViewportRef}
                 className="relative w-full max-w-full mx-auto overflow-hidden"
-                style={{ aspectRatio: `${MAP_CANVAS_WIDTH} / ${MAP_CANVAS_HEIGHT}` }}
+                style={{ aspectRatio: `${MAP_CANVAS_WIDTH} / ${MAP_CANVAS_HEIGHT}`, touchAction: 'none' }}
+                onWheel={handleMapWheel}
+                onPointerDown={handleMapPointerDown}
+                onPointerMove={handleMapPointerMove}
+                onPointerUp={endMapPointerInteraction}
+                onPointerCancel={endMapPointerInteraction}
+                onPointerLeave={() => {
+                  if (!dragStateRef.current) setCursorWorld(null);
+                }}
               >
                 <div
-                  className="absolute inset-0 origin-center transition-transform duration-200"
-                  style={{ transform: `scale(${mapZoom})` }}
+                  className={`absolute inset-0 origin-top-left ${isMapDragging ? '' : 'transition-transform duration-150'} ${isMapDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+                  style={{ transform: `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapZoom})` }}
                 >
                   {layerVisibility.basemap ? (
                     <img
@@ -543,7 +819,7 @@ export default function DispatchMap() {
                   const size = selected ? 14 : 10;
                   const color = priorityColor(call.priority);
                   return (
-                    <g key={`call-${call.id}`} onClick={() => setSelectedCallId(Number(call.id))} style={{ cursor: 'pointer' }}>
+                    <g key={`call-${call.id}`} onClick={() => handleSelectCall(call.id)} style={{ cursor: 'pointer' }}>
                       <rect x={p.x - (size / 2)} y={p.y - (size / 2)} width={size} height={size} fill={color} transform={`rotate(45 ${p.x} ${p.y})`} opacity={0.95} />
                       {selected ? <circle cx={p.x} cy={p.y} r={16} fill="none" stroke={color} strokeWidth="2" opacity="0.85" /> : null}
                       {layerVisibility.labels ? (
@@ -560,7 +836,7 @@ export default function DispatchMap() {
                   const color = statusColor(unit.status);
                   const headingLine = headingLineFromMapPoint(p, unit.position_heading, selected ? 22 : 16);
                   return (
-                    <g key={`unit-${unit.id}`} onClick={() => setSelectedUnitId(Number(unit.id))} style={{ cursor: 'pointer' }}>
+                    <g key={`unit-${unit.id}`} onClick={() => handleSelectUnit(unit.id)} style={{ cursor: 'pointer' }}>
                       {headingLine ? (
                         <line
                           x1={headingLine.x1}
@@ -589,6 +865,11 @@ export default function DispatchMap() {
                 ) : null}
                   </svg>
                 </div>
+              </div>
+              <div className="absolute left-3 bottom-3 text-xs text-cad-muted bg-black/35 border border-white/10 rounded px-2 py-1">
+                {cursorWorld
+                  ? `X ${Math.round(cursorWorld.x)} | Y ${Math.round(cursorWorld.y)}`
+                  : `Bounds X ${WORLD_BOUNDS.minX}..${WORLD_BOUNDS.maxX} | Y ${WORLD_BOUNDS.minY}..${WORLD_BOUNDS.maxY}`}
               </div>
               <div className="absolute right-3 bottom-3 text-xs text-cad-muted bg-black/35 border border-white/10 rounded px-2 py-1">
                 {loading ? 'Refreshing...' : `Calls without coordinates: ${unmappedCallsCount}`}
