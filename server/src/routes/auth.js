@@ -5,6 +5,7 @@ const { generateToken } = require('../auth/jwt');
 const { requireAuth, getUserFiveMOnlineStatus } = require('../auth/middleware');
 const { Users, UserDepartments, UserSubDepartments, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
+const { getAnnouncementPermissionForUser } = require('../utils/announcementPermissions');
 
 const router = express.Router();
 
@@ -61,7 +62,7 @@ router.post('/set-cookie', (req, res) => {
 });
 
 // Get current user profile
-router.get('/me', requireAuth, (req, res) => {
+router.get('/me', requireAuth, async (req, res) => {
   const {
     id,
     steam_id,
@@ -78,6 +79,7 @@ router.get('/me', requireAuth, (req, res) => {
   const sub_departments = req.user.sub_departments || [];
   const fivemStatus = getUserFiveMOnlineStatus(req.user);
   const currentRulesVersion = String(Settings.get('cms_rules_version') || '1').trim() || '1';
+  const announcementPermission = await getAnnouncementPermissionForUser(req.user);
   res.json({
     id,
     steam_id,
@@ -90,6 +92,8 @@ router.get('/me', requireAuth, (req, res) => {
     rules_agreed_version: String(rules_agreed_version || '').trim(),
     rules_agreed_at: rules_agreed_at || null,
     current_rules_version: currentRulesVersion,
+    can_manage_announcements: !!announcementPermission?.allowed,
+    is_department_leader: !!announcementPermission?.is_department_leader,
     departments,
     sub_departments,
     is_fivem_online: !!fivemStatus.online,

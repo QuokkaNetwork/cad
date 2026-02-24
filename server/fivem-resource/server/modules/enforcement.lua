@@ -2540,29 +2540,64 @@ local function addInventoryItemForJailRestore(sourceId, item, playerObject)
   if name == '' or amount <= 0 then return false, 'invalid_item_payload' end
   local slot = tonumber(item.slot)
   local metadata = getJailInventoryAddMetadata(item)
+  local sawAdapter = false
+  local lastAdapterErr = ''
+  local attemptedLabels = {}
+
+  local function noteFailure(label, errOrResult)
+    local cleanLabel = trim(label or '')
+    local cleanErr = trim(errOrResult or '')
+    if cleanLabel ~= '' then
+      attemptedLabels[#attemptedLabels + 1] = cleanLabel
+      sawAdapter = true
+    end
+    if cleanErr ~= '' then
+      lastAdapterErr = cleanErr
+    end
+  end
 
   if type(playerObject) == 'table' then
     if type(playerObject.Functions) == 'table' and type(playerObject.Functions.AddItem) == 'function' then
       local attempts = {
-        function() return playerObject.Functions.AddItem(name, amount, slot and math.floor(slot) or false, metadata) end,
-        function() return playerObject.Functions.AddItem(name, amount, false, metadata) end,
-        function() return playerObject.Functions.AddItem(name, amount, metadata, slot and math.floor(slot) or false) end,
-        function() return playerObject.Functions.AddItem(name, amount) end,
+        {
+          label = 'playerObject.Functions.AddItem(name, amount, slot, metadata)',
+          fn = function() return playerObject.Functions.AddItem(name, amount, slot and math.floor(slot) or false, metadata) end,
+        },
+        {
+          label = 'playerObject.Functions.AddItem(name, amount, false, metadata)',
+          fn = function() return playerObject.Functions.AddItem(name, amount, false, metadata) end,
+        },
+        {
+          label = 'playerObject.Functions.AddItem(name, amount, metadata, slot)',
+          fn = function() return playerObject.Functions.AddItem(name, amount, metadata, slot and math.floor(slot) or false) end,
+        },
+        {
+          label = 'playerObject.Functions.AddItem(name, amount)',
+          fn = function() return playerObject.Functions.AddItem(name, amount) end,
+        },
       }
-      for _, fn in ipairs(attempts) do
-        local ok, result = pcall(fn)
+      for _, attempt in ipairs(attempts) do
+        local ok, result, extra = pcall(attempt.fn)
         if ok and result ~= false then return true, '' end
+        noteFailure(attempt.label, ok and (extra or result) or result)
       end
     end
 
     if type(playerObject.AddItem) == 'function' then
       local attempts = {
-        function() return playerObject:AddItem(name, amount, slot and math.floor(slot) or false, metadata) end,
-        function() return playerObject:AddItem(name, amount, metadata) end,
+        {
+          label = 'playerObject:AddItem(name, amount, slot, metadata)',
+          fn = function() return playerObject:AddItem(name, amount, slot and math.floor(slot) or false, metadata) end,
+        },
+        {
+          label = 'playerObject:AddItem(name, amount, metadata)',
+          fn = function() return playerObject:AddItem(name, amount, metadata) end,
+        },
       }
-      for _, fn in ipairs(attempts) do
-        local ok, result = pcall(fn)
+      for _, attempt in ipairs(attempts) do
+        local ok, result, extra = pcall(attempt.fn)
         if ok and result ~= false then return true, '' end
+        noteFailure(attempt.label, ok and (extra or result) or result)
       end
     end
   end
@@ -2572,37 +2607,69 @@ local function addInventoryItemForJailRestore(sourceId, item, playerObject)
       return exports.ox_inventory:AddItem(sourceId, name, amount, metadata, slot and math.floor(slot) or nil)
     end)
     if ok and result ~= false then return true, '' end
+    noteFailure('ox_inventory:AddItem', result)
   end
 
   local exportAddAttempts = {
     {
       resource = 'qb-inventory',
+      label = 'qb-inventory:AddItem',
       fn = function()
         return exports['qb-inventory']:AddItem(sourceId, name, amount, slot and math.floor(slot) or false, metadata)
       end,
     },
     {
       resource = 'ps-inventory',
+      label = 'ps-inventory:AddItem',
       fn = function()
         return exports['ps-inventory']:AddItem(sourceId, name, amount, slot and math.floor(slot) or false, metadata)
       end,
     },
     {
       resource = 'lj-inventory',
+      label = 'lj-inventory:AddItem',
       fn = function()
         return exports['lj-inventory']:AddItem(sourceId, name, amount, slot and math.floor(slot) or false, metadata)
+      end,
+    },
+    {
+      resource = 'qs-inventory',
+      label = 'qs-inventory:AddItem',
+      fn = function()
+        return exports['qs-inventory']:AddItem(sourceId, name, amount, slot and math.floor(slot) or false, metadata)
+      end,
+    },
+    {
+      resource = 'qs_inventory',
+      label = 'qs_inventory:AddItem',
+      fn = function()
+        return exports['qs_inventory']:AddItem(sourceId, name, amount, slot and math.floor(slot) or false, metadata)
       end,
     },
   }
 
   for _, attempt in ipairs(exportAddAttempts) do
     if GetResourceState(attempt.resource) == 'started' then
-      local ok, result = pcall(attempt.fn)
+      local ok, result, extra = pcall(attempt.fn)
       if ok and result ~= false then return true, '' end
+      noteFailure(attempt.label or (attempt.resource .. ':AddItem'), ok and (extra or result) or result)
     end
   end
 
-  return false, ('No supported inventory restore adapter for item %s'):format(name)
+  if sawAdapter then
+    local attempted = #attemptedLabels > 0 and table.concat(attemptedLabels, ', ') or 'inventory adapter'
+    local suffix = ''
+    if lastAdapterErr ~= '' then
+      suffix = (': %s'):format(lastAdapterErr)
+    elseif name:lower() == 'paper' then
+      suffix = ' (item may not exist; set cad_bridge_printed_ticket_item_name to an item that exists in your inventory)'
+    else
+      suffix = ' (item may not exist in your inventory/shared items)'
+    end
+    return false, ('Inventory add failed for item %s via %s%s'):format(name, attempted, suffix)
+  end
+
+  return false, ('No supported inventory restore adapter for item %s (supported: qbx/qb player object, ox_inventory, qb-inventory, ps-inventory, lj-inventory, qs-inventory)'):format(name)
 end
 
 local activeDocumentPrintJobsById = {}

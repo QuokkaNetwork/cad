@@ -60,6 +60,8 @@ export function AuthProvider({ children }) {
     loading,
     isAuthenticated: !!user,
     isAdmin: user?.is_admin || false,
+    canManageAnnouncements: !!user?.can_manage_announcements,
+    isDepartmentLeader: !!user?.is_department_leader,
     isFiveMOnline: !!user?.is_fivem_online,
     currentRulesVersion: String(user?.current_rules_version || '').trim(),
     hasAcceptedCurrentRules: (

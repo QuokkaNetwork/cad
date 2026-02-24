@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { emitUnitDutyChanged } from '../utils/unitDutyEvents';
 
 const PRESET_STORAGE_PREFIX = 'cad_go_on_duty_presets_v1';
 
@@ -219,6 +220,10 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
         callsign: normalizedCallsign,
         department_id: department?.id,
         sub_department_id: subDepartmentId || null,
+      });
+      emitUnitDutyChanged({
+        action: 'on_duty',
+        department_id: department?.id || null,
       });
       if (!isDispatchDepartment && departmentKey) {
         const nextLast = normalizePresetEntry({

@@ -35,6 +35,12 @@ function canAccessInfringement(req, notice) {
   return Array.isArray(req.user?.departments) && req.user.departments.some((d) => Number(d.id) === Number(notice.department_id));
 }
 
+function isPaidInfringementNotice(notice) {
+  if (!notice) return false;
+  const payableStatus = String(notice.payable_status || '').trim().toLowerCase();
+  return payableStatus === 'paid' || !!String(notice.paid_at || '').trim();
+}
+
 function normalizeDateOnlyInput(value) {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -241,6 +247,56 @@ router.post('/:id/mark-paid', requireAuth, (req, res) => {
   audit(req.user.id, 'infringement_notice_marked_paid', { infringement_notice_id: noticeId });
   bus.emit('infringement:update', { departmentId: Number(updated?.department_id || notice.department_id), infringement: updated });
   res.json(updated);
+});
+
+router.post('/:id/cancel', requireAuth, (req, res) => {
+  const noticeId = parseInt(req.params.id, 10);
+  const notice = InfringementNotices.findById(noticeId);
+  if (!notice) return res.status(404).json({ error: 'Infringement notice not found' });
+  if (!canAccessInfringement(req, notice)) return res.status(403).json({ error: 'Department access denied' });
+  if (isPaidInfringementNotice(notice)) {
+    return res.status(400).json({ error: 'Paid infringement notices cannot be cancelled' });
+  }
+
+  const updated = InfringementNotices.update(noticeId, {
+    status: 'cancelled',
+    payable_status: 'withdrawn',
+    paid_at: null,
+    updated_by_user_id: req.user.id,
+  });
+
+  audit(req.user.id, 'infringement_notice_cancelled', {
+    infringement_notice_id: noticeId,
+    previous_status: String(notice.status || ''),
+    previous_payable_status: String(notice.payable_status || ''),
+  });
+  bus.emit('infringement:update', { departmentId: Number(updated?.department_id || notice.department_id), infringement: updated });
+  res.json(updated);
+});
+
+router.delete('/:id', requireAuth, (req, res) => {
+  const noticeId = parseInt(req.params.id, 10);
+  const notice = InfringementNotices.findById(noticeId);
+  if (!notice) return res.status(404).json({ error: 'Infringement notice not found' });
+  if (!canAccessInfringement(req, notice)) return res.status(403).json({ error: 'Department access denied' });
+  if (isPaidInfringementNotice(notice)) {
+    return res.status(400).json({ error: 'Paid infringement notices cannot be removed' });
+  }
+
+  const deleted = InfringementNotices.delete(noticeId);
+  if (!deleted) return res.status(404).json({ error: 'Infringement notice not found' });
+
+  audit(req.user.id, 'infringement_notice_deleted', {
+    infringement_notice_id: noticeId,
+    notice_number: String(notice.notice_number || ''),
+    payable_status: String(notice.payable_status || ''),
+    status: String(notice.status || ''),
+  });
+  bus.emit('infringement:delete', {
+    departmentId: Number(notice.department_id || 0),
+    infringementId: noticeId,
+  });
+  res.json({ success: true, id: noticeId });
 });
 
 router.post('/:id/print', requireAuth, (req, res) => {

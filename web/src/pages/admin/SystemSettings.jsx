@@ -404,6 +404,19 @@ export default function AdminSystemSettings() {
               When enabled, CAD applies/removes Discord roles based on QBox jobs (including multi-character checks).
             </p>
           </div>
+          <div className="md:col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Department Leader Discord Role IDs (Announcements Permission)</label>
+            <textarea
+              value={settings.announcements_department_leader_role_ids || ''}
+              onChange={e => updateSetting('announcements_department_leader_role_ids', e.target.value)}
+              rows={4}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder={'123456789012345678\n234567890123456789'}
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              Users with any of these Discord role IDs can access <span className="font-mono">Announcements</span> and post Home page announcements (without full admin access). Paste one role ID per line, comma-separated, or JSON array.
+            </p>
+          </div>
         </div>
       </div>
 

@@ -50,6 +50,7 @@ export default function MainLayout() {
   const location = useLocation();
   const { activeDepartment } = useDepartment();
   const isAdminRoute = location.pathname.startsWith('/admin');
+  const isHomeRoute = location.pathname === '/home';
   const hideSidebar = ['/settings', '/home', '/departments', '/rules'].includes(location.pathname) || isAdminRoute;
   const hasDepartmentTheme = !!(activeDepartment && !hideSidebar);
   const departmentColor = String(activeDepartment?.color || '#0052C2').trim() || '#0052C2';
@@ -74,9 +75,9 @@ export default function MainLayout() {
       <Header />
       <div className="flex flex-1 overflow-hidden">
         {!hideSidebar && <Sidebar />}
-        <main className="cad-app-main-shell flex-1 overflow-y-auto p-6 bg-cad-bg relative">
+        <main className={`cad-app-main-shell flex-1 overflow-y-auto bg-cad-bg relative ${isHomeRoute ? 'p-0' : 'p-6'}`}>
           <div className="cad-app-main-overlay" aria-hidden="true" />
-          <div className={`cad-app-page-content relative z-10 ${isAdminRoute ? 'cad-admin-page-content' : ''}`}>
+          <div className={`cad-app-page-content relative z-10 ${isAdminRoute ? 'cad-admin-page-content' : ''} ${isHomeRoute ? 'h-full' : ''}`}>
             <Outlet />
           </div>
         </main>

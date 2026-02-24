@@ -151,58 +151,269 @@ function InfringementLockedCard() {
 function FormFields({ form, setForm }) {
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <div>
-        <label className="block text-sm mb-1">Subject Name</label>
-        <input value={form.subject_name} onChange={(e) => setField('subject_name', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+    <div className="space-y-4">
+      <section className="rounded-xl border border-cad-border bg-cad-card/60 p-4">
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">Subject & Location</p>
+          <h3 className="text-sm font-semibold text-cad-ink mt-1">Recipient Details</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Subject Name</label>
+            <input value={form.subject_name} onChange={(e) => setField('subject_name', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Citizen ID</label>
+            <input value={form.citizen_id} onChange={(e) => setField('citizen_id', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Vehicle Plate</label>
+            <input value={form.vehicle_plate} onChange={(e) => setField('vehicle_plate', e.target.value.toUpperCase())} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Location</label>
+            <input value={form.location} onChange={(e) => setField('location', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-cad-border bg-cad-card/60 p-4">
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">Notice Details</p>
+          <h3 className="text-sm font-semibold text-cad-ink mt-1">Offence / Infringement Information</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="md:col-span-2">
+            <label className="block text-sm mb-1 text-cad-muted">Title</label>
+            <input required value={form.title} onChange={(e) => setField('title', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-sm mb-1 text-cad-muted">Description / Particulars</label>
+            <textarea value={form.description} onChange={(e) => setField('description', e.target.value)} rows={4} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Amount (AUD)</label>
+            <input type="number" min="0" step="1" value={form.amount} onChange={(e) => setField('amount', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Payable Status</label>
+            <select value={form.payable_status} onChange={(e) => setField('payable_status', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2">
+              {EDITABLE_PAYABLE_STATUS_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-cad-border bg-cad-card/60 p-4">
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">Court & Status</p>
+          <h3 className="text-sm font-semibold text-cad-ink mt-1">Compliance Tracking</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Due Date</label>
+            <input type="date" value={form.due_date} onChange={(e) => setField('due_date', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Court Date</label>
+            <input type="date" value={form.court_date} onChange={(e) => setField('court_date', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Court Location</label>
+            <input value={form.court_location} onChange={(e) => setField('court_location', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-cad-muted">Notice Status</label>
+            <select value={form.status} onChange={(e) => setField('status', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2">
+              {NOTICE_STATUS_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+            </select>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeDetailPanel({
+  selectedListItem,
+  selectedNotice,
+  detailLoading,
+  formError,
+  showCreate,
+  setFormError,
+  editForm,
+  setEditForm,
+  submitSave,
+  saveSaving,
+  printNoticeTemplate,
+  exportNoticeJson,
+  queuePrint,
+  printing,
+  markPaid,
+  markingPaid,
+  cancelNotice,
+  cancelling,
+  removeNotice,
+  removingNotice,
+  auditRows,
+  auditLoading,
+}) {
+  const payableStatus = String(selectedNotice?.payable_status || '').trim().toLowerCase();
+  const noticeStatus = String(selectedNotice?.status || '').trim().toLowerCase();
+  const isPaid = payableStatus === 'paid' || !!String(selectedNotice?.paid_at || '').trim();
+  const canCancel = !!selectedNotice && !isPaid && noticeStatus !== 'cancelled';
+  const canRemove = !!selectedNotice && !isPaid;
+
+  return (
+    <div className="bg-cad-card border border-cad-border rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-cad-border bg-cad-surface/40">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">Notice Workspace</p>
+        <h2 className="text-lg font-semibold text-cad-ink mt-1">
+          {selectedNotice
+            ? `Infringement Notice ${selectedNotice.notice_number || `#${selectedNotice.id}`}`
+            : 'Select A Notice'}
+        </h2>
+        <p className="text-xs text-cad-muted mt-1">
+          {selectedNotice
+            ? 'Review, update, print, and track this notice without opening a popup.'
+            : 'Choose a notice from the register to view and manage it here.'}
+        </p>
       </div>
-      <div>
-        <label className="block text-sm mb-1">Citizen ID</label>
-        <input value={form.citizen_id} onChange={(e) => setField('citizen_id', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div>
-        <label className="block text-sm mb-1">Vehicle Plate</label>
-        <input value={form.vehicle_plate} onChange={(e) => setField('vehicle_plate', e.target.value.toUpperCase())} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div>
-        <label className="block text-sm mb-1">Location</label>
-        <input value={form.location} onChange={(e) => setField('location', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div className="md:col-span-2">
-        <label className="block text-sm mb-1">Title</label>
-        <input required value={form.title} onChange={(e) => setField('title', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div className="md:col-span-2">
-        <label className="block text-sm mb-1">Description / Particulars</label>
-        <textarea value={form.description} onChange={(e) => setField('description', e.target.value)} rows={3} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div>
-        <label className="block text-sm mb-1">Amount (AUD)</label>
-        <input type="number" min="0" step="1" value={form.amount} onChange={(e) => setField('amount', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div>
-        <label className="block text-sm mb-1">Payable Status</label>
-        <select value={form.payable_status} onChange={(e) => setField('payable_status', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2">
-          {EDITABLE_PAYABLE_STATUS_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-        </select>
-      </div>
-      <div>
-        <label className="block text-sm mb-1">Due Date</label>
-        <input type="date" value={form.due_date} onChange={(e) => setField('due_date', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div>
-        <label className="block text-sm mb-1">Court Date</label>
-        <input type="date" value={form.court_date} onChange={(e) => setField('court_date', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div>
-        <label className="block text-sm mb-1">Court Location</label>
-        <input value={form.court_location} onChange={(e) => setField('court_location', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2" />
-      </div>
-      <div>
-        <label className="block text-sm mb-1">Notice Status</label>
-        <select value={form.status} onChange={(e) => setField('status', e.target.value)} className="w-full rounded-md border border-cad-border bg-cad-surface px-3 py-2">
-          {NOTICE_STATUS_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-        </select>
+
+      <div className="p-4 space-y-4">
+        {detailLoading && !selectedNotice ? <div className="text-sm text-cad-muted">Loading notice...</div> : null}
+        {!detailLoading && !selectedNotice ? (
+          <div className="rounded-xl border border-cad-border bg-cad-surface/40 p-4">
+            {selectedListItem ? (
+              <>
+                <p className="text-sm font-semibold text-cad-ink">{selectedListItem.title || 'Untitled Notice'}</p>
+                <p className="text-xs text-cad-muted mt-1">
+                  {selectedListItem.subject_name || selectedListItem.citizen_id || 'Unknown'}
+                  {selectedListItem.vehicle_plate ? ` | ${selectedListItem.vehicle_plate}` : ''}
+                </p>
+                <p className="text-xs text-cad-muted mt-1">Loading full notice details...</p>
+              </>
+            ) : (
+              <p className="text-sm text-cad-muted">No notice selected.</p>
+            )}
+          </div>
+        ) : null}
+
+        {selectedNotice ? (
+          <>
+            {formError && !showCreate ? (
+              <div className="rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                {formError}
+              </div>
+            ) : null}
+
+            <div className="rounded-xl border border-cad-border bg-cad-surface/35 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`inline-flex px-2 py-0.5 rounded text-xs border ${badgeClass('payable', selectedNotice.payable_status)}`}>
+                      {labelize(selectedNotice.payable_status)}
+                    </span>
+                    <span className={`inline-flex px-2 py-0.5 rounded text-xs border ${badgeClass('notice', selectedNotice.status)}`}>
+                      {labelize(selectedNotice.status)}
+                    </span>
+                    {Number(selectedNotice.print_count || 0) > 0 ? (
+                      <span className="inline-flex px-2 py-0.5 rounded text-xs border border-cad-border bg-cad-card text-cad-muted">
+                        Printed {Number(selectedNotice.print_count)}x
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-1 gap-1 text-xs text-cad-muted">
+                    <div>
+                      Filed by {selectedNotice.officer_callsign ? `${selectedNotice.officer_callsign} ` : ''}
+                      {selectedNotice.officer_name || selectedNotice.creator_name || '-'}
+                    </div>
+                    <div>
+                      Created {formatDateTimeAU(selectedNotice.created_at)}
+                      {selectedNotice.updated_at ? ` | Updated ${formatDateTimeAU(selectedNotice.updated_at)}` : ''}
+                    </div>
+                    {selectedNotice.paid_at ? <div>Paid {formatDateTimeAU(selectedNotice.paid_at)}</div> : null}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setFormError(''); printNoticeTemplate(); }} className="px-3 py-2 rounded-md border border-cad-border bg-cad-card text-sm">
+                    Print Template
+                  </button>
+                  <button type="button" onClick={exportNoticeJson} className="px-3 py-2 rounded-md border border-cad-border bg-cad-card text-sm">
+                    Export
+                  </button>
+                  <button type="button" onClick={queuePrint} disabled={printing} className="px-3 py-2 rounded-md bg-cad-accent text-white text-sm font-medium disabled:opacity-50">
+                    {printing ? 'Queueing...' : (Number(selectedNotice.print_count || 0) > 0 ? 'Reprint In-Game' : 'Print In-Game')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={markPaid}
+                    disabled={markingPaid || String(selectedNotice.payable_status || '').toLowerCase() === 'paid'}
+                    className="px-3 py-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-sm disabled:opacity-50"
+                  >
+                    {markingPaid ? 'Updating...' : 'Mark Paid'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelNotice}
+                    disabled={!canCancel || cancelling}
+                    className="px-3 py-2 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm disabled:opacity-50"
+                    title={isPaid ? 'Paid notices cannot be cancelled' : undefined}
+                  >
+                    {cancelling ? 'Cancelling...' : (noticeStatus === 'cancelled' ? 'Cancelled' : 'Cancel Notice')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={removeNotice}
+                    disabled={!canRemove || removingNotice}
+                    className="px-3 py-2 rounded-md border border-red-500/40 bg-red-500/10 text-red-300 text-sm disabled:opacity-50"
+                    title={isPaid ? 'Paid notices cannot be removed' : undefined}
+                  >
+                    {removingNotice ? 'Removing...' : 'Remove Notice'}
+                  </button>
+                </div>
+              </div>
+              {isPaid ? (
+                <p className="text-xs text-cad-muted mt-2">
+                  Paid notices are preserved and cannot be cancelled or removed.
+                </p>
+              ) : null}
+            </div>
+
+            <form onSubmit={submitSave} className="space-y-4">
+              <FormFields form={editForm} setForm={setEditForm} />
+              <div className="flex justify-end">
+                <button type="submit" disabled={saveSaving} className="px-4 py-2 rounded-md bg-cad-accent text-white font-medium disabled:opacity-50">
+                  {saveSaving ? 'Saving...' : 'Save Notice'}
+                </button>
+              </div>
+            </form>
+
+            <div className="rounded-xl border border-cad-border bg-cad-surface/35 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold">Print / Reprint Audit</h3>
+                <span className="text-xs text-cad-muted">{auditRows.length} entries</span>
+              </div>
+              {auditLoading ? <div className="text-sm text-cad-muted">Loading audit...</div> : null}
+              {!auditLoading && auditRows.length === 0 ? <div className="text-sm text-cad-muted">No print activity recorded yet.</div> : null}
+              <div className="space-y-2">
+                {auditRows.map((row) => (
+                  <div key={row.id} className="rounded-md border border-cad-border bg-cad-card px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{String(row.print_action || '').toLowerCase() === 'reprint' ? 'Reprint' : 'Print'}</span>
+                      <span className="text-xs text-cad-muted">{formatDateTimeAU(row.created_at)}</span>
+                    </div>
+                    <div className="text-xs text-cad-muted mt-1">
+                      {row.printed_by_callsign ? `${row.printed_by_callsign} ` : ''}{row.printed_by_name || ''}
+                      {row.print_job_id ? ` | Print Job #${row.print_job_id}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -232,6 +443,8 @@ export default function Infringements() {
   const [saveSaving, setSaveSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [removingNotice, setRemovingNotice] = useState(false);
 
   const summary = useMemo(() => {
     const issued = list.filter((row) => String(row.status || '').toLowerCase() === 'issued');
@@ -354,6 +567,16 @@ export default function Infringements() {
       const updatedId = Number(payload?.infringement?.id || 0);
       if (updatedId && Number(selectedId || 0) === updatedId) fetchDetail(updatedId);
     },
+    'infringement:delete': (payload) => {
+      if (Number(payload?.departmentId || payload?.department_id || 0) !== Number(departmentId || 0)) return;
+      fetchList();
+      const deletedId = Number(payload?.infringementId || payload?.infringement_id || 0);
+      if (deletedId && Number(selectedId || 0) === deletedId) {
+        setSelectedId(null);
+        setSelectedNotice(null);
+        setAuditRows([]);
+      }
+    },
   });
 
   async function submitCreate(event) {
@@ -425,6 +648,64 @@ export default function Infringements() {
       setFormError(err?.message || 'Failed to queue print / reprint');
     } finally {
       setPrinting(false);
+    }
+  }
+
+  async function cancelNotice() {
+    if (!selectedNotice?.id) return;
+    const payableStatus = String(selectedNotice.payable_status || '').trim().toLowerCase();
+    const isPaid = payableStatus === 'paid' || !!String(selectedNotice.paid_at || '').trim();
+    if (isPaid) {
+      setFormError('Paid infringement notices cannot be cancelled');
+      return;
+    }
+    if (String(selectedNotice.status || '').trim().toLowerCase() === 'cancelled') {
+      return;
+    }
+    if (!confirm('Cancel this infringement notice? This will mark it as cancelled/withdrawn.')) return;
+
+    setCancelling(true);
+    setFormError('');
+    try {
+      await api.post(`/api/infringements/${selectedNotice.id}/cancel`, {});
+      await fetchList();
+      await fetchDetail(selectedNotice.id);
+    } catch (err) {
+      setFormError(err?.message || 'Failed to cancel infringement notice');
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  async function removeNotice() {
+    if (!selectedNotice?.id) return;
+    const payableStatus = String(selectedNotice.payable_status || '').trim().toLowerCase();
+    const isPaid = payableStatus === 'paid' || !!String(selectedNotice.paid_at || '').trim();
+    if (isPaid) {
+      setFormError('Paid infringement notices cannot be removed');
+      return;
+    }
+    const confirmMessage = [
+      'Remove this infringement notice from CAD?',
+      '',
+      'This permanently deletes the notice record and its print audit entries.',
+      'Paid notices cannot be removed.',
+    ].join('\n');
+    if (!confirm(confirmMessage)) return;
+
+    const deletingId = Number(selectedNotice.id);
+    setRemovingNotice(true);
+    setFormError('');
+    try {
+      await api.delete(`/api/infringements/${deletingId}`);
+      setSelectedId(null);
+      setSelectedNotice(null);
+      setAuditRows([]);
+      await fetchList();
+    } catch (err) {
+      setFormError(err?.message || 'Failed to remove infringement notice');
+    } finally {
+      setRemovingNotice(false);
     }
   }
 
@@ -550,7 +831,7 @@ export default function Infringements() {
         <div className="bg-cad-card border border-cad-border rounded-lg p-4"><div className="text-xs text-cad-muted uppercase tracking-wide">Overdue</div><div className={`text-2xl font-semibold mt-1 ${summary.overdue > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{summary.overdue}</div></div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.55fr)_420px] gap-5">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,560px)] gap-5">
         <div className="space-y-4">
           <div className="bg-cad-card border border-cad-border rounded-lg p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
             <div className="xl:col-span-2">
@@ -635,88 +916,111 @@ export default function Infringements() {
               ))}
             </div>
           </div>
-          <div className="bg-cad-card border border-cad-border rounded-lg p-4">
-            <div className="text-xs uppercase tracking-wide text-cad-muted">Selected Notice</div>
-            {selectedListItem ? (
-              <>
-                <div className="font-semibold mt-1">{selectedListItem.title}</div>
-                <div className="text-sm text-cad-muted mt-1">{selectedListItem.subject_name || selectedListItem.citizen_id || 'Unknown person'}{selectedListItem.citizen_id ? ` | CID ${selectedListItem.citizen_id}` : ''}</div>
-                <div className="text-sm text-cad-muted mt-1">{selectedListItem.location || 'No location recorded'}{selectedListItem.vehicle_plate ? ` | ${selectedListItem.vehicle_plate}` : ''}</div>
-                <button type="button" onClick={() => setSelectedId(Number(selectedListItem.id))} className="mt-3 w-full rounded-md border border-cad-accent/40 bg-cad-accent/10 px-3 py-2 text-sm font-medium hover:border-cad-accent">Open notice details</button>
-              </>
-            ) : <div className="text-sm text-cad-muted mt-2">Select a notice to manage it.</div>}
-          </div>
+          <NoticeDetailPanel
+            selectedListItem={selectedListItem}
+            selectedNotice={selectedNotice}
+            detailLoading={detailLoading}
+            formError={formError}
+            showCreate={showCreate}
+            setFormError={setFormError}
+            editForm={editForm}
+            setEditForm={setEditForm}
+            submitSave={submitSave}
+            saveSaving={saveSaving}
+            printNoticeTemplate={printNoticeTemplate}
+            exportNoticeJson={exportNoticeJson}
+            queuePrint={queuePrint}
+            printing={printing}
+            markPaid={markPaid}
+            markingPaid={markingPaid}
+            cancelNotice={cancelNotice}
+            cancelling={cancelling}
+            removeNotice={removeNotice}
+            removingNotice={removingNotice}
+            auditRows={auditRows}
+            auditLoading={auditLoading}
+          />
         </div>
       </div>
 
       <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Create Infringement Notice" wide>
         <form onSubmit={submitCreate} className="space-y-4">
-          {formError && showCreate ? <div className="text-sm text-rose-300">{formError}</div> : null}
-          <FormFields form={createForm} setForm={setCreateForm} />
+          <div className="rounded-xl border border-cad-border bg-cad-surface/40 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">New Notice</p>
+                <h3 className="text-base font-semibold text-cad-ink mt-1">Create Roadside Infringement</h3>
+                <p className="text-xs text-cad-muted mt-1">
+                  Complete the recipient details, offence information, and payment/court fields before issuing.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="px-2 py-1 rounded-md border border-cad-border bg-cad-card text-cad-muted">
+                  Amount: {money(createForm.amount)}
+                </span>
+                <span className={`px-2 py-1 rounded-md border ${badgeClass('payable', createForm.payable_status)}`}>
+                  {labelize(createForm.payable_status)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {formError && showCreate ? (
+            <div className="rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+              {formError}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-4">
+            <div>
+              <FormFields form={createForm} setForm={setCreateForm} />
+            </div>
+            <aside className="space-y-3">
+              <div className="rounded-xl border border-cad-border bg-cad-card/60 p-3">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-cad-muted">Quick Checks</p>
+                <ul className="mt-2 space-y-2 text-xs text-cad-muted">
+                  <li>Use `Court Listed` only when a court date is entered.</li>
+                  <li>Vehicle plate is optional for non-vehicle infringements.</li>
+                  <li>Due date usually defaults to 14 days for standard notices.</li>
+                </ul>
+              </div>
+              <div className="rounded-xl border border-cad-border bg-cad-card/60 p-3">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-cad-muted">Live Summary</p>
+                <div className="mt-2 space-y-1.5 text-xs">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-cad-muted">Subject</span>
+                    <span className="text-cad-ink text-right truncate">{createForm.subject_name || createForm.citizen_id || '-'}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-cad-muted">Title</span>
+                    <span className="text-cad-ink text-right truncate">{createForm.title || '-'}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-cad-muted">Amount</span>
+                    <span className="text-cad-ink">{money(createForm.amount)}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-cad-muted">Due</span>
+                    <span className="text-cad-ink">{createForm.due_date || '-'}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-cad-muted">Court</span>
+                    <span className="text-cad-ink">{createForm.court_date || '-'}</span>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setShowCreate(false)} className="px-4 py-2 rounded-md border border-cad-border bg-cad-surface">Cancel</button>
-            <button type="submit" disabled={createSaving} className="px-4 py-2 rounded-md bg-cad-accent text-white font-medium disabled:opacity-50">{createSaving ? 'Creating...' : 'Create Notice'}</button>
+            <button type="button" onClick={() => setShowCreate(false)} className="px-4 py-2 rounded-md border border-cad-border bg-cad-surface">
+              Cancel
+            </button>
+            <button type="submit" disabled={createSaving} className="px-4 py-2 rounded-md bg-cad-accent text-white font-medium disabled:opacity-50">
+              {createSaving ? 'Creating...' : 'Create Notice'}
+            </button>
           </div>
         </form>
-      </Modal>
-
-      <Modal open={!!selectedId} onClose={() => setSelectedId(null)} title={selectedNotice ? `Infringement Notice ${selectedNotice.notice_number || `#${selectedNotice.id}`}` : 'Infringement Notice'} wide>
-        {detailLoading && !selectedNotice ? <div className="text-sm text-cad-muted">Loading notice...</div> : null}
-        {!detailLoading && !selectedNotice ? <div className="text-sm text-cad-muted">Select a notice from the register.</div> : null}
-        {selectedNotice ? (
-          <div className="space-y-4">
-            {formError && !showCreate ? <div className="text-sm text-rose-300">{formError}</div> : null}
-            <div className="bg-cad-card border border-cad-border rounded-lg p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm">
-                  <div className="text-xs text-cad-muted uppercase tracking-wide">Filed By</div>
-                  <div className="mt-1">{selectedNotice.officer_callsign ? `${selectedNotice.officer_callsign} ` : ''}{selectedNotice.officer_name || selectedNotice.creator_name || '-'}</div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={printNoticeTemplate} className="px-3 py-2 rounded-md border border-cad-border bg-cad-surface text-sm">Print Template</button>
-                  <button type="button" onClick={exportNoticeJson} className="px-3 py-2 rounded-md border border-cad-border bg-cad-surface text-sm">Export</button>
-                  <button type="button" onClick={queuePrint} disabled={printing} className="px-3 py-2 rounded-md bg-cad-accent text-white text-sm font-medium disabled:opacity-50">{printing ? 'Queueing...' : (Number(selectedNotice.print_count || 0) > 0 ? 'Reprint In-Game' : 'Print In-Game')}</button>
-                  <button type="button" onClick={markPaid} disabled={markingPaid || String(selectedNotice.payable_status || '').toLowerCase() === 'paid'} className="px-3 py-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-sm disabled:opacity-50">{markingPaid ? 'Updating...' : 'Mark Paid'}</button>
-                </div>
-              </div>
-              <div className="text-xs text-cad-muted mt-2">
-                Created {formatDateTimeAU(selectedNotice.created_at)}
-                {selectedNotice.updated_at ? ` | Updated ${formatDateTimeAU(selectedNotice.updated_at)}` : ''}
-                {selectedNotice.paid_at ? ` | Paid ${formatDateTimeAU(selectedNotice.paid_at)}` : ''}
-              </div>
-            </div>
-
-            <form onSubmit={submitSave} className="space-y-4">
-              <FormFields form={editForm} setForm={setEditForm} />
-              <div className="flex justify-end">
-                <button type="submit" disabled={saveSaving} className="px-4 py-2 rounded-md bg-cad-accent text-white font-medium disabled:opacity-50">{saveSaving ? 'Saving...' : 'Save Notice'}</button>
-              </div>
-            </form>
-
-            <div className="bg-cad-card border border-cad-border rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold">Print / Reprint Audit</h3>
-                <span className="text-xs text-cad-muted">{auditRows.length} entries</span>
-              </div>
-              {auditLoading ? <div className="text-sm text-cad-muted">Loading audit...</div> : null}
-              {!auditLoading && auditRows.length === 0 ? <div className="text-sm text-cad-muted">No print activity recorded yet.</div> : null}
-              <div className="space-y-2">
-                {auditRows.map((row) => (
-                  <div key={row.id} className="rounded-md border border-cad-border bg-cad-surface px-3 py-2 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">{String(row.print_action || '').toLowerCase() === 'reprint' ? 'Reprint' : 'Print'}</span>
-                      <span className="text-xs text-cad-muted">{formatDateTimeAU(row.created_at)}</span>
-                    </div>
-                    <div className="text-xs text-cad-muted mt-1">
-                      {row.printed_by_callsign ? `${row.printed_by_callsign} ` : ''}{row.printed_by_name || ''}
-                      {row.print_job_id ? ` | Print Job #${row.print_job_id}` : ''}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : null}
       </Modal>
     </div>
   );

@@ -9,7 +9,8 @@ const WORLD_BOUNDS = {
   minY: -4200,
   maxY: 8600,
 };
-const MAP_CANVAS_SIZE = 1000;
+const MAP_CANVAS_WIDTH = 1000;
+const MAP_CANVAS_HEIGHT = 1500;
 const MAP_IMAGE_SRC = '/maps/FullMap.png';
 
 function parseNum(value) {
@@ -17,12 +18,12 @@ function parseNum(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function toMapPoint(x, y, size = MAP_CANVAS_SIZE) {
-  const px = ((x - WORLD_BOUNDS.minX) / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX)) * size;
-  const py = size - (((y - WORLD_BOUNDS.minY) / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY)) * size);
+function toMapPoint(x, y, width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGHT) {
+  const px = ((x - WORLD_BOUNDS.minX) / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX)) * width;
+  const py = height - (((y - WORLD_BOUNDS.minY) / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY)) * height);
   return {
-    x: Math.max(0, Math.min(size, px)),
-    y: Math.max(0, Math.min(size, py)),
+    x: Math.max(0, Math.min(width, px)),
+    y: Math.max(0, Math.min(height, py)),
   };
 }
 
@@ -92,14 +93,14 @@ function zoneMatchesDepartment(zone, departmentFilter) {
   return primary === target || backup === target;
 }
 
-function ZoneOverlay({ zone, size = 1000 }) {
+function ZoneOverlay({ zone, width = MAP_CANVAS_WIDTH, height = MAP_CANVAS_HEIGHT }) {
   if (!zone) return null;
   if (shapeIsPolygon(zone)) {
     const points = Array.isArray(zone.points) ? zone.points : [];
     const mapped = points
       .map((p) => ({ x: parseNum(p?.x), y: parseNum(p?.y) }))
       .filter((p) => p.x !== null && p.y !== null)
-      .map((p) => toMapPoint(p.x, p.y, size));
+      .map((p) => toMapPoint(p.x, p.y, width, height));
     if (mapped.length < 3) return null;
     const d = mapped.map((p) => `${p.x},${p.y}`).join(' ');
     return <polygon points={d} fill="rgba(251, 191, 36, 0.08)" stroke="rgba(251, 191, 36, 0.45)" strokeWidth="2" />;
@@ -108,9 +109,10 @@ function ZoneOverlay({ zone, size = 1000 }) {
   const y = parseNum(zone.y);
   const radius = parseNum(zone.radius);
   if (x === null || y === null || radius === null || radius <= 0) return null;
-  const center = toMapPoint(x, y, size);
-  const sx = size / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX);
-  const r = Math.max(2, radius * sx);
+  const center = toMapPoint(x, y, width, height);
+  const sx = width / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX);
+  const sy = height / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY);
+  const r = Math.max(2, radius * Math.min(sx, sy));
   return <circle cx={center.x} cy={center.y} r={r} fill="rgba(251, 191, 36, 0.08)" stroke="rgba(251, 191, 36, 0.45)" strokeWidth="2" />;
 }
 
@@ -481,7 +483,10 @@ export default function DispatchMap() {
               <div className="absolute left-4 top-3 z-20 text-xs tracking-wide uppercase text-cad-muted bg-black/30 border border-white/10 rounded px-2 py-1">
                 Blaine County / Los Santos
               </div>
-              <div className="relative w-full max-w-full aspect-square mx-auto overflow-hidden">
+              <div
+                className="relative w-full max-w-full mx-auto overflow-hidden"
+                style={{ aspectRatio: `${MAP_CANVAS_WIDTH} / ${MAP_CANVAS_HEIGHT}` }}
+              >
                 <div
                   className="absolute inset-0 origin-center transition-transform duration-200"
                   style={{ transform: `scale(${mapZoom})` }}
@@ -490,7 +495,7 @@ export default function DispatchMap() {
                     <img
                       src={MAP_IMAGE_SRC}
                       alt="Los Santos dispatch map"
-                      className="absolute inset-0 w-full h-full object-cover opacity-90 pointer-events-none select-none"
+                      className="absolute inset-0 w-full h-full object-contain opacity-90 pointer-events-none select-none"
                       draggable={false}
                     />
                   ) : null}
@@ -504,7 +509,7 @@ export default function DispatchMap() {
                       }}
                     />
                   ) : null}
-                  <svg viewBox="0 0 1000 1000" className="absolute inset-0 w-full h-full">
+                  <svg viewBox={`0 0 ${MAP_CANVAS_WIDTH} ${MAP_CANVAS_HEIGHT}`} className="absolute inset-0 w-full h-full">
                 {layerVisibility.zones && filteredZones.map((zone, idx) => (
                   <ZoneOverlay key={`zone-${String(zone.id || idx)}`} zone={zone} />
                 ))}

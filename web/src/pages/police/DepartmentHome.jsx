@@ -8,6 +8,7 @@ import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { formatDateAU, formatTimeAU } from '../../utils/dateTime';
+import { emitUnitDutyChanged } from '../../utils/unitDutyEvents';
 
 // Mirror the sidebar's visibility rules so hidden items don't appear on the home screen.
 // Route -> whether it requires FiveM to be online (same list as requiresFiveMOnlineForNavItem in Sidebar.jsx)
@@ -457,6 +458,10 @@ export default function DepartmentHome() {
     setOffDutyLoading(true);
     try {
       const response = await api.delete('/api/units/me');
+      emitUnitDutyChanged({
+        action: 'off_duty',
+        department_id: activeDepartment?.id || null,
+      });
       setMyUnit(null);
       setOffDutySummary(response?.summary || null);
       scheduleRefresh();
@@ -477,6 +482,10 @@ export default function DepartmentHome() {
     try {
       const unit = await api.post('/api/units/me', {
         callsign: 'DISPATCH',
+        department_id: activeDepartment.id,
+      });
+      emitUnitDutyChanged({
+        action: 'on_duty',
         department_id: activeDepartment.id,
       });
       setMyUnit(unit);

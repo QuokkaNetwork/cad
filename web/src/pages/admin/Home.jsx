@@ -73,6 +73,12 @@ const ADMIN_SECTIONS = [
         color: 'bg-vicpol-navy',
       },
       {
+        to: '/admin/announcements',
+        title: 'Announcements',
+        description: 'Post and manage Home page announcements for the community portal.',
+        color: 'bg-sky-500',
+      },
+      {
         to: '/admin/audit-log',
         title: 'Audit Log',
         description: 'Administrative and system action history for QA and accountability.',
@@ -84,6 +90,7 @@ const ADMIN_SECTIONS = [
 
 const QUICK_START = [
   { to: '/admin/settings', label: 'System Settings' },
+  { to: '/admin/announcements', label: 'Announcements' },
   { to: '/admin/role-mappings', label: 'Role Access Sync' },
   { to: '/admin/job-bindings', label: 'Job Role Sync' },
   { to: '/admin/alarm-zones', label: 'Alarm Zones' },

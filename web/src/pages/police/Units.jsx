@@ -9,6 +9,7 @@ import Modal from '../../components/Modal';
 import OffDutySummaryModal from '../../components/OffDutySummaryModal';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { formatDateTimeAU } from '../../utils/dateTime';
+import { emitUnitDutyChanged } from '../../utils/unitDutyEvents';
 
 function normalizeUnitStatus(value) {
   return String(value || '').trim().toLowerCase();
@@ -118,6 +119,10 @@ export default function Units() {
     if (!confirm('Go off duty?')) return;
     try {
       const response = await api.delete('/api/units/me');
+      emitUnitDutyChanged({
+        action: 'off_duty',
+        department_id: activeDepartment?.id || null,
+      });
       setMyUnit(null);
       setCurrentCall(null);
       setSelectedCall(null);

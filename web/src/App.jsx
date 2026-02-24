@@ -40,6 +40,7 @@ import AdminOffenceCatalog from './pages/admin/OffenceCatalog';
 import AdminQboxSettings from './pages/admin/QboxSettings';
 import AdminJobBindings from './pages/admin/JobBindings';
 import AdminAlarmZones from './pages/admin/AlarmZones';
+import AdminAnnouncements from './pages/admin/Announcements';
 
 export default function App() {
   return (
@@ -96,6 +97,7 @@ export default function App() {
             <Route path="/admin/settings" element={<ProtectedRoute requireAdmin><AdminSystemSettings /></ProtectedRoute>} />
             <Route path="/admin/qbox-settings" element={<ProtectedRoute requireAdmin><AdminQboxSettings /></ProtectedRoute>} />
             <Route path="/admin/alarm-zones" element={<ProtectedRoute requireAdmin><AdminAlarmZones /></ProtectedRoute>} />
+            <Route path="/admin/announcements" element={<ProtectedRoute requireAnnouncementManager><AdminAnnouncements /></ProtectedRoute>} />
           </Route>
 
           {/* Default redirect */}

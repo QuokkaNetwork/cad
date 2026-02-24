@@ -917,6 +917,42 @@ async function getGuildRoles() {
     }));
 }
 
+async function getGuildMemberRoleIds(discordId) {
+  const normalizedId = String(discordId || '').trim();
+  if (!normalizedId) return { ok: false, roleIds: [], reason: 'missing_discord_id' };
+  if (!client) return { ok: false, roleIds: [], reason: 'bot_not_running' };
+
+  const guild = client.guilds.cache.get(config.discord.guildId);
+  if (!guild) return { ok: false, roleIds: [], reason: 'guild_not_found' };
+
+  let member;
+  try {
+    member = await guild.members.fetch(normalizedId);
+  } catch {
+    return { ok: false, roleIds: [], reason: 'member_not_in_guild' };
+  }
+
+  const roleIds = member.roles.cache
+    .filter((role) => role.id !== guild.id)
+    .map((role) => String(role.id));
+
+  return { ok: true, roleIds, reason: '' };
+}
+
+async function memberHasAnyGuildRole(discordId, roleIds) {
+  const targetRoleIds = Array.from(new Set((Array.isArray(roleIds) ? roleIds : []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (targetRoleIds.length === 0) return { hasRole: false, matchedRoleId: '', reason: 'no_target_roles' };
+  const result = await getGuildMemberRoleIds(discordId);
+  if (!result.ok) return { hasRole: false, matchedRoleId: '', reason: result.reason || 'member_lookup_failed' };
+  const current = new Set(result.roleIds.map((id) => String(id)));
+  for (const roleId of targetRoleIds) {
+    if (current.has(roleId)) {
+      return { hasRole: true, matchedRoleId: roleId, reason: 'matched' };
+    }
+  }
+  return { hasRole: false, matchedRoleId: '', reason: 'role_not_present' };
+}
+
 function getClient() {
   return client;
 }
@@ -926,6 +962,8 @@ module.exports = {
   syncUserRoles,
   syncAllMembers,
   getGuildRoles,
+  getGuildMemberRoleIds,
+  memberHasAnyGuildRole,
   getClient,
   refreshPeriodicRoleSync,
   getUserCitizenIdCandidates,

@@ -5,6 +5,7 @@ import { useDepartment } from '../context/DepartmentContext';
 import { useEventSource } from '../hooks/useEventSource';
 import { api } from '../api/client';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../utils/departmentLayout';
+import { UNIT_DUTY_CHANGED_EVENT } from '../utils/unitDutyEvents';
 
 const LAW_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
@@ -265,6 +266,20 @@ export default function Sidebar() {
     fetchActiveCallStatus();
   }, [fetchDispatcherStatus, fetchOnDutyStatus, fetchActiveCallStatus]);
 
+  const refreshSidebarStatus = useCallback(() => {
+    fetchDispatcherStatus();
+    fetchOnDutyStatus();
+    fetchActiveCallStatus();
+  }, [fetchDispatcherStatus, fetchOnDutyStatus, fetchActiveCallStatus]);
+
+  useEffect(() => {
+    function handleDutyChanged() {
+      refreshSidebarStatus();
+    }
+    window.addEventListener(UNIT_DUTY_CHANGED_EVENT, handleDutyChanged);
+    return () => window.removeEventListener(UNIT_DUTY_CHANGED_EVENT, handleDutyChanged);
+  }, [refreshSidebarStatus]);
+
   useEventSource({
     'call:create': (payload) => {
       if (!isOnDuty) return;
@@ -279,14 +294,10 @@ export default function Sidebar() {
       }
     },
     'unit:online': () => {
-      fetchDispatcherStatus();
-      fetchOnDutyStatus();
-      fetchActiveCallStatus();
+      refreshSidebarStatus();
     },
     'unit:offline': () => {
-      fetchDispatcherStatus();
-      fetchOnDutyStatus();
-      fetchActiveCallStatus();
+      refreshSidebarStatus();
     },
     'call:assign': (payload) => {
       fetchActiveCallStatus();
