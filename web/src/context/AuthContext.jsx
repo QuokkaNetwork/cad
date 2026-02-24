@@ -61,7 +61,9 @@ export function AuthProvider({ children }) {
     isAuthenticated: !!user,
     isAdmin: user?.is_admin || false,
     canManageAnnouncements: !!user?.can_manage_announcements,
+    canManageDepartmentApplications: !!user?.can_manage_department_applications,
     isDepartmentLeader: !!user?.is_department_leader,
+    managedDepartmentIds: Array.isArray(user?.managed_department_ids) ? user.managed_department_ids : [],
     isFiveMOnline: !!user?.is_fivem_online,
     currentRulesVersion: String(user?.current_rules_version || '').trim(),
     hasAcceptedCurrentRules: (

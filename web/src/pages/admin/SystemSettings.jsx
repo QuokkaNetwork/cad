@@ -405,7 +405,7 @@ export default function AdminSystemSettings() {
             </p>
           </div>
           <div className="md:col-span-2">
-            <label className="block text-xs text-cad-muted mb-1">Department Leader Discord Role IDs (Announcements Permission)</label>
+            <label className="block text-xs text-cad-muted mb-1">Department Leader Role IDs (Legacy Announcements Fallback)</label>
             <textarea
               value={settings.announcements_department_leader_role_ids || ''}
               onChange={e => updateSetting('announcements_department_leader_role_ids', e.target.value)}
@@ -414,7 +414,7 @@ export default function AdminSystemSettings() {
               placeholder={'123456789012345678\n234567890123456789'}
             />
             <p className="text-xs text-cad-muted mt-1">
-              Users with any of these Discord role IDs can access <span className="font-mono">Announcements</span> and post Home page announcements (without full admin access). Paste one role ID per line, comma-separated, or JSON array.
+              Preferred setup: configure leader role IDs per department in <span className="font-mono">Admin &gt; Departments</span>. This field remains as a legacy global fallback for announcements if no per-department leader roles are set.
             </p>
           </div>
         </div>

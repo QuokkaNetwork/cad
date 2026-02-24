@@ -185,12 +185,26 @@ const Departments = {
   findByShortName(shortName) {
     return db.prepare('SELECT * FROM departments WHERE short_name = ?').get(shortName);
   },
-  create({ name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order, applications_open }) {
+  create({
+    name,
+    short_name,
+    color,
+    icon,
+    slogan,
+    layout_type,
+    fivem_job_name,
+    fivem_job_grade,
+    sort_order,
+    applications_open,
+    department_leader_role_ids,
+    application_template,
+    application_form_schema,
+  }) {
     const resolvedSortOrder = Number.isFinite(Number(sort_order))
       ? Math.max(0, Math.trunc(Number(sort_order)))
       : getNextSortOrder('departments');
     const info = db.prepare(
-      'INSERT INTO departments (name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order, applications_open) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO departments (name, short_name, color, icon, slogan, layout_type, fivem_job_name, fivem_job_grade, sort_order, applications_open, department_leader_role_ids, application_template, application_form_schema) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(
       name,
       short_name || '',
@@ -201,12 +215,15 @@ const Departments = {
       String(fivem_job_name || '').trim(),
       Number.isFinite(Number(fivem_job_grade)) ? Math.max(0, Math.trunc(Number(fivem_job_grade))) : 0,
       resolvedSortOrder,
-      applications_open ? 1 : 0
+      applications_open ? 1 : 0,
+      String(department_leader_role_ids || '').trim().slice(0, 4000),
+      String(application_template || '').slice(0, 12000),
+      String(application_form_schema || '').slice(0, 50000)
     );
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['name', 'short_name', 'color', 'icon', 'slogan', 'is_active', 'dispatch_visible', 'is_dispatch', 'applications_open', 'layout_type', 'fivem_job_name', 'fivem_job_grade', 'sort_order'];
+    const allowed = ['name', 'short_name', 'color', 'icon', 'slogan', 'is_active', 'dispatch_visible', 'is_dispatch', 'applications_open', 'layout_type', 'fivem_job_name', 'fivem_job_grade', 'sort_order', 'department_leader_role_ids', 'application_template', 'application_form_schema'];
     const updates = [];
     const values = [];
     for (const key of allowed) {
@@ -214,6 +231,12 @@ const Departments = {
         updates.push(`${key} = ?`);
         if (key === 'fivem_job_name' || key === 'slogan') {
           values.push(String(fields[key] || '').trim());
+        } else if (key === 'department_leader_role_ids') {
+          values.push(String(fields[key] || '').trim().slice(0, 4000));
+        } else if (key === 'application_template') {
+          values.push(String(fields[key] || '').slice(0, 12000));
+        } else if (key === 'application_form_schema') {
+          values.push(String(fields[key] || '').slice(0, 50000));
         } else if (key === 'fivem_job_grade') {
           const grade = Number(fields[key]);
           values.push(Number.isFinite(grade) ? Math.max(0, Math.trunc(grade)) : 0);
@@ -295,17 +318,32 @@ const DepartmentApplications = {
       LIMIT ?
     `).all(userId, parsedLimit);
   },
-  listForAdmin({ status = '', limit = 200 } = {}) {
+  listForAdmin({ status = '', limit = 200, departmentIds = [] } = {}) {
     const parsedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.trunc(Number(limit))) : 200;
     const normalizedStatus = normalizeDepartmentApplicationStatus(status, '');
-    const where = normalizedStatus ? 'WHERE da.status = ?' : '';
-    const params = normalizedStatus ? [normalizedStatus, parsedLimit] : [parsedLimit];
+    const normalizedDepartmentIds = Array.from(new Set(
+      (Array.isArray(departmentIds) ? departmentIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    ));
+    const whereParts = [];
+    const params = [];
+    if (normalizedStatus) {
+      whereParts.push('da.status = ?');
+      params.push(normalizedStatus);
+    }
+    if (normalizedDepartmentIds.length > 0) {
+      whereParts.push(`da.department_id IN (${normalizedDepartmentIds.map(() => '?').join(', ')})`);
+      params.push(...normalizedDepartmentIds);
+    }
+    const where = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
     return db.prepare(`
       SELECT
         da.*,
         d.name AS department_name,
         d.short_name AS department_short_name,
         d.color AS department_color,
+        d.application_template AS department_application_template,
         applicant.steam_name AS applicant_name,
         applicant.discord_name AS applicant_discord_name,
         applicant.discord_id AS applicant_discord_id,
@@ -325,17 +363,18 @@ const DepartmentApplications = {
         da.created_at DESC,
         da.id DESC
       LIMIT ?
-    `).all(...params);
+    `).all(...params, parsedLimit);
   },
-  create({ user_id, department_id, message }) {
+  create({ user_id, department_id, message, form_answers_json = '' }) {
     const info = db.prepare(`
       INSERT INTO department_applications (
-        user_id, department_id, status, message, review_notes, reviewed_by, reviewed_at, created_at, updated_at
-      ) VALUES (?, ?, 'pending', ?, '', NULL, NULL, datetime('now'), datetime('now'))
+        user_id, department_id, status, message, form_answers_json, review_notes, reviewed_by, reviewed_at, created_at, updated_at
+      ) VALUES (?, ?, 'pending', ?, ?, '', NULL, NULL, datetime('now'), datetime('now'))
     `).run(
       user_id,
       department_id,
-      String(message || '').trim()
+      String(message || '').trim(),
+      String(form_answers_json || '').slice(0, 50000)
     );
     return this.findById(info.lastInsertRowid);
   },

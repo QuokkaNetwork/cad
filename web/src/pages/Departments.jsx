@@ -91,19 +91,209 @@ function getApplicationStatusMeta(status) {
   };
 }
 
-function DepartmentCard({ dept, onSelect, index }) {
+function getDepartmentApplicationFormFields(dept) {
+  if (!Array.isArray(dept?.application_form_schema)) return [];
+  return dept.application_form_schema
+    .filter((field) => field && typeof field === 'object' && String(field.label || '').trim())
+    .map((field, index) => ({
+      id: String(field.id || `field_${index + 1}`),
+      label: String(field.label || `Question ${index + 1}`),
+      type: String(field.type || 'text').toLowerCase(),
+      required: !!field.required,
+      description: String(field.description || ''),
+      placeholder: String(field.placeholder || ''),
+      options: Array.isArray(field.options) ? field.options.map((opt) => String(opt)).filter(Boolean) : [],
+      max_length: Number.isInteger(Number(field.max_length)) ? Number(field.max_length) : undefined,
+    }));
+}
+
+function buildInitialApplicationFormValues(fields) {
+  const out = {};
+  for (const field of fields) {
+    const type = String(field?.type || 'text').toLowerCase();
+    if (type === 'checkbox') out[field.id] = false;
+    else out[field.id] = '';
+  }
+  return out;
+}
+
+function isStructuredFieldSatisfied(field, value) {
+  const type = String(field?.type || 'text').toLowerCase();
+  if (!field?.required) return true;
+  if (type === 'checkbox') return value === true;
+  if (type === 'yes_no') return value === true || value === false || value === 'true' || value === 'false';
+  return String(value ?? '').trim() !== '';
+}
+
+function structuredFormHasMissingRequired(fields, values) {
+  return fields.some((field) => !isStructuredFieldSatisfied(field, values?.[field.id]));
+}
+
+function formatStructuredAnswerValue(answer) {
+  if (!answer || typeof answer !== 'object') return '';
+  const type = String(answer.type || '').toLowerCase();
+  const value = answer.value;
+  if (type === 'checkbox' || type === 'yes_no') {
+    return value ? 'Yes' : 'No';
+  }
+  return String(answer.value_label || value || '');
+}
+
+function ApplicationFormFieldInput({ field, value, onChange, disabled = false }) {
+  const type = String(field?.type || 'text').toLowerCase();
+  const fieldId = String(field?.id || 'field');
+  const label = String(field?.label || 'Question');
+  const description = String(field?.description || '').trim();
+  const placeholder = String(field?.placeholder || '').trim();
+  const maxLength = Number.isInteger(field?.max_length) ? field.max_length : (type === 'textarea' ? 4000 : 250);
+  const options = Array.isArray(field?.options) ? field.options : [];
+
+  return (
+    <div className="rounded-lg border border-cad-border bg-cad-surface/45 p-3">
+      <label className="block text-sm text-cad-ink font-medium mb-1" htmlFor={`app-field-${fieldId}`}>
+        {label} {field?.required ? <span className="text-red-300">*</span> : null}
+      </label>
+      {description ? <p className="text-xs text-cad-muted mb-2 leading-5">{description}</p> : null}
+
+      {(type === 'text' || type === 'number') && (
+        <input
+          id={`app-field-${fieldId}`}
+          type={type === 'number' ? 'number' : 'text'}
+          value={value ?? ''}
+          onChange={(e) => onChange(fieldId, e.target.value)}
+          placeholder={placeholder || undefined}
+          maxLength={type === 'text' ? maxLength : undefined}
+          disabled={disabled}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent disabled:opacity-60"
+        />
+      )}
+
+      {type === 'textarea' && (
+        <>
+          <textarea
+            id={`app-field-${fieldId}`}
+            rows={4}
+            value={value ?? ''}
+            onChange={(e) => onChange(fieldId, e.target.value)}
+            placeholder={placeholder || undefined}
+            maxLength={maxLength}
+            disabled={disabled}
+            className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-y disabled:opacity-60"
+          />
+          <p className="text-[11px] text-cad-muted mt-1">{String(value ?? '').length}/{maxLength}</p>
+        </>
+      )}
+
+      {(type === 'select') && (
+        <select
+          id={`app-field-${fieldId}`}
+          value={value ?? ''}
+          onChange={(e) => onChange(fieldId, e.target.value)}
+          disabled={disabled}
+          className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent disabled:opacity-60"
+        >
+          <option value="">{field?.required ? 'Select an option...' : 'Optional - no selection'}</option>
+          {options.map((option) => (
+            <option key={`${fieldId}-${option}`} value={option}>{option}</option>
+          ))}
+        </select>
+      )}
+
+      {type === 'radio' && (
+        <div className="space-y-2">
+          {options.map((option) => (
+            <label key={`${fieldId}-${option}`} className="flex items-center gap-2 text-sm text-cad-muted">
+              <input
+                type="radio"
+                name={`app-field-${fieldId}`}
+                value={option}
+                checked={String(value ?? '') === String(option)}
+                onChange={(e) => onChange(fieldId, e.target.value)}
+                disabled={disabled}
+                className="accent-cad-accent"
+              />
+              <span>{option}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {(type === 'yes_no') && (
+        <div className="flex flex-wrap gap-2">
+          {[
+            { value: 'true', label: 'Yes' },
+            { value: 'false', label: 'No' },
+          ].map((option) => (
+            <button
+              key={`${fieldId}-${option.value}`}
+              type="button"
+              onClick={() => onChange(fieldId, option.value)}
+              disabled={disabled}
+              className={`px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+                String(value ?? '') === option.value
+                  ? 'border-cad-accent/40 bg-cad-accent/12 text-cad-accent-light'
+                  : 'border-cad-border bg-cad-card text-cad-muted hover:text-cad-ink'
+              } disabled:opacity-50`}
+            >
+              {option.label}
+            </button>
+          ))}
+          {!field?.required ? (
+            <button
+              type="button"
+              onClick={() => onChange(fieldId, '')}
+              disabled={disabled}
+              className="px-3 py-1.5 rounded-lg border border-cad-border bg-cad-card text-xs text-cad-muted hover:text-cad-ink transition-colors disabled:opacity-50"
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      {type === 'checkbox' && (
+        <label className="inline-flex items-center gap-2 text-sm text-cad-muted">
+          <input
+            id={`app-field-${fieldId}`}
+            type="checkbox"
+            checked={value === true}
+            onChange={(e) => onChange(fieldId, e.target.checked)}
+            disabled={disabled}
+            className="rounded accent-cad-accent"
+          />
+          <span>{placeholder || 'Tick to confirm'}</span>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function DepartmentCard({
+  dept,
+  onSelect,
+  index,
+  locked = false,
+  latestApplicationStatus = '',
+  showApplicationState = true,
+}) {
   const accent = String(dept?.color || '#0052C2').trim() || '#0052C2';
   const kind = getDepartmentKindLabel(dept);
   const logo = String(dept?.icon || '').trim();
   const slogan = String(dept?.slogan || '').trim() || `${kind} workspace`;
+  const isAssigned = !!dept?.is_assigned && !locked;
+  const applicationMeta = latestApplicationStatus ? getApplicationStatusMeta(latestApplicationStatus) : null;
 
   return (
     <button
-      onClick={() => onSelect(dept)}
-      className="group relative text-left rounded-2xl border overflow-hidden transition-all duration-200 hover:-translate-y-1 hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-cad-bg"
+      type="button"
+      onClick={() => onSelect?.(dept)}
+      aria-disabled={locked ? 'true' : 'false'}
+      className={`group relative text-left rounded-2xl border overflow-hidden transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-cad-bg ${
+        locked ? 'cursor-not-allowed opacity-90' : 'hover:-translate-y-1 hover:shadow-2xl'
+      }`}
       style={{
         borderColor: colorWithAlpha(accent, 0.2),
-        background: `linear-gradient(145deg, ${colorWithAlpha(accent, 0.06)}, rgba(26,35,50,0.95))`,
+        background: `linear-gradient(145deg, ${colorWithAlpha(accent, locked ? 0.04 : 0.06)}, rgba(26,35,50,0.95))`,
         boxShadow: `0 4px 20px ${colorWithAlpha(accent, 0.08)}`,
         animationDelay: `${index * 40}ms`,
       }}
@@ -148,19 +338,43 @@ function DepartmentCard({ dept, onSelect, index }) {
             </div>
           </div>
           <div
-            className="flex-shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-lg border font-medium transition-all group-hover:scale-105"
+            className={`flex-shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-lg border font-medium transition-all ${locked ? '' : 'group-hover:scale-105'}`}
             style={{
               borderColor: colorWithAlpha(accent, 0.3),
               backgroundColor: colorWithAlpha(accent, 0.1),
               color: '#c8d8f4',
             }}
           >
-            Launch
+            {locked ? 'Locked' : 'Enter'}
           </div>
         </div>
 
         {/* Slogan */}
         <p className="text-xs text-cad-muted line-clamp-2 leading-relaxed">{slogan}</p>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border ${
+            isAssigned
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+              : 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+          }`}>
+            {isAssigned ? 'Access Granted' : 'No Access'}
+          </span>
+          {showApplicationState ? (
+            <span className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border ${
+              dept?.applications_open
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                : 'border-gray-500/30 bg-gray-500/10 text-gray-300'
+            }`}>
+              {dept?.applications_open ? 'Applications Open' : 'Applications Closed'}
+            </span>
+          ) : null}
+          {applicationMeta && !isAssigned ? (
+            <span className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border ${applicationMeta.className}`}>
+              {applicationMeta.label}
+            </span>
+          ) : null}
+        </div>
       </div>
     </button>
   );
@@ -178,10 +392,12 @@ function StatusPill({ label, value, active }) {
   );
 }
 
-function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment }) {
+function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment, latestApplicationByDepartment }) {
   const linked = !!user?.discord_id;
-  const kinds = countDepartmentKinds(departments);
+  const assignedDepartments = departments.filter((dept) => !!dept?.is_assigned);
+  const kinds = countDepartmentKinds(assignedDepartments.length > 0 ? assignedDepartments : departments);
   const totalTiles = departments.length;
+  const assignedTiles = assignedDepartments.length;
 
   return (
     <div className="flex flex-col h-full gap-0">
@@ -220,13 +436,14 @@ function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment }) {
             {/* Status pills */}
             <div className="flex flex-wrap gap-2">
               <StatusPill label="Access" value={linked ? 'Discord Verified' : 'Setup Required'} active={linked} />
-              <StatusPill label="Workspaces" value={`${departments.length} assigned`} active={departments.length > 0} />
+              <StatusPill label="Workspaces" value={`${assignedTiles} assigned`} active={assignedTiles > 0} />
+              <StatusPill label="Directory" value={`${totalTiles} visible`} active={totalTiles > 0} />
               <StatusPill label="Role" value={isAdmin ? 'Administrator' : 'Operator'} active={true} />
             </div>
           </div>
 
           {/* Coverage strip */}
-          {departments.length > 0 && (
+          {assignedDepartments.length > 0 && (
             <div className="flex flex-wrap gap-4 mt-4 pt-4 border-t border-white/5">
               {kinds.police > 0 && (
                 <div className="flex items-center gap-2">
@@ -259,7 +476,7 @@ function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment }) {
 
       {/* Department grid area */}
       <div className="flex-1 min-h-0 overflow-auto p-5 sm:p-6">
-        {totalTiles === 0 ? (
+          {totalTiles === 0 ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center max-w-sm">
               <div className="w-16 h-16 rounded-2xl border border-cad-border bg-cad-surface flex items-center justify-center mx-auto mb-4">
@@ -274,11 +491,20 @@ function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment }) {
         ) : (
           <>
             <div className="flex items-center justify-between mb-4">
-              <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">{totalTiles} workspace{totalTiles !== 1 ? 's' : ''} available</p>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-cad-muted">
+                {assignedTiles} assigned / {totalTiles} visible
+              </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
               {departments.map((dept, i) => (
-                <DepartmentCard key={dept.id} dept={dept} onSelect={onSelectDepartment} index={i} />
+                <DepartmentCard
+                  key={dept.id}
+                  dept={dept}
+                  onSelect={onSelectDepartment}
+                  index={i}
+                  locked={!dept?.is_assigned}
+                  latestApplicationStatus={String(latestApplicationByDepartment?.get?.(Number(dept.id))?.status || '').toLowerCase()}
+                />
               ))}
             </div>
           </>
@@ -297,7 +523,7 @@ function WorkspaceHub({ user, departments, isAdmin, onSelectDepartment }) {
           )}
         </div>
         <p className="text-[10px] uppercase tracking-wider text-cad-muted">
-          Select a workspace above to enter the operational environment
+          Select an assigned workspace above to enter the operational environment
         </p>
       </div>
     </div>
@@ -427,6 +653,7 @@ function DepartmentApplicationsPortal({ user }) {
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState(null);
   const [applicationMessage, setApplicationMessage] = useState('');
+  const [applicationFormValues, setApplicationFormValues] = useState({});
   const [submitting, setSubmitting] = useState(false);
 
   async function loadPortalData() {
@@ -462,11 +689,24 @@ function DepartmentApplicationsPortal({ user }) {
   const openDepartments = portalData.departments.filter((dept) => !!dept.applications_open && !dept.is_assigned);
   const closedDepartments = portalData.departments.filter((dept) => !dept.applications_open && !dept.is_assigned);
   const pendingCount = portalData.applications.filter((app) => String(app?.status || '').toLowerCase() === 'pending').length;
+  const selectedDepartmentFormFields = useMemo(
+    () => getDepartmentApplicationFormFields(selectedDepartment),
+    [selectedDepartment]
+  );
+  const selectedDepartmentHasStructuredForm = selectedDepartmentFormFields.length > 0;
+  const structuredFormMissingRequired = selectedDepartmentHasStructuredForm
+    ? structuredFormHasMissingRequired(selectedDepartmentFormFields, applicationFormValues)
+    : false;
 
   function beginApply(department) {
     setSelectedDepartment(department);
     setApplicationMessage('');
+    setApplicationFormValues(buildInitialApplicationFormValues(getDepartmentApplicationFormFields(department)));
     setShowApplyModal(true);
+  }
+
+  function updateApplicationFormValue(fieldId, value) {
+    setApplicationFormValues((prev) => ({ ...prev, [String(fieldId)]: value }));
   }
 
   async function submitApplication(e) {
@@ -474,13 +714,18 @@ function DepartmentApplicationsPortal({ user }) {
     if (!selectedDepartment) return;
     try {
       setSubmitting(true);
-      await api.post('/api/department-applications', {
+      const payload = {
         department_id: selectedDepartment.id,
-        message: applicationMessage,
-      });
+        form_answers: applicationFormValues,
+      };
+      if (!selectedDepartmentHasStructuredForm || String(applicationMessage || '').trim()) {
+        payload.message = applicationMessage;
+      }
+      await api.post('/api/department-applications', payload);
       setShowApplyModal(false);
       setSelectedDepartment(null);
       setApplicationMessage('');
+      setApplicationFormValues({});
       await loadPortalData();
     } catch (err) {
       alert('Failed to submit application: ' + err.message);
@@ -537,6 +782,34 @@ function DepartmentApplicationsPortal({ user }) {
           </div>
         </section>
 
+        <section className="rounded-2xl border border-cad-border bg-cad-surface/45 p-4 sm:p-5 shrink-0">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h2 className="text-sm font-semibold text-cad-ink">Department Directory</h2>
+            <span className="text-xs text-cad-muted">
+              {portalData.departments.length} visible
+            </span>
+          </div>
+          <p className="text-xs text-cad-muted mb-3">
+            All department cards stay visible. Locked cards require role access before you can enter the workspace.
+          </p>
+          <div className="max-h-[280px] overflow-auto pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {portalData.departments.map((dept, index) => (
+                <DepartmentCard
+                  key={`directory-${dept.id}`}
+                  dept={dept}
+                  index={index}
+                  locked={!dept.is_assigned}
+                  onSelect={() => {
+                    if (!dept.is_assigned) return;
+                  }}
+                  latestApplicationStatus={String(latestApplicationByDepartment.get(Number(dept.id))?.status || '').toLowerCase()}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+
         <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4 min-h-0 flex-1">
           <section className="rounded-2xl border border-cad-border bg-cad-surface/45 p-4 sm:p-5 overflow-auto">
             <div className="flex items-center justify-between mb-3">
@@ -584,6 +857,11 @@ function DepartmentApplicationsPortal({ user }) {
                         <p className="text-xs text-cad-muted mt-1 leading-5">
                           {String(dept.slogan || '').trim() || `${getDepartmentKindLabel(dept)} department access application`}
                         </p>
+                        {String(dept.application_template || '').trim() ? (
+                          <p className="text-xs text-cad-muted mt-1">
+                            Application template available for this department.
+                          </p>
+                        ) : null}
                         {latestApplication ? (
                           <div className="mt-2 text-xs text-cad-muted space-y-1">
                             <div className="flex items-center gap-2 flex-wrap">
@@ -654,13 +932,26 @@ function DepartmentApplicationsPortal({ user }) {
                           {statusMeta.label}
                         </span>
                       </div>
-                      {String(application.message || '').trim() ? (
-                        <p className="text-xs text-cad-muted mt-2 whitespace-pre-wrap leading-5">
-                          {application.message}
-                        </p>
-                      ) : null}
-                      {String(application.review_notes || '').trim() ? (
-                        <div className="mt-2 rounded-lg border border-cad-border bg-cad-surface/50 p-2.5">
+                    {String(application.message || '').trim() ? (
+                      <p className="text-xs text-cad-muted mt-2 whitespace-pre-wrap leading-5">
+                        {application.message}
+                      </p>
+                    ) : null}
+                    {Array.isArray(application.form_answers) && application.form_answers.length > 0 ? (
+                      <div className="mt-2 rounded-lg border border-cad-border bg-cad-surface/45 p-2.5">
+                        <p className="text-[10px] uppercase tracking-widest text-cad-muted">Form Responses</p>
+                        <div className="mt-2 space-y-1.5">
+                          {application.form_answers.map((answer, idx) => (
+                            <div key={`${application.id}-answer-${answer.field_id || idx}`} className="text-xs">
+                              <span className="text-cad-ink font-medium">{answer.label || answer.field_id || 'Field'}:</span>{' '}
+                              <span className="text-cad-muted whitespace-pre-wrap">{formatStructuredAnswerValue(answer) || '-'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {String(application.review_notes || '').trim() ? (
+                      <div className="mt-2 rounded-lg border border-cad-border bg-cad-surface/50 p-2.5">
                           <p className="text-[10px] uppercase tracking-widest text-cad-muted">Review Notes</p>
                           <p className="text-xs text-cad-muted mt-1 whitespace-pre-wrap leading-5">{application.review_notes}</p>
                         </div>
@@ -683,25 +974,75 @@ function DepartmentApplicationsPortal({ user }) {
       >
         <form onSubmit={submitApplication} className="space-y-3">
           <p className="text-sm text-cad-muted">
-            Tell the admin team why you want to join this department and any relevant experience.
+            {selectedDepartmentHasStructuredForm
+              ? 'Complete the required department application questions below.'
+              : 'Tell the admin team why you want to join this department and any relevant experience.'}
           </p>
-          <div>
-            <label className="block text-sm text-cad-muted mb-1">Application Message *</label>
-            <textarea
-              required
-              rows={6}
-              maxLength={4000}
-              value={applicationMessage}
-              onChange={(e) => setApplicationMessage(e.target.value)}
-              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-y"
-              placeholder="Example: I am applying for Highway Patrol. I am active evenings and have prior patrol/dispatch experience..."
-            />
-            <p className="text-xs text-cad-muted mt-1">{applicationMessage.length}/4000</p>
-          </div>
+          {String(selectedDepartment?.application_template || '').trim() ? (
+            <div className="rounded-lg border border-cad-border bg-cad-surface/50 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-cad-muted">Department Application Template</p>
+                <button
+                  type="button"
+                  onClick={() => setApplicationMessage(String(selectedDepartment?.application_template || ''))}
+                  className="text-xs px-2 py-1 rounded border border-cad-border bg-cad-card text-cad-muted hover:text-cad-ink transition-colors"
+                >
+                  Insert Template
+                </button>
+              </div>
+              <pre className="mt-2 text-xs text-cad-muted whitespace-pre-wrap leading-5 font-sans">
+                {String(selectedDepartment?.application_template || '').trim()}
+              </pre>
+            </div>
+          ) : null}
+          {selectedDepartmentHasStructuredForm ? (
+            <div className="space-y-3">
+              {selectedDepartmentFormFields.map((field) => (
+                <ApplicationFormFieldInput
+                  key={`selected-form-field-${field.id}`}
+                  field={field}
+                  value={applicationFormValues[field.id]}
+                  onChange={updateApplicationFormValue}
+                  disabled={submitting}
+                />
+              ))}
+              <div>
+                <label className="block text-sm text-cad-muted mb-1">Additional Notes (optional)</label>
+                <textarea
+                  rows={4}
+                  maxLength={4000}
+                  value={applicationMessage}
+                  onChange={(e) => setApplicationMessage(e.target.value)}
+                  className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-y"
+                  placeholder="Optional extra information not covered by the form."
+                />
+                <p className="text-xs text-cad-muted mt-1">{applicationMessage.length}/4000</p>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm text-cad-muted mb-1">Application Message *</label>
+              <textarea
+                required
+                rows={6}
+                maxLength={4000}
+                value={applicationMessage}
+                onChange={(e) => setApplicationMessage(e.target.value)}
+                className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent resize-y"
+                placeholder="Example: I am applying for Highway Patrol. I am active evenings and have prior patrol/dispatch experience..."
+              />
+              <p className="text-xs text-cad-muted mt-1">{applicationMessage.length}/4000</p>
+            </div>
+          )}
+          {selectedDepartmentHasStructuredForm && structuredFormMissingRequired ? (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Complete all required form fields before submitting.
+            </div>
+          ) : null}
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
-              disabled={submitting || !applicationMessage.trim()}
+              disabled={submitting || (!selectedDepartmentHasStructuredForm && !applicationMessage.trim()) || structuredFormMissingRequired}
               className="flex-1 px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
             >
               {submitting ? 'Submitting...' : 'Submit Application'}
@@ -773,10 +1114,59 @@ export default function Departments() {
   const navigate = useNavigate();
   const { user, departments, isAdmin } = useAuth();
   const { setActiveDepartment } = useDepartment();
+  const [directoryData, setDirectoryData] = useState({ departments: [], applications: [] });
 
   const departmentList = useMemo(() => (Array.isArray(departments) ? departments : []), [departments]);
+  const assignedDepartmentIds = useMemo(
+    () => new Set(departmentList.map((dept) => Number(dept?.id)).filter((id) => Number.isInteger(id) && id > 0)),
+    [departmentList]
+  );
+
+  useEffect(() => {
+    let active = true;
+    async function loadDirectory() {
+      try {
+        const data = await api.get('/api/department-applications');
+        if (!active) return;
+        setDirectoryData({
+          departments: Array.isArray(data?.departments) ? data.departments : [],
+          applications: Array.isArray(data?.applications) ? data.applications : [],
+        });
+      } catch {
+        if (!active) return;
+        setDirectoryData({ departments: [], applications: [] });
+      }
+    }
+    loadDirectory();
+    return () => { active = false; };
+  }, [user?.id]);
+
+  const latestApplicationByDepartment = useMemo(() => {
+    const map = new Map();
+    for (const application of Array.isArray(directoryData.applications) ? directoryData.applications : []) {
+      const departmentId = Number(application?.department_id);
+      if (!departmentId || map.has(departmentId)) continue;
+      map.set(departmentId, application);
+    }
+    return map;
+  }, [directoryData.applications]);
+
+  const visibleDepartmentCards = useMemo(() => {
+    if (Array.isArray(directoryData.departments) && directoryData.departments.length > 0) {
+      return directoryData.departments.map((dept) => ({
+        ...dept,
+        is_assigned: assignedDepartmentIds.has(Number(dept?.id)) || !!dept?.is_assigned,
+      }));
+    }
+    return departmentList.map((dept) => ({ ...dept, is_assigned: true }));
+  }, [directoryData.departments, departmentList, assignedDepartmentIds]);
 
   function selectDepartment(dept) {
+    const departmentId = Number(dept?.id || 0);
+    if (!assignedDepartmentIds.has(departmentId)) {
+      alert('You do not currently have access to this department. Apply (if open) and wait for role assignment.');
+      return;
+    }
     setActiveDepartment(dept);
     navigate('/department');
   }
@@ -812,9 +1202,10 @@ export default function Departments() {
         <div className="flex-1 min-h-0 rounded-none overflow-hidden border-b border-cad-border" style={{ background: 'rgba(10,15,26,0.97)' }}>
           <WorkspaceHub
             user={user}
-            departments={departmentList}
+            departments={visibleDepartmentCards}
             isAdmin={isAdmin}
             onSelectDepartment={selectDepartment}
+            latestApplicationByDepartment={latestApplicationByDepartment}
           />
         </div>
       </div>

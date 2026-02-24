@@ -1,8 +1,13 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-export default function ProtectedRoute({ children, requireAdmin = false, requireAnnouncementManager = false }) {
-  const { isAuthenticated, isAdmin, canManageAnnouncements, loading } = useAuth();
+export default function ProtectedRoute({
+  children,
+  requireAdmin = false,
+  requireAnnouncementManager = false,
+  requireDepartmentApplicationManager = false,
+}) {
+  const { isAuthenticated, isAdmin, canManageAnnouncements, canManageDepartmentApplications, loading } = useAuth();
 
   if (loading) {
     return (
@@ -21,6 +26,10 @@ export default function ProtectedRoute({ children, requireAdmin = false, require
   }
 
   if (requireAnnouncementManager && !canManageAnnouncements) {
+    return <Navigate to="/home" replace />;
+  }
+
+  if (requireDepartmentApplicationManager && !canManageDepartmentApplications) {
     return <Navigate to="/home" replace />;
   }
 

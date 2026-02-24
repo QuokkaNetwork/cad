@@ -41,6 +41,7 @@ import AdminQboxSettings from './pages/admin/QboxSettings';
 import AdminJobBindings from './pages/admin/JobBindings';
 import AdminAlarmZones from './pages/admin/AlarmZones';
 import AdminAnnouncements from './pages/admin/Announcements';
+import DepartmentApplicationsManager from './pages/admin/DepartmentApplicationsManager';
 
 export default function App() {
   return (
@@ -98,6 +99,7 @@ export default function App() {
             <Route path="/admin/qbox-settings" element={<ProtectedRoute requireAdmin><AdminQboxSettings /></ProtectedRoute>} />
             <Route path="/admin/alarm-zones" element={<ProtectedRoute requireAdmin><AdminAlarmZones /></ProtectedRoute>} />
             <Route path="/admin/announcements" element={<ProtectedRoute requireAnnouncementManager><AdminAnnouncements /></ProtectedRoute>} />
+            <Route path="/admin/department-applications" element={<ProtectedRoute requireDepartmentApplicationManager><DepartmentApplicationsManager /></ProtectedRoute>} />
           </Route>
 
           {/* Default redirect */}

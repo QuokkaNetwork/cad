@@ -33,6 +33,7 @@ export default function AdminDepartments() {
     icon: '',
     slogan: '',
     applications_open: 0,
+    department_leader_role_ids: '',
     layout_type: DEPARTMENT_LAYOUT.LAW_ENFORCEMENT,
     fivem_job_name: '',
     fivem_job_grade: 0,
@@ -48,6 +49,7 @@ export default function AdminDepartments() {
     is_dispatch: 0,
     dispatch_visible: 0,
     applications_open: 0,
+    department_leader_role_ids: '',
     layout_type: DEPARTMENT_LAYOUT.LAW_ENFORCEMENT,
     fivem_job_name: '',
     fivem_job_grade: 0,
@@ -163,6 +165,7 @@ export default function AdminDepartments() {
         icon,
         slogan: String(form.slogan || '').trim(),
         applications_open: form.applications_open ? 1 : 0,
+        department_leader_role_ids: String(form.department_leader_role_ids || '').trim(),
         layout_type: normalizeDepartmentLayoutType(form.layout_type),
         fivem_job_name: String(form.fivem_job_name || '').trim(),
         fivem_job_grade: Number(form.fivem_job_grade || 0),
@@ -175,6 +178,7 @@ export default function AdminDepartments() {
         icon: '',
         slogan: '',
         applications_open: 0,
+        department_leader_role_ids: '',
         layout_type: DEPARTMENT_LAYOUT.LAW_ENFORCEMENT,
         fivem_job_name: '',
         fivem_job_grade: 0,
@@ -247,6 +251,7 @@ export default function AdminDepartments() {
       is_dispatch: dept.is_dispatch ? 1 : 0,
       dispatch_visible: dept.dispatch_visible ? 1 : 0,
       applications_open: dept.applications_open ? 1 : 0,
+      department_leader_role_ids: dept.department_leader_role_ids || '',
       layout_type: normalizeDepartmentLayoutType(dept.layout_type),
       fivem_job_name: dept.fivem_job_name || '',
       fivem_job_grade: Number.isFinite(Number(dept.fivem_job_grade)) ? Number(dept.fivem_job_grade) : 0,
@@ -273,6 +278,7 @@ export default function AdminDepartments() {
         is_dispatch: editForm.is_dispatch ? 1 : 0,
         dispatch_visible: editForm.dispatch_visible ? 1 : 0,
         applications_open: editForm.applications_open ? 1 : 0,
+        department_leader_role_ids: String(editForm.department_leader_role_ids || '').trim(),
         layout_type: normalizeDepartmentLayoutType(editForm.layout_type),
         fivem_job_name: String(editForm.fivem_job_name || '').trim(),
         fivem_job_grade: Number(editForm.fivem_job_grade || 0),
@@ -432,6 +438,7 @@ export default function AdminDepartments() {
         links={[
           { to: '/admin/users', label: 'Users' },
           { to: '/admin/role-mappings', label: 'Role Access Sync' },
+          { to: '/admin/department-applications', label: 'Applications & Templates' },
           { to: '/admin/alarm-zones', label: 'Alarm Zones' },
         ]}
       />
@@ -519,6 +526,11 @@ export default function AdminDepartments() {
               <span className={`text-xs px-2 py-0.5 rounded border ${dept.applications_open ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-gray-500/20 text-gray-300 border-gray-500/30'}`}>
                 {dept.applications_open ? 'Applications Open' : 'Applications Closed'}
               </span>
+              {String(dept.department_leader_role_ids || '').trim() ? (
+                <span className="text-xs px-2 py-0.5 rounded border border-cad-border bg-cad-surface text-cad-muted">
+                  Leader Roles Set
+                </span>
+              ) : null}
               <span className={`text-xs px-2 py-0.5 rounded ${dept.is_active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-500/20 text-gray-400'}`}>
                 {dept.is_active ? 'Active' : 'Inactive'}
               </span>
@@ -781,6 +793,19 @@ export default function AdminDepartments() {
             />
             Applications open for this department
           </label>
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Department Leader Discord Role IDs</label>
+            <textarea
+              rows={4}
+              value={form.department_leader_role_ids}
+              onChange={e => setForm(f => ({ ...f, department_leader_role_ids: e.target.value }))}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent resize-y"
+              placeholder={'One role ID per line\n123456789012345678\n987654321098765432'}
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              Users with any of these Discord roles are treated as leaders for this department (applications + templates).
+            </p>
+          </div>
           <div className="bg-cad-card border border-cad-border rounded-lg p-3 space-y-2">
             <p className="text-xs font-semibold text-cad-ink">FiveM Job Mapping</p>
             <div>
@@ -923,6 +948,19 @@ export default function AdminDepartments() {
             />
             Applications open for this department
           </label>
+          <div>
+            <label className="block text-sm text-cad-muted mb-1">Department Leader Discord Role IDs</label>
+            <textarea
+              rows={4}
+              value={editForm.department_leader_role_ids}
+              onChange={e => setEditForm(f => ({ ...f, department_leader_role_ids: e.target.value }))}
+              className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent resize-y"
+              placeholder={'One role ID per line\n123456789012345678\n987654321098765432'}
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              Used for department leader permissions (application review/template access and announcement eligibility).
+            </p>
+          </div>
           <div className="bg-cad-card border border-cad-border rounded-lg p-3 space-y-2">
             <p className="text-xs font-semibold text-cad-ink">Dispatch Settings</p>
             <label className="flex items-center gap-2 text-sm text-cad-muted">

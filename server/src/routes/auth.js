@@ -6,6 +6,7 @@ const { requireAuth, getUserFiveMOnlineStatus } = require('../auth/middleware');
 const { Users, UserDepartments, UserSubDepartments, Settings } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const { getAnnouncementPermissionForUser } = require('../utils/announcementPermissions');
+const { getDepartmentLeaderScopeForUser } = require('../utils/departmentLeaderPermissions');
 
 const router = express.Router();
 
@@ -79,7 +80,8 @@ router.get('/me', requireAuth, async (req, res) => {
   const sub_departments = req.user.sub_departments || [];
   const fivemStatus = getUserFiveMOnlineStatus(req.user);
   const currentRulesVersion = String(Settings.get('cms_rules_version') || '1').trim() || '1';
-  const announcementPermission = await getAnnouncementPermissionForUser(req.user);
+  const departmentLeaderScope = await getDepartmentLeaderScopeForUser(req.user);
+  const announcementPermission = await getAnnouncementPermissionForUser(req.user, { departmentLeaderScope });
   res.json({
     id,
     steam_id,
@@ -93,7 +95,9 @@ router.get('/me', requireAuth, async (req, res) => {
     rules_agreed_at: rules_agreed_at || null,
     current_rules_version: currentRulesVersion,
     can_manage_announcements: !!announcementPermission?.allowed,
-    is_department_leader: !!announcementPermission?.is_department_leader,
+    can_manage_department_applications: !!departmentLeaderScope?.allowed,
+    is_department_leader: !!departmentLeaderScope?.is_department_leader || !!announcementPermission?.is_department_leader,
+    managed_department_ids: Array.isArray(departmentLeaderScope?.managed_department_ids) ? departmentLeaderScope.managed_department_ids : [],
     departments,
     sub_departments,
     is_fivem_online: !!fivemStatus.online,

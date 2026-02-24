@@ -1,45 +1,20 @@
 const { Settings } = require('../db/sqlite');
-
-function parseDiscordRoleIds(raw) {
-  const text = String(raw || '').trim();
-  if (!text) return [];
-
-  const tokens = [];
-  try {
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) {
-      for (const item of parsed) tokens.push(String(item || ''));
-    } else {
-      tokens.push(text);
-    }
-  } catch {
-    for (const line of text.split(/\r?\n/)) {
-      tokens.push(line);
-    }
-  }
-
-  const out = [];
-  const seen = new Set();
-  for (const token of tokens) {
-    for (const part of String(token || '').split(/[,\s]+/)) {
-      const cleaned = String(part || '')
-        .trim()
-        .replace(/^<@&/, '')
-        .replace(/>$/, '');
-      if (!/^\d{5,25}$/.test(cleaned)) continue;
-      if (seen.has(cleaned)) continue;
-      seen.add(cleaned);
-      out.push(cleaned);
-    }
-  }
-  return out;
-}
+const {
+  parseDiscordRoleIds,
+  getDepartmentLeaderRoleConfig,
+  getDepartmentLeaderScopeForUser,
+} = require('./departmentLeaderPermissions');
 
 function getDepartmentLeaderAnnouncementRoleIds() {
+  const perDepartment = getDepartmentLeaderRoleConfig();
+  if (Array.isArray(perDepartment?.unionRoleIds) && perDepartment.unionRoleIds.length > 0) {
+    return perDepartment.unionRoleIds;
+  }
+  // Legacy fallback for existing deployments still using the old global setting.
   return parseDiscordRoleIds(Settings.get('announcements_department_leader_role_ids') || '');
 }
 
-async function getAnnouncementPermissionForUser(user) {
+async function getAnnouncementPermissionForUser(user, options = {}) {
   if (user?.is_admin) {
     return {
       allowed: true,
@@ -50,8 +25,22 @@ async function getAnnouncementPermissionForUser(user) {
     };
   }
 
-  const discordId = String(user?.discord_id || '').trim();
   const leaderRoleIds = getDepartmentLeaderAnnouncementRoleIds();
+  const scope = options.departmentLeaderScope || await getDepartmentLeaderScopeForUser(user);
+  if (Array.isArray(scope?.configured_leader_role_ids) && scope.configured_leader_role_ids.length > 0) {
+    return {
+      allowed: !!scope.allowed,
+      source: scope.source || (scope.allowed ? 'department_leader_role' : 'role_not_present'),
+      is_admin: false,
+      is_department_leader: !!scope.is_department_leader,
+      leader_role_ids: leaderRoleIds,
+      managed_department_ids: Array.isArray(scope.managed_department_ids) ? scope.managed_department_ids : [],
+      matched_role_id: Object.values(scope.matched_role_ids_by_department || {})[0] || '',
+      matched_role_ids_by_department: scope.matched_role_ids_by_department || {},
+      ...(scope.error ? { error: scope.error } : {}),
+    };
+  }
+  const discordId = String(user?.discord_id || '').trim();
   if (!discordId) {
     return {
       allowed: false,
@@ -118,4 +107,3 @@ module.exports = {
   getAnnouncementPermissionForUser,
   requireAnnouncementManager,
 };
-
