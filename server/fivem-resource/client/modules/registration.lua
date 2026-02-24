@@ -22,6 +22,89 @@ local function parseCoords(value)
   return nil
 end
 
+local function readStateValue(container, key, index)
+  if type(container) ~= 'table' and type(container) ~= 'userdata' then return nil end
+  local out = nil
+  local ok = pcall(function()
+    out = container[key]
+  end)
+  if (not ok or out == nil) and index ~= nil then
+    pcall(function()
+      out = container[index]
+    end)
+  end
+  return out
+end
+
+local function applyCharInfoToName(current, charinfo)
+  if type(charinfo) ~= 'table' then return current end
+  local first = trim(charinfo.firstname or charinfo.firstName or '')
+  local last = trim(charinfo.lastname or charinfo.lastName or '')
+  local full = trim(first .. ' ' .. last)
+  if full ~= '' then return full end
+  return current
+end
+
+local function getLocalCharacterFullName()
+  local playerName = trim(GetPlayerName(PlayerId()) or '')
+  local fullName = playerName ~= '' and playerName or 'Player'
+
+  local localPlayer = rawget(_G, 'LocalPlayer')
+  local localState = localPlayer and readStateValue(localPlayer, 'state')
+  if localState then
+    fullName = applyCharInfoToName(fullName, readStateValue(localState, 'charinfo'))
+
+    local statePlayerData = readStateValue(localState, 'PlayerData')
+    if type(statePlayerData) == 'table' then
+      fullName = applyCharInfoToName(fullName, statePlayerData.charinfo)
+      local pdName = trim(statePlayerData.name or '')
+      if pdName ~= '' and trim(fullName) == '' then fullName = pdName end
+    end
+
+    local stateName = trim(readStateValue(localState, 'name') or '')
+    if stateName ~= '' and trim(fullName) == '' then fullName = stateName end
+  end
+
+  if GetResourceState('qbx_core') == 'started' then
+    local ok, pd = pcall(function()
+      if exports.qbx_core and type(exports.qbx_core.GetPlayerData) == 'function' then
+        return exports.qbx_core:GetPlayerData()
+      end
+      if exports.qbx_core and type(exports.qbx_core.GetPlayer) == 'function' then
+        local player = exports.qbx_core:GetPlayer(GetPlayerServerId(PlayerId()))
+        return player and player.PlayerData or nil
+      end
+      return nil
+    end)
+    if ok and type(pd) == 'table' then
+      fullName = applyCharInfoToName(fullName, pd.charinfo)
+      local pdName = trim(pd.name or '')
+      if pdName ~= '' and trim(fullName) == '' then fullName = pdName end
+    end
+  end
+
+  if GetResourceState('qb-core') == 'started' then
+    local ok, pd = pcall(function()
+      local obj = exports['qb-core']:GetCoreObject()
+      if obj and obj.Functions and type(obj.Functions.GetPlayerData) == 'function' then
+        return obj.Functions.GetPlayerData()
+      end
+      return nil
+    end)
+    if ok and type(pd) == 'table' then
+      fullName = applyCharInfoToName(fullName, pd.charinfo)
+      local pdName = trim(pd.name or '')
+      if pdName ~= '' and trim(fullName) == '' then fullName = pdName end
+    end
+  end
+
+  fullName = trim(fullName)
+  if fullName == '' then
+    fullName = trim(GetPlayerName(PlayerId()) or '') ~= '' and trim(GetPlayerName(PlayerId()) or '') or 'Player'
+  end
+  return fullName
+end
+
 local function notifyWarn(title, description)
   if type(util.triggerCadOxNotify) == 'function' and util.triggerCadOxNotify({
     title = tostring(title or 'CAD'),
@@ -438,10 +521,15 @@ local function buildCurrentSeatedVehicleRegistrationPrefill()
     model = tostring(modelHash or '')
   end
 
+  local ownerName = getLocalCharacterFullName()
   return {
     plate = plate,
     vehicle_model = trim(model or ''),
     vehicle_colour = getVehicleColourLabel(vehicle),
+    owner_name = ownerName,
+    character_name = ownerName,
+    duration_options = type(Config.VehicleRegistrationDurationOptions) == 'table' and Config.VehicleRegistrationDurationOptions or nil,
+    default_duration_days = tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35,
     source = 'npwd_vicroads',
   }, ''
 end
@@ -509,7 +597,7 @@ RegisterNUICallback('cadBridgeNpwdVicRoadsGetPrefill', function(_data, cb)
     return
   end
 
-  payload.duration_days = tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
+  payload.duration_days = tonumber(payload.default_duration_days or Config.VehicleRegistrationDefaultDays or 35) or 35
   if cb then cb({ ok = true, payload = payload }) end
 end)
 
@@ -540,6 +628,17 @@ RegisterNUICallback('cadBridgeNpwdVicRoadsSubmitRegistration', function(data, cb
         error = 'invalid_form',
         error_code = 'invalid_form',
         message = 'Plate and vehicle model are required.',
+      })
+    end
+    return
+  end
+  if ownerName == '' then
+    if cb then
+      cb({
+        ok = false,
+        error = 'missing_owner',
+        error_code = 'missing_owner',
+        message = 'Unable to determine your current character name. Re-log and try again.',
       })
     end
     return
