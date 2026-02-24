@@ -50,6 +50,7 @@ const CALL_DETAILS_NAV_ITEM = {
   label: 'Call Details',
   icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z',
 };
+const DUTY_REQUIRED_ROUTES = new Set(['/units', '/dispatch']);
 
 function requiresFiveMOnlineForNavItem(item) {
   return item?.to === '/incidents'
@@ -273,7 +274,24 @@ export default function Sidebar() {
   }, [fetchDispatcherStatus, fetchOnDutyStatus, fetchActiveCallStatus]);
 
   useEffect(() => {
-    function handleDutyChanged() {
+    function handleDutyChanged(event) {
+      const detail = event?.detail || {};
+      const action = String(detail?.action || '').trim().toLowerCase();
+      const changedDepartmentId = Number(detail?.department_id || 0);
+
+      // Optimistically update duty state so the sidebar tabs change immediately,
+      // then reconcile with the API refresh below.
+      if (action === 'on_duty') {
+        setIsOnDuty(true);
+        if (Number.isInteger(changedDepartmentId) && changedDepartmentId > 0) {
+          setOnDutyDepartmentId(changedDepartmentId);
+        }
+      } else if (action === 'off_duty') {
+        setIsOnDuty(false);
+        setOnDutyDepartmentId(0);
+        setHasActiveCall(false);
+      }
+
       refreshSidebarStatus();
     }
     window.addEventListener(UNIT_DUTY_CHANGED_EVENT, handleDutyChanged);
@@ -318,6 +336,12 @@ export default function Sidebar() {
   });
 
   const baseNavItems = getNavItemsForLayout(layoutType, activeDepartment);
+  const activeDepartmentId = Number(deptId || 0);
+  const isOnDutyForActiveDepartment = !!isOnDuty && (
+    activeDepartmentId <= 0
+    || onDutyDepartmentId <= 0
+    || onDutyDepartmentId === activeDepartmentId
+  );
   const hideInGameProtectedItems = !isFiveMOnline && !activeDepartment?.is_dispatch;
   const hiddenInGameNavLabels = hideInGameProtectedItems
     ? baseNavItems
@@ -327,13 +351,12 @@ export default function Sidebar() {
   const hiddenInGameNavText = formatHiddenNavLabels(hiddenInGameNavLabels);
 
   const navItems = baseNavItems.filter((item) => {
-    const isDispatchTab = item.to === '/units' || item.to === '/dispatch';
-    if (!isOnDuty && isDispatchTab) return false;
+    if (DUTY_REQUIRED_ROUTES.has(item.to) && !isOnDutyForActiveDepartment) return false;
     if (requiresFiveMOnlineForNavItem(item) && hideInGameProtectedItems) return false;
     return true;
   });
 
-  const navWithCallDetails = hasActiveCall
+  const navWithCallDetails = (hasActiveCall && isOnDutyForActiveDepartment)
     ? [...navItems, CALL_DETAILS_NAV_ITEM]
     : navItems;
 
