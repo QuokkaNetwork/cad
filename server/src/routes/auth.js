@@ -62,7 +62,18 @@ router.post('/set-cookie', (req, res) => {
 
 // Get current user profile
 router.get('/me', requireAuth, (req, res) => {
-  const { id, steam_id, steam_name, avatar_url, discord_id, discord_name, is_admin, created_at } = req.user;
+  const {
+    id,
+    steam_id,
+    steam_name,
+    avatar_url,
+    discord_id,
+    discord_name,
+    is_admin,
+    created_at,
+    rules_agreed_version,
+    rules_agreed_at,
+  } = req.user;
   const departments = req.user.departments;
   const sub_departments = req.user.sub_departments || [];
   const fivemStatus = getUserFiveMOnlineStatus(req.user);
@@ -75,6 +86,8 @@ router.get('/me', requireAuth, (req, res) => {
     discord_name,
     is_admin: !!is_admin,
     created_at,
+    rules_agreed_version: String(rules_agreed_version || '').trim(),
+    rules_agreed_at: rules_agreed_at || null,
     departments,
     sub_departments,
     is_fivem_online: !!fivemStatus.online,

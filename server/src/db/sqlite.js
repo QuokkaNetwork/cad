@@ -80,13 +80,23 @@ const Users = {
     return this.findById(info.lastInsertRowid);
   },
   update(id, fields) {
-    const allowed = ['steam_name', 'avatar_url', 'discord_id', 'discord_name', 'is_admin', 'is_banned', 'preferred_citizen_id'];
+    const allowed = [
+      'steam_name',
+      'avatar_url',
+      'discord_id',
+      'discord_name',
+      'is_admin',
+      'is_banned',
+      'preferred_citizen_id',
+      'rules_agreed_version',
+      'rules_agreed_at',
+    ];
     const updates = [];
     const values = [];
     for (const key of allowed) {
       if (fields[key] !== undefined) {
         updates.push(`${key} = ?`);
-        if (key === 'preferred_citizen_id') {
+        if (key === 'preferred_citizen_id' || key === 'rules_agreed_version') {
           values.push(String(fields[key] || '').trim());
         } else {
           values.push(fields[key]);

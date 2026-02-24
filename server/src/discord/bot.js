@@ -68,6 +68,78 @@ function isCharacterNameNicknameSyncEnabled() {
   return toBool(Settings.get('qbox_discord_sync_character_name_enabled'), false);
 }
 
+function getRulesAcceptedDiscordRoleId() {
+  return String(Settings.get('cms_discord_rules_accepted_role_id') || '').trim();
+}
+
+function getCurrentCmsRulesVersion() {
+  return String(Settings.get('cms_rules_version') || '1').trim() || '1';
+}
+
+async function syncRulesAcceptedRole(user, member) {
+  const configuredRoleId = getRulesAcceptedDiscordRoleId();
+  if (!configuredRoleId) {
+    return {
+      configured: false,
+      changed: false,
+      reason: 'not_configured',
+    };
+  }
+
+  const currentRulesVersion = getCurrentCmsRulesVersion();
+  const agreedVersion = String(user?.rules_agreed_version || '').trim();
+  const shouldHaveRole = !!agreedVersion && agreedVersion === currentRulesVersion;
+  const hasRole = member.roles.cache.has(configuredRoleId);
+
+  if (shouldHaveRole === hasRole) {
+    return {
+      configured: true,
+      changed: false,
+      reason: shouldHaveRole ? 'already_granted' : 'already_revoked',
+      role_id: configuredRoleId,
+      rules_version: currentRulesVersion,
+      agreed_version: agreedVersion || '',
+      should_have_role: shouldHaveRole,
+    };
+  }
+
+  try {
+    if (shouldHaveRole) {
+      await member.roles.add(configuredRoleId, `CAD rules accepted v${currentRulesVersion}`);
+    } else {
+      await member.roles.remove(configuredRoleId, `CAD rules reaccept required (current v${currentRulesVersion})`);
+    }
+
+    audit(user.id, shouldHaveRole ? 'discord_rules_role_granted' : 'discord_rules_role_revoked', {
+      discordId: user.discord_id,
+      roleId: configuredRoleId,
+      rules_version: currentRulesVersion,
+      agreed_version: agreedVersion || '',
+    });
+
+    return {
+      configured: true,
+      changed: true,
+      reason: shouldHaveRole ? 'granted' : 'revoked',
+      role_id: configuredRoleId,
+      rules_version: currentRulesVersion,
+      agreed_version: agreedVersion || '',
+      should_have_role: shouldHaveRole,
+    };
+  } catch (err) {
+    return {
+      configured: true,
+      changed: false,
+      reason: 'discord_role_update_failed',
+      role_id: configuredRoleId,
+      rules_version: currentRulesVersion,
+      agreed_version: agreedVersion || '',
+      should_have_role: shouldHaveRole,
+      error: String(err?.message || err || 'Unknown Discord role update error'),
+    };
+  }
+}
+
 function getQboxJobSourceFallbackPolicy() {
   const playersTable = String(Settings.get('qbox_players_table') || 'players').trim().toLowerCase();
   const jobTable = String(Settings.get('qbox_job_table') || Settings.get('qbox_players_table') || 'players').trim().toLowerCase();
@@ -487,6 +559,7 @@ async function syncLinkedUserAccess(user, member, mappings) {
   const usernameSync = syncDiscordUsername(user, member);
   const reverseJobSync = await syncJobRolesFromGame(user, member, mappings);
   const nicknameSync = await syncCharacterNameNickname(user, member);
+  const rulesRoleSync = await syncRulesAcceptedRole(user, member);
   const memberRoleIds = new Set(member.roles.cache.map(r => r.id));
   const hasAdminRole = memberRoleIds.has(ADMIN_DISCORD_ROLE_ID);
   const { departmentIds, subDepartmentIds, roleJobs } = getMappedTargets(memberRoleIds, mappings);
@@ -546,6 +619,7 @@ async function syncLinkedUserAccess(user, member, mappings) {
     sub_departments: newSubDepts,
     reverse_job_role_sync: reverseJobSync,
     nickname_sync: nicknameSync,
+    rules_role_sync: rulesRoleSync,
     queued_job_sync_id: queuedJob?.id || null,
   };
 }
@@ -800,6 +874,7 @@ async function syncUserRoles(discordId) {
     sub_departments: synced.sub_departments.map(d => d.short_name),
     reverse_job_role_sync: synced.reverse_job_role_sync,
     nickname_sync: synced.nickname_sync,
+    rules_role_sync: synced.rules_role_sync,
     queued_job_sync_id: synced.queued_job_sync_id,
   };
 }

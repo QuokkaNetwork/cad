@@ -9,6 +9,8 @@ import MainLayout from './layouts/MainLayout';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import Home from './pages/Home';
+import Departments from './pages/Departments';
+import Rules from './pages/Rules';
 import Settings from './pages/Settings';
 import Dispatch from './pages/police/Dispatch';
 import Units from './pages/police/Units';
@@ -57,6 +59,8 @@ export default function App() {
           >
             {/* General */}
             <Route path="/home" element={<Home />} />
+            <Route path="/departments" element={<Departments />} />
+            <Route path="/rules" element={<Rules />} />
             <Route path="/settings" element={<Settings />} />
 
             {/* Police MDT */}

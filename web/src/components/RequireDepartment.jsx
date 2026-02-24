@@ -17,7 +17,7 @@ export default function RequireDepartment({
   }
 
   if (!activeDepartment) {
-    return <Navigate to="/home" replace />;
+    return <Navigate to="/departments" replace />;
   }
 
   if (!allowDispatch && activeDepartment.is_dispatch) {

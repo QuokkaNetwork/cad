@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
@@ -11,6 +11,12 @@ const UNIT_STATUSES = [
   { value: 'enroute',     label: 'En Route',     color: '#3b82f6' },
   { value: 'on-scene',    label: 'On Scene',     color: '#8b5cf6' },
   { value: 'unavailable', label: 'Unavailable',  color: '#6b7280' },
+];
+
+const HEADER_NAV_ITEMS = [
+  { to: '/home', label: 'Home' },
+  { to: '/departments', label: 'Departments' },
+  { to: '/rules', label: 'Rules' },
 ];
 
 function colorWithAlpha(color, alpha) {
@@ -137,6 +143,27 @@ export default function Header() {
         </div>
 
         {/* ── Centre: unit status strip (only when on duty) ── */}
+        <nav className="hidden sm:flex items-center gap-1 flex-none" aria-label="CAD primary navigation">
+          {HEADER_NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => {
+                const active = isActive || (item.to === '/departments' && onDepartmentPage);
+                return (
+                `px-2.5 py-1 rounded-md text-xs font-medium transition-colors border ${
+                  active
+                    ? 'bg-cad-accent/15 text-cad-accent-light border-cad-accent/25'
+                    : 'text-cad-muted hover:text-cad-ink hover:bg-cad-card border-transparent'
+                }`
+                );
+              }}
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+
         {showStatus && (
           <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0 overflow-hidden">
             {/* Callsign chip */}

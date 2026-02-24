@@ -408,6 +408,129 @@ export default function AdminSystemSettings() {
       </div>
 
       <div className="bg-cad-card border border-cad-border rounded-xl p-6">
+        <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">CAD Home / Rules CMS</h3>
+        <p className="text-xs text-cad-muted mb-5">
+          These settings power the user-facing <span className="font-mono">Home</span> and <span className="font-mono">Rules</span> pages.
+          Increment the rules version and update the change summary to trigger the rules amendment popup and require re-agreement.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Home Title</label>
+            <input
+              type="text"
+              value={settings.cms_home_title || ''}
+              onChange={e => updateSetting('cms_home_title', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="Community Home"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Home Subtitle</label>
+            <input
+              type="text"
+              value={settings.cms_home_subtitle || ''}
+              onChange={e => updateSetting('cms_home_subtitle', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="News, rule updates, and department access in one place."
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Home Body Copy</label>
+            <textarea
+              value={settings.cms_home_body || ''}
+              onChange={e => updateSetting('cms_home_body', e.target.value)}
+              rows={4}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="Welcome message and guidance shown on the Home page."
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Home Carousel Images JSON</label>
+            <textarea
+              value={settings.cms_home_carousel_images_json || ''}
+              onChange={e => updateSetting('cms_home_carousel_images_json', e.target.value)}
+              rows={4}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder='["/1080.png","/96.png","https://example.com/image.jpg"]'
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              Array of image URLs or local paths. Leave blank to use default CAD images.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Rules Title</label>
+            <input
+              type="text"
+              value={settings.cms_rules_title || ''}
+              onChange={e => updateSetting('cms_rules_title', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="Community Rules"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Rules Version</label>
+            <input
+              type="text"
+              value={settings.cms_rules_version || ''}
+              onChange={e => updateSetting('cms_rules_version', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="1.0.0"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Rules Updated Timestamp (optional)</label>
+            <input
+              type="text"
+              value={settings.cms_rules_updated_at || ''}
+              onChange={e => updateSetting('cms_rules_updated_at', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="2026-02-24T18:30:00Z"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cad-muted mb-1">Discord Access Role ID (Rules Accepted)</label>
+            <input
+              type="text"
+              value={settings.cms_discord_rules_accepted_role_id || ''}
+              onChange={e => updateSetting('cms_discord_rules_accepted_role_id', e.target.value)}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="123456789012345678"
+            />
+            <p className="text-xs text-cad-muted mt-1">
+              CAD will add/remove this Discord role based on whether the user has agreed to the current rules version.
+            </p>
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Rule Amendments / Changes / Additions Summary</label>
+            <textarea
+              value={settings.cms_rules_changes_summary || ''}
+              onChange={e => updateSetting('cms_rules_changes_summary', e.target.value)}
+              rows={4}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
+              placeholder="List the latest rule amendments, changes, and additions shown in the Home page popup."
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-xs text-cad-muted mb-1">Rules Content</label>
+            <textarea
+              value={settings.cms_rules_content || ''}
+              onChange={e => updateSetting('cms_rules_content', e.target.value)}
+              rows={14}
+              className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cad-accent"
+              placeholder="Paste your full community rules here."
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-cad-card border border-cad-border rounded-xl p-6">
         <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-5">Warrant Community Alerts</h3>
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
