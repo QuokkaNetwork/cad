@@ -6,8 +6,6 @@ author 'CAD Team'
 description 'NPWD external app - VicRoads (CAD vehicle registration bridge)'
 version '1.0.0'
 
-ui_page 'web/dist/index.html'
-
 files {
   'web/dist/index.html',
   'web/dist/**/*',

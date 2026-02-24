@@ -6,8 +6,6 @@ author 'CAD Team'
 description 'NPWD external app - Fines Victoria (CAD infringement payment bridge)'
 version '1.0.0'
 
-ui_page 'web/dist/index.html'
-
 files {
   'web/dist/index.html',
   'web/dist/**/*',
