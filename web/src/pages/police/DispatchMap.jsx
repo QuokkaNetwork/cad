@@ -48,6 +48,7 @@ const WORLD_CAL_CONTROL_POINTS = [
   { raw: { x: -193, y: -648 }, actual: { x: 299.01, y: -584.47 } }, // Pillbox
   { raw: { x: 1629, y: 4286 }, actual: { x: 1836.61, y: 3674.63 } }, // Sandy SO
   { raw: { x: -304, y: -1149 }, actual: { x: -206.92, y: -1307.73 } }, // User sample (Davis/impound area)
+  { raw: { x: 756, y: 1352 }, actual: { x: 718.98, y: 1205.19 } }, // User sample (north LS / hillside)
 ];
 const WORLD_CAL_RESIDUAL_IDW_POWER = 2.2;
 const WORLD_CAL_RESIDUAL_FALLOFF_UNITS = 2200;
