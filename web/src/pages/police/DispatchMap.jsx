@@ -40,6 +40,17 @@ const WORLD_CAL_INV_C = 0.6056830072135153;
 const WORLD_CAL_INV_D = 0.9397999126830787;
 const WORLD_CAL_INV_TX = -677.5974130992097;
 const WORLD_CAL_INV_TY = -279.8204210210343;
+// Additional control points can expose local non-linear distortion in the basemap image.
+// Apply a localized residual warp on top of the affine model so we can refine one area
+// without breaking previously-calibrated landmarks.
+const WORLD_CAL_CONTROL_POINTS = [
+  { raw: { x: 38, y: -944 }, actual: { x: 433.66, y: -986.21 } }, // MRPD
+  { raw: { x: -193, y: -648 }, actual: { x: 299.01, y: -584.47 } }, // Pillbox
+  { raw: { x: 1629, y: 4286 }, actual: { x: 1836.61, y: 3674.63 } }, // Sandy SO
+  { raw: { x: -70, y: -1043 }, actual: { x: -206.92, y: -1307.73 } }, // User sample (Davis/impound area)
+];
+const WORLD_CAL_RESIDUAL_IDW_POWER = 2.2;
+const WORLD_CAL_RESIDUAL_FALLOFF_UNITS = 2200;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -106,7 +117,7 @@ function isImagePointInsideAtlas(point) {
     && y <= (MAP_ATLAS_RECT.y + MAP_ATLAS_RECT.height);
 }
 
-function applyWorldCalibration(point) {
+function applyWorldAffineCalibrationOnly(point) {
   const x = Number(point?.x);
   const y = Number(point?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return { x: 0, y: 0 };
@@ -116,13 +127,85 @@ function applyWorldCalibration(point) {
   };
 }
 
-function invertWorldCalibration(point) {
+function invertWorldAffineCalibrationOnly(point) {
   const x = Number(point?.x);
   const y = Number(point?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return { x: 0, y: 0 };
   return {
     x: (WORLD_CAL_INV_A * x) + (WORLD_CAL_INV_B * y) + WORLD_CAL_INV_TX,
     y: (WORLD_CAL_INV_C * x) + (WORLD_CAL_INV_D * y) + WORLD_CAL_INV_TY,
+  };
+}
+
+function sampleWorldCalibrationResidual(point, direction = 'raw_to_actual') {
+  const x = Number(point?.x);
+  const y = Number(point?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return { x: 0, y: 0 };
+  if (!Array.isArray(WORLD_CAL_CONTROL_POINTS) || WORLD_CAL_CONTROL_POINTS.length === 0) return { x: 0, y: 0 };
+
+  let weightedDx = 0;
+  let weightedDy = 0;
+  let weightTotal = 0;
+  let nearestDistance = Infinity;
+
+  for (const cp of WORLD_CAL_CONTROL_POINTS) {
+    const source = direction === 'actual_to_raw' ? cp?.actual : cp?.raw;
+    const target = direction === 'actual_to_raw' ? cp?.raw : cp?.actual;
+    const sx = Number(source?.x);
+    const sy = Number(source?.y);
+    const tx = Number(target?.x);
+    const ty = Number(target?.y);
+    if (!Number.isFinite(sx) || !Number.isFinite(sy) || !Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+
+    const baseTarget = direction === 'actual_to_raw'
+      ? invertWorldAffineCalibrationOnly(source)
+      : applyWorldAffineCalibrationOnly(source);
+    const dxResidual = tx - Number(baseTarget?.x || 0);
+    const dyResidual = ty - Number(baseTarget?.y || 0);
+
+    const dx = x - sx;
+    const dy = y - sy;
+    const distance = Math.hypot(dx, dy);
+    nearestDistance = Math.min(nearestDistance, distance);
+
+    if (distance < 0.0001) {
+      return { x: dxResidual, y: dyResidual };
+    }
+
+    const weight = 1 / Math.pow(Math.max(distance, 1), WORLD_CAL_RESIDUAL_IDW_POWER);
+    weightedDx += weight * dxResidual;
+    weightedDy += weight * dyResidual;
+    weightTotal += weight;
+  }
+
+  if (!Number.isFinite(weightTotal) || weightTotal <= 0) return { x: 0, y: 0 };
+
+  const avgDx = weightedDx / weightTotal;
+  const avgDy = weightedDy / weightTotal;
+  const radius = Math.max(1, Number(WORLD_CAL_RESIDUAL_FALLOFF_UNITS || 0) || 1);
+  const attenuation = 1 / (1 + Math.pow(Math.max(0, nearestDistance) / radius, 2.4));
+
+  return {
+    x: avgDx * attenuation,
+    y: avgDy * attenuation,
+  };
+}
+
+function applyWorldCalibration(point) {
+  const base = applyWorldAffineCalibrationOnly(point);
+  const residual = sampleWorldCalibrationResidual(point, 'raw_to_actual');
+  return {
+    x: base.x + residual.x,
+    y: base.y + residual.y,
+  };
+}
+
+function invertWorldCalibration(point) {
+  const base = invertWorldAffineCalibrationOnly(point);
+  const residual = sampleWorldCalibrationResidual(point, 'actual_to_raw');
+  return {
+    x: base.x + residual.x,
+    y: base.y + residual.y,
   };
 }
 
@@ -176,18 +259,6 @@ function worldDistanceToImagePixels(distance) {
   const sx = MAP_ATLAS_RECT.width / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX);
   const sy = MAP_ATLAS_RECT.height / (WORLD_BOUNDS.maxY - WORLD_BOUNDS.minY);
   return Math.max(1, Number(distance || 0) * Math.min(sx, sy));
-}
-
-function headingLineFromImagePoint(point, heading, lengthPx = 18) {
-  const h = Number(heading);
-  if (!point || !Number.isFinite(h)) return null;
-  const radians = ((h - 90) * Math.PI) / 180;
-  return {
-    x1: point.x,
-    y1: point.y,
-    x2: point.x + (Math.cos(radians) * lengthPx),
-    y2: point.y + (Math.sin(radians) * lengthPx),
-  };
 }
 
 function statusColor(status) {
@@ -663,15 +734,6 @@ export default function DispatchMap() {
 
     unitMarkers.forEach((unit) => {
       const selected = Number(unit.id) === Number(selectedUnitId);
-      const headingLine = headingLineFromImagePoint(unit.__image, unit.position_heading, selected ? 22 : 16);
-      if (headingLine) {
-        L.polyline([
-          imagePointToLatLng({ x: headingLine.x1, y: headingLine.y1 }),
-          imagePointToLatLng({ x: headingLine.x2, y: headingLine.y2 }),
-        ], {
-          pane: 'dispatchMarkerPane', color: 'rgba(226,232,240,0.75)', weight: selected ? 2.4 : 1.8, interactive: false,
-        }).addTo(groups.units);
-      }
       const marker = L.circleMarker(unit.__latlng, {
         pane: 'dispatchMarkerPane',
         radius: selected ? 8 : 6,
