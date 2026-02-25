@@ -156,15 +156,18 @@ function SidebarLink({ to, label, icon }) {
 }
 
 export default function Sidebar() {
-  const { departments, isFiveMOnline } = useAuth();
+  const { departments, isFiveMOnline, refreshUser } = useAuth();
   const { activeDepartment } = useDepartment();
   const [dispatcherOnline, setDispatcherOnline] = useState(false);
   const [isDispatchDepartment, setIsDispatchDepartment] = useState(false);
   const [isOnDuty, setIsOnDuty] = useState(false);
   const [onDutyDepartmentId, setOnDutyDepartmentId] = useState(0);
   const [hasActiveCall, setHasActiveCall] = useState(false);
+  const [assumeFiveMOnlineUntil, setAssumeFiveMOnlineUntil] = useState(0);
   const callAssignAudioRef = useRef(null);
   const emergencyCallAudioRef = useRef(null);
+  const dutyRefreshTimersRef = useRef([]);
+  const pendingDutyTransitionRef = useRef({ action: '', expiresAt: 0 });
 
   const deptId = activeDepartment?.id;
   const layoutType = getDepartmentLayoutType(activeDepartment);
@@ -240,8 +243,14 @@ export default function Sidebar() {
       setIsOnDuty(true);
       const unitDepartmentId = Number(unit?.department_id || 0);
       setOnDutyDepartmentId(Number.isInteger(unitDepartmentId) && unitDepartmentId > 0 ? unitDepartmentId : 0);
+      pendingDutyTransitionRef.current = { action: '', expiresAt: 0 };
     } catch (err) {
       if (err?.status === 404 || err?.status === 401) {
+        const pending = pendingDutyTransitionRef.current || {};
+        const withinOnDutyGrace = pending.action === 'on_duty' && Number(pending.expiresAt || 0) > Date.now();
+        if (withinOnDutyGrace) {
+          return;
+        }
         setIsOnDuty(false);
         setOnDutyDepartmentId(0);
         setHasActiveCall(false);
@@ -277,30 +286,66 @@ export default function Sidebar() {
     fetchActiveCallStatus();
   }, [fetchDispatcherStatus, fetchOnDutyStatus, fetchActiveCallStatus]);
 
+  const clearDutyRefreshTimers = useCallback(() => {
+    for (const timerId of dutyRefreshTimersRef.current) {
+      clearTimeout(timerId);
+    }
+    dutyRefreshTimersRef.current = [];
+  }, []);
+
+  const scheduleDutyReconcileRefresh = useCallback(() => {
+    clearDutyRefreshTimers();
+
+    const runRefresh = () => {
+      refreshSidebarStatus();
+      if (typeof refreshUser === 'function') {
+        refreshUser();
+      }
+    };
+
+    runRefresh();
+    [250, 800, 1600, 3000].forEach((delay) => {
+      const timerId = window.setTimeout(runRefresh, delay);
+      dutyRefreshTimersRef.current.push(timerId);
+    });
+  }, [clearDutyRefreshTimers, refreshSidebarStatus, refreshUser]);
+
+  useEffect(() => {
+    return () => {
+      clearDutyRefreshTimers();
+    };
+  }, [clearDutyRefreshTimers]);
+
   useEffect(() => {
     function handleDutyChanged(event) {
       const detail = event?.detail || {};
       const action = String(detail?.action || '').trim().toLowerCase();
-      const changedDepartmentId = Number(detail?.department_id || 0);
+      const changedDepartmentId = Number(detail?.department_id || detail?.departmentId || 0);
 
       // Optimistically update duty state so the sidebar tabs change immediately,
       // then reconcile with the API refresh below.
       if (action === 'on_duty') {
+        pendingDutyTransitionRef.current = { action: 'on_duty', expiresAt: Date.now() + 5000 };
         setIsOnDuty(true);
         if (Number.isInteger(changedDepartmentId) && changedDepartmentId > 0) {
           setOnDutyDepartmentId(changedDepartmentId);
         }
+        // Auth/FiveM online state can lag behind the duty create call; keep tabs visible
+        // briefly while auth/me catches up so the sidebar fully expands immediately.
+        setAssumeFiveMOnlineUntil(Date.now() + 5000);
       } else if (action === 'off_duty') {
+        pendingDutyTransitionRef.current = { action: 'off_duty', expiresAt: Date.now() + 2000 };
         setIsOnDuty(false);
         setOnDutyDepartmentId(0);
         setHasActiveCall(false);
+        setAssumeFiveMOnlineUntil(0);
       }
 
-      refreshSidebarStatus();
+      scheduleDutyReconcileRefresh();
     }
     window.addEventListener(UNIT_DUTY_CHANGED_EVENT, handleDutyChanged);
     return () => window.removeEventListener(UNIT_DUTY_CHANGED_EVENT, handleDutyChanged);
-  }, [refreshSidebarStatus]);
+  }, [scheduleDutyReconcileRefresh]);
 
   useEventSource({
     'call:create': (payload) => {
@@ -346,7 +391,8 @@ export default function Sidebar() {
     || onDutyDepartmentId <= 0
     || onDutyDepartmentId === activeDepartmentId
   );
-  const hideInGameProtectedItems = !isFiveMOnline && !activeDepartment?.is_dispatch;
+  const effectiveIsFiveMOnline = !!isFiveMOnline || (isOnDutyForActiveDepartment && Date.now() < Number(assumeFiveMOnlineUntil || 0));
+  const hideInGameProtectedItems = !effectiveIsFiveMOnline && !activeDepartment?.is_dispatch;
   const hiddenInGameNavLabels = hideInGameProtectedItems
     ? baseNavItems
       .filter((item) => requiresFiveMOnlineForNavItem(item))
