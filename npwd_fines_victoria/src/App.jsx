@@ -196,7 +196,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetchCadBridgeNui('cadBridgeNpwdFinesVicList', {});
+      const res = await fetchCadBridgeNui('cadBridgeNpwdFinesVicList', {}, { timeoutMs: 15000 });
       const ok = res?.ok === true || res?.success === true;
       if (!ok) {
         setNotices([]);
@@ -271,7 +271,7 @@ export default function App() {
     });
 
     try {
-      const res = await fetchCadBridgeNui('cadBridgeNpwdFinesVicPay', { notice_id: noticeId });
+      const res = await fetchCadBridgeNui('cadBridgeNpwdFinesVicPay', { notice_id: noticeId }, { timeoutMs: 30000 });
       const ok = res?.ok === true || res?.success === true;
       if (!ok) {
         const fundsDeducted = res?.funds_deducted === true;

@@ -162,7 +162,7 @@ export default function App() {
     setLoadingVehicle(true);
     setStatus({ type: 'info', message: 'Checking your current vehicle and active character...' });
     try {
-      const res = await fetchCadBridgeNui('cadBridgeNpwdVicRoadsGetPrefill', {});
+      const res = await fetchCadBridgeNui('cadBridgeNpwdVicRoadsGetPrefill', {}, { timeoutMs: 10000 });
       const ok = res?.ok === true || res?.success === true;
       if (!ok) {
         setStatus({
@@ -226,7 +226,7 @@ export default function App() {
         vehicle_model: vehicleModel,
         vehicle_colour: vehicleColour,
         duration_days: durationDays,
-      });
+      }, { timeoutMs: 30000 });
       const ok = res?.ok === true || res?.success === true;
       if (ok) {
         setStatus({
