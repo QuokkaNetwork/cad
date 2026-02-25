@@ -177,6 +177,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [payingNoticeId, setPayingNoticeId] = useState(0);
+  const [confirmNotice, setConfirmNotice] = useState(null);
   const [notices, setNotices] = useState([]);
   const [summary, setSummary] = useState({ total_outstanding: 0, payable_count: 0, total_notices: 0 });
   const [account, setAccount] = useState('bank');
@@ -250,11 +251,18 @@ export default function App() {
     const noticeId = Number(notice?.id || 0);
     if (!noticeId || payingNoticeId > 0) return;
     if (notice?.can_pay_online !== true) return;
+    setConfirmNotice(notice);
+  }
 
-    const confirmMessage = `Pay ${formatCurrency(notice?.amount)} for ${String(notice?.notice_number || `Notice #${noticeId}`)}?`;
-    if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(confirmMessage)) {
+  async function handleConfirmPayNotice() {
+    const notice = confirmNotice;
+    const noticeId = Number(notice?.id || 0);
+    if (!noticeId || payingNoticeId > 0) return;
+    if (notice?.can_pay_online !== true) {
+      setConfirmNotice(null);
       return;
     }
+    setConfirmNotice(null);
 
     setPayingNoticeId(noticeId);
     setStatus({
@@ -381,6 +389,67 @@ export default function App() {
         </div>
 
         <StatusBanner status={status} />
+
+        {confirmNotice ? (
+          <div
+            style={{
+              borderRadius: 14,
+              border: '1px solid rgba(245,200,76,0.28)',
+              background: 'linear-gradient(180deg, rgba(245,200,76,0.08), rgba(15,23,42,0.42))',
+              padding: 12,
+              display: 'grid',
+              gap: 8,
+            }}
+          >
+            <div style={{ fontSize: 11, color: '#d6c27f', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+              Confirm Payment
+            </div>
+            <div style={{ fontSize: 12.5, color: '#f8fbff', lineHeight: 1.35 }}>
+              Pay <strong>{formatCurrency(confirmNotice?.amount)}</strong> for{' '}
+              <strong>{String(confirmNotice?.notice_number || `Notice #${confirmNotice?.id || '?'}`)}</strong>?
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setConfirmNotice(null)}
+                disabled={payingNoticeId > 0}
+                style={{
+                  flex: 1,
+                  borderRadius: 10,
+                  border: '1px solid rgba(148,163,184,0.22)',
+                  background: 'rgba(15,23,42,0.35)',
+                  color: '#dbeafe',
+                  padding: '9px 10px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: payingNoticeId > 0 ? 'default' : 'pointer',
+                  opacity: payingNoticeId > 0 ? 0.7 : 1,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPayNotice}
+                disabled={payingNoticeId > 0}
+                style={{
+                  flex: 1,
+                  borderRadius: 10,
+                  border: '1px solid rgba(234,179,8,0.35)',
+                  background: 'linear-gradient(135deg, #f5c84c, #eab308)',
+                  color: '#1f1400',
+                  padding: '9px 10px',
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: payingNoticeId > 0 ? 'default' : 'pointer',
+                  opacity: payingNoticeId > 0 ? 0.7 : 1,
+                }}
+              >
+                Confirm Pay
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {loading && notices.length === 0 ? (
           <div style={{ fontSize: 12.5, color: '#cbd5e1', padding: '4px 2px' }}>Loading notices...</div>
