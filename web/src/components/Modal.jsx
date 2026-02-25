@@ -38,12 +38,12 @@ export default function Modal({
         if (closeOnBackdrop && e.target === overlayRef.current) onClose();
       }}
     >
-      <div className={`bg-cad-surface border border-cad-border rounded-lg shadow-2xl ${wide ? 'w-full max-w-2xl' : 'w-full max-w-md'} max-h-[90vh] flex flex-col`}>
+      <div className={`bg-cad-surface border border-cad-border rounded-lg shadow-2xl mx-3 sm:mx-4 ${wide ? 'w-full max-w-4xl' : 'w-full max-w-2xl'} max-h-[92vh] flex flex-col`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-cad-border">
           <h2 className="text-lg font-semibold">{title}</h2>
           <button onClick={onClose} className="text-cad-muted hover:text-cad-ink transition-colors text-xl leading-none">&times;</button>
         </div>
-        <div className="px-5 py-4 overflow-y-auto flex-1">
+        <div className="px-5 sm:px-6 py-4 overflow-y-auto flex-1">
           {children}
         </div>
       </div>

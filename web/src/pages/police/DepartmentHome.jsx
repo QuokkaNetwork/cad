@@ -12,7 +12,7 @@ import { emitUnitDutyChanged } from '../../utils/unitDutyEvents';
 
 // Mirror the sidebar's visibility rules so hidden items don't appear on the home screen.
 // Route -> whether it requires FiveM to be online (same list as requiresFiveMOnlineForNavItem in Sidebar.jsx)
-const FIVEM_REQUIRED_ROUTES = new Set(['/incidents', '/records', '/arrest-reports', '/warrants', '/evidence', '/infringements']);
+const FIVEM_REQUIRED_ROUTES = new Set(['/incidents', '/records', '/warrants', '/evidence', '/infringements']);
 // Routes that only appear when the user is on duty in this department
 const DUTY_REQUIRED_ROUTES = new Set(['/units', '/dispatch']);
 
@@ -520,8 +520,7 @@ export default function DepartmentHome() {
       return [
         { label: 'Response Board', sublabel: 'Live unit & call management', route: '/units', variant: 'primary' },
         { label: 'Lookup', route: '/search' },
-        { label: 'Records', route: '/records' },
-        { label: 'Arrest Reports', route: '/arrest-reports' },
+        { label: 'Arrest Reports', route: '/records' },
         { label: 'Infringement Notices', route: '/infringements' },
         { label: 'Warrants', route: '/warrants' },
         { label: 'POI / VOI', route: '/bolos' },
@@ -586,11 +585,10 @@ export default function DepartmentHome() {
         {
           key: 'casework',
           eyebrow: 'Casework',
-          title: 'Records & arrest workflow',
+          title: 'Arrest workflow',
           body: 'Use arrest reports for draft and supervisor review, then finalise to apply fines or custodial outcomes.',
           actions: [
-            { label: 'Records', route: '/records' },
-            { label: 'Arrest Reports', route: '/arrest-reports' },
+            { label: 'Arrest Reports', route: '/records' },
             { label: 'Infringements', route: '/infringements' },
             { label: 'Incidents', route: '/incidents' },
           ],

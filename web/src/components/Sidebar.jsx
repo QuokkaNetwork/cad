@@ -11,8 +11,7 @@ const LAW_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
   { to: '/map', label: 'AVL Map', icon: 'M9.75 3l-6 3v15l6-3 4.5 2.25L20.25 17V2l-6 3L9.75 3zM9.75 3v15M14.25 5v15' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
-  { to: '/records', label: 'Records', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
-  { to: '/arrest-reports', label: 'Arrest Reports', icon: 'M12 8v8m-4-4h8M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
+  { to: '/records', label: 'Arrest Reports', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/infringements', label: 'Infringement Notices', icon: 'M9 12h6m-6 4h6M7 3h10l1 2h2a1 1 0 011 1v13a2 2 0 01-2 2H5a2 2 0 01-2-2V6a1 1 0 011-1h2l1-2z' },
   { to: '/warrants', label: 'Warrants', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
   { to: '/bolos', label: 'POI / VOI', icon: 'M3 10h18M5 6h14M7 14h10M9 18h6' },
@@ -62,7 +61,6 @@ function requiresOnDutyForNavItem(item) {
 function requiresFiveMOnlineForNavItem(item) {
   return item?.to === '/incidents'
     || item?.to === '/records'
-    || item?.to === '/arrest-reports'
     || item?.to === '/infringements'
     || item?.to === '/warrants'
     || item?.to === '/evidence';

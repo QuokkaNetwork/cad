@@ -613,13 +613,13 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
 
   const pageCopy = isLaw
     ? {
-      title: isArrestReportsMode ? 'Arrest Reports' : 'Criminal Records',
-      newButton: isArrestReportsMode ? 'New Arrest Report' : 'New Record',
-      newModalTitle: isArrestReportsMode ? 'New Arrest Report' : 'New Criminal Record',
-      editModalTitle: isArrestReportsMode ? 'Edit Arrest Report' : 'Edit Record',
+      title: 'Arrest Reports',
+      newButton: 'New Arrest Report',
+      newModalTitle: 'New Arrest Report',
+      editModalTitle: 'Edit Arrest Report',
       searchPlaceholder: 'Search person by first or last name...',
-      noRecords: isArrestReportsMode ? 'No arrest reports found for this person' : 'No records found for this person',
-      countNoun: isArrestReportsMode ? 'arrest report(s)' : 'record(s)',
+      noRecords: 'No arrest reports found for this person',
+      countNoun: 'arrest report(s)',
     }
     : isParamedics
       ? {
@@ -644,7 +644,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
   const personAnchorLabel = isFire ? 'Reporting Contact / Occupant' : 'Person';
   const findPersonButtonLabel = isFire ? 'Find Contact / Occupant' : 'Find Person';
   const createSubmitLabel = isLaw
-    ? (isArrestReportsMode ? 'Create Arrest Report' : 'Create Record')
+    ? 'Create Arrest Report'
     : isParamedics ? 'Create Patient Report' : 'Create Incident Report';
 
   const [personQuery, setPersonQuery] = useState('');

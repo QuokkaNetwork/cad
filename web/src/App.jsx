@@ -22,7 +22,6 @@ import BOLOs from './pages/police/BOLOs';
 import Warrants from './pages/police/Warrants';
 import CallDetails from './pages/police/CallDetails';
 import Records from './pages/police/Records';
-import ArrestReports from './pages/police/ArrestReports';
 import Infringements from './pages/police/Infringements';
 import EvidenceManagement from './pages/police/EvidenceManagement';
 import DispatchMap from './pages/police/DispatchMap';
@@ -74,7 +73,7 @@ export default function App() {
             <Route path="/search" element={<RequireRulesAgreement><RequireDepartment><Search /></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/incidents" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="incidents"><Incidents /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/records" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="records"><Records /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
-            <Route path="/arrest-reports" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="arrest reports"><ArrestReports /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
+            <Route path="/arrest-reports" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="arrest reports"><Records /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/infringements" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="infringement notices"><Infringements /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/bolos" element={<RequireRulesAgreement><RequireDepartment><BOLOs /></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/warrants" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="warrants"><Warrants /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />

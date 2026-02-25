@@ -251,7 +251,7 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm modal-fade-in"
       onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
     >
-      <div className="w-full max-w-md bg-cad-surface border border-cad-border rounded-xl shadow-2xl modal-pop-in">
+      <div className="w-full max-w-2xl mx-3 sm:mx-4 bg-cad-surface border border-cad-border rounded-xl shadow-2xl modal-pop-in">
         <div className="px-5 py-4 border-b border-cad-border flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold">Go On Duty</h3>

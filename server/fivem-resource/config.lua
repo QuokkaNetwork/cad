@@ -554,6 +554,26 @@ if Config.AutoAmbulanceCallPriority == '' then Config.AutoAmbulanceCallPriority 
 
 Config.PublishAllPlayers = getBoolean('cad_bridge_publish_all_players', true)
 
+-- AI traffic yield assist (ambient vehicles pull aside for active emergency response).
+Config.AiTrafficYieldAssistEnabled = getBoolean('cad_bridge_ai_yield_assist_enabled', true)
+Config.AiTrafficYieldAssistPollIntervalMs = math.max(100, math.floor(getNumber('cad_bridge_ai_yield_assist_poll_ms', 250)))
+Config.AiTrafficYieldAssistRadiusMeters = getNumber('cad_bridge_ai_yield_assist_radius_m', 70.0)
+if Config.AiTrafficYieldAssistRadiusMeters < 20.0 then Config.AiTrafficYieldAssistRadiusMeters = 20.0 end
+Config.AiTrafficYieldAssistMinOfficerSpeedMps = getNumber('cad_bridge_ai_yield_assist_min_officer_speed_mps', 8.0)
+if Config.AiTrafficYieldAssistMinOfficerSpeedMps < 0.0 then Config.AiTrafficYieldAssistMinOfficerSpeedMps = 0.0 end
+Config.AiTrafficYieldAssistLaneBandMeters = getNumber('cad_bridge_ai_yield_assist_lane_band_m', 14.0)
+if Config.AiTrafficYieldAssistLaneBandMeters < 4.0 then Config.AiTrafficYieldAssistLaneBandMeters = 4.0 end
+Config.AiTrafficYieldAssistForwardOffsetMeters = getNumber('cad_bridge_ai_yield_assist_forward_offset_m', 18.0)
+if Config.AiTrafficYieldAssistForwardOffsetMeters < 6.0 then Config.AiTrafficYieldAssistForwardOffsetMeters = 6.0 end
+Config.AiTrafficYieldAssistSideOffsetMeters = getNumber('cad_bridge_ai_yield_assist_side_offset_m', 5.5)
+if Config.AiTrafficYieldAssistSideOffsetMeters < 2.0 then Config.AiTrafficYieldAssistSideOffsetMeters = 2.0 end
+Config.AiTrafficYieldAssistPreferLeft = getBoolean('cad_bridge_ai_yield_assist_prefer_left', false)
+Config.AiTrafficYieldAssistMaxTargetsPerPulse = math.max(1, math.min(10, math.floor(getNumber('cad_bridge_ai_yield_assist_max_targets', 4))))
+Config.AiTrafficYieldAssistCooldownMs = math.max(500, math.floor(getNumber('cad_bridge_ai_yield_assist_cooldown_ms', 5000)))
+Config.AiTrafficYieldAssistResumeAfterMs = math.max(1000, math.floor(getNumber('cad_bridge_ai_yield_assist_resume_after_ms', 7000)))
+Config.AiTrafficYieldAssistPushMinSpeedMps = getNumber('cad_bridge_ai_yield_assist_push_min_speed_mps', 4.5)
+if Config.AiTrafficYieldAssistPushMinSpeedMps < 0.0 then Config.AiTrafficYieldAssistPushMinSpeedMps = 0.0 end
+
 -- Postal integration.
 Config.UseNearestPostal = getBoolean('cad_bridge_use_nearest_postal', true)
 Config.NearestPostalResource = getString('cad_bridge_postal_resource', 'nearest-postal')

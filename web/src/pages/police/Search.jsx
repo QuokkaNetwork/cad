@@ -259,7 +259,7 @@ export default function Search() {
   const vehicleSearchPlaceholder = isFire
     ? 'Search incident vehicle by plate, owner, or model...'
     : 'Search by plate, owner name, or model...';
-  const recordsButtonLabel = isFire ? 'Open Incident Reports' : 'Add / Manage Records';
+  const recordsButtonLabel = isFire ? 'Open Incident Reports' : (isLaw ? 'Open Arrest Reports' : 'Add / Manage Records');
   const filingOfficerLabel = `${String(currentUnit?.callsign || '').trim() ? `${String(currentUnit.callsign).trim()} - ` : ''}${String(user?.steam_name || user?.email || 'Unknown Officer').trim() || 'Unknown Officer'}`;
 
   useEffect(() => {
@@ -560,14 +560,6 @@ export default function Search() {
     navigate(`/records?citizen_id=${encodeURIComponent(citizenId)}`);
   }
 
-  function openArrestReportsPageForSelectedPerson() {
-    const citizenId = String(selectedPerson?.citizenid || '').trim();
-    if (!citizenId) return;
-    setSelectedPerson(null);
-    setShowPersonWarningsModal(false);
-    navigate(`/arrest-reports?citizen_id=${encodeURIComponent(citizenId)}`);
-  }
-
   return (
     <div>
       <h2 className="text-xl font-bold mb-6">
@@ -830,15 +822,6 @@ export default function Search() {
                     className="px-4 py-2 bg-amber-600/90 hover:bg-amber-500 text-white rounded text-sm font-medium transition-colors"
                   >
                     Warnings{selectedPersonWarnings.length > 0 ? ` (${selectedPersonWarnings.length})` : ''}
-                  </button>
-                )}
-                {isLaw && (
-                  <button
-                    type="button"
-                    onClick={openArrestReportsPageForSelectedPerson}
-                    className="px-4 py-2 bg-blue-600/90 hover:bg-blue-500 text-white rounded text-sm font-medium transition-colors"
-                  >
-                    Arrest Report
                   </button>
                 )}
                 <button

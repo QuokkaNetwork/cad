@@ -22,6 +22,206 @@ local documentPedBlips = {}
 local documentPedTargetEntities = {}
 local useOxTargetForDocuments = GetResourceState('ox_target') == 'started'
 
+local trafficYieldAssistEnabled = Config.AiTrafficYieldAssistEnabled == true
+local trafficYieldAssistStates = {}
+local trafficYieldDrivingStyle = 786603
+
+local trafficYieldPollIntervalMs = math.max(100, math.floor(tonumber(Config.AiTrafficYieldAssistPollIntervalMs) or 250))
+local trafficYieldRadiusMeters = math.max(20.0, tonumber(Config.AiTrafficYieldAssistRadiusMeters) or 70.0)
+local trafficYieldMinOfficerSpeedMps = math.max(0.0, tonumber(Config.AiTrafficYieldAssistMinOfficerSpeedMps) or 8.0)
+local trafficYieldLaneBandMeters = math.max(4.0, tonumber(Config.AiTrafficYieldAssistLaneBandMeters) or 14.0)
+local trafficYieldForwardOffsetMeters = math.max(6.0, tonumber(Config.AiTrafficYieldAssistForwardOffsetMeters) or 18.0)
+local trafficYieldSideOffsetMeters = math.max(2.0, tonumber(Config.AiTrafficYieldAssistSideOffsetMeters) or 5.5)
+local trafficYieldPreferLeft = Config.AiTrafficYieldAssistPreferLeft == true
+local trafficYieldMaxTargetsPerPulse = math.max(1, math.floor(tonumber(Config.AiTrafficYieldAssistMaxTargetsPerPulse) or 4))
+local trafficYieldResumeAfterMs = math.max(1000, math.floor(tonumber(Config.AiTrafficYieldAssistResumeAfterMs) or 7000))
+local trafficYieldCooldownMs = math.max(
+  trafficYieldResumeAfterMs,
+  math.floor(tonumber(Config.AiTrafficYieldAssistCooldownMs) or 5000)
+)
+local trafficYieldPushMinSpeedMps = math.max(0.0, tonumber(Config.AiTrafficYieldAssistPushMinSpeedMps) or 4.5)
+
+local emergencyVehicleClassSet = { [18] = true }
+if type(Config.WraithEmergencyVehicleClasses) == 'table' then
+  for _, classId in ipairs(Config.WraithEmergencyVehicleClasses) do
+    local normalized = tonumber(classId)
+    if normalized ~= nil then
+      emergencyVehicleClassSet[math.floor(normalized)] = true
+    end
+  end
+end
+
+local function dot2(ax, ay, bx, by)
+  return ((tonumber(ax) or 0.0) * (tonumber(bx) or 0.0)) + ((tonumber(ay) or 0.0) * (tonumber(by) or 0.0))
+end
+
+local function isVehicleSirenActive(vehicle)
+  if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
+  local ok, result = pcall(function()
+    return IsVehicleSirenOn(vehicle) or IsVehicleSirenAudioOn(vehicle) or IsVehicleSirenSoundOn(vehicle)
+  end)
+  return ok and (result == true or result == 1)
+end
+
+local function isEmergencyResponseVehicle(vehicle)
+  if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
+  local okHasSiren, hasSiren = pcall(function()
+    return DoesVehicleHaveSiren(vehicle)
+  end)
+  if not okHasSiren or (hasSiren ~= true and hasSiren ~= 1) then
+    return false
+  end
+  local classId = tonumber(GetVehicleClass(vehicle))
+  if classId == nil then return false end
+  return emergencyVehicleClassSet[math.floor(classId)] == true
+end
+
+local function shouldAffectTrafficVehicle(vehicle, playerVehicle, playerCoords, playerForward, playerRight, nowMs)
+  if not vehicle or vehicle == 0 or vehicle == playerVehicle then return nil end
+  if not DoesEntityExist(vehicle) then return nil end
+
+  local driver = GetPedInVehicleSeat(vehicle, -1)
+  if not driver or driver == 0 or not DoesEntityExist(driver) then return nil end
+  if IsPedAPlayer(driver) then return nil end
+  if IsPedDeadOrDying(driver, true) then return nil end
+  if GetPedInVehicleSeat(vehicle, -1) ~= driver then return nil end
+
+  local modelHash = GetEntityModel(vehicle)
+  if not modelHash or modelHash == 0 then return nil end
+  if not IsThisModelACar(modelHash) and not IsThisModelABike(modelHash) then
+    return nil
+  end
+  if isEmergencyResponseVehicle(vehicle) then return nil end
+
+  local existing = trafficYieldAssistStates[vehicle]
+  if type(existing) == 'table' and nowMs < (tonumber(existing.cooldown_until_ms) or 0) then
+    return nil
+  end
+
+  local coords = GetEntityCoords(vehicle)
+  local zDelta = math.abs((tonumber(coords.z) or 0.0) - (tonumber(playerCoords.z) or 0.0))
+  if zDelta > 10.0 then return nil end
+
+  local relX = (tonumber(coords.x) or 0.0) - (tonumber(playerCoords.x) or 0.0)
+  local relY = (tonumber(coords.y) or 0.0) - (tonumber(playerCoords.y) or 0.0)
+  local relZ = (tonumber(coords.z) or 0.0) - (tonumber(playerCoords.z) or 0.0)
+  local planarDistanceSq = (relX * relX) + (relY * relY)
+  if planarDistanceSq < 9.0 or planarDistanceSq > (trafficYieldRadiusMeters * trafficYieldRadiusMeters) then
+    return nil
+  end
+
+  local forwardDistance = dot2(relX, relY, playerForward.x, playerForward.y)
+  if forwardDistance < 3.0 then return nil end
+
+  local lateralDistance = dot2(relX, relY, playerRight.x, playerRight.y)
+  if math.abs(lateralDistance) > trafficYieldLaneBandMeters then return nil end
+
+  local targetForward = GetEntityForwardVector(vehicle)
+  local headingAlignment = dot2(targetForward.x, targetForward.y, playerForward.x, playerForward.y)
+  if headingAlignment < 0.15 then
+    return nil
+  end
+
+  return {
+    vehicle = vehicle,
+    driver = driver,
+    coords = coords,
+    forward_distance = forwardDistance,
+    lateral_distance = lateralDistance,
+    speed_mps = tonumber(GetEntitySpeed(vehicle)) or 0.0,
+    heading_alignment = headingAlignment,
+    rel_z = relZ,
+  }
+end
+
+local function applyTrafficYieldAssist(target, officerVehicleSpeedMps, nowMs)
+  if type(target) ~= 'table' then return end
+  local vehicle = target.vehicle
+  local driver = target.driver
+  if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return end
+  if not driver or driver == 0 or not DoesEntityExist(driver) then return end
+  if GetPedInVehicleSeat(vehicle, -1) ~= driver then return end
+
+  local currentCoords = GetEntityCoords(vehicle)
+  local forwardVec = GetEntityForwardVector(vehicle)
+  local rightVec = GetEntityRightVector(vehicle)
+  local sideSign = trafficYieldPreferLeft and -1.0 or 1.0
+  local extraForward = math.min(8.0, math.max(0.0, (tonumber(target.speed_mps) or 0.0) * 0.8))
+  local destX = (tonumber(currentCoords.x) or 0.0)
+    + ((tonumber(forwardVec.x) or 0.0) * (trafficYieldForwardOffsetMeters + extraForward))
+    + ((tonumber(rightVec.x) or 0.0) * (trafficYieldSideOffsetMeters * sideSign))
+  local destY = (tonumber(currentCoords.y) or 0.0)
+    + ((tonumber(forwardVec.y) or 0.0) * (trafficYieldForwardOffsetMeters + extraForward))
+    + ((tonumber(rightVec.y) or 0.0) * (trafficYieldSideOffsetMeters * sideSign))
+  local destZ = tonumber(currentCoords.z) or 0.0
+
+  local driveSpeedMps = math.max(8.0, math.min(22.0, math.max(tonumber(target.speed_mps) or 0.0, officerVehicleSpeedMps * 0.65)))
+
+  pcall(function()
+    NetworkRequestControlOfEntity(vehicle)
+  end)
+
+  pcall(function()
+    SetDriveTaskDrivingStyle(driver, trafficYieldDrivingStyle)
+    SetPedKeepTask(driver, true)
+    TaskVehicleDriveToCoordLongrange(driver, vehicle, destX + 0.0, destY + 0.0, destZ + 0.0, driveSpeedMps + 0.0, trafficYieldDrivingStyle, 4.0)
+  end)
+
+  if trafficYieldPushMinSpeedMps > 0.0 then
+    local currentSpeed = tonumber(GetEntitySpeed(vehicle)) or 0.0
+    if currentSpeed < trafficYieldPushMinSpeedMps and officerVehicleSpeedMps > (trafficYieldPushMinSpeedMps + 2.0) then
+      pcall(function()
+        SetVehicleForwardSpeed(vehicle, trafficYieldPushMinSpeedMps + 0.0)
+      end)
+    end
+  end
+
+  trafficYieldAssistStates[vehicle] = {
+    driver = driver,
+    revert_at_ms = nowMs + trafficYieldResumeAfterMs,
+    cooldown_until_ms = nowMs + trafficYieldCooldownMs,
+    resumed = false,
+    resume_speed_mps = math.max(8.0, math.min(20.0, driveSpeedMps)),
+  }
+end
+
+local function tickTrafficYieldRestore(nowMs)
+  local hasActive = false
+  for vehicle, entry in pairs(trafficYieldAssistStates) do
+    local exists = (type(vehicle) == 'number' and vehicle ~= 0 and DoesEntityExist(vehicle))
+    if not exists then
+      if nowMs >= (tonumber(entry and entry.cooldown_until_ms) or 0) then
+        trafficYieldAssistStates[vehicle] = nil
+      else
+        hasActive = true
+      end
+    else
+      if type(entry) ~= 'table' then
+        trafficYieldAssistStates[vehicle] = nil
+      else
+        if entry.resumed ~= true and nowMs >= (tonumber(entry.revert_at_ms) or 0) then
+          local driver = entry.driver
+          if driver and driver ~= 0 and DoesEntityExist(driver) and GetPedInVehicleSeat(vehicle, -1) == driver and not IsPedAPlayer(driver) then
+            pcall(function()
+              SetDriveTaskDrivingStyle(driver, trafficYieldDrivingStyle)
+              SetPedKeepTask(driver, true)
+              TaskVehicleDriveWander(driver, vehicle, (tonumber(entry.resume_speed_mps) or 12.0) + 0.0, trafficYieldDrivingStyle)
+            end)
+          end
+          entry.resumed = true
+        end
+
+        if nowMs >= (tonumber(entry.cooldown_until_ms) or 0) then
+          trafficYieldAssistStates[vehicle] = nil
+        else
+          hasActive = true
+        end
+      end
+    end
+  end
+  return hasActive
+end
+
 local function loadPedModel(modelName)
   local modelHash = modelName
   if type(modelName) ~= 'number' then
@@ -402,6 +602,74 @@ AddEventHandler('onResourceStop', function(resourceName)
   if resourceName ~= GetCurrentResourceName() then return end
   clearDocumentPedBlips()
   deleteDocumentPeds()
+end)
+
+CreateThread(function()
+  if not trafficYieldAssistEnabled then
+    return
+  end
+
+  while true do
+    local nowMs = tonumber(GetGameTimer() or 0) or 0
+    local activeStates = tickTrafficYieldRestore(nowMs)
+    Wait(activeStates and 250 or 1000)
+  end
+end)
+
+CreateThread(function()
+  if not trafficYieldAssistEnabled then
+    return
+  end
+
+  while true do
+    local waitMs = 1000
+    local playerPed = PlayerPedId()
+    if playerPed and playerPed ~= 0 and IsPedInAnyVehicle(playerPed, false) then
+      local playerVehicle = GetVehiclePedIsIn(playerPed, false)
+      if playerVehicle and playerVehicle ~= 0 and GetPedInVehicleSeat(playerVehicle, -1) == playerPed then
+        local officerSpeedMps = tonumber(GetEntitySpeed(playerVehicle)) or 0.0
+        if isEmergencyResponseVehicle(playerVehicle) and isVehicleSirenActive(playerVehicle) and officerSpeedMps >= trafficYieldMinOfficerSpeedMps then
+          waitMs = trafficYieldPollIntervalMs
+          local playerCoords = GetEntityCoords(playerVehicle)
+          local playerForward = GetEntityForwardVector(playerVehicle)
+          local playerRight = GetEntityRightVector(playerVehicle)
+          local nowMs = tonumber(GetGameTimer() or 0) or 0
+
+          local candidates = {}
+          local vehicles = GetGamePool('CVehicle') or {}
+          for _, vehicle in ipairs(vehicles) do
+            local target = shouldAffectTrafficVehicle(vehicle, playerVehicle, playerCoords, playerForward, playerRight, nowMs)
+            if target then
+              candidates[#candidates + 1] = target
+            end
+          end
+
+          if #candidates > 1 then
+            table.sort(candidates, function(a, b)
+              local aForward = tonumber(a and a.forward_distance) or 999999.0
+              local bForward = tonumber(b and b.forward_distance) or 999999.0
+              if math.abs(aForward - bForward) > 0.001 then
+                return aForward < bForward
+              end
+              local aLateral = math.abs(tonumber(a and a.lateral_distance) or 999999.0)
+              local bLateral = math.abs(tonumber(b and b.lateral_distance) or 999999.0)
+              return aLateral < bLateral
+            end)
+          end
+
+          local applied = 0
+          for i = 1, #candidates do
+            applyTrafficYieldAssist(candidates[i], officerSpeedMps, nowMs)
+            applied = applied + 1
+            if applied >= trafficYieldMaxTargetsPerPulse then
+              break
+            end
+          end
+        end
+      end
+    end
+    Wait(waitMs)
+  end
 end)
 
 CreateThread(function()
