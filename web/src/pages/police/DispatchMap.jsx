@@ -372,6 +372,7 @@ export default function DispatchMap() {
   const [error, setError] = useState('');
   const [lastLoadedAt, setLastLoadedAt] = useState('');
   const [cursorWorld, setCursorWorld] = useState(null);
+  const [cursorMapCoords, setCursorMapCoords] = useState(null);
   const [mapUi, setMapUi] = useState({ zoom: null, zoomPercent: 100, ready: false });
   const [mapInitError, setMapInitError] = useState('');
   const [mapImageError, setMapImageError] = useState('');
@@ -605,10 +606,18 @@ export default function DispatchMap() {
       const onMoveOrZoom = () => syncMapUiState();
       const onMouseMove = (e) => {
         const imagePoint = latLngToImagePoint(e.latlng);
-        if (!isImagePointInsideAtlas(imagePoint)) return setCursorWorld(null);
-        return setCursorWorld(imageToWorldPoint(imagePoint.x, imagePoint.y));
+        if (!isImagePointInsideAtlas(imagePoint)) {
+          setCursorWorld(null);
+          setCursorMapCoords(null);
+          return;
+        }
+        setCursorMapCoords(rawImageToWorldPoint(imagePoint.x, imagePoint.y));
+        setCursorWorld(imageToWorldPoint(imagePoint.x, imagePoint.y));
       };
-      const onMouseOut = () => setCursorWorld(null);
+      const onMouseOut = () => {
+        setCursorWorld(null);
+        setCursorMapCoords(null);
+      };
 
       map.on('zoomend moveend', onMoveOrZoom);
       map.on('mousemove', onMouseMove);
@@ -902,7 +911,10 @@ export default function DispatchMap() {
                 <div className="text-[10px] tracking-[0.16em] uppercase text-cad-muted">Cursor / Bounds</div>
                 <div className="text-xs mt-1">
                   {cursorWorld ? (
-                    <span className="text-slate-100">X {Math.round(cursorWorld.x)} | Y {Math.round(cursorWorld.y)}</span>
+                    <div className="space-y-0.5">
+                      <div className="text-slate-100">World X {Math.round(cursorWorld.x)} | Y {Math.round(cursorWorld.y)}</div>
+                      <div className="text-cyan-100/90">Map X {Math.round(cursorMapCoords?.x || 0)} | Y {Math.round(cursorMapCoords?.y || 0)}</div>
+                    </div>
                   ) : (
                     <span className="text-cad-muted">Cursor outside calibrated atlas (image padding area)</span>
                   )}
