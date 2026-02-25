@@ -9,6 +9,7 @@ import { UNIT_DUTY_CHANGED_EVENT } from '../utils/unitDutyEvents';
 
 const LAW_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/map', label: 'AVL Map', icon: 'M9.75 3l-6 3v15l6-3 4.5 2.25L20.25 17V2l-6 3L9.75 3zM9.75 3v15M14.25 5v15' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/records', label: 'Records', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/arrest-reports', label: 'Arrest Reports', icon: 'M12 8v8m-4-4h8M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
@@ -21,6 +22,7 @@ const LAW_NAV = [
 
 const EMS_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/map', label: 'AVL Map', icon: 'M9.75 3l-6 3v15l6-3 4.5 2.25L20.25 17V2l-6 3L9.75 3zM9.75 3v15M14.25 5v15' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/ems-treatment', label: 'Treatment Log', icon: 'M12 6v12m6-6H6' },
   { to: '/ems-transport', label: 'Transport Tracker', icon: 'M3 13h2l2-5 4 10 2-5h6' },
@@ -30,6 +32,7 @@ const EMS_NAV = [
 
 const FIRE_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/map', label: 'AVL Map', icon: 'M9.75 3l-6 3v15l6-3 4.5 2.25L20.25 17V2l-6 3L9.75 3zM9.75 3v15M14.25 5v15' },
   { to: '/units', label: 'Response Board', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/records', label: 'Incident Reports', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
