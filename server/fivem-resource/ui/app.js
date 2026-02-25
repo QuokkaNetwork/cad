@@ -42,6 +42,7 @@ var jailReleaseReasonField = document.getElementById("jailReleaseReasonField");
 var jailReleaseReasonText = document.getElementById("jailReleaseReasonText");
 
 var printedDocOverlay = document.getElementById("printedDocOverlay");
+var printedDocPopup = printedDocOverlay ? printedDocOverlay.querySelector(".printed-doc-popup") : null;
 var printedDocCloseBtn = document.getElementById("printedDocCloseBtn");
 var printedDocCancelBtn = document.getElementById("printedDocCancelBtn");
 var printedDocZoomOutBtn = document.getElementById("printedDocZoomOutBtn");
@@ -1439,6 +1440,7 @@ function renderPrintedDocExtra(metadata) {
     officer_name: true,
     officer_callsign: true,
     fine_amount: true,
+    payable_status: true,
     jail_minutes: true,
     issued_at: true,
     printed_at: true,
@@ -1492,8 +1494,17 @@ function resetPrintedDocForm(payload) {
   var metadata = normalized.metadata || {};
 
   var subtype = printedDocString(safeGet(metadata, "document_subtype", ""));
+  var isTicketDoc = subtype.toLowerCase() === "ticket";
+  if (printedDocOverlay && printedDocOverlay.classList) {
+    if (isTicketDoc) printedDocOverlay.classList.add("printed-doc-overlay--ticket");
+    else printedDocOverlay.classList.remove("printed-doc-overlay--ticket");
+  }
+  if (printedDocPopup && printedDocPopup.classList) {
+    if (isTicketDoc) printedDocPopup.classList.add("printed-doc-popup--ticket");
+    else printedDocPopup.classList.remove("printed-doc-popup--ticket");
+  }
   if (printedDocFallback && printedDocFallback.classList) {
-    if (subtype.toLowerCase() === "ticket") printedDocFallback.classList.add("printed-doc-paper-ticket");
+    if (isTicketDoc) printedDocFallback.classList.add("printed-doc-paper-ticket");
     else printedDocFallback.classList.remove("printed-doc-paper-ticket");
   }
   var typeText = subtype ? printedDocToTitleCase(subtype) : "Document";
@@ -1532,9 +1543,16 @@ function resetPrintedDocForm(payload) {
     formatPrintedDocDate(printedDocFirstNonEmpty([safeGet(metadata, "issued_at", ""), safeGet(metadata, "printed_at", "")], "")),
     "Unknown"
   );
+  if (printedDocStatus && printedDocStatus.parentElement && printedDocStatus.parentElement.classList) {
+    if (isTicketDoc) printedDocStatus.parentElement.classList.add("hidden");
+    else printedDocStatus.parentElement.classList.remove("hidden");
+  }
   setPrintedDocField(
     printedDocStatus,
-    printedDocToTitleCase(printedDocFirstNonEmpty([safeGet(metadata, "status", ""), safeGet(metadata, "payable_status", "")], "")),
+    printedDocToTitleCase(printedDocFirstNonEmpty([
+      safeGet(metadata, "status", ""),
+      isTicketDoc ? "" : safeGet(metadata, "payable_status", "")
+    ], "")),
     "N/A"
   );
   setPrintedDocField(
@@ -1593,6 +1611,8 @@ function closePrintedDocForm() {
   printedDocOpen = false;
   activePrintedDocPayload = null;
   resetPrintedDocPdfViewer();
+  if (printedDocOverlay && printedDocOverlay.classList) printedDocOverlay.classList.remove("printed-doc-overlay--ticket");
+  if (printedDocPopup && printedDocPopup.classList) printedDocPopup.classList.remove("printed-doc-popup--ticket");
   setVisible(printedDocOverlay, false);
 }
 

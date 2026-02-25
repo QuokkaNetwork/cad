@@ -157,13 +157,20 @@ function drawFieldBox(page, label, value, layout, fonts) {
   });
 }
 
-function drawPageShell(page, titleText, subtitleText, fonts) {
+function drawPageShell(page, titleText, subtitleText, fonts, theme = {}) {
+  const pageFill = theme.pageFill || rgb(0.985, 0.972, 0.93);
+  const headerFill = theme.headerFill || rgb(0.12, 0.18, 0.28);
+  const headerText = theme.headerText || rgb(0.97, 0.98, 1);
+  const headerSubText = theme.headerSubText || rgb(0.8, 0.86, 0.94);
+  const border = theme.border || rgb(0.66, 0.66, 0.66);
+  const guideLine = theme.guideLine || rgb(0.94, 0.94, 0.9);
+
   page.drawRectangle({
     x: 0,
     y: 0,
     width: PAGE.width,
     height: PAGE.height,
-    color: rgb(0.985, 0.972, 0.93),
+    color: pageFill,
   });
 
   page.drawRectangle({
@@ -171,7 +178,7 @@ function drawPageShell(page, titleText, subtitleText, fonts) {
     y: PAGE.height - PAGE.margin - 60,
     width: PAGE.width - PAGE.margin * 2,
     height: 60,
-    color: rgb(0.12, 0.18, 0.28),
+    color: headerFill,
   });
 
   page.drawText(titleText, {
@@ -179,14 +186,14 @@ function drawPageShell(page, titleText, subtitleText, fonts) {
     y: PAGE.height - PAGE.margin - 28,
     size: 18,
     font: fonts.header,
-    color: rgb(0.97, 0.98, 1),
+    color: headerText,
   });
   page.drawText(subtitleText, {
     x: PAGE.margin + 14,
     y: PAGE.height - PAGE.margin - 45,
     size: 8.5,
     font: fonts.label,
-    color: rgb(0.8, 0.86, 0.94),
+    color: headerSubText,
   });
 
   page.drawRectangle({
@@ -194,7 +201,7 @@ function drawPageShell(page, titleText, subtitleText, fonts) {
     y: PAGE.margin,
     width: PAGE.width - PAGE.margin * 2,
     height: PAGE.height - PAGE.margin * 2,
-    borderColor: rgb(0.66, 0.66, 0.66),
+    borderColor: border,
     borderWidth: 1,
     color: undefined,
   });
@@ -203,7 +210,7 @@ function drawPageShell(page, titleText, subtitleText, fonts) {
     page.drawLine({
       start: { x: PAGE.margin + 1, y },
       end: { x: PAGE.width - PAGE.margin - 1, y },
-      color: rgb(0.94, 0.94, 0.9),
+      color: guideLine,
       thickness: 0.5,
     });
   }
@@ -245,7 +252,20 @@ function drawSignatureBlock(page, fonts, x, yTop, width, officerName) {
 
 function drawInfringementNotice(page, payload, fonts) {
   const metadata = payload.metadata || {};
-  drawPageShell(page, 'INFRINGEMENT NOTICE', 'Official CAD printout for in-game service', fonts);
+  drawPageShell(
+    page,
+    'INFRINGEMENT NOTICE',
+    'Official CAD printout for in-game service',
+    fonts,
+    {
+      pageFill: rgb(0.985, 0.977, 0.947),
+      headerFill: rgb(0.92, 0.9, 0.84),
+      headerText: rgb(0.15, 0.16, 0.17),
+      headerSubText: rgb(0.35, 0.36, 0.37),
+      border: rgb(0.68, 0.66, 0.6),
+      guideLine: rgb(0.945, 0.936, 0.9),
+    },
+  );
 
   const innerX = PAGE.margin + 12;
   const innerW = PAGE.width - (PAGE.margin + 12) * 2;
@@ -267,13 +287,7 @@ function drawInfringementNotice(page, payload, fonts) {
   drawFieldBox(page, 'Notice Number', metadata.notice_number || payload.title, {
     x: innerX,
     yTop: y,
-    width: leftW * 0.55,
-    height: 44,
-  }, fonts);
-  drawFieldBox(page, 'Payable Status', titleCase(metadata.payable_status || metadata.status || 'unpaid'), {
-    x: innerX + leftW * 0.55 + 8,
-    yTop: y,
-    width: leftW * 0.45 - 8,
+    width: leftW,
     height: 44,
   }, fonts);
   drawFieldBox(page, 'Fine Amount', formatMoney(metadata.amount || metadata.fine_amount), {
@@ -381,7 +395,7 @@ function drawInfringementNotice(page, payload, fonts) {
     innerX + 4,
     y,
     Math.min(260, innerW * 0.52),
-    [cleanText(metadata.officer_callsign), cleanText(metadata.officer_name)].filter(Boolean).join(' - ')
+    cleanText(metadata.officer_signature_name || metadata.officer_character_name || metadata.officer_name)
   );
 
   page.drawText(`Printed ${formatDate(metadata.printed_at || new Date().toISOString())}`, {

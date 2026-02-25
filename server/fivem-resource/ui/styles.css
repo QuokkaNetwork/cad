@@ -567,6 +567,108 @@ select {
   animation: panel-enter 150ms ease-out;
 }
 
+.printed-doc-overlay--ticket {
+  right: 0.7rem;
+  bottom: 0.7rem;
+}
+
+.printed-doc-overlay--ticket .printed-doc-popup {
+  width: min(560px, 80vw);
+  height: min(72vh, 640px);
+  border-radius: 12px;
+  border: 1px solid rgba(120, 109, 87, 0.7);
+  background:
+    linear-gradient(180deg, rgba(232, 227, 214, 0.97), rgba(220, 214, 198, 0.96)),
+    rgba(228, 222, 206, 0.96);
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(255, 255, 255, 0.12) inset;
+  padding: 0.45rem;
+  gap: 0.4rem;
+}
+
+.printed-doc-overlay--ticket .printed-doc-popup-header {
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.printed-doc-overlay--ticket .printed-doc-title-wrap .eyebrow,
+.printed-doc-overlay--ticket .printed-doc-popup-subtitle {
+  display: none;
+}
+
+.printed-doc-overlay--ticket .printed-doc-popup-title {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #2a241c;
+  font-weight: 700;
+}
+
+.printed-doc-overlay--ticket .printed-doc-toolbar {
+  gap: 0.25rem;
+}
+
+.printed-doc-overlay--ticket .printed-doc-type {
+  display: none;
+}
+
+.printed-doc-overlay--ticket .printed-doc-toolbar .icon-btn,
+.printed-doc-overlay--ticket .printed-doc-zoom-label {
+  border-color: rgba(139, 126, 101, 0.6);
+  background: rgba(246, 242, 232, 0.8);
+  color: #2d271e;
+}
+
+.printed-doc-overlay--ticket .printed-doc-pdf-status {
+  border-color: rgba(139, 126, 101, 0.55);
+  background: rgba(244, 239, 227, 0.82);
+  color: #3a3227;
+  border-radius: 8px;
+  font-size: 0.76rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.printed-doc-overlay--ticket .printed-doc-pdf-viewport {
+  border-radius: 10px;
+  border: 1px solid rgba(139, 126, 101, 0.55);
+  background:
+    radial-gradient(circle at 20% 10%, rgba(132, 114, 76, 0.08), transparent 45%),
+    rgba(206, 198, 180, 0.76);
+  padding: 0.45rem;
+}
+
+.printed-doc-overlay--ticket .printed-doc-pdf-pages {
+  gap: 0.5rem;
+}
+
+.printed-doc-overlay--ticket .printed-doc-pdf-page {
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(93, 83, 62, 0.22);
+}
+
+.printed-doc-overlay--ticket .printed-doc-pdf-page-label {
+  color: #716652;
+  font-size: 0.62rem;
+}
+
+.printed-doc-overlay--ticket .printed-doc-popup-footer {
+  border-top-color: rgba(139, 126, 101, 0.35);
+  padding-top: 0.35rem;
+  min-height: 0;
+}
+
+.printed-doc-overlay--ticket .printed-doc-popup-reference {
+  color: #5f5648;
+  font-size: 0.68rem;
+}
+
+.printed-doc-overlay--ticket .printed-doc-action-btn,
+.printed-doc-overlay--ticket .printed-doc-close-btn {
+  min-height: 1.7rem;
+  padding: 0.22rem 0.5rem;
+  font-size: 0.68rem;
+}
+
 .printed-doc-popup-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

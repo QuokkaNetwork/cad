@@ -330,6 +330,9 @@ router.post('/:id/print', requireAuth, async (req, res) => {
     court_location: String(notice.court_location || '').trim(),
     officer_name: String(notice.officer_name || '').trim() || String(unit.user_name || req.user?.steam_name || '').trim(),
     officer_callsign: String(notice.officer_callsign || '').trim() || String(unit.callsign || '').trim(),
+    officer_signature_name: String(req.fivemLink?.player_name || '').trim()
+      || String(unit.user_name || '').trim()
+      || String(req.user?.steam_name || '').trim(),
     issued_at: String(notice.created_at || '').trim(),
     print_action: printAction,
     details: notice.details || {},
