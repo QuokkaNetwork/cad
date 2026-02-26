@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import EvidencePanel from '../../components/EvidencePanel';
 import { useDepartment } from '../../context/DepartmentContext';
+import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 
 const ENTITY_OPTIONS = [
   { value: 'call', label: 'Call' },
@@ -64,6 +65,17 @@ export default function Incidents() {
 
   const departmentId = Number(activeDepartment?.id || 0);
   const dispatchMode = !!activeDepartment?.is_dispatch;
+  const layoutType = getDepartmentLayoutType(activeDepartment);
+  const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
+  const isFire = layoutType === DEPARTMENT_LAYOUT.FIRE;
+  const isOpsLeanMode = isParamedics || isFire;
+  const pageHeading = isOpsLeanMode ? 'Incident Board' : 'Incidents / Cases';
+  const pageLabel = isOpsLeanMode ? 'Operations' : 'Incident Linking';
+  const pageDescription = isParamedics
+    ? 'Track operational incidents, link relevant calls/records, and keep EMS evidence attached to the incident.'
+    : isFire
+      ? 'Track operational incidents, link related calls/reports, and keep fire evidence attached to the incident.'
+      : 'Link calls, records, arrest reports, warrants, POIs and evidence into a single incident/case for cross-department coordination.';
 
   const prefilledEntity = useMemo(() => {
     const entityType = String(searchParams.get('entity_type') || '').trim().toLowerCase();
@@ -309,10 +321,10 @@ export default function Incidents() {
       <div className="bg-cad-card border border-cad-border rounded-2xl p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-wider text-cad-muted">Incident Linking</p>
-            <h2 className="text-xl font-bold mt-1">Incidents / Cases</h2>
+            <p className="text-xs uppercase tracking-wider text-cad-muted">{pageLabel}</p>
+            <h2 className="text-xl font-bold mt-1">{pageHeading}</h2>
             <p className="text-sm text-cad-muted mt-2 max-w-3xl">
-              Link calls, records, arrest reports, warrants, POIs and evidence into a single incident/case for cross-department coordination.
+              {pageDescription}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -367,7 +379,9 @@ export default function Incidents() {
       <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_1fr] gap-6 items-start">
         <div className="space-y-6">
           <div className="bg-cad-card border border-cad-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold mb-3">Create Incident / Case</h3>
+            <h3 className="text-sm font-semibold mb-3">
+              {isOpsLeanMode ? 'Create Operational Incident' : 'Create Incident / Case'}
+            </h3>
             <form onSubmit={createIncident} className="space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="md:col-span-2">
@@ -417,9 +431,11 @@ export default function Incidents() {
               </div>
 
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-cad-muted">
-                  Creates a department-owned incident/case and optionally links the current entity context if opened from another workflow.
-                </p>
+                  <p className="text-xs text-cad-muted">
+                    {isOpsLeanMode
+                      ? 'Creates a department incident and links the current workflow item if this page was opened from another screen.'
+                      : 'Creates a department-owned incident/case and optionally links the current entity context if opened from another workflow.'}
+                  </p>
                 <button
                   type="submit"
                   disabled={savingIncident || !departmentId}
@@ -433,7 +449,7 @@ export default function Incidents() {
 
           <div className="bg-cad-card border border-cad-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 border-b border-cad-border flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold">Incidents / Cases ({incidents.length})</h3>
+              <h3 className="text-sm font-semibold">{isOpsLeanMode ? 'Incident Queue' : 'Incidents / Cases'} ({incidents.length})</h3>
               {loadingList ? <span className="text-xs text-cad-muted">Loading...</span> : null}
             </div>
             {incidents.length === 0 ? (
@@ -483,7 +499,9 @@ export default function Incidents() {
               <div>
                 <h3 className="text-sm font-semibold">Selected Incident / Case</h3>
                 <p className="text-xs text-cad-muted mt-1">
-                  Manage incident status and link operational entities.
+                  {isOpsLeanMode
+                    ? 'Update status and optionally link related CAD items.'
+                    : 'Manage incident status and link operational entities.'}
                 </p>
               </div>
               {loadingIncident ? <span className="text-xs text-cad-muted">Loading...</span> : null}
@@ -534,53 +552,110 @@ export default function Incidents() {
                   </button>
                 </div>
 
-                <form onSubmit={linkEntityToIncident} className="space-y-3 pt-2 border-t border-cad-border">
-                  <h4 className="text-sm font-semibold">Link Item to Incident</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-cad-muted mb-1">Item Type</label>
-                      <select
-                        value={linkForm.entity_type}
-                        onChange={(e) => setLinkForm((prev) => ({ ...prev, entity_type: e.target.value }))}
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                {isOpsLeanMode ? (
+                  <details className="pt-2 border-t border-cad-border">
+                    <summary className="cursor-pointer select-none text-sm font-semibold text-cad-muted">
+                      Advanced Manual Linking (IDs)
+                    </summary>
+                    <p className="text-xs text-cad-muted mt-2">
+                      Use this when you need to manually attach a CAD item that was not opened from a workflow shortcut.
+                    </p>
+                    <form onSubmit={linkEntityToIncident} className="space-y-3 mt-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-cad-muted mb-1">Item Type</label>
+                          <select
+                            value={linkForm.entity_type}
+                            onChange={(e) => setLinkForm((prev) => ({ ...prev, entity_type: e.target.value }))}
+                            className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                          >
+                            {ENTITY_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-cad-muted mb-1">Item ID</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={linkForm.entity_id}
+                            onChange={(e) => setLinkForm((prev) => ({ ...prev, entity_id: e.target.value }))}
+                            className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono"
+                            placeholder="e.g. 42"
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-xs text-cad-muted mb-1">Tasking / Link Note (optional)</label>
+                          <input
+                            type="text"
+                            value={linkForm.note}
+                            onChange={(e) => setLinkForm((prev) => ({ ...prev, note: e.target.value }))}
+                            className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                            placeholder="Why this item is linked to the case (optional)"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={linkingItem}
+                          className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium disabled:opacity-50"
+                        >
+                          {linkingItem ? 'Linking...' : 'Link Item'}
+                        </button>
+                      </div>
+                    </form>
+                  </details>
+                ) : (
+                  <form onSubmit={linkEntityToIncident} className="space-y-3 pt-2 border-t border-cad-border">
+                    <h4 className="text-sm font-semibold">Link Item to Incident</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-cad-muted mb-1">Item Type</label>
+                        <select
+                          value={linkForm.entity_type}
+                          onChange={(e) => setLinkForm((prev) => ({ ...prev, entity_type: e.target.value }))}
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                        >
+                          {ENTITY_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-cad-muted mb-1">Item ID</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={linkForm.entity_id}
+                          onChange={(e) => setLinkForm((prev) => ({ ...prev, entity_id: e.target.value }))}
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono"
+                          placeholder="e.g. 42"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs text-cad-muted mb-1">Tasking / Link Note (optional)</label>
+                        <input
+                          type="text"
+                          value={linkForm.note}
+                          onChange={(e) => setLinkForm((prev) => ({ ...prev, note: e.target.value }))}
+                          className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
+                          placeholder="Why this item is linked to the case (optional)"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={linkingItem}
+                        className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium disabled:opacity-50"
                       >
-                        {ENTITY_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
+                        {linkingItem ? 'Linking...' : 'Link Item'}
+                      </button>
                     </div>
-                    <div>
-                      <label className="block text-xs text-cad-muted mb-1">Item ID</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={linkForm.entity_id}
-                        onChange={(e) => setLinkForm((prev) => ({ ...prev, entity_id: e.target.value }))}
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm font-mono"
-                        placeholder="e.g. 42"
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs text-cad-muted mb-1">Tasking / Link Note (optional)</label>
-                      <input
-                        type="text"
-                        value={linkForm.note}
-                        onChange={(e) => setLinkForm((prev) => ({ ...prev, note: e.target.value }))}
-                        className="w-full bg-cad-surface border border-cad-border rounded px-3 py-2 text-sm"
-                        placeholder="Why this item is linked to the case (optional)"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex justify-end">
-                    <button
-                      type="submit"
-                      disabled={linkingItem}
-                      className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium disabled:opacity-50"
-                    >
-                      {linkingItem ? 'Linking...' : 'Link Item'}
-                    </button>
-                  </div>
-                </form>
+                  </form>
+                )}
               </div>
             )}
           </div>
@@ -593,7 +668,9 @@ export default function Incidents() {
               </span>
             </div>
             {!selectedIncident?.links?.length ? (
-              <p className="text-sm text-cad-muted mt-3">No linked calls/records/warrants/POIs/evidence yet.</p>
+              <p className="text-sm text-cad-muted mt-3">
+                {isOpsLeanMode ? 'No linked items yet. Link calls, reports, or evidence as the incident develops.' : 'No linked calls/records/warrants/POIs/evidence yet.'}
+              </p>
             ) : (
               <div className="mt-3 space-y-2">
                 {selectedIncident.links.map((link) => (
@@ -639,7 +716,7 @@ export default function Incidents() {
                 entityType="incident"
                 entityId={selectedIncident.id}
                 departmentId={selectedIncident.department_id || departmentId || null}
-                title="Investigation Evidence"
+                title={isOpsLeanMode ? 'Incident Evidence' : 'Investigation Evidence'}
               />
             )}
           </div>

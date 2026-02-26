@@ -532,21 +532,21 @@ export default function DepartmentHome() {
     }
     if (isEmsDepartment) {
       return [
-        { label: 'Response Board', sublabel: 'Live crew & job management', route: '/units', variant: 'primary' },
+        { label: 'Response Board', sublabel: 'Live crew and call management', route: '/units', variant: 'primary' },
+        { label: 'AVL Map', route: '/map' },
+        { label: 'Incidents', route: '/incidents' },
         { label: 'Treatment Log', route: '/ems-treatment' },
         { label: 'Transport Tracker', route: '/ems-transport' },
         { label: 'Patient Reports', route: '/records' },
-        { label: 'Incidents', route: '/incidents' },
       ];
     }
     if (isFireDepartment) {
       return [
-        { label: 'Response Board', sublabel: 'Live appliance & incident management', route: '/units', variant: 'primary' },
+        { label: 'Response Board', sublabel: 'Live appliance and incident management', route: '/units', variant: 'primary' },
+        { label: 'AVL Map', route: '/map' },
+        { label: 'Incidents', route: '/incidents' },
         { label: 'Incident Reports', route: '/records' },
         { label: 'Lookup', route: '/search' },
-        { label: 'Apparatus', route: '/fire-apparatus' },
-        { label: 'Pre-Plans', route: '/fire-preplans' },
-        { label: 'Incidents', route: '/incidents' },
       ];
     }
     return [
@@ -625,23 +625,25 @@ export default function DepartmentHome() {
     if (isEmsDepartment) {
       return [
         {
-          key: 'clinical',
-          eyebrow: 'Clinical',
-          title: 'Treatment & transport',
-          body: 'Document treatment, medications and procedures, then complete transport destination and handover details.',
+          key: 'ems-response',
+          eyebrow: 'Response',
+          title: 'Live ambulance operations',
+          body: 'Use the Response Board and AVL Map for dispatching crews, scene coordination, and status updates during active jobs.',
+          actions: [
+            { label: 'Response Board', route: '/units', variant: 'primary' },
+            { label: 'AVL Map', route: '/map' },
+            { label: 'Incidents', route: '/incidents' },
+          ],
+        },
+        {
+          key: 'ems-documentation',
+          eyebrow: 'Documentation',
+          title: 'Patient care workflow',
+          body: 'Capture treatment, transport, and final patient reporting with a simple end-to-end CAD workflow after each job.',
           actions: [
             { label: 'Treatment Log', route: '/ems-treatment', variant: 'primary' },
             { label: 'Transport Tracker', route: '/ems-transport' },
             { label: 'Patient Reports', route: '/records' },
-          ],
-        },
-        {
-          key: 'response',
-          eyebrow: 'Operations',
-          title: 'Crew response board',
-          body: 'Manage active jobs, crew availability, and incident assignment from the response board.',
-          actions: [
-            { label: 'Response Board', route: '/units' },
             { label: 'Incidents', route: '/incidents' },
           ],
         },
@@ -650,24 +652,24 @@ export default function DepartmentHome() {
     if (isFireDepartment) {
       return [
         {
-          key: 'operations',
+          key: 'fire-operations',
           eyebrow: 'Operations',
-          title: 'Live incident response',
-          body: 'Coordinate appliances and crews on the response board, then capture outcomes in Incident Reports.',
+          title: 'Live fireground coordination',
+          body: 'Run appliance and crew response from the board, monitor incident load, and keep active jobs moving cleanly in-game.',
           actions: [
             { label: 'Response Board', route: '/units', variant: 'primary' },
-            { label: 'Incident Reports', route: '/records' },
-            { label: 'Lookup', route: '/search' },
+            { label: 'AVL Map', route: '/map' },
+            { label: 'Incidents', route: '/incidents' },
           ],
         },
         {
-          key: 'planning',
-          eyebrow: 'Planning',
-          title: 'Readiness & pre-planning',
-          body: 'Maintain apparatus readiness, site knowledge, and recurring risk information.',
+          key: 'fire-reporting',
+          eyebrow: 'Reporting',
+          title: 'Simple incident documentation',
+          body: 'Write incident reports, use lookup only when needed, and link supporting records under incidents without extra planning modules.',
           actions: [
-            { label: 'Apparatus', route: '/fire-apparatus' },
-            { label: 'Pre-Plans', route: '/fire-preplans' },
+            { label: 'Incident Reports', route: '/records', variant: 'primary' },
+            { label: 'Lookup', route: '/search' },
             { label: 'Incidents', route: '/incidents' },
           ],
         },
@@ -887,16 +889,16 @@ export default function DepartmentHome() {
     }
     if (isEmsDepartment) {
       return [
-        'Allocate crews on the response board and document care in Treatment Log.',
-        'Use Transport Tracker for destination, ETA, and hospital handover status.',
-        'Complete patient reports for clinical recordkeeping and follow-up review.',
+        'Run live jobs from the Response Board and AVL Map.',
+        'Record treatment and transport details after scene care.',
+        'Complete a patient report and link the job to an incident when needed.',
       ];
     }
     if (isFireDepartment) {
       return [
-        'Use Response Board for appliance allocation and incident coordination.',
-        'Capture post-incident outcomes in Incident Reports and linked incidents.',
-        'Maintain apparatus readiness and pre-plan references for repeat-risk locations.',
+        'Run appliances and crews from the Response Board during active incidents.',
+        'Use Incidents to group related calls, units, and case notes when required.',
+        'Complete Incident Reports after response with only the details needed for CAD.',
       ];
     }
     return ['Use the relevant workflow for live response, lookup, and documentation.'];

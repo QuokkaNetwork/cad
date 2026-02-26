@@ -214,6 +214,7 @@ export default function Search() {
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
   const isFire = layoutType === DEPARTMENT_LAYOUT.FIRE;
+  const isOpsLeanMode = isParamedics || isFire;
 
   const [searchType, setSearchType] = useState('person');
   const [personFirstName, setPersonFirstName] = useState('');
@@ -248,7 +249,12 @@ export default function Search() {
   ].filter(Boolean).join(' ').trim();
   const activeQuery = searchType === 'person' ? personQuery : String(vehicleQuery || '').trim();
   const canSearch = activeQuery.length >= 2;
-  const pageTitle = isLaw ? 'Licence & Registration Search' : isParamedics ? 'Patient Analysis' : 'Incident Lookup';
+  const pageTitle = isLaw ? 'Licence & Registration Search' : isParamedics ? 'Patient Lookup & Analysis' : 'Fire Lookup';
+  const pageSubtitle = isParamedics
+    ? 'Search a patient, review medical history, and document treatment or transport updates.'
+    : isFire
+      ? 'Lookup occupants, contacts, and vehicles, then open incident reports from the selected person.'
+      : '';
   const personTabLabel = isParamedics ? 'Patient Lookup' : isFire ? 'Individual Lookup' : 'Individual Lookup';
   const vehicleTabLabel = isFire ? 'Vehicle Lookup' : 'Vehicle Lookup';
   const personFirstLabel = isFire ? 'Occupant / Contact First Name' : 'First Name';
@@ -562,16 +568,29 @@ export default function Search() {
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-6">
-        {pageTitle}
-      </h2>
+      <div className="mb-6">
+        <h2 className="text-xl font-bold">
+          {pageTitle}
+        </h2>
+        {isOpsLeanMode && (
+          <p className="text-sm text-cad-muted mt-1">{pageSubtitle}</p>
+        )}
+      </div>
 
       {isFire && (
         <div className="bg-cad-card border border-cad-border rounded-xl p-4 mb-6">
-          <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Fire Lookup Guidance</h3>
-          <p className="text-sm text-cad-muted mt-2">
-            Use this tab to identify occupants/contacts and incident vehicles. Open Incident Reports from a selected person to document the fire response report.
-          </p>
+          <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider">Fire Lookup Workflow</h3>
+          <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+            <div className="rounded-lg border border-cad-border bg-cad-surface px-3 py-2">
+              1. Search person or vehicle
+            </div>
+            <div className="rounded-lg border border-cad-border bg-cad-surface px-3 py-2">
+              2. Confirm occupant / owner details
+            </div>
+            <div className="rounded-lg border border-cad-border bg-cad-surface px-3 py-2">
+              3. Open Incident Reports from the selected person
+            </div>
+          </div>
         </div>
       )}
 
@@ -710,6 +729,21 @@ export default function Search() {
                 </p>
               </div>
             )}
+            {isFire && (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-cad-border bg-cad-surface px-3 py-2">
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-cad-muted">Primary Action</p>
+                  <p className="text-sm text-cad-ink">Open or update the person-linked incident report.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={openRecordsPageForSelectedPerson}
+                  className="px-3 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors whitespace-nowrap"
+                >
+                  {recordsButtonLabel}
+                </button>
+              </div>
+            )}
 
             {isLaw && (selectedPerson.has_warrant || selectedPerson.has_bolo || selectedPerson.repeat_offender) ? (
               <div className="flex flex-wrap gap-2">
@@ -733,7 +767,7 @@ export default function Search() {
 
             <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                {isFire ? 'Licence / Identity (CAD)' : 'Driver Licence (CAD)'}
+                {isFire ? 'Identity / Licence Reference (CAD)' : 'Driver Licence (CAD)'}
               </h4>
               {selectedPerson.cad_driver_license ? (
                 <div className="space-y-3">
@@ -772,36 +806,71 @@ export default function Search() {
             </div>
 
             {!isParamedics && (
-              <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
-                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                  {isFire ? 'Known Vehicles / Registrations' : 'Registrations'} ({personRegistrations.length})
-                </h4>
-                {personRegistrations.length > 0 ? (
-                  <div className="space-y-2">
-                    {personRegistrations.map((reg) => (
-                      <button
-                        key={`${reg.plate_normalized || reg.plate}`}
-                        type="button"
-                        onClick={() => selectVehicle({ plate: reg.plate })}
-                        className="w-full text-left bg-cad-card rounded px-3 py-2 text-sm hover:bg-cad-surface border border-cad-border/40"
-                      >
-                        <div className="flex flex-wrap items-center gap-4">
-                          <span className="font-mono font-bold text-cad-accent-light">{reg.plate}</span>
-                          <span>{reg.vehicle_model || '-'}</span>
-                          <span className="text-cad-muted">{reg.vehicle_colour || '-'}</span>
-                        </div>
-                        <div className="mt-1 text-xs text-cad-muted">
-                          Status: {formatStatusLabel(reg.status)} | Expiry: {formatDateAU(reg.expiry_at || '', '-')}
-                        </div>
-                      </button>
-                    ))}
+              isFire ? (
+                <details className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
+                  <summary className="cursor-pointer select-none text-sm font-semibold text-cad-muted uppercase tracking-wider">
+                    Vehicle References ({personRegistrations.length})
+                  </summary>
+                  <div className="mt-3">
+                    {personRegistrations.length > 0 ? (
+                      <div className="space-y-2">
+                        {personRegistrations.map((reg) => (
+                          <button
+                            key={`${reg.plate_normalized || reg.plate}`}
+                            type="button"
+                            onClick={() => selectVehicle({ plate: reg.plate })}
+                            className="w-full text-left bg-cad-card rounded px-3 py-2 text-sm hover:bg-cad-surface border border-cad-border/40"
+                          >
+                            <div className="flex flex-wrap items-center gap-4">
+                              <span className="font-mono font-bold text-cad-accent-light">{reg.plate}</span>
+                              <span>{reg.vehicle_model || '-'}</span>
+                              <span className="text-cad-muted">{reg.vehicle_colour || '-'}</span>
+                            </div>
+                            <div className="mt-1 text-xs text-cad-muted">
+                              Status: {formatStatusLabel(reg.status)} | Expiry: {formatDateAU(reg.expiry_at || '', '-')}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-cad-muted">
+                        No CAD registrations found for this person/contact.
+                      </p>
+                    )}
                   </div>
-                ) : (
-                  <p className="text-sm text-cad-muted">
-                    No CAD registrations found for this {isFire ? 'person/contact' : 'person'}.
-                  </p>
-                )}
-              </div>
+                </details>
+              ) : (
+                <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
+                  <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                    Registrations ({personRegistrations.length})
+                  </h4>
+                  {personRegistrations.length > 0 ? (
+                    <div className="space-y-2">
+                      {personRegistrations.map((reg) => (
+                        <button
+                          key={`${reg.plate_normalized || reg.plate}`}
+                          type="button"
+                          onClick={() => selectVehicle({ plate: reg.plate })}
+                          className="w-full text-left bg-cad-card rounded px-3 py-2 text-sm hover:bg-cad-surface border border-cad-border/40"
+                        >
+                          <div className="flex flex-wrap items-center gap-4">
+                            <span className="font-mono font-bold text-cad-accent-light">{reg.plate}</span>
+                            <span>{reg.vehicle_model || '-'}</span>
+                            <span className="text-cad-muted">{reg.vehicle_colour || '-'}</span>
+                          </div>
+                          <div className="mt-1 text-xs text-cad-muted">
+                            Status: {formatStatusLabel(reg.status)} | Expiry: {formatDateAU(reg.expiry_at || '', '-')}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-cad-muted">
+                      No CAD registrations found for this person.
+                    </p>
+                  )}
+                </div>
+              )
             )}
 
             <div className="pt-1">
@@ -824,13 +893,15 @@ export default function Search() {
                     Warnings{selectedPersonWarnings.length > 0 ? ` (${selectedPersonWarnings.length})` : ''}
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={openRecordsPageForSelectedPerson}
-                  className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors"
-                >
-                  {recordsButtonLabel}
-                </button>
+                {!isFire && (
+                  <button
+                    type="button"
+                    onClick={openRecordsPageForSelectedPerson}
+                    className="px-4 py-2 bg-cad-accent hover:bg-cad-accent-light text-white rounded text-sm font-medium transition-colors"
+                  >
+                    {recordsButtonLabel}
+                  </button>
+                )}
               </div>
             </div>
             </div>
@@ -852,9 +923,20 @@ export default function Search() {
       >
         {selectedVehicle && (
           <div className="space-y-4">
+            {isFire && (
+              <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
+                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">Vehicle Lookup Summary</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                  <p>Plate: <span className="text-cad-ink">{selectedVehicle?.plate || '-'}</span></p>
+                  <p>Model: <span className="text-cad-ink">{selectedVehicle?.model || selectedVehicle?.cad_registration?.vehicle_model || '-'}</span></p>
+                  <p>Owner: <span className="text-cad-ink">{selectedVehicle?.cad_registration?.owner_name || (vehicleOwner ? resolvePersonName(vehicleOwner) : '-')}</span></p>
+                  <p>Status: <span className="text-cad-ink">{selectedVehicle?.cad_registration ? formatStatusLabel(selectedVehicle.cad_registration.status) : '-'}</span></p>
+                </div>
+              </div>
+            )}
             <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-3">
               <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                {isFire ? 'Vehicle / Asset Registration (CAD)' : 'Registration (CAD)'}
+                {isFire ? 'Vehicle Reference (CAD)' : 'Registration (CAD)'}
               </h4>
               {selectedVehicle.cad_registration ? (
                 <div className="space-y-2">
@@ -908,16 +990,31 @@ export default function Search() {
             </div>
 
             {vehicleOwner && (
-              <div className="bg-cad-surface rounded px-3 py-3">
-                <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
-                  {isFire ? 'Registered Owner / Linked Person' : 'Registered Owner'}
-                </h4>
-                <p className="text-sm">{resolvePersonName(vehicleOwner)}</p>
-                <p className="text-xs text-cad-muted">Citizen ID: {vehicleOwner.citizenid || '-'}</p>
-                <div className="mt-2">
-                  <MugshotPreview url={vehicleOwner?.cad_driver_license?.mugshot_url} />
+              isFire ? (
+                <details className="bg-cad-surface border border-cad-border rounded px-3 py-3">
+                  <summary className="cursor-pointer select-none text-sm font-semibold text-cad-muted uppercase tracking-wider">
+                    Owner / Linked Person
+                  </summary>
+                  <div className="mt-3">
+                    <p className="text-sm">{resolvePersonName(vehicleOwner)}</p>
+                    <p className="text-xs text-cad-muted">Citizen ID: {vehicleOwner.citizenid || '-'}</p>
+                    <div className="mt-2">
+                      <MugshotPreview url={vehicleOwner?.cad_driver_license?.mugshot_url} />
+                    </div>
+                  </div>
+                </details>
+              ) : (
+                <div className="bg-cad-surface rounded px-3 py-3">
+                  <h4 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-2">
+                    Registered Owner
+                  </h4>
+                  <p className="text-sm">{resolvePersonName(vehicleOwner)}</p>
+                  <p className="text-xs text-cad-muted">Citizen ID: {vehicleOwner.citizenid || '-'}</p>
+                  <div className="mt-2">
+                    <MugshotPreview url={vehicleOwner?.cad_driver_license?.mugshot_url} />
+                  </div>
                 </div>
-              </div>
+              )
             )}
 
             {isLaw && (

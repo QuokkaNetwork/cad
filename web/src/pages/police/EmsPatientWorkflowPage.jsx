@@ -42,6 +42,8 @@ export default function EmsPatientWorkflowPage({
   const { activeDepartment } = useDepartment();
   const layoutType = getDepartmentLayoutType(activeDepartment);
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
+  const isTreatmentMode = String(mode || '').toLowerCase() === 'treatment';
+  const isTransportMode = String(mode || '').toLowerCase() === 'transport';
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -57,6 +59,11 @@ export default function EmsPatientWorkflowPage({
   );
   const canSearch = query.length >= 2;
   const medicalCount = Math.max(0, Number(selectedPerson?.medical_analysis_count || 0));
+  const workflowFocus = isTreatmentMode
+    ? 'Document on-scene findings, treatments, and patient response to care.'
+    : isTransportMode
+      ? 'Track destination, transport status, ETA changes, and hospital handoff.'
+      : 'Search a patient and document EMS care or transport updates.';
 
   async function doSearch(event) {
     event.preventDefault();
@@ -105,6 +112,18 @@ export default function EmsPatientWorkflowPage({
         {subtitle ? <p className="text-sm text-cad-muted mt-1">{subtitle}</p> : null}
       </div>
 
+      <div className="bg-cad-card border border-cad-border rounded-xl p-4">
+        <p className="text-xs uppercase tracking-wider text-cad-muted">Workflow Focus</p>
+        <p className="text-sm text-cad-ink mt-1">{workflowFocus}</p>
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+          <div className="rounded-lg border border-cad-border bg-cad-surface px-3 py-2">1. Search patient</div>
+          <div className="rounded-lg border border-cad-border bg-cad-surface px-3 py-2">2. Confirm identity and history</div>
+          <div className="rounded-lg border border-cad-border bg-cad-surface px-3 py-2">
+            {isTransportMode ? '3. Update transport / handoff' : '3. Update care notes'}
+          </div>
+        </div>
+      </div>
+
       <div className="bg-cad-card border border-cad-border rounded-2xl p-4">
         <form onSubmit={doSearch} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
           <div>
@@ -144,6 +163,9 @@ export default function EmsPatientWorkflowPage({
 
         {results.length > 0 ? (
           <div className="mt-3 border border-cad-border rounded-lg overflow-hidden">
+            <div className="px-3 py-2 border-b border-cad-border bg-cad-surface/60 text-xs text-cad-muted uppercase tracking-wider">
+              Search Results ({results.length})
+            </div>
             <SearchResults type="person" results={results} onSelect={selectPerson} />
           </div>
         ) : null}
@@ -158,6 +180,9 @@ export default function EmsPatientWorkflowPage({
                 <p className="text-lg font-semibold mt-1">{resolvePersonName(selectedPerson)}</p>
                 <p className="text-xs text-cad-muted mt-1">
                   Citizen ID: <span className="font-mono">{selectedPerson?.citizenid || '-'}</span>
+                </p>
+                <p className="text-xs text-cad-muted mt-1">
+                  {isTransportMode ? 'Transport workflow active' : isTreatmentMode ? 'Treatment workflow active' : 'EMS workflow active'}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
@@ -198,7 +223,7 @@ export default function EmsPatientWorkflowPage({
         </div>
       ) : (
         <div className="bg-cad-card border border-cad-border rounded-lg p-5 text-sm text-cad-muted">
-          Search and select a patient to begin.
+          {isTransportMode ? 'Search and select a patient to start tracking transport and hospital handoff.' : 'Search and select a patient to begin.'}
         </div>
       )}
     </div>

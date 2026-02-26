@@ -40,6 +40,7 @@ export default function Units() {
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
   const isFire = layoutType === DEPARTMENT_LAYOUT.FIRE;
+  const isOpsLeanMode = isParamedics || isFire;
   const isDispatchDepartment = !!activeDepartment?.is_dispatch;
   const canSelfDispatch = !!(myUnit && !dispatchStatus.dispatcher_online && !dispatchStatus.is_dispatch_department);
   const isMyUnitAvailable = normalizeUnitStatus(myUnit?.status) === 'available';
@@ -47,6 +48,12 @@ export default function Units() {
   const hideSharedPanels = !!(dispatchStatus.dispatcher_online && !dispatchStatus.is_dispatch_department);
   const callNoun = isFire ? 'incident' : 'call';
   const callNounTitle = isFire ? 'Incident' : 'Call';
+  const responseBoardTitle = isLaw ? 'Unit Management' : isParamedics ? 'Crew Response Board' : 'Fire Response Board';
+  const responseBoardSubtitle = isParamedics
+    ? 'Go on duty, keep status updated, and self-assign to active patient calls when dispatch is offline.'
+    : isFire
+      ? 'Go on duty, manage active incidents, and keep appliance/crew status visible for responding units.'
+      : '';
   const shiftLogTitle = isLaw ? 'Officer Shift Log' : isParamedics ? 'Crew Shift Log' : 'Crew / Appliance Shift Log';
   const shiftNotePlaceholder = myUnit
     ? (isFire
@@ -55,6 +62,12 @@ export default function Units() {
     : 'Go on duty to start your shift notes.';
   const addShiftNoteLabel = isFire ? 'Add Handoff Note' : 'Add Shift Note';
   const assignedUnitsLabel = isFire ? 'Assigned Units / Appliances' : 'Assigned Units';
+  const selfDispatchTitle = isLaw ? 'Self Dispatch' : isParamedics ? 'Open Patient Calls' : 'Open Incidents';
+  const allUnitsHeading = isFire
+    ? 'On-Duty Crews / Appliances'
+    : isParamedics
+      ? 'On-Duty Crews'
+      : 'All On-Duty Units';
 
   const fetchData = useCallback(async () => {
     if (!deptId) return;
@@ -201,11 +214,37 @@ export default function Units() {
     }
   }, [calls, currentCall, selectedCall]);
 
+  const shiftNotesList = shiftNotesLoading ? (
+    <p className="text-sm text-cad-muted">Loading shift notes...</p>
+  ) : shiftNotes.length === 0 ? (
+    <p className="text-sm text-cad-muted">No shift notes yet for this department.</p>
+  ) : (
+    <div className="space-y-2 max-h-64 overflow-y-auto">
+      {shiftNotes.map((note) => (
+        <div key={note.id} className="bg-cad-surface border border-cad-border rounded px-3 py-2">
+          <div className="flex items-center justify-between gap-2 text-xs text-cad-muted">
+            <span>
+              {note.unit_callsign ? <span className="font-mono text-cad-ink">{note.unit_callsign}</span> : 'No Unit'}{' '}
+              {note.author_name ? `- ${note.author_name}` : ''}
+            </span>
+            <span>{formatDateTimeAU(note.created_at ? `${note.created_at}Z` : '', '-')}</span>
+          </div>
+          <p className="text-sm mt-1 whitespace-pre-wrap break-words">{note.note}</p>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div>
-      <h2 className="text-xl font-bold mb-6">
-        {isLaw ? 'Unit Management' : isParamedics ? 'Crew & Patient Response' : 'Appliance & Incident Board'}
-      </h2>
+      <div className="mb-6">
+        <h2 className="text-xl font-bold">
+          {responseBoardTitle}
+        </h2>
+        {isOpsLeanMode && (
+          <p className="text-sm text-cad-muted mt-1">{responseBoardSubtitle}</p>
+        )}
+      </div>
 
       {/* My unit / Go on duty */}
       {myUnit ? (
@@ -281,9 +320,16 @@ export default function Units() {
 
       <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">
         <div className="flex items-center justify-between gap-2 mb-3">
-          <h3 className="font-semibold">
-            {shiftLogTitle}
-          </h3>
+          <div>
+            <h3 className="font-semibold">
+              {isOpsLeanMode ? 'Crew Handoff Notes (Optional)' : shiftLogTitle}
+            </h3>
+            {isOpsLeanMode && (
+              <p className="text-xs text-cad-muted mt-1">
+                Keep this for quick handoff notes. Put incident-specific details in the incident or report.
+              </p>
+            )}
+          </div>
           <span className="text-xs text-cad-muted">
             {shiftNotes.length} note{shiftNotes.length === 1 ? '' : 's'}
           </span>
@@ -308,25 +354,17 @@ export default function Units() {
             </button>
           </div>
         </div>
-        {shiftNotesLoading ? (
-          <p className="text-sm text-cad-muted">Loading shift notes...</p>
-        ) : shiftNotes.length === 0 ? (
-          <p className="text-sm text-cad-muted">No shift notes yet for this department.</p>
+        {isOpsLeanMode ? (
+          <details className="mt-1">
+            <summary className="cursor-pointer text-xs text-cad-muted select-none">
+              Recent handoff notes ({shiftNotes.length})
+            </summary>
+            <div className="mt-2">
+              {shiftNotesList}
+            </div>
+          </details>
         ) : (
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {shiftNotes.map((note) => (
-              <div key={note.id} className="bg-cad-surface border border-cad-border rounded px-3 py-2">
-                <div className="flex items-center justify-between gap-2 text-xs text-cad-muted">
-                  <span>
-                    {note.unit_callsign ? <span className="font-mono text-cad-ink">{note.unit_callsign}</span> : 'No Unit'}{' '}
-                    {note.author_name ? `- ${note.author_name}` : ''}
-                  </span>
-                  <span>{formatDateTimeAU(note.created_at ? `${note.created_at}Z` : '', '-')}</span>
-                </div>
-                <p className="text-sm mt-1 whitespace-pre-wrap break-words">{note.note}</p>
-              </div>
-            ))}
-          </div>
+          shiftNotesList
         )}
       </div>
 
@@ -334,9 +372,18 @@ export default function Units() {
         <div className="bg-cad-card border border-cad-border rounded-lg p-5">
           <h3 className="font-semibold mb-1">Dispatcher Online</h3>
           <p className="text-sm text-cad-muted">
-            {dispatchStatus.dispatch_department?.name || 'Dispatch'} currently has{' '}
-            {dispatchStatus.online_count} dispatcher{dispatchStatus.online_count === 1 ? '' : 's'} on duty.
-            Self-assignment panels are hidden while dispatchers are active.
+            {isOpsLeanMode ? (
+              <>
+                {dispatchStatus.dispatch_department?.name || 'Dispatch'} is online ({dispatchStatus.online_count}{' '}
+                dispatcher{dispatchStatus.online_count === 1 ? '' : 's'}). Self-assignment is hidden while dispatch is active.
+              </>
+            ) : (
+              <>
+                {dispatchStatus.dispatch_department?.name || 'Dispatch'} currently has{' '}
+                {dispatchStatus.online_count} dispatcher{dispatchStatus.online_count === 1 ? '' : 's'} on duty.
+                Self-assignment panels are hidden while dispatchers are active.
+              </>
+            )}
           </p>
         </div>
       ) : (
@@ -344,9 +391,14 @@ export default function Units() {
           {/* Self dispatch */}
           {!dispatchStatus.is_dispatch_department && (
             <div className="bg-cad-card border border-cad-border rounded-lg p-5 mb-6">
-              <h3 className="font-semibold mb-3">
-                {isLaw ? 'Self Dispatch' : isParamedics ? 'Assign to Patient Calls' : 'Assign to Incident Calls'}
-              </h3>
+              <div className="mb-3">
+                <h3 className="font-semibold">{selfDispatchTitle}</h3>
+                {isOpsLeanMode && (
+                  <p className="text-xs text-cad-muted mt-1">
+                    Join, leave, or close active {isFire ? 'incidents' : 'calls'} from one place.
+                  </p>
+                )}
+              </div>
               {!myUnit && (
                 <p className="text-sm text-cad-muted">Go on duty first to self-dispatch to active {isFire ? 'incidents' : 'calls'}.</p>
               )}
@@ -417,7 +469,7 @@ export default function Units() {
 
           {/* All units */}
           <h3 className="text-sm font-semibold text-cad-muted uppercase tracking-wider mb-3">
-            {isFire ? 'All On-Duty Units / Appliances' : 'All On-Duty Units'} ({units.length})
+            {allUnitsHeading} ({units.length})
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {units.map(unit => (

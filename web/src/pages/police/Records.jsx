@@ -606,6 +606,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
   const isLaw = layoutType === DEPARTMENT_LAYOUT.LAW_ENFORCEMENT;
   const isParamedics = layoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
   const isFire = layoutType === DEPARTMENT_LAYOUT.FIRE;
+  const isOpsLeanMode = isParamedics || isFire;
   const isArrestReportsMode = isLaw && String(mode || '').trim().toLowerCase() === 'arrest_reports';
   const isEmbedded = !!embeddedPerson;
   const effectiveDepartmentId = embeddedDepartmentId || activeDepartment?.id;
@@ -623,7 +624,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
     }
     : isParamedics
       ? {
-        title: 'Patient Care Reports',
+        title: 'Patient Reports',
         newButton: 'New Patient Report',
         newModalTitle: 'New Patient Care Report',
         editModalTitle: 'Edit Patient Report',
@@ -632,7 +633,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         countNoun: 'report(s)',
       }
       : {
-        title: 'Fire Incident Reports',
+        title: 'Incident Reports',
         newButton: 'New Incident Report',
         newModalTitle: 'New Fire Incident Report',
         editModalTitle: 'Edit Incident Report',
@@ -640,6 +641,11 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
         noRecords: 'No fire incident reports linked to this contact / occupant',
         countNoun: 'report(s)',
       };
+  const opsWorkflowHint = isParamedics
+    ? 'Search patient -> select patient -> create/update report. Keep entries short and operationally useful for RP handoff.'
+    : isFire
+      ? 'Search occupant/contact -> select person -> create/update incident report. Use incidents for live coordination, reports for final documentation.'
+      : '';
 
   const personAnchorLabel = isFire ? 'Reporting Contact / Occupant' : 'Person';
   const findPersonButtonLabel = isFire ? 'Find Contact / Occupant' : 'Find Person';
@@ -1213,11 +1219,16 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
   return (
     <div>
       <div className={`flex items-center justify-between ${hideHeader ? 'mb-3' : 'mb-6'}`}>
-        {hideHeader ? (
-          <h3 className="text-lg font-semibold">{pageCopy.title}</h3>
-        ) : (
-          <h2 className="text-xl font-bold">{pageCopy.title}</h2>
-        )}
+        <div>
+          {hideHeader ? (
+            <h3 className="text-lg font-semibold">{pageCopy.title}</h3>
+          ) : (
+            <h2 className="text-xl font-bold">{pageCopy.title}</h2>
+          )}
+          {!hideHeader && isOpsLeanMode && (
+            <p className="text-sm text-cad-muted mt-1">{opsWorkflowHint}</p>
+          )}
+        </div>
         <button
           onClick={() => setShowNew(true)}
           disabled={!selectedPerson}
@@ -1229,10 +1240,12 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
 
       {!isEmbedded && (
         <div className="bg-cad-card border border-cad-border rounded-2xl p-4 mb-6">
-          {isFire && (
+          {isOpsLeanMode && (
             <div className="mb-3 rounded-lg border border-cad-border bg-cad-surface px-3 py-2">
               <p className="text-xs text-cad-muted">
-                Fire incident reports are currently linked to a person record (occupant, owner, or reporting contact) for searchability until incident linking is fully implemented.
+                {isFire
+                  ? 'Fire incident reports are linked to a person (occupant, owner, or reporting contact) for searchability. Use the Incidents page for live incident coordination and evidence.'
+                  : 'Patient reports are person-linked for quick lookup and treatment/transport handoff continuity.'}
               </p>
             </div>
           )}
@@ -1313,7 +1326,9 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
       {records.length > 0 && (
         <div className="space-y-3">
           <div className="text-sm text-cad-muted">
-            {records.length} {pageCopy.countNoun} {isFire ? 'linked to' : 'for'} {selectedPerson?.firstname} {selectedPerson?.lastname}
+            {isOpsLeanMode
+              ? `${records.length} report(s) for ${selectedPerson?.firstname} ${selectedPerson?.lastname}`
+              : `${records.length} ${pageCopy.countNoun} ${isFire ? 'linked to' : 'for'} ${selectedPerson?.firstname} ${selectedPerson?.lastname}`}
           </div>
           {records.map(r => {
             const medical = parseMedicalRecord(r);
@@ -1526,6 +1541,16 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
 
       <Modal open={showNew} onClose={() => setShowNew(false)} title={pageCopy.newModalTitle}>
         <form onSubmit={createRecord} className="space-y-3">
+          {isOpsLeanMode && (
+            <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-2">
+              <p className="text-xs text-cad-muted uppercase tracking-wider">Report Entry</p>
+              <p className="text-sm text-cad-ink mt-1">
+                {isParamedics
+                  ? 'Log only treatment/transport-relevant facts. Avoid duplicate details already stored in the incident.'
+                  : 'Log outcome, hazards, and actions taken. Avoid duplicating live dispatch chatter.'}
+              </p>
+            </div>
+          )}
           <div>
             <label className="block text-sm text-cad-muted mb-1">{personAnchorLabel} *</label>
             <input
@@ -1624,6 +1649,14 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
 
       <Modal open={showEdit} onClose={() => setShowEdit(false)} title={`${pageCopy.editModalTitle} #${editingRecord?.id || ''}`}>
         <form onSubmit={saveEdit} className="space-y-3">
+          {isOpsLeanMode && editingRecord?.id ? (
+            <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-2">
+              <p className="text-xs text-cad-muted uppercase tracking-wider">Editing Report</p>
+              <p className="text-sm text-cad-ink mt-1">
+                {isParamedics ? 'Update treatment/transport details and handoff notes only.' : 'Update incident outcome details and hazards only.'}
+              </p>
+            </div>
+          ) : null}
           {isLaw ? (
             <>
               <div className="bg-cad-surface border border-cad-border rounded-lg px-3 py-2">
