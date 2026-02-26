@@ -22,23 +22,21 @@ const LAW_NAV = [
 
 const EMS_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/units', label: 'Response Board', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
   { to: '/map', label: 'AVL Map', icon: 'M9.75 3l-6 3v15l6-3 4.5 2.25L20.25 17V2l-6 3L9.75 3zM9.75 3v15M14.25 5v15' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/ems-treatment', label: 'Treatment Log', icon: 'M12 6v12m6-6H6' },
   { to: '/ems-transport', label: 'Transport Tracker', icon: 'M3 13h2l2-5 4 10 2-5h6' },
   { to: '/records', label: 'Patient Reports', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
-  { to: '/units', label: 'Response Board', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
 ];
 
 const FIRE_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
-  { to: '/map', label: 'AVL Map', icon: 'M9.75 3l-6 3v15l6-3 4.5 2.25L20.25 17V2l-6 3L9.75 3zM9.75 3v15M14.25 5v15' },
   { to: '/units', label: 'Response Board', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
+  { to: '/map', label: 'AVL Map', icon: 'M9.75 3l-6 3v15l6-3 4.5 2.25L20.25 17V2l-6 3L9.75 3zM9.75 3v15M14.25 5v15' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/records', label: 'Incident Reports', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/search', label: 'Lookup', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
-  { to: '/fire-apparatus', label: 'Apparatus', icon: 'M3 17h18M5 17V9h10v8M15 17V5h4v12M7 13h2' },
-  { to: '/fire-preplans', label: 'Pre-Plans', icon: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5a2 2 0 012-2h10a2 2 0 012 2v11.382a1 1 0 01-.553.894L11 20m0 0V4' },
 ];
 
 const DISPATCH_NAV = [
