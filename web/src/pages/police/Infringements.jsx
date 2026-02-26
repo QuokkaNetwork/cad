@@ -526,6 +526,7 @@ export default function Infringements() {
   const [filters, setFilters] = useState({ status: 'open', payable_status: 'unpaid', q: '', court_only: false });
   const [list, setList] = useState([]);
   const [courtList, setCourtList] = useState([]);
+  const [arrestReportFines, setArrestReportFines] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
@@ -566,6 +567,7 @@ export default function Infringements() {
     if (!departmentId || !isLaw) {
       setList([]);
       setCourtList([]);
+      setArrestReportFines([]);
       return;
     }
     const params = new URLSearchParams();
@@ -582,16 +584,23 @@ export default function Infringements() {
     courtParams.set('status', 'open');
     courtParams.set('court_only', 'true');
 
+    const arrestReportFineParams = new URLSearchParams();
+    arrestReportFineParams.set('department_id', String(departmentId));
+    arrestReportFineParams.set('limit', '50');
+    if (String(filters.q || '').trim()) arrestReportFineParams.set('q', String(filters.q).trim());
+
     setLoading(true);
     setError('');
     try {
-      const [rows, courtRows] = await Promise.all([
+      const [rows, courtRows, arrestRows] = await Promise.all([
         api.get(`/api/infringements?${params.toString()}`),
         api.get(`/api/infringements?${courtParams.toString()}`).catch(() => []),
+        api.get(`/api/infringements/arrest-report-fines?${arrestReportFineParams.toString()}`).catch(() => []),
       ]);
       const next = Array.isArray(rows) ? rows : [];
       setList(next);
       setCourtList(Array.isArray(courtRows) ? courtRows : []);
+      setArrestReportFines(Array.isArray(arrestRows) ? arrestRows : []);
       setSelectedId((current) => {
         if (current && next.some((r) => Number(r.id) === Number(current))) return current;
         return next[0]?.id || null;
@@ -600,6 +609,7 @@ export default function Infringements() {
       setError(err?.message || 'Failed to load infringement notices');
       setList([]);
       setCourtList([]);
+      setArrestReportFines([]);
     } finally {
       setLoading(false);
     }
@@ -1032,6 +1042,38 @@ export default function Infringements() {
                   <div className="font-medium text-sm">{row.title}</div>
                   <div className="text-xs text-cad-muted mt-0.5">{row.subject_name || row.citizen_id || 'Unknown'}{row.court_location ? ` | ${row.court_location}` : ''}</div>
                 </button>
+              ))}
+            </div>
+          </div>
+          <div className="bg-cad-card border border-cad-border rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">Arrest Report Fines</h2>
+              <span className="text-xs text-cad-muted">{arrestReportFines.length}</span>
+            </div>
+            <p className="text-xs text-cad-muted mt-1">
+              Read-only visibility for finalized arrest-report fines so they remain visible in the infractions workspace.
+            </p>
+            <div className="mt-3 space-y-2 max-h-72 overflow-y-auto">
+              {arrestReportFines.length === 0 ? (
+                <div className="text-sm text-cad-muted">No finalized arrest-report fines match the current search.</div>
+              ) : arrestReportFines.map((row) => (
+                <div key={`${row.arrest_report_id}:${row.finalized_record_id}`} className="rounded-md border border-cad-border bg-cad-surface px-3 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{row.title || row.arrest_report_title || 'Arrest Report Fine'}</div>
+                      <div className="text-xs text-cad-muted mt-0.5">
+                        {row.citizen_id || 'Unknown CID'}
+                        {row.officer_callsign ? ` | ${row.officer_callsign}` : ''}
+                        {row.officer_name ? ` ${row.officer_name}` : ''}
+                      </div>
+                      <div className="text-xs text-cad-muted mt-1">
+                        AR #{row.arrest_report_id} {'->'} Fine Record #{row.finalized_record_id}
+                        {row.arrest_report_finalized_at ? ` | Finalized ${formatDateTimeAU(row.arrest_report_finalized_at)}` : ''}
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold shrink-0">{money(row.amount)}</div>
+                  </div>
+                </div>
               ))}
             </div>
           </div>

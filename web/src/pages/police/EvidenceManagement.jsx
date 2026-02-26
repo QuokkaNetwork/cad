@@ -9,12 +9,14 @@ import { formatDateTimeAU } from '../../utils/dateTime';
 const ENTITY_FILTER_OPTIONS = [
   { value: 'all', label: 'All Evidence' },
   { value: 'criminal_record', label: 'Criminal Records' },
+  { value: 'arrest_report', label: 'Arrest Reports' },
   { value: 'warrant', label: 'Warrants' },
+  { value: 'incident', label: 'Incidents' },
 ];
 
 function normalizeEntityType(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'criminal_record' || normalized === 'warrant') return normalized;
+  if (normalized === 'criminal_record' || normalized === 'arrest_report' || normalized === 'warrant' || normalized === 'incident') return normalized;
   return '';
 }
 
@@ -26,7 +28,11 @@ function buildTargetFromItem(item) {
 }
 
 function entityTypeLabel(value) {
-  return value === 'warrant' ? 'Warrant' : 'Criminal Record';
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'warrant') return 'Warrant';
+  if (normalized === 'arrest_report') return 'Arrest Report';
+  if (normalized === 'incident') return 'Incident';
+  return 'Criminal Record';
 }
 
 function formatStatusLabel(value) {
@@ -186,8 +192,10 @@ export default function EvidenceManagement() {
     const totalChains = chains.length;
     const warrantChains = chains.filter((chain) => chain.entityType === 'warrant').length;
     const recordChains = chains.filter((chain) => chain.entityType === 'criminal_record').length;
+    const arrestReportChains = chains.filter((chain) => chain.entityType === 'arrest_report').length;
+    const incidentChains = chains.filter((chain) => chain.entityType === 'incident').length;
     const withPhotos = chains.filter((chain) => Number(chain.photoCount || 0) > 0).length;
-    return { totalItems, totalChains, warrantChains, recordChains, withPhotos };
+    return { totalItems, totalChains, warrantChains, recordChains, arrestReportChains, incidentChains, withPhotos };
   }, [items, chains]);
 
   const loadEvidenceList = useCallback(async () => {
@@ -287,12 +295,12 @@ export default function EvidenceManagement() {
         <div>
           <h2 className="text-xl font-bold">Evidence Management</h2>
           <p className="text-sm text-cad-muted mt-1">
-            Review department evidence items and manage the chain for criminal records and warrants.
+            Review department evidence items and manage chains for records, arrest reports, warrants, and incidents.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
         <div className="bg-cad-card border border-cad-border rounded-xl p-3">
           <p className="text-[11px] uppercase tracking-wider text-cad-muted">Chains</p>
           <p className="text-xl font-semibold mt-1">{loading ? '...' : summary.totalChains}</p>
@@ -306,8 +314,16 @@ export default function EvidenceManagement() {
           <p className="text-xl font-semibold mt-1 text-cad-accent-light">{loading ? '...' : summary.recordChains}</p>
         </div>
         <div className="bg-cad-card border border-cad-border rounded-xl p-3">
+          <p className="text-[11px] uppercase tracking-wider text-cad-muted">Arrest Chains</p>
+          <p className="text-xl font-semibold mt-1 text-blue-300">{loading ? '...' : summary.arrestReportChains}</p>
+        </div>
+        <div className="bg-cad-card border border-cad-border rounded-xl p-3">
           <p className="text-[11px] uppercase tracking-wider text-cad-muted">Warrant Chains</p>
           <p className="text-xl font-semibold mt-1 text-amber-300">{loading ? '...' : summary.warrantChains}</p>
+        </div>
+        <div className="bg-cad-card border border-cad-border rounded-xl p-3">
+          <p className="text-[11px] uppercase tracking-wider text-cad-muted">Incident Chains</p>
+          <p className="text-xl font-semibold mt-1 text-cyan-300">{loading ? '...' : summary.incidentChains}</p>
         </div>
         <div className="bg-cad-card border border-cad-border rounded-xl p-3">
           <p className="text-[11px] uppercase tracking-wider text-cad-muted">Chains With Photos</p>
@@ -515,7 +531,9 @@ export default function EvidenceManagement() {
                     className="bg-cad-card border border-cad-border rounded px-3 py-2 text-sm"
                   >
                     <option value="criminal_record">Criminal Record</option>
+                    <option value="arrest_report">Arrest Report</option>
                     <option value="warrant">Warrant</option>
+                    <option value="incident">Incident</option>
                   </select>
                   <input
                     type="number"
@@ -546,7 +564,7 @@ export default function EvidenceManagement() {
             />
           ) : (
             <div className="bg-cad-card border border-cad-border rounded-xl p-5 text-sm text-cad-muted">
-              Select a recent evidence item or enter a criminal record / warrant ID to open its evidence chain.
+              Select a recent evidence item or enter a record, arrest report, warrant, or incident ID to open its evidence chain.
             </div>
           )}
         </div>

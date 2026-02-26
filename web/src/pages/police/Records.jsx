@@ -1745,7 +1745,7 @@ export default function Records({ embeddedPerson = null, embeddedDepartmentId = 
           )}
           {isLaw && editingRecord?.id ? (
             <EvidencePanel
-              entityType="criminal_record"
+              entityType={String(editingRecord?.type || '').trim().toLowerCase() === 'arrest_report' ? 'arrest_report' : 'criminal_record'}
               entityId={editingRecord.id}
               departmentId={editingRecord.department_id || effectiveDepartmentId || null}
               title="Evidence Chain"

@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth, requireFiveMOnline } = require('../auth/middleware');
-const { EvidenceItems, CriminalRecords, Warrants } = require('../db/sqlite');
+const { EvidenceItems, CriminalRecords, Warrants, Incidents } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -10,7 +10,7 @@ router.use(requireAuth, requireFiveMOnline);
 
 function normalizeEntityType(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'criminal_record' || normalized === 'warrant') return normalized;
+  if (normalized === 'criminal_record' || normalized === 'arrest_report' || normalized === 'warrant' || normalized === 'incident') return normalized;
   return '';
 }
 
@@ -29,10 +29,21 @@ function resolveEntity(entityType, entityId) {
     if (!record) return null;
     return { entity: record, departmentId: record.department_id || null };
   }
+  if (entityType === 'arrest_report') {
+    const record = CriminalRecords.findById(parsedId);
+    if (!record) return null;
+    if (String(record.type || '').trim().toLowerCase() !== 'arrest_report') return null;
+    return { entity: record, departmentId: record.department_id || null };
+  }
   if (entityType === 'warrant') {
     const warrant = Warrants.findById(parsedId);
     if (!warrant) return null;
     return { entity: warrant, departmentId: warrant.department_id || null };
+  }
+  if (entityType === 'incident') {
+    const incident = Incidents.findById(parsedId);
+    if (!incident) return null;
+    return { entity: incident, departmentId: incident.department_id || null };
   }
   return null;
 }
@@ -55,7 +66,7 @@ router.get('/', requireAuth, (req, res) => {
     const rawEntityTypeFilter = String(req.query?.entity_type || '').trim();
     const entityTypeFilter = rawEntityTypeFilter ? normalizeEntityType(rawEntityTypeFilter) : '';
     if (rawEntityTypeFilter && !entityTypeFilter) {
-      return res.status(400).json({ error: 'entity_type filter must be criminal_record or warrant' });
+      return res.status(400).json({ error: 'entity_type filter must be criminal_record, arrest_report, warrant, or incident' });
     }
     return res.json(EvidenceItems.listByDepartment(departmentId, {
       entityType: entityTypeFilter,
@@ -66,7 +77,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const entityType = normalizeEntityType(req.query?.entity_type);
   const entityId = Number(req.query?.entity_id);
-  if (!entityType) return res.status(400).json({ error: 'entity_type must be criminal_record or warrant' });
+  if (!entityType) return res.status(400).json({ error: 'entity_type must be criminal_record, arrest_report, warrant, or incident' });
   if (!Number.isInteger(entityId) || entityId <= 0) return res.status(400).json({ error: 'entity_id is required' });
 
   const resolved = resolveEntity(entityType, entityId);
@@ -81,7 +92,7 @@ router.get('/', requireAuth, (req, res) => {
 router.post('/', requireAuth, (req, res) => {
   const entityType = normalizeEntityType(req.body?.entity_type);
   const entityId = Number(req.body?.entity_id);
-  if (!entityType) return res.status(400).json({ error: 'entity_type must be criminal_record or warrant' });
+  if (!entityType) return res.status(400).json({ error: 'entity_type must be criminal_record, arrest_report, warrant, or incident' });
   if (!Number.isInteger(entityId) || entityId <= 0) return res.status(400).json({ error: 'entity_id is required' });
 
   const resolved = resolveEntity(entityType, entityId);

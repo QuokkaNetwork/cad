@@ -6,6 +6,7 @@ const {
   Departments,
   Units,
   DriverLicenses,
+  CriminalRecords,
 } = require('../db/sqlite');
 const { getCharacterById } = require('../db/qbox');
 const { audit } = require('../utils/audit');
@@ -131,6 +132,17 @@ router.get('/', requireAuth, (req, res) => {
     court_only: String(req.query.court_only || '').toLowerCase() === 'true',
     limit: Number(req.query.limit || 100),
     offset: Number(req.query.offset || 0),
+  });
+  res.json(rows);
+});
+
+router.get('/arrest-report-fines', requireAuth, (req, res) => {
+  const deptAccess = ensureLawDepartmentAccess(req, req.query.department_id);
+  if (deptAccess.error) return res.status(deptAccess.status || 400).json({ error: deptAccess.error });
+
+  const rows = CriminalRecords.listFinalizedArrestReportFinesByDepartment(deptAccess.deptId, {
+    query: String(req.query.q || ''),
+    limit: Number(req.query.limit || 50),
   });
   res.json(rows);
 });

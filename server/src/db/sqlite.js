@@ -1269,7 +1269,7 @@ const TrafficStops = {
 
 function normalizeEvidenceEntityType(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'criminal_record' || normalized === 'warrant') return normalized;
+  if (normalized === 'criminal_record' || normalized === 'arrest_report' || normalized === 'warrant' || normalized === 'incident') return normalized;
   return '';
 }
 
@@ -1297,6 +1297,21 @@ const EvidenceItems = {
     const normalizedType = normalizeEvidenceEntityType(entityType);
     const parsedId = Number(entityId);
     if (!normalizedType || !Number.isInteger(parsedId) || parsedId <= 0) return [];
+    if (normalizedType === 'arrest_report') {
+      return db.prepare(`
+        SELECT ei.*,
+               us.steam_name AS creator_name
+        FROM evidence_items ei
+        LEFT JOIN users us ON us.id = ei.created_by_user_id
+        LEFT JOIN criminal_records cr ON ei.entity_type = 'criminal_record' AND cr.id = ei.entity_id
+        WHERE ei.entity_id = ?
+          AND (
+            ei.entity_type = 'arrest_report'
+            OR (ei.entity_type = 'criminal_record' AND cr.type = 'arrest_report')
+          )
+        ORDER BY ei.created_at DESC, ei.id DESC
+      `).all(parsedId).map(hydrateEvidenceItemRow);
+    }
     return db.prepare(`
       SELECT ei.*,
              us.steam_name AS creator_name
@@ -1319,8 +1334,20 @@ const EvidenceItems = {
     const params = [parsedDeptId];
 
     if (hasEntityTypeFilter) {
-      clauses.push('ei.entity_type = ?');
-      params.push(normalizedType);
+      if (normalizedType === 'criminal_record') {
+        clauses.push(`(
+          ei.entity_type = 'criminal_record'
+          AND lower(trim(COALESCE(cr.type, ''))) <> 'arrest_report'
+        )`);
+      } else if (normalizedType === 'arrest_report') {
+        clauses.push(`(
+          ei.entity_type = 'arrest_report'
+          OR (ei.entity_type = 'criminal_record' AND lower(trim(COALESCE(cr.type, ''))) = 'arrest_report')
+        )`);
+      } else {
+        clauses.push('ei.entity_type = ?');
+        params.push(normalizedType);
+      }
     }
 
     if (search) {
@@ -1330,11 +1357,13 @@ const EvidenceItems = {
         OR lower(ei.case_number) LIKE ?
         OR lower(ei.description) LIKE ?
         OR lower(ei.chain_status) LIKE ?
-        OR lower(COALESCE(cr.title, w.title, '')) LIKE ?
+        OR lower(COALESCE(cr.title, w.title, i.title, '')) LIKE ?
         OR lower(COALESCE(cr.citizen_id, w.citizen_id, '')) LIKE ?
         OR lower(COALESCE(w.subject_name, '')) LIKE ?
+        OR lower(COALESCE(i.incident_number, '')) LIKE ?
+        OR lower(COALESCE(i.location, '')) LIKE ?
       )`);
-      params.push(q, q, q, q, q, q, q);
+      params.push(q, q, q, q, q, q, q, q, q);
     }
 
     params.push(safeLimit);
@@ -1343,23 +1372,32 @@ const EvidenceItems = {
       SELECT ei.*,
              us.steam_name AS creator_name,
              cr.title AS criminal_record_title,
+             cr.type AS criminal_record_type,
              cr.citizen_id AS criminal_record_citizen_id,
              w.title AS warrant_title,
              w.subject_name AS warrant_subject_name,
-             w.citizen_id AS warrant_citizen_id
+             w.citizen_id AS warrant_citizen_id,
+             i.title AS incident_title,
+             i.incident_number AS incident_number,
+             i.location AS incident_location
       FROM evidence_items ei
       LEFT JOIN users us ON us.id = ei.created_by_user_id
-      LEFT JOIN criminal_records cr ON ei.entity_type = 'criminal_record' AND cr.id = ei.entity_id
+      LEFT JOIN criminal_records cr ON (ei.entity_type = 'criminal_record' OR ei.entity_type = 'arrest_report') AND cr.id = ei.entity_id
       LEFT JOIN warrants w ON ei.entity_type = 'warrant' AND w.id = ei.entity_id
+      LEFT JOIN incidents i ON ei.entity_type = 'incident' AND i.id = ei.entity_id
       WHERE ${clauses.join(' AND ')}
       ORDER BY ei.updated_at DESC, ei.id DESC
       LIMIT ?
     `).all(...params).map((row) => {
       const item = hydrateEvidenceItemRow(row);
+      const normalizedRowEntityType = item.entity_type === 'criminal_record' && String(item.criminal_record_type || '').trim().toLowerCase() === 'arrest_report'
+        ? 'arrest_report'
+        : String(item.entity_type || '').trim().toLowerCase();
       return {
         ...item,
-        parent_title: item.criminal_record_title || item.warrant_title || '',
-        parent_subject_name: item.warrant_subject_name || '',
+        entity_type: normalizedRowEntityType,
+        parent_title: item.criminal_record_title || item.warrant_title || item.incident_title || '',
+        parent_subject_name: item.warrant_subject_name || (item.incident_number ? `Incident ${item.incident_number}` : ''),
         parent_citizen_id: item.criminal_record_citizen_id || item.warrant_citizen_id || '',
       };
     });
@@ -2379,6 +2417,60 @@ const CriminalRecords = {
     return db.prepare(
       'SELECT * FROM criminal_records ORDER BY created_at DESC LIMIT ? OFFSET ?'
     ).all(limit, offset);
+  },
+  listFinalizedArrestReportFinesByDepartment(departmentId, { query = '', limit = 100 } = {}) {
+    const deptId = Number(departmentId);
+    if (!Number.isInteger(deptId) || deptId <= 0) return [];
+
+    const clauses = [
+      "ar.type = 'arrest_report'",
+      'COALESCE(ar.finalized_record_id, 0) > 0',
+      "lower(trim(COALESCE(ar.workflow_status, ''))) = 'finalized'",
+      "fr.type = 'fine'",
+      'COALESCE(fr.fine_amount, 0) > 0',
+      'COALESCE(fr.department_id, ar.department_id) = ?',
+    ];
+    const params = [deptId];
+
+    const search = String(query || '').trim().toLowerCase();
+    if (search) {
+      const q = `%${search}%`;
+      clauses.push(`(
+        lower(COALESCE(fr.citizen_id, '')) LIKE ?
+        OR lower(COALESCE(fr.title, '')) LIKE ?
+        OR lower(COALESCE(ar.title, '')) LIKE ?
+        OR lower(COALESCE(fr.officer_name, '')) LIKE ?
+        OR lower(COALESCE(fr.officer_callsign, '')) LIKE ?
+      )`);
+      params.push(q, q, q, q, q);
+    }
+
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 100));
+    params.push(safeLimit);
+
+    return db.prepare(`
+      SELECT
+        ar.id AS arrest_report_id,
+        ar.title AS arrest_report_title,
+        ar.created_at AS arrest_report_created_at,
+        ar.finalized_at AS arrest_report_finalized_at,
+        ar.workflow_status AS arrest_report_workflow_status,
+        fr.id AS finalized_record_id,
+        fr.citizen_id,
+        fr.title AS title,
+        fr.description,
+        fr.fine_amount AS amount,
+        fr.jail_minutes,
+        fr.officer_name,
+        fr.officer_callsign,
+        COALESCE(fr.department_id, ar.department_id) AS department_id,
+        fr.created_at AS finalized_record_created_at
+      FROM criminal_records ar
+      INNER JOIN criminal_records fr ON fr.id = ar.finalized_record_id
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY COALESCE(ar.finalized_at, fr.created_at, ar.created_at) DESC, ar.id DESC
+      LIMIT ?
+    `).all(...params);
   },
 };
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
+import EvidencePanel from '../../components/EvidencePanel';
 import { useDepartment } from '../../context/DepartmentContext';
 
 const ENTITY_OPTIONS = [
@@ -625,6 +626,21 @@ export default function Incidents() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+
+          <div className="bg-cad-card border border-cad-border rounded-xl p-5">
+            {!selectedIncident?.id ? (
+              <div className="text-sm text-cad-muted">
+                Select an incident to log and review investigation evidence.
+              </div>
+            ) : (
+              <EvidencePanel
+                entityType="incident"
+                entityId={selectedIncident.id}
+                departmentId={selectedIncident.department_id || departmentId || null}
+                title="Investigation Evidence"
+              />
             )}
           </div>
         </div>
