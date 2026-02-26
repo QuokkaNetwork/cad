@@ -51,6 +51,14 @@ export const GTA_LEAFLET_REFERENCE_CRS = {
   referencePlanePx: 8192, // 256 * 2^5
 };
 
+// Small post-projection image nudge for the local postal FullMap.png variant.
+// Different postal-map renders can be slightly shifted even when using the same
+// GTA V world transform. Positive X moves right, positive Y moves down.
+export const GTA_POSTAL_MAP_IMAGE_NUDGE = {
+  x: -12,
+  y: -64,
+};
+
 function clamp01(value) {
   if (!Number.isFinite(value)) return 0;
   if (value <= 0) return 0;
@@ -120,6 +128,7 @@ export function createGtaLeafletReferenceProjection({
   imageSize = GTA_FULL_MAP_IMAGE_SIZE,
   imageRect = null,
   crs = GTA_LEAFLET_REFERENCE_CRS,
+  imageNudge = GTA_POSTAL_MAP_IMAGE_NUDGE,
 } = {}) {
   const {
     imageMinX,
@@ -132,6 +141,8 @@ export function createGtaLeafletReferenceProjection({
   const centerY = Number(crs?.centerY || 0);
   const scaleX = Number(crs?.scaleX || 0.02072);
   const scaleY = Number(crs?.scaleY || 0.0205);
+  const nudgeX = Number(imageNudge?.x || 0);
+  const nudgeY = Number(imageNudge?.y || 0);
   const referenceZoom = Number.isFinite(Number(crs?.referenceZoom)) ? Number(crs.referenceZoom) : 5;
   const zoomScale = Math.pow(2, referenceZoom);
   const referencePlanePx = Math.max(1, Number(crs?.referencePlanePx) || (256 * zoomScale));
@@ -153,8 +164,8 @@ export function createGtaLeafletReferenceProjection({
       if (!Number.isFinite(x) || !Number.isFinite(y)) return { x: 0, y: 0 };
       const ref = worldToReferencePlane(x, y);
       return {
-        x: imageMinX + ((ref.x / referencePlanePx) * imageWorldWidth),
-        y: imageMinY + ((ref.y / referencePlanePx) * imageWorldHeight),
+        x: imageMinX + ((ref.x / referencePlanePx) * imageWorldWidth) + nudgeX,
+        y: imageMinY + ((ref.y / referencePlanePx) * imageWorldHeight) + nudgeY,
       };
     },
 
@@ -162,8 +173,8 @@ export function createGtaLeafletReferenceProjection({
       const x = Number(point?.x);
       const y = Number(point?.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return { x: 0, y: 0 };
-      const refX = ((x - imageMinX) / imageWorldWidth) * referencePlanePx;
-      const refY = ((y - imageMinY) / imageWorldHeight) * referencePlanePx;
+      const refX = ((x - nudgeX - imageMinX) / imageWorldWidth) * referencePlanePx;
+      const refY = ((y - nudgeY - imageMinY) / imageWorldHeight) * referencePlanePx;
       return referencePlaneToWorld(refX, refY);
     },
 
