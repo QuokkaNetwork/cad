@@ -6,7 +6,6 @@ import { api } from '../../api/client';
 import { useDepartment } from '../../context/DepartmentContext';
 import { useEventSource } from '../../hooks/useEventSource';
 import {
-  GTA_MAP_TILE_WORLD_UNITS as GTA_MAP_TILE_UNITS,
   GTA_MAP_ATLAS_TILE_PX,
   GTA_DEFAULT_WORLD_BOUNDS as WORLD_BOUNDS,
   GTA_FULL_MAP_IMAGE_SIZE as MAP_IMAGE_SIZE,
@@ -153,26 +152,27 @@ function drawCalibrationGrid(group) {
     interactive: false,
   }).addTo(group);
 
+  // Draw atlas tile boundaries in image space so they stay correct regardless of world bounds.
+  for (let xPx = GTA_MAP_ATLAS_TILE_PX; xPx < MAP_IMAGE_SIZE.width; xPx += GTA_MAP_ATLAS_TILE_PX) {
+    L.polyline([imagePointToLatLng({ x: xPx, y: 0 }), imagePointToLatLng({ x: xPx, y: MAP_IMAGE_SIZE.height })], {
+      pane: 'dispatchGridPane', color: 'rgba(96,165,250,0.42)', weight: 1.2, interactive: false,
+    }).addTo(group);
+  }
+  for (let yPx = GTA_MAP_ATLAS_TILE_PX; yPx < MAP_IMAGE_SIZE.height; yPx += GTA_MAP_ATLAS_TILE_PX) {
+    L.polyline([imagePointToLatLng({ x: 0, y: yPx }), imagePointToLatLng({ x: MAP_IMAGE_SIZE.width, y: yPx })], {
+      pane: 'dispatchGridPane', color: 'rgba(96,165,250,0.42)', weight: 1.2, interactive: false,
+    }).addTo(group);
+  }
+
+  // World-space subgrid for cursor/debug context.
   for (let x = WORLD_BOUNDS.minX + MAP_SUBGRID_WORLD_STEP; x < WORLD_BOUNDS.maxX; x += MAP_SUBGRID_WORLD_STEP) {
-    if ((x - WORLD_BOUNDS.minX) % GTA_MAP_TILE_UNITS === 0) continue;
     L.polyline([worldToLatLng(x, WORLD_BOUNDS.minY), worldToLatLng(x, WORLD_BOUNDS.maxY)], {
       pane: 'dispatchGridPane', color: 'rgba(148,163,184,0.2)', weight: 1, dashArray: '3 5', interactive: false,
     }).addTo(group);
   }
   for (let y = WORLD_BOUNDS.minY + MAP_SUBGRID_WORLD_STEP; y < WORLD_BOUNDS.maxY; y += MAP_SUBGRID_WORLD_STEP) {
-    if ((y - WORLD_BOUNDS.minY) % GTA_MAP_TILE_UNITS === 0) continue;
     L.polyline([worldToLatLng(WORLD_BOUNDS.minX, y), worldToLatLng(WORLD_BOUNDS.maxX, y)], {
       pane: 'dispatchGridPane', color: 'rgba(148,163,184,0.2)', weight: 1, dashArray: '3 5', interactive: false,
-    }).addTo(group);
-  }
-  for (let x = WORLD_BOUNDS.minX; x <= WORLD_BOUNDS.maxX; x += GTA_MAP_TILE_UNITS) {
-    L.polyline([worldToLatLng(x, WORLD_BOUNDS.minY), worldToLatLng(x, WORLD_BOUNDS.maxY)], {
-      pane: 'dispatchGridPane', color: 'rgba(96,165,250,0.42)', weight: 1.2, interactive: false,
-    }).addTo(group);
-  }
-  for (let y = WORLD_BOUNDS.minY; y <= WORLD_BOUNDS.maxY; y += GTA_MAP_TILE_UNITS) {
-    L.polyline([worldToLatLng(WORLD_BOUNDS.minX, y), worldToLatLng(WORLD_BOUNDS.maxX, y)], {
-      pane: 'dispatchGridPane', color: 'rgba(96,165,250,0.42)', weight: 1.2, interactive: false,
     }).addTo(group);
   }
   L.polyline([worldToLatLng(0, WORLD_BOUNDS.minY), worldToLatLng(0, WORLD_BOUNDS.maxY)], {
@@ -677,7 +677,7 @@ export default function DispatchMap() {
             <div>
               <div className="font-semibold">Dispatch Area Map</div>
               <div className="text-[11px] text-cad-muted mt-0.5">
-                Direct 2x3 atlas projection (`4500u` per tile) on the full `FullMap.png` canvas
+                Direct full-canvas projection with standard GTA V/FiveM world bounds on `FullMap.png`
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">

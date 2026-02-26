@@ -6,7 +6,9 @@
 //
 // Inference:
 // - A 6144x9216 PNG is a standard 2x3 atlas canvas (2 * 3072 by 3 * 3072).
-// - That canvas should be projected linearly to the 9000 x 13500 world-unit atlas space.
+// - The atlas canvas size does NOT imply the playable GTA V world bounds are exactly 9000 x 13500 units.
+// - Common GTA V/FiveM map overlays align using the standard world bounds below
+//   (x: -4000..6000, y: -4000..8000), while still rendering on the full atlas canvas.
 // - Do not "re-fit" coordinates to an inner content rect; transparent padding is part of the atlas canvas.
 
 export const GTA_MAP_TILE_WORLD_UNITS = 4500;
@@ -19,11 +21,13 @@ export const GTA_FULL_MAP_IMAGE_SIZE = {
   height: GTA_MAP_ATLAS_TILE_PX * GTA_MAP_ATLAS_ROWS,
 };
 
+// Standard GTA V/FiveM world extents used by many Leaflet-based overlays.
+// Source example: GIS StackExchange answer showing GTA V map bounds in Leaflet's CRS.Simple notation.
 export const GTA_DEFAULT_WORLD_BOUNDS = {
-  minX: -GTA_MAP_TILE_WORLD_UNITS,
-  maxX: GTA_MAP_TILE_WORLD_UNITS,
-  minY: -GTA_MAP_TILE_WORLD_UNITS,
-  maxY: GTA_MAP_TILE_WORLD_UNITS * (GTA_MAP_ATLAS_ROWS - 1),
+  minX: -4000,
+  maxX: 6000,
+  minY: -4000,
+  maxY: 8000,
 };
 
 // Measured from the current `web/public/maps/FullMap.png` alpha channel.
