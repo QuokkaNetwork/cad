@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 
 const STORAGE_KEY = 'cad:developer_ui_preview_enabled';
 const CHANGE_EVENT = 'cad:developer-ui-preview-changed';
-const ENV = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
-
-const DEV_PREVIEW_AVAILABLE = (
-  ENV.DEV === true
-  || String(ENV.VITE_ENABLE_DEVELOPER_UI_PREVIEW || '').trim().toLowerCase() === 'true'
-);
 
 function readEnabled() {
-  if (!DEV_PREVIEW_AVAILABLE) return false;
   if (typeof window === 'undefined') return false;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -21,7 +15,7 @@ function readEnabled() {
 }
 
 function writeEnabled(nextValue) {
-  if (!DEV_PREVIEW_AVAILABLE || typeof window === 'undefined') return;
+  if (typeof window === 'undefined') return;
   try {
     if (nextValue) {
       window.localStorage.setItem(STORAGE_KEY, '1');
@@ -43,10 +37,12 @@ function emitChange(nextValue) {
 }
 
 export function useDeveloperCadPreview() {
+  const { isAdmin } = useAuth();
   const [enabled, setEnabledState] = useState(readEnabled);
+  const previewAvailable = !!isAdmin;
 
   useEffect(() => {
-    if (!DEV_PREVIEW_AVAILABLE || typeof window === 'undefined') {
+    if (!previewAvailable || typeof window === 'undefined') {
       setEnabledState(false);
       return undefined;
     }
@@ -63,22 +59,22 @@ export function useDeveloperCadPreview() {
       window.removeEventListener(CHANGE_EVENT, sync);
       window.removeEventListener('storage', onStorage);
     };
-  }, []);
+  }, [previewAvailable]);
 
   const setEnabled = useCallback((nextValue) => {
-    const next = !!nextValue && DEV_PREVIEW_AVAILABLE;
+    const next = !!nextValue && previewAvailable;
     setEnabledState(next);
     writeEnabled(next);
     emitChange(next);
-  }, []);
+  }, [previewAvailable]);
 
   const toggle = useCallback(() => {
     setEnabled(!enabled);
   }, [enabled, setEnabled]);
 
   return {
-    available: DEV_PREVIEW_AVAILABLE,
-    enabled: DEV_PREVIEW_AVAILABLE && enabled,
+    available: previewAvailable,
+    enabled: previewAvailable && enabled,
     setEnabled,
     toggle,
   };
