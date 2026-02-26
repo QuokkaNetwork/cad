@@ -4,7 +4,7 @@ import SearchResults from '../../components/SearchResults';
 import PatientAnalysisPanel from '../../components/PatientAnalysisPanel';
 import { useDepartment } from '../../context/DepartmentContext';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
-import { formatDateTimeAU } from '../../utils/dateTime';
+import { formatDateTimeAU, formatDateAU } from '../../utils/dateTime';
 
 function resolvePersonName(person) {
   const fullName = String(person?.full_name || '').trim();
@@ -178,12 +178,11 @@ export default function EmsPatientWorkflowPage({
               <div>
                 <p className="text-xs text-cad-muted uppercase tracking-wider">Selected Patient</p>
                 <p className="text-lg font-semibold mt-1">{resolvePersonName(selectedPerson)}</p>
-                <p className="text-xs text-cad-muted mt-1">
-                  Citizen ID: <span className="font-mono">{selectedPerson?.citizenid || '-'}</span>
-                </p>
-                <p className="text-xs text-cad-muted mt-1">
-                  {isTransportMode ? 'Transport workflow active' : isTreatmentMode ? 'Treatment workflow active' : 'EMS workflow active'}
-                </p>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-cad-muted">
+                  <span>CID: <span className="font-mono">{selectedPerson?.citizenid || '-'}</span></span>
+                  <span>DOB: {formatDateAU(selectedPerson?.birthdate || selectedPerson?.cad_driver_license?.date_of_birth || '', '-')}</span>
+                  <span>Gender: {String(selectedPerson?.gender || selectedPerson?.cad_driver_license?.gender || '-')}</span>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 {medicalCount > 0 ? (
