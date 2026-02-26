@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth/middleware');
-const { Units, Departments, SubDepartments, Users, FiveMPlayerLinks, Calls, AuditLog } = require('../db/sqlite');
+const { Units, Departments, SubDepartments, Users, UserDepartments, FiveMPlayerLinks, Calls, AuditLog } = require('../db/sqlite');
 const { audit } = require('../utils/audit');
 const bus = require('../utils/eventBus');
 
@@ -28,6 +28,50 @@ function isUserInDispatchDepartment(user) {
 
 function normalizeUnitStatus(status) {
   return String(status || '').trim().toLowerCase();
+}
+
+function isParamedicsDepartment(department) {
+  return String(department?.layout_type || '').trim().toLowerCase() === 'paramedics';
+}
+
+function isHemsSubDepartment(subDepartment) {
+  if (!subDepartment) return false;
+  const haystack = `${String(subDepartment?.short_name || '').trim()} ${String(subDepartment?.name || '').trim()}`
+    .trim()
+    .toLowerCase();
+  if (!haystack) return false;
+  return haystack.includes('hems');
+}
+
+function randomHemsSlot() {
+  return Math.floor(Math.random() * 5) + 1;
+}
+
+function buildEmsDutyCallsignForUser(userId, department, subDepartmentId = null, { randomizeHems = true } = {}) {
+  if (!department || !isParamedicsDepartment(department) || department.is_dispatch) return null;
+
+  const baseNumber = UserDepartments.ensureEmsCallsignNumber(userId, department.id);
+  if (!baseNumber) return null;
+
+  const baseCallsign = String(baseNumber).padStart(4, '0');
+  const selectedSubDept = subDepartmentId ? SubDepartments.findById(Number(subDepartmentId)) : null;
+  const hemsSelected = isHemsSubDepartment(selectedSubDept);
+  const hemsSlot = hemsSelected ? (randomizeHems ? randomHemsSlot() : 1) : null;
+  const finalCallsign = hemsSelected ? `${baseCallsign} (HEMS${hemsSlot})` : baseCallsign;
+
+  return {
+    mode: 'auto_ems_numeric',
+    locked: true,
+    base_callsign: baseCallsign,
+    callsign: finalCallsign,
+    department_id: Number(department.id || 0) || null,
+    sub_department_id: selectedSubDept?.id || null,
+    is_hems: hemsSelected,
+    hems_slot: hemsSlot,
+    hems_slot_min: hemsSelected ? 1 : null,
+    hems_slot_max: hemsSelected ? 5 : null,
+    hems_note: hemsSelected ? 'HEMS slot is randomized each duty login.' : '',
+  };
 }
 
 function getEditableUnitStatuses() {
@@ -300,6 +344,66 @@ router.get('/sub-departments', requireAuth, (req, res) => {
   res.json(getAvailableSubDepartments(req.user, deptId));
 });
 
+// Preview callsign mode for a department/sub-department before going on duty
+router.get('/callsign-preview', requireAuth, (req, res) => {
+  const deptId = parseInt(req.query.department_id, 10);
+  if (!deptId) return res.status(400).json({ error: 'department_id is required' });
+
+  const dept = Departments.findById(deptId);
+  if (!dept) return res.status(404).json({ error: 'Department not found' });
+
+  const hasDept = req.user.is_admin || req.user.departments.some(d => d.id === deptId);
+  if (!hasDept) return res.status(403).json({ error: 'Department access denied' });
+
+  let selectedSubDeptId = null;
+  const availableSubDepts = getAvailableSubDepartments(req.user, deptId);
+  if (req.query.sub_department_id != null && String(req.query.sub_department_id).trim() !== '') {
+    selectedSubDeptId = parseInt(req.query.sub_department_id, 10);
+    if (!selectedSubDeptId) {
+      return res.status(400).json({ error: 'Invalid sub_department_id' });
+    }
+    const validSubDept = availableSubDepts.find(sd => Number(sd.id) === Number(selectedSubDeptId));
+    if (!validSubDept) {
+      return res.status(400).json({ error: 'Invalid sub department selection' });
+    }
+  }
+
+  if (dept.is_dispatch) {
+    return res.json({
+      mode: 'dispatch_fixed',
+      locked: true,
+      callsign: 'DISPATCH',
+      base_callsign: 'DISPATCH',
+      department_id: deptId,
+      sub_department_id: selectedSubDeptId || null,
+      is_hems: false,
+    });
+  }
+
+  if (isParamedicsDepartment(dept)) {
+    const autoConfig = buildEmsDutyCallsignForUser(req.user.id, dept, selectedSubDeptId, { randomizeHems: true });
+    return res.json(autoConfig || {
+      mode: 'auto_ems_numeric',
+      locked: true,
+      callsign: '',
+      base_callsign: '',
+      department_id: deptId,
+      sub_department_id: selectedSubDeptId || null,
+      is_hems: false,
+    });
+  }
+
+  return res.json({
+    mode: 'manual',
+    locked: false,
+    callsign: '',
+    base_callsign: '',
+    department_id: deptId,
+    sub_department_id: selectedSubDeptId || null,
+    is_hems: false,
+  });
+});
+
 // Get current user's unit
 router.get('/me', requireAuth, (req, res) => {
   const unit = Units.findByUserId(req.user.id);
@@ -355,7 +459,11 @@ router.post('/me', requireAuth, (req, res) => {
     }
   }
 
-  const normalizedCallsign = dept.is_dispatch ? 'DISPATCH' : String(callsign || '').trim();
+  let normalizedCallsign = dept.is_dispatch ? 'DISPATCH' : String(callsign || '').trim();
+  if (!dept.is_dispatch && isParamedicsDepartment(dept)) {
+    const autoConfig = buildEmsDutyCallsignForUser(req.user.id, dept, selectedSubDeptId, { randomizeHems: true });
+    normalizedCallsign = String(autoConfig?.callsign || '').trim();
+  }
   if (!normalizedCallsign) {
     return res.status(400).json({ error: 'Callsign is required' });
   }
@@ -384,6 +492,7 @@ router.patch('/me', requireAuth, (req, res) => {
 
   const { status, callsign } = req.body;
   const updates = {};
+  const unitDepartment = Departments.findById(Number(unit.department_id));
   if (status !== undefined) {
     const normalizedStatus = String(status || '').trim().toLowerCase();
     if (!getEditableUnitStatuses().has(normalizedStatus)) {
@@ -392,6 +501,9 @@ router.patch('/me', requireAuth, (req, res) => {
     updates.status = normalizedStatus;
   }
   if (callsign !== undefined) {
+    if (unitDepartment && !unitDepartment.is_dispatch && isParamedicsDepartment(unitDepartment)) {
+      return res.status(400).json({ error: 'Paramedic callsign is auto-assigned and cannot be changed' });
+    }
     const normalizedCallsign = String(callsign || '').trim();
     if (!normalizedCallsign) {
       return res.status(400).json({ error: 'Callsign cannot be empty' });

@@ -401,28 +401,160 @@ const DepartmentApplications = {
 };
 
 // --- User Departments ---
+function normalizeEmsAutoCallsignNumber(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return null;
+  if (parsed < 1000 || parsed > 9999) return null;
+  return parsed;
+}
+
+function departmentUsesEmsAutoCallsign(departmentId) {
+  const deptId = Number(departmentId);
+  if (!Number.isInteger(deptId) || deptId <= 0) return false;
+  const department = Departments.findById(deptId);
+  if (!department) return false;
+  if (department.is_dispatch) return false;
+  return normalizeDepartmentLayoutType(department.layout_type) === 'paramedics';
+}
+
+function generateUniqueEmsAutoCallsignNumber(departmentId, reservedNumbers = new Set()) {
+  const deptId = Number(departmentId);
+  if (!Number.isInteger(deptId) || deptId <= 0) {
+    throw new Error('Invalid department id for EMS callsign generation');
+  }
+
+  const existsStmt = db.prepare(`
+    SELECT 1
+    FROM user_departments
+    WHERE department_id = ? AND ems_callsign_number = ?
+    LIMIT 1
+  `);
+
+  const isTaken = (n) => {
+    const normalized = normalizeEmsAutoCallsignNumber(n);
+    if (!normalized) return true;
+    if (reservedNumbers.has(normalized)) return true;
+    return !!existsStmt.get(deptId, normalized);
+  };
+
+  for (let i = 0; i < 500; i += 1) {
+    const candidate = 1000 + Math.floor(Math.random() * 9000);
+    if (!isTaken(candidate)) return candidate;
+  }
+
+  for (let candidate = 1000; candidate <= 9999; candidate += 1) {
+    if (!isTaken(candidate)) return candidate;
+  }
+
+  throw new Error('No available EMS callsign numbers remaining for this department');
+}
+
 const UserDepartments = {
+  getMembership(userId, departmentId) {
+    return db.prepare(`
+      SELECT user_id, department_id, ems_callsign_number
+      FROM user_departments
+      WHERE user_id = ? AND department_id = ?
+      LIMIT 1
+    `).get(userId, departmentId);
+  },
   getForUser(userId) {
     return db.prepare(`
-      SELECT d.* FROM departments d
+      SELECT d.*, ud.ems_callsign_number
+      FROM departments d
       JOIN user_departments ud ON ud.department_id = d.id
       WHERE ud.user_id = ?
       ORDER BY d.sort_order ASC, d.id ASC
     `).all(userId);
   },
+  ensureEmsCallsignNumber(userId, departmentId) {
+    const membership = this.getMembership(userId, departmentId);
+    if (!membership) return null;
+    if (!departmentUsesEmsAutoCallsign(departmentId)) return null;
+
+    const existing = normalizeEmsAutoCallsignNumber(membership.ems_callsign_number);
+    if (existing) return existing;
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const nextNumber = generateUniqueEmsAutoCallsignNumber(departmentId);
+      try {
+        db.prepare(`
+          UPDATE user_departments
+          SET ems_callsign_number = ?
+          WHERE user_id = ? AND department_id = ?
+        `).run(nextNumber, userId, departmentId);
+        const updated = this.getMembership(userId, departmentId);
+        const normalized = normalizeEmsAutoCallsignNumber(updated?.ems_callsign_number);
+        if (normalized) return normalized;
+      } catch (err) {
+        if (!String(err?.message || '').toLowerCase().includes('unique')) {
+          throw err;
+        }
+      }
+    }
+
+    throw new Error('Failed to assign EMS callsign number');
+  },
   setForUser(userId, departmentIds) {
     db.transaction(() => {
+      const normalizedDepartmentIds = Array.from(new Set(
+        (Array.isArray(departmentIds) ? departmentIds : [])
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      ));
+
+      const existingRows = db.prepare(`
+        SELECT department_id, ems_callsign_number
+        FROM user_departments
+        WHERE user_id = ?
+      `).all(userId);
+      const existingByDept = new Map(
+        existingRows.map((row) => [Number(row.department_id), normalizeEmsAutoCallsignNumber(row.ems_callsign_number)])
+      );
+
       db.prepare('DELETE FROM user_departments WHERE user_id = ?').run(userId);
-      const insert = db.prepare('INSERT INTO user_departments (user_id, department_id) VALUES (?, ?)');
-      for (const deptId of departmentIds) {
-        insert.run(userId, deptId);
+
+      const insert = db.prepare(`
+        INSERT INTO user_departments (user_id, department_id, ems_callsign_number)
+        VALUES (?, ?, ?)
+      `);
+
+      const reservedByDept = new Map();
+      for (const deptId of normalizedDepartmentIds) {
+        let emsCallsignNumber = null;
+        if (departmentUsesEmsAutoCallsign(deptId)) {
+          const preserved = existingByDept.get(deptId);
+          if (normalizeEmsAutoCallsignNumber(preserved)) {
+            emsCallsignNumber = preserved;
+          } else {
+            const reserved = reservedByDept.get(deptId) || new Set();
+            emsCallsignNumber = generateUniqueEmsAutoCallsignNumber(deptId, reserved);
+            reserved.add(emsCallsignNumber);
+            reservedByDept.set(deptId, reserved);
+          }
+        }
+        insert.run(userId, deptId, emsCallsignNumber);
       }
     })();
   },
   add(userId, departmentId) {
+    const deptId = Number(departmentId);
+    if (!Number.isInteger(deptId) || deptId <= 0) return;
+
+    const existing = this.getMembership(userId, deptId);
+    if (existing) {
+      if (departmentUsesEmsAutoCallsign(deptId)) this.ensureEmsCallsignNumber(userId, deptId);
+      return;
+    }
+
+    let emsCallsignNumber = null;
+    if (departmentUsesEmsAutoCallsign(deptId)) {
+      emsCallsignNumber = generateUniqueEmsAutoCallsignNumber(deptId);
+    }
+
     db.prepare(
-      'INSERT OR IGNORE INTO user_departments (user_id, department_id) VALUES (?, ?)'
-    ).run(userId, departmentId);
+      'INSERT OR IGNORE INTO user_departments (user_id, department_id, ems_callsign_number) VALUES (?, ?, ?)'
+    ).run(userId, deptId, emsCallsignNumber);
   },
   remove(userId, departmentId) {
     db.prepare(

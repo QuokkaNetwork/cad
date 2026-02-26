@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { emitUnitDutyChanged } from '../utils/unitDutyEvents';
+import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../utils/departmentLayout';
 
 const PRESET_STORAGE_PREFIX = 'cad_go_on_duty_presets_v1';
 
@@ -71,11 +72,16 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
   const [callsign, setCallsign] = useState('');
   const [subDepartments, setSubDepartments] = useState([]);
   const [subDepartmentId, setSubDepartmentId] = useState('');
+  const [callsignPreview, setCallsignPreview] = useState(null);
+  const [callsignPreviewLoading, setCallsignPreviewLoading] = useState(false);
   const [lastUsed, setLastUsed] = useState(null);
   const [favorites, setFavorites] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const isDispatchDepartment = !!department?.is_dispatch;
+  const departmentLayoutType = getDepartmentLayoutType(department);
+  const isParamedicsDepartment = departmentLayoutType === DEPARTMENT_LAYOUT.PARAMEDICS;
+  const isAutoCallsignDepartment = !isDispatchDepartment && isParamedicsDepartment;
   const departmentKey = String(department?.id || '').trim();
   const storageKey = useMemo(() => buildStorageKey(user), [user]);
 
@@ -89,7 +95,7 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
   }, [subDepartments]);
 
   const persistDepartmentPresets = useCallback((nextLast, nextFavorites) => {
-    if (!departmentKey || isDispatchDepartment) return;
+    if (!departmentKey || isDispatchDepartment || isAutoCallsignDepartment) return;
     const current = readPresets(storageKey);
     const updated = {
       ...current,
@@ -103,10 +109,10 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
     }
     updated.favoritesByDepartment[departmentKey] = dedupePresets(nextFavorites || []);
     writePresets(storageKey, updated);
-  }, [departmentKey, isDispatchDepartment, storageKey]);
+  }, [departmentKey, isAutoCallsignDepartment, isDispatchDepartment, storageKey]);
 
   const loadDepartmentPresets = useCallback(() => {
-    if (!departmentKey || isDispatchDepartment) {
+    if (!departmentKey || isDispatchDepartment || isAutoCallsignDepartment) {
       setLastUsed(null);
       setFavorites([]);
       setCallsign(isDispatchDepartment ? 'DISPATCH' : '');
@@ -120,7 +126,7 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
     setFavorites(storedFavorites);
     setCallsign(storedLast?.callsign || '');
     setSubDepartmentId(storedLast?.subDepartmentId || '');
-  }, [departmentKey, isDispatchDepartment, storageKey]);
+  }, [departmentKey, isAutoCallsignDepartment, isDispatchDepartment, storageKey]);
 
   useEffect(() => {
     if (open) {
@@ -148,6 +154,36 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
     }
     fetchSubDepartments();
   }, [open, department?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchCallsignPreview() {
+      if (!open || !department?.id || !isAutoCallsignDepartment) {
+        setCallsignPreview(null);
+        setCallsignPreviewLoading(false);
+        return;
+      }
+      setCallsignPreviewLoading(true);
+      try {
+        const query = new URLSearchParams({ department_id: String(department.id) });
+        if (subDepartmentId) query.set('sub_department_id', String(subDepartmentId));
+        const data = await api.get(`/api/units/callsign-preview?${query.toString()}`);
+        if (cancelled) return;
+        setCallsignPreview(data && typeof data === 'object' ? data : null);
+        const nextBase = String(data?.base_callsign || data?.callsign || '').trim();
+        if (nextBase) setCallsign(nextBase);
+      } catch (err) {
+        if (!cancelled) {
+          setCallsignPreview(null);
+          setError((current) => current || (err?.message || 'Failed to load auto callsign'));
+        }
+      } finally {
+        if (!cancelled) setCallsignPreviewLoading(false);
+      }
+    }
+    fetchCallsignPreview();
+    return () => { cancelled = true; };
+  }, [open, department?.id, subDepartmentId, isAutoCallsignDepartment]);
 
   useEffect(() => {
     if (!open || isDispatchDepartment) return;
@@ -207,7 +243,11 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
   async function submit(e) {
     e.preventDefault();
     const trimmed = callsign.trim();
-    const normalizedCallsign = isDispatchDepartment ? 'DISPATCH' : trimmed;
+    const normalizedCallsign = isDispatchDepartment
+      ? 'DISPATCH'
+      : (isAutoCallsignDepartment
+        ? String(callsignPreview?.callsign || callsignPreview?.base_callsign || trimmed).trim()
+        : trimmed);
     if (!normalizedCallsign) return;
     if (!isDispatchDepartment && subDepartments.length > 0 && !subDepartmentId) {
       setError('Please select a sub-department');
@@ -225,7 +265,7 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
         action: 'on_duty',
         department_id: department?.id || null,
       });
-      if (!isDispatchDepartment && departmentKey) {
+      if (!isDispatchDepartment && !isAutoCallsignDepartment && departmentKey) {
         const nextLast = normalizePresetEntry({
           callsign: normalizedCallsign,
           subDepartmentId: subDepartmentId ? String(subDepartmentId) : '',
@@ -263,7 +303,7 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
         </div>
 
         <form onSubmit={submit} className="px-5 py-4">
-          {!isDispatchDepartment ? (
+          {!isDispatchDepartment && !isAutoCallsignDepartment ? (
             <>
               <label className="block text-sm text-cad-muted mb-2">Callsign</label>
               <input
@@ -276,6 +316,33 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
                 className="w-full bg-cad-card border border-cad-border rounded px-3 py-2 text-sm focus:outline-none focus:border-cad-accent"
               />
             </>
+          ) : isAutoCallsignDepartment ? (
+            <div className="mb-2 rounded-lg border border-cad-border bg-cad-card px-3 py-3">
+              <p className="text-sm text-cad-muted">
+                Ambulance callsign is automatically assigned for this department.
+              </p>
+              <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div className="rounded border border-cad-border bg-cad-surface px-3 py-2">
+                  <p className="text-xs uppercase tracking-wider text-cad-muted">Assigned Number</p>
+                  <p className="mt-1 text-sm font-mono text-cad-ink">
+                    {callsignPreviewLoading ? 'Loading...' : (callsignPreview?.base_callsign || callsign || '-')}
+                  </p>
+                </div>
+                <div className="rounded border border-cad-border bg-cad-surface px-3 py-2">
+                  <p className="text-xs uppercase tracking-wider text-cad-muted">Duty Callsign</p>
+                  <p className="mt-1 text-sm font-mono text-cad-ink">
+                    {callsignPreviewLoading
+                      ? 'Loading...'
+                      : (callsignPreview?.callsign || callsignPreview?.base_callsign || callsign || '-')}
+                  </p>
+                  {callsignPreview?.is_hems ? (
+                    <p className="mt-1 text-[11px] text-cad-muted">
+                      HEMS slot is randomized each time you go on duty.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
           ) : (
             <p className="text-sm text-cad-muted mb-2">
               Dispatcher units are automatically assigned callsign <span className="font-mono text-cad-ink">DISPATCH</span>.
@@ -299,7 +366,7 @@ export default function GoOnDutyModal({ open, onClose, department, onSuccess }) 
               </select>
             </>
           )}
-          {!isDispatchDepartment && (
+          {!isDispatchDepartment && !isAutoCallsignDepartment && (
             <div className="mt-3 space-y-2">
               {lastUsed && (
                 <button
