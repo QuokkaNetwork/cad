@@ -5,6 +5,7 @@ import GoOnDutyModal from '../../components/GoOnDutyModal';
 import OffDutySummaryModal from '../../components/OffDutySummaryModal';
 import { useAuth } from '../../context/AuthContext';
 import { useDepartment } from '../../context/DepartmentContext';
+import { useDeveloperCadPreview } from '../../hooks/useDeveloperCadPreview';
 import { useEventSource } from '../../hooks/useEventSource';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../../utils/departmentLayout';
 import { formatDateAU, formatTimeAU } from '../../utils/dateTime';
@@ -308,6 +309,7 @@ function SectionCard({ title, subtitle, accent, actionLabel, actionRoute, naviga
 export default function DepartmentHome() {
   const navigate = useNavigate();
   const { isFiveMOnline } = useAuth();
+  const { enabled: developerPreviewEnabled } = useDeveloperCadPreview();
   const { activeDepartment } = useDepartment();
   const [stats, setStats] = useState(DEFAULT_STATS);
   const [loading, setLoading] = useState(true);
@@ -677,9 +679,11 @@ export default function DepartmentHome() {
   // Mirror the sidebar's visibility rules:
   // 1. /units and /dispatch only appear when the user is on duty in this department.
   // 2. FiveM-protected routes only appear when FiveM is online (or it's a dispatch workspace).
-  const hideInGameItems = !isFiveMOnline && !isDispatch;
+  const previewOnActiveDeptDuty = developerPreviewEnabled || onActiveDeptDuty;
+  const previewFiveMOnline = developerPreviewEnabled || isFiveMOnline;
+  const hideInGameItems = !previewFiveMOnline && !isDispatch;
   const visibleQuickActions = quickActions.filter(action => {
-    if (DUTY_REQUIRED_ROUTES.has(action.route) && !onActiveDeptDuty) return false;
+    if (DUTY_REQUIRED_ROUTES.has(action.route) && !previewOnActiveDeptDuty) return false;
     if (FIVEM_REQUIRED_ROUTES.has(action.route) && hideInGameItems) return false;
     return true;
   });
@@ -689,7 +693,7 @@ export default function DepartmentHome() {
     // If every action in this panel links to a hidden route, hide the whole panel.
     const visibleActions = panel.actions.filter(action => {
       const route = action.route.split('?')[0]; // strip query string
-      if (DUTY_REQUIRED_ROUTES.has(route) && !onActiveDeptDuty) return false;
+      if (DUTY_REQUIRED_ROUTES.has(route) && !previewOnActiveDeptDuty) return false;
       if (FIVEM_REQUIRED_ROUTES.has(route) && hideInGameItems) return false;
       return true;
     });
@@ -698,14 +702,14 @@ export default function DepartmentHome() {
     ...panel,
     actions: panel.actions.filter(action => {
       const route = action.route.split('?')[0];
-      if (DUTY_REQUIRED_ROUTES.has(route) && !onActiveDeptDuty) return false;
+      if (DUTY_REQUIRED_ROUTES.has(route) && !previewOnActiveDeptDuty) return false;
       if (FIVEM_REQUIRED_ROUTES.has(route) && hideInGameItems) return false;
       return true;
     }),
   }));
 
   // Track what's been hidden so we can show a contextual notice
-  const hiddenDutyRoutes = quickActions.filter(a => DUTY_REQUIRED_ROUTES.has(a.route) && !onActiveDeptDuty);
+  const hiddenDutyRoutes = quickActions.filter(a => DUTY_REQUIRED_ROUTES.has(a.route) && !previewOnActiveDeptDuty);
   const hiddenFiveMRoutes = quickActions.filter(a => FIVEM_REQUIRED_ROUTES.has(a.route) && hideInGameItems);
 
   // Split quickActions: primary is first (col-span-2), rest are regular
@@ -1305,10 +1309,17 @@ export default function DepartmentHome() {
               <div className="rounded-xl border border-cad-border bg-cad-surface/30 px-3 py-3">
                 <p className="text-[10px] uppercase tracking-[0.16em] text-cad-muted">Connection & Access</p>
                 <div className="mt-2 space-y-2 text-xs">
+                  {developerPreviewEnabled && (
+                    <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-2.5 py-2 text-sky-100">
+                      Developer Preview is enabled in this browser. Duty/FiveM UI gating is bypassed for navigation and quick actions.
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-cad-muted">FiveM Link</span>
-                    <span className={`font-semibold ${isFiveMOnline ? 'text-emerald-300' : 'text-amber-200'}`}>
-                      {isDispatch ? (isFiveMOnline ? 'Connected (optional)' : 'Not required for dispatch') : (isFiveMOnline ? 'Connected' : 'Offline')}
+                    <span className={`font-semibold ${previewFiveMOnline ? 'text-emerald-300' : 'text-amber-200'}`}>
+                      {developerPreviewEnabled
+                        ? (isFiveMOnline ? 'Connected (preview active)' : 'Bypassed (developer preview)')
+                        : (isDispatch ? (isFiveMOnline ? 'Connected (optional)' : 'Not required for dispatch') : (isFiveMOnline ? 'Connected' : 'Offline'))}
                     </span>
                   </div>
                   {hiddenDutyRoutes.length > 0 && (

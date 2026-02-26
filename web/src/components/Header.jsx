@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
 import { useEventSource } from '../hooks/useEventSource';
+import { useDeveloperCadPreview } from '../hooks/useDeveloperCadPreview';
 
 const UNIT_STATUSES = [
   { value: 'available',   label: 'Available',   color: '#10b981' },
@@ -31,6 +32,11 @@ function colorWithAlpha(color, alpha) {
 export default function Header() {
   const { user, isAdmin, canManageAnnouncements, canManageDepartmentApplications, logout, refreshUser } = useAuth();
   const { activeDepartment } = useDepartment();
+  const {
+    available: developerPreviewAvailable,
+    enabled: developerPreviewEnabled,
+    toggle: toggleDeveloperPreview,
+  } = useDeveloperCadPreview();
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -301,6 +307,36 @@ export default function Header() {
                     </svg>
                     Admin Panel
                   </button>
+                )}
+                {developerPreviewAvailable && (
+                  <>
+                    <div className="border-t border-cad-border my-1" />
+                    <button
+                      type="button"
+                      onClick={() => { toggleDeveloperPreview(); }}
+                      className="w-full text-left px-3 py-2 text-sm text-cad-muted hover:text-cad-ink hover:bg-cad-card transition-colors"
+                      title="Bypass duty/FiveM UI gating to preview hidden CAD navigation during development"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold uppercase tracking-wider text-sky-300">Developer Preview</div>
+                          <div className="text-[11px] text-cad-muted mt-0.5 leading-snug">
+                            Show sidebar and hidden CAD sections without duty/FiveM UI gates
+                          </div>
+                        </div>
+                        <span
+                          className={`mt-0.5 inline-flex h-5 min-w-[2.1rem] items-center rounded-full border px-0.5 transition-colors ${
+                            developerPreviewEnabled
+                              ? 'border-sky-400/40 bg-sky-500/20 justify-end'
+                              : 'border-cad-border bg-cad-card justify-start'
+                          }`}
+                          aria-hidden="true"
+                        >
+                          <span className={`h-3.5 w-3.5 rounded-full ${developerPreviewEnabled ? 'bg-sky-300' : 'bg-cad-muted'}`} />
+                        </span>
+                      </div>
+                    </button>
+                  </>
                 )}
                 <div className="border-t border-cad-border my-1" />
                 <button

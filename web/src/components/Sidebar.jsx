@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useDepartment } from '../context/DepartmentContext';
 import { useEventSource } from '../hooks/useEventSource';
+import { useDeveloperCadPreview } from '../hooks/useDeveloperCadPreview';
 import { api } from '../api/client';
 import { DEPARTMENT_LAYOUT, getDepartmentLayoutType } from '../utils/departmentLayout';
 import { UNIT_DUTY_CHANGED_EVENT } from '../utils/unitDutyEvents';
@@ -159,6 +160,7 @@ function SidebarLink({ to, label, icon }) {
 export default function Sidebar() {
   const { departments, isFiveMOnline, refreshUser } = useAuth();
   const { activeDepartment } = useDepartment();
+  const { enabled: developerPreviewEnabled } = useDeveloperCadPreview();
   const [dispatcherOnline, setDispatcherOnline] = useState(false);
   const [isDispatchDepartment, setIsDispatchDepartment] = useState(false);
   const [isOnDuty, setIsOnDuty] = useState(false);
@@ -392,7 +394,10 @@ export default function Sidebar() {
     || onDutyDepartmentId <= 0
     || onDutyDepartmentId === activeDepartmentId
   );
-  const effectiveIsFiveMOnline = !!isFiveMOnline || (isOnDutyForActiveDepartment && Date.now() < Number(assumeFiveMOnlineUntil || 0));
+  const effectiveOnDutyForActiveDepartment = developerPreviewEnabled || isOnDutyForActiveDepartment;
+  const effectiveIsFiveMOnline = developerPreviewEnabled
+    || !!isFiveMOnline
+    || (isOnDutyForActiveDepartment && Date.now() < Number(assumeFiveMOnlineUntil || 0));
   const hideInGameProtectedItems = !effectiveIsFiveMOnline && !activeDepartment?.is_dispatch;
   const hiddenInGameNavLabels = hideInGameProtectedItems
     ? baseNavItems
@@ -402,17 +407,17 @@ export default function Sidebar() {
   const hiddenInGameNavText = formatHiddenNavLabels(hiddenInGameNavLabels);
 
   const navItems = baseNavItems.filter((item) => {
-    if (requiresOnDutyForNavItem(item) && !isOnDutyForActiveDepartment) return false;
+    if (requiresOnDutyForNavItem(item) && !effectiveOnDutyForActiveDepartment) return false;
     if (requiresFiveMOnlineForNavItem(item) && hideInGameProtectedItems) return false;
     return true;
   });
 
-  const navWithCallDetails = (hasActiveCall && isOnDutyForActiveDepartment)
+  const navWithCallDetails = (hasActiveCall && effectiveOnDutyForActiveDepartment)
     ? [...navItems, CALL_DETAILS_NAV_ITEM]
     : navItems;
 
   // Department sidebar should not appear at all until the user is on duty in that department.
-  if (activeDepartment && !isOnDutyForActiveDepartment) {
+  if (activeDepartment && !effectiveOnDutyForActiveDepartment) {
     return null;
   }
 
@@ -425,6 +430,14 @@ export default function Sidebar() {
             <div className="text-xs text-cad-muted uppercase tracking-wider mb-2 px-3">
               {activeDepartment.short_name}
             </div>
+            {developerPreviewEnabled && (
+              <div className="mb-2 mx-1 rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2">
+                <p className="text-[11px] uppercase tracking-wider text-sky-300">Developer Preview</p>
+                <p className="text-xs text-cad-muted mt-1">
+                  Duty/FiveM sidebar gating is temporarily bypassed in this browser.
+                </p>
+              </div>
+            )}
             {navWithCallDetails.map(item => (
               <SidebarLink key={item.to} {...item} />
             ))}
