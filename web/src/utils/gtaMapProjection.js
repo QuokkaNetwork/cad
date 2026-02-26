@@ -55,8 +55,8 @@ export const GTA_LEAFLET_REFERENCE_CRS = {
 // Different postal-map renders can be slightly shifted even when using the same
 // GTA V world transform. Positive X moves right, positive Y moves down.
 export const GTA_POSTAL_MAP_IMAGE_NUDGE = {
-  x: -12,
-  y: -64,
+  x: 21,
+  y: -148,
 };
 
 function clamp01(value) {
