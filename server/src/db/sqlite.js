@@ -3825,7 +3825,13 @@ const FiveMPlayerLinks = {
     return db.prepare('SELECT * FROM fivem_player_links WHERE steam_id = ?').get(steamId);
   },
   findByCitizenId(citizenId) {
-    return db.prepare('SELECT * FROM fivem_player_links WHERE lower(citizen_id) = lower(?)').get(String(citizenId || '').trim());
+    return db.prepare(`
+      SELECT *
+      FROM fivem_player_links
+      WHERE lower(citizen_id) = lower(?)
+      ORDER BY updated_at DESC, steam_id ASC
+      LIMIT 1
+    `).get(String(citizenId || '').trim());
   },
   list() {
     return db.prepare('SELECT * FROM fivem_player_links ORDER BY updated_at DESC').all();

@@ -184,24 +184,40 @@ function chooseActiveLinkForUser(user) {
   if (!user) return null;
 
   const candidates = [];
+  const seenKeys = new Set();
   const steamId = String(user.steam_id || '').trim();
   const discordId = String(user.discord_id || '').trim();
+  const preferredCitizenId = String(user.preferred_citizen_id || '').trim();
+
+  const pushCandidate = (row) => {
+    if (!row) return;
+    const key = String(row.steam_id || '').trim() || `citizen:${String(row.citizen_id || '').trim()}`;
+    if (!key || seenKeys.has(key)) return;
+    seenKeys.add(key);
+    candidates.push(row);
+  };
 
   if (steamId) {
-    const bySteam = FiveMPlayerLinks.findBySteamId(steamId);
-    if (bySteam) candidates.push(bySteam);
+    pushCandidate(FiveMPlayerLinks.findBySteamId(steamId));
   }
   if (discordId) {
-    const byDiscord = FiveMPlayerLinks.findBySteamId(`discord:${discordId}`);
-    if (byDiscord) candidates.push(byDiscord);
+    pushCandidate(FiveMPlayerLinks.findBySteamId(`discord:${discordId}`));
+  }
+  if (preferredCitizenId) {
+    pushCandidate(FiveMPlayerLinks.findByCitizenId(preferredCitizenId));
   }
 
   let selected = null;
   let selectedTs = NaN;
   for (const candidate of candidates) {
     const ts = parseSqliteUtc(candidate?.updated_at);
+    if (!selected) {
+      selected = candidate;
+      selectedTs = ts;
+      continue;
+    }
     if (Number.isNaN(ts)) continue;
-    if (!selected || ts > selectedTs) {
+    if (Number.isNaN(selectedTs) || ts > selectedTs) {
       selected = candidate;
       selectedTs = ts;
     }

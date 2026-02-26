@@ -22,7 +22,11 @@ const MAP_FIT_PADDING_PX = [16, 16];
 const MAP_WHOLE_PADDING_PX = [8, 8];
 const LEAFLET_DEFAULT_MIN_ZOOM = -2;
 const LEAFLET_MAX_ZOOM = 4.5;
-const MAP_PROJECTION = createGtaAtlasProjection({ imageSize: MAP_IMAGE_SIZE, worldBounds: WORLD_BOUNDS });
+const MAP_PROJECTION = createGtaAtlasProjection({
+  imageSize: MAP_IMAGE_SIZE,
+  imageRect: MAP_IMAGE_CONTENT_BOUNDS,
+  worldBounds: WORLD_BOUNDS,
+});
 const MAP_CANVAS_IS_STANDARD_ATLAS = isGtaAtlasCanvasSize(MAP_IMAGE_SIZE);
 const MAP_CONTENT_SIZE = getRectSize(MAP_IMAGE_CONTENT_BOUNDS);
 const MAP_CONTENT_COVERAGE_PCT = Math.round((MAP_CONTENT_SIZE.width / MAP_IMAGE_SIZE.width) * 1000) / 10;
@@ -677,7 +681,7 @@ export default function DispatchMap() {
             <div>
               <div className="font-semibold">Dispatch Area Map</div>
               <div className="text-[11px] text-cad-muted mt-0.5">
-                Direct full-canvas projection with standard GTA V/FiveM world bounds on `FullMap.png`
+                Projection uses standard GTA V/FiveM world bounds mapped into the visible `FullMap.png` content area
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">

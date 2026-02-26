@@ -77,10 +77,25 @@ export function isGtaAtlasCanvasSize(imageSize) {
 
 export function createGtaAtlasProjection({
   imageSize = GTA_FULL_MAP_IMAGE_SIZE,
+  imageRect = null,
   worldBounds = GTA_DEFAULT_WORLD_BOUNDS,
 } = {}) {
   const width = Math.max(1, Number(imageSize?.width) || 1);
   const height = Math.max(1, Number(imageSize?.height) || 1);
+  const rectLeftRaw = Number(imageRect?.left);
+  const rectTopRaw = Number(imageRect?.top);
+  const rectRightRaw = Number(imageRect?.right);
+  const rectBottomRaw = Number(imageRect?.bottom);
+  const rectLeft = Number.isFinite(rectLeftRaw) ? rectLeftRaw : 0;
+  const rectTop = Number.isFinite(rectTopRaw) ? rectTopRaw : 0;
+  const rectRight = Number.isFinite(rectRightRaw) ? rectRightRaw : width;
+  const rectBottom = Number.isFinite(rectBottomRaw) ? rectBottomRaw : height;
+  const imageMinX = Math.max(0, Math.min(width, rectLeft));
+  const imageMinY = Math.max(0, Math.min(height, rectTop));
+  const imageMaxX = Math.max(imageMinX + 1, Math.min(width, rectRight));
+  const imageMaxY = Math.max(imageMinY + 1, Math.min(height, rectBottom));
+  const imageWorldWidth = Math.max(1, imageMaxX - imageMinX);
+  const imageWorldHeight = Math.max(1, imageMaxY - imageMinY);
   const minX = Number(worldBounds?.minX || 0);
   const maxX = Number(worldBounds?.maxX || 0);
   const minY = Number(worldBounds?.minY || 0);
@@ -96,8 +111,8 @@ export function createGtaAtlasProjection({
       const relX = (x - minX) / worldWidth;
       const relY = (y - minY) / worldHeight;
       return {
-        x: clamp01(relX) * width,
-        y: (1 - clamp01(relY)) * height,
+        x: imageMinX + (clamp01(relX) * imageWorldWidth),
+        y: imageMinY + ((1 - clamp01(relY)) * imageWorldHeight),
       };
     },
 
@@ -105,8 +120,8 @@ export function createGtaAtlasProjection({
       const x = Number(point?.x);
       const y = Number(point?.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return { x: 0, y: 0 };
-      const relX = x / width;
-      const relY = y / height;
+      const relX = (x - imageMinX) / imageWorldWidth;
+      const relY = (y - imageMinY) / imageWorldHeight;
       return {
         x: minX + (clamp01(relX) * worldWidth),
         y: minY + ((1 - clamp01(relY)) * worldHeight),
@@ -115,8 +130,8 @@ export function createGtaAtlasProjection({
 
     worldDistanceToImagePixels(distance) {
       const d = Math.max(0, Number(distance || 0));
-      const sx = width / worldWidth;
-      const sy = height / worldHeight;
+      const sx = imageWorldWidth / worldWidth;
+      const sy = imageWorldHeight / worldHeight;
       return Math.max(1, d * Math.min(sx, sy));
     },
   };
