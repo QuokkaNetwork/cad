@@ -286,6 +286,48 @@ local function isVehicleUsableForRegistration(vehicle)
   return true
 end
 
+local function isPedOccupyingVehicle(ped, vehicle)
+  if not ped or ped <= 0 then return false end
+  if not isVehicleUsableForRegistration(vehicle) then return false end
+  if type(GetPedInVehicleSeat) ~= 'function' then return true end
+
+  if GetPedInVehicleSeat(vehicle, -1) == ped then
+    return true
+  end
+
+  local maxPassengers = tonumber(GetVehicleMaxNumberOfPassengers(vehicle) or 0) or 0
+  if maxPassengers < 0 then maxPassengers = 0 end
+  for seat = 0, maxPassengers do
+    if GetPedInVehicleSeat(vehicle, seat) == ped then
+      return true
+    end
+  end
+  return false
+end
+
+local function resolveCurrentSeatedVehicleForRegistration(ped)
+  if not ped or ped <= 0 then return 0 end
+
+  local currentVehicle = GetVehiclePedIsIn(ped, false)
+  if isVehicleUsableForRegistration(currentVehicle) and isPedOccupyingVehicle(ped, currentVehicle) then
+    return currentVehicle
+  end
+
+  local activeVehicle = GetVehiclePedIsIn(ped, true)
+  if isVehicleUsableForRegistration(activeVehicle) and isPedOccupyingVehicle(ped, activeVehicle) then
+    return activeVehicle
+  end
+
+  if type(GetVehiclePedIsUsing) == 'function' then
+    local usingVehicle = GetVehiclePedIsUsing(ped)
+    if isVehicleUsableForRegistration(usingVehicle) and isPedOccupyingVehicle(ped, usingVehicle) then
+      return usingVehicle
+    end
+  end
+
+  return 0
+end
+
 local function findNearestVehicleInRadius(origin, radius)
   local resolvedOrigin = parseCoords(origin)
   local vehicles = GetGamePool('CVehicle')
@@ -536,16 +578,13 @@ ui.openVehicleRegistrationPopup = openVehicleRegistrationPopup
 
 local function buildCurrentSeatedVehicleRegistrationPrefill()
   local ped = PlayerPedId()
-  if not ped or ped == 0 then
+  if not ped or ped <= 0 then
     return nil, 'Player ped not available.'
   end
-  if not IsPedInAnyVehicle(ped, false) then
-    return nil, 'You need to be sitting in the vehicle you want to register before opening VicRoads.'
-  end
 
-  local vehicle = GetVehiclePedIsIn(ped, false)
+  local vehicle = resolveCurrentSeatedVehicleForRegistration(ped)
   if not isVehicleUsableForRegistration(vehicle) then
-    return nil, 'Unable to detect the vehicle you are sitting in. Exit and re-enter the vehicle, then try again.'
+    return nil, 'You need to be sitting in the vehicle you want to register before opening VicRoads.'
   end
 
   local plate = trim(GetVehicleNumberPlateText(vehicle) or '')
@@ -663,8 +702,8 @@ RegisterNUICallback('cadBridgeNpwdVicRoadsSubmitRegistration', function(data, cb
   local model = trim(data and data.vehicle_model or data and data.model or '')
   local colour = trim(data and data.vehicle_colour or data and data.colour or data and data.color or '')
   local ownerName = trim(data and data.owner_name or data and data.character_name or '')
-  local durationDays = tonumber(data and data.duration_days or 0) or tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
-  durationDays = select(1, resolveVehicleRegistrationDurationDays(durationDays))
+  local requestedDurationDays = tonumber(data and data.duration_days or 0) or tonumber(Config.VehicleRegistrationDefaultDays or 35) or 35
+  local durationDays, _, durationAllowed = resolveVehicleRegistrationDurationDays(requestedDurationDays)
 
   if plate == '' or model == '' then
     if cb then

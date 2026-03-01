@@ -1,10 +1,7 @@
 const CAD_BRIDGE_RESOURCE = 'cad_bridge';
-const IS_PROD = typeof import.meta !== 'undefined' && import.meta.env?.PROD === true;
-// Qbox NPWD is most reliable with the explicit cfx-nui endpoint. The generic
-// `https://cad_bridge` fallback can trigger browser-style dialogs in some CEF builds.
-const CAD_BRIDGE_ENDPOINTS = IS_PROD
-  ? [`https://cfx-nui-${CAD_BRIDGE_RESOURCE}`]
-  : [`https://cfx-nui-${CAD_BRIDGE_RESOURCE}`, `https://${CAD_BRIDGE_RESOURCE}`];
+// Prefer explicit cfx-nui first, then fall back to the generic endpoint for
+// CEF/runtime variants where cfx-nui fetch fails.
+const CAD_BRIDGE_ENDPOINTS = [`https://cfx-nui-${CAD_BRIDGE_RESOURCE}`, `https://${CAD_BRIDGE_RESOURCE}`];
 
 function withTimeout(timeoutMs) {
   const timeout = Math.max(1000, Number(timeoutMs) || 10000);
