@@ -10,6 +10,7 @@ import { UNIT_DUTY_CHANGED_EVENT } from '../utils/unitDutyEvents';
 
 const LAW_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/map', label: 'Live Map', icon: 'M9 20l-5.447 2.724A1 1 0 012 21.83V5.236a1 1 0 01.553-.894l6-3a1 1 0 01.894 0L15 4l5.447-2.724A1 1 0 0122 2.17v16.594a1 1 0 01-.553.894l-6 3a1 1 0 01-.894 0L9 20zm0 0V7m6 14V4' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/records', label: 'Arrest Reports', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/infringements', label: 'Infringement Notices', icon: 'M9 12h6m-6 4h6M7 3h10l1 2h2a1 1 0 011 1v13a2 2 0 01-2 2H5a2 2 0 01-2-2V6a1 1 0 011-1h2l1-2z' },
@@ -21,6 +22,7 @@ const LAW_NAV = [
 
 const EMS_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/map', label: 'Live Map', icon: 'M9 20l-5.447 2.724A1 1 0 012 21.83V5.236a1 1 0 01.553-.894l6-3a1 1 0 01.894 0L15 4l5.447-2.724A1 1 0 0122 2.17v16.594a1 1 0 01-.553.894l-6 3a1 1 0 01-.894 0L9 20zm0 0V7m6 14V4' },
   { to: '/units', label: 'Response Board', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/ems-treatment', label: 'Treatment Log', icon: 'M12 6v12m6-6H6' },
@@ -30,6 +32,7 @@ const EMS_NAV = [
 
 const FIRE_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
+  { to: '/map', label: 'Live Map', icon: 'M9 20l-5.447 2.724A1 1 0 012 21.83V5.236a1 1 0 01.553-.894l6-3a1 1 0 01.894 0L15 4l5.447-2.724A1 1 0 0122 2.17v16.594a1 1 0 01-.553.894l-6 3a1 1 0 01-.894 0L9 20zm0 0V7m6 14V4' },
   { to: '/units', label: 'Response Board', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
   { to: '/incidents', label: 'Incidents', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
   { to: '/records', label: 'Incident Reports', icon: 'M9 12h6m-6 4h6M8 2h8a2 2 0 012 2v16l-6-3-6 3V4a2 2 0 012-2z' },
@@ -39,6 +42,7 @@ const FIRE_NAV = [
 const DISPATCH_NAV = [
   { to: '/department', label: 'Home', icon: 'M3 12l9-9 9 9M4 10v10h5v-6h6v6h5V10' },
   { to: '/dispatch', label: 'Dispatch', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100-8 4 4 0 000 8zm11 4l-4.35 4.35M17 11h4m-2-2v4' },
+  { to: '/map', label: 'Live Map', icon: 'M9 20l-5.447 2.724A1 1 0 012 21.83V5.236a1 1 0 01.553-.894l6-3a1 1 0 01.894 0L15 4l5.447-2.724A1 1 0 0122 2.17v16.594a1 1 0 01-.553.894l-6 3a1 1 0 01-.894 0L9 20zm0 0V7m6 14V4' },
   { to: '/search', label: 'Search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
 ];
 

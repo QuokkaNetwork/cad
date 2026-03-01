@@ -13,6 +13,7 @@ import Home from './pages/Home';
 import Departments from './pages/Departments';
 import Rules from './pages/Rules';
 import Settings from './pages/Settings';
+import MapPage from './pages/Map';
 import Dispatch from './pages/police/Dispatch';
 import Units from './pages/police/Units';
 import DepartmentHome from './pages/police/DepartmentHome';
@@ -67,7 +68,7 @@ export default function App() {
             {/* Police MDT */}
             <Route path="/department" element={<RequireRulesAgreement><RequireDepartment><DepartmentHome /></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/dispatch" element={<RequireRulesAgreement><RequireDepartment><Dispatch /></RequireDepartment></RequireRulesAgreement>} />
-            <Route path="/map" element={<Navigate to="/department" replace />} />
+            <Route path="/map" element={<RequireRulesAgreement><RequireDepartment><MapPage /></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/units" element={<RequireRulesAgreement><RequireDepartment><Units /></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/search" element={<RequireRulesAgreement><RequireDepartment><Search /></RequireDepartment></RequireRulesAgreement>} />
             <Route path="/incidents" element={<RequireRulesAgreement><RequireDepartment><RequireFiveMOnline featureLabel="incidents"><Incidents /></RequireFiveMOnline></RequireDepartment></RequireRulesAgreement>} />
